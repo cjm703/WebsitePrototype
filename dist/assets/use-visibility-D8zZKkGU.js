@@ -1,0 +1,1 @@
+import{r as t}from"./index-BAhgvbrz.js";function r(){const[i,n]=t.useState(()=>!document.hidden);return t.useEffect(()=>{const e=()=>n(!document.hidden);return document.addEventListener("visibilitychange",e),()=>document.removeEventListener("visibilitychange",e)},[]),i}export{r as u};
