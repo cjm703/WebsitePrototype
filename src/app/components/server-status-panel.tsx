@@ -59,28 +59,47 @@ export function ServerStatusPanel({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Ping the server
-  const checkServer = async () => {
-    const start = performance.now();
-    try {
-      const res = awaiconst res = await fetch(`${API_BASE}/health`, {
-          method: "GET",
-          headers: {
-              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-      });
-      const ms = Math.round(performance.now() - start);
-      const ok = res.ok;
-      const now = new Date();
-      setPing({ status: ok ? "ok" : "error", latencyMs: ms, lastChecked: now });
-      setPingHistory((prev) => [...prev.slice(-19), { time: now, ms, ok }]);
-    } catch {
-      const ms = Math.round(performance.now() - start);
-      const now = new Date();
-      setPing({ status: "error", latencyMs: ms, lastChecked: now });
-      setPingHistory((prev) => [...prev.slice(-19), { time: now, ms, ok: false }]);
-    }
-  };
+const checkServer = async () => {
+  const start = performance.now();
 
+  try {
+    const res = await fetch(`${API_BASE}/health`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+    });
+
+    const ms = Math.round(performance.now() - start);
+    const ok = res.ok;
+    const now = new Date();
+
+    setPing({
+      status: ok ? "ok" : "error",
+      latencyMs: ms,
+      lastChecked: now,
+    });
+
+    setPingHistory((prev) => [
+      ...prev.slice(-19),
+      { time: now, ms, ok },
+    ]);
+  } catch {
+    const ms = Math.round(performance.now() - start);
+    const now = new Date();
+
+    setPing({
+      status: "error",
+      latencyMs: ms,
+      lastChecked: now,
+    });
+
+    setPingHistory((prev) => [
+      ...prev.slice(-19),
+      { time: now, ms, ok: false },
+    ]);
+  }
+};
   // Refresh local metrics
   const refreshMetrics = () => {
     setStorageBytes(getStorageUsageBytes());
