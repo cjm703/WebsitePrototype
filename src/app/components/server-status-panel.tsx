@@ -1,14 +1,8 @@
-// ════════════════════════════════════════════════════════
-// Server Status Panel — compact retro status bar showing
-// server health, error count, storage usage, session info
-// ════════════════════════════════════════════════════════
-
 import React, { useState, useEffect, useRef } from "react";
 import { retro } from "./retro-styles";
 import { S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 import { getStorageUsageBytes, getStorageUsageFraction } from "./safe-storage";
 import { readErrorLog, type ErrorLogEntry } from "./error-logger";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
 import {
   Activity,
   Database,
@@ -22,7 +16,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-8a5950b5`;
+const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
 
 interface ServerPing {
   status: "ok" | "error" | "checking";
@@ -68,13 +62,11 @@ export function ServerStatusPanel({
   const checkServer = async () => {
     const start = performance.now();
     try {
-      const res = await fetch(`${API_BASE}/auth-codes/statuses`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ ids: [] }),
+      const res = awaiconst res = await fetch(`${API_BASE}/health`, {
+          method: "GET",
+          headers: {
+              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
       });
       const ms = Math.round(performance.now() - start);
       const ok = res.ok;
