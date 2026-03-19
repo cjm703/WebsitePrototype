@@ -50,7 +50,7 @@ async function ensureDmAuthCode(): Promise<void> {
 ensureDmAuthCode().catch((err) => console.log("Error seeding DM auth code:", err));
 
 // Health check endpoint
-app.get("/make-server-8a5950b5/health", (c) => {
+app.get("/health", (c) => {
   return c.json({ status: "ok" });
 });
 
@@ -63,7 +63,7 @@ app.get("/make-server-8a5950b5/health", (c) => {
  * Body: { profileId: string, code: string }
  * Hashes the code server-side and stores it in KV.
  */
-app.post("/make-server-8a5950b5/auth-codes/set", async (c) => {
+app.post("/auth-codes/set", async (c) => {
   try {
     const { profileId, code } = await c.req.json();
     if (!profileId || typeof profileId !== "string") {
@@ -87,7 +87,7 @@ app.post("/make-server-8a5950b5/auth-codes/set", async (c) => {
  * Body: { profileId: string, code: string }
  * Returns { valid: boolean, hasCode: boolean }
  */
-app.post("/make-server-8a5950b5/auth-codes/verify", async (c) => {
+app.post("/auth-codes/verify", async (c) => {
   try {
     const { profileId, code } = await c.req.json();
     if (!profileId || typeof profileId !== "string") {
@@ -114,7 +114,7 @@ app.post("/make-server-8a5950b5/auth-codes/verify", async (c) => {
  * Body: { profileIds: string[] }
  * Returns { statuses: Record<string, boolean> } — true if code is set
  */
-app.post("/make-server-8a5950b5/auth-codes/status", async (c) => {
+app.post("/auth-codes/status", async (c) => {
   try {
     const { profileIds } = await c.req.json();
     if (!Array.isArray(profileIds)) {
@@ -142,7 +142,7 @@ app.post("/make-server-8a5950b5/auth-codes/status", async (c) => {
  * DELETE /auth-codes/:profileId
  * Removes the auth code for a profile.
  */
-app.delete("/make-server-8a5950b5/auth-codes/:profileId", async (c) => {
+app.delete("/auth-codes/:profileId", async (c) => {
   try {
     const profileId = c.req.param("profileId");
     if (!profileId) {
@@ -163,7 +163,7 @@ app.delete("/make-server-8a5950b5/auth-codes/:profileId", async (c) => {
  * Bulk-migrates plain-text codes from localStorage into the KV store.
  * Skips profiles that already have a server-side code set.
  */
-app.post("/make-server-8a5950b5/auth-codes/migrate", async (c) => {
+app.post("/auth-codes/migrate", async (c) => {
   try {
     const { codes } = await c.req.json();
     if (!Array.isArray(codes)) {
@@ -199,7 +199,7 @@ const pfpKey = (userId: string) => `inet-pfp::${userId}`;
  * imageData is a base64 data URL (resized client-side to ≤128×128).
  * Overwrites any existing profile picture for that user.
  */
-app.post("/make-server-8a5950b5/profile-picture/upload", async (c) => {
+app.post("/profile-picture/upload", async (c) => {
   try {
     const { userId, imageData } = await c.req.json();
     if (!userId || typeof userId !== "string") {
@@ -229,7 +229,7 @@ app.post("/make-server-8a5950b5/profile-picture/upload", async (c) => {
  * GET /profile-picture/:userId
  * Returns { imageData: string, updatedAt: number } or { imageData: null }
  */
-app.get("/make-server-8a5950b5/profile-picture/:userId", async (c) => {
+app.get("/profile-picture/:userId", async (c) => {
   try {
     const userId = c.req.param("userId");
     if (!userId) {
@@ -251,7 +251,7 @@ app.get("/make-server-8a5950b5/profile-picture/:userId", async (c) => {
  * Body: { userIds: string[] }
  * Returns { pictures: Record<string, string | null> }
  */
-app.post("/make-server-8a5950b5/profile-picture/batch", async (c) => {
+app.post("/profile-picture/batch", async (c) => {
   try {
     const { userIds } = await c.req.json();
     if (!Array.isArray(userIds)) {
@@ -276,7 +276,7 @@ app.post("/make-server-8a5950b5/profile-picture/batch", async (c) => {
  * DELETE /profile-picture/:userId
  * Removes the profile picture for the given user.
  */
-app.delete("/make-server-8a5950b5/profile-picture/:userId", async (c) => {
+app.delete("/profile-picture/:userId", async (c) => {
   try {
     const userId = c.req.param("userId");
     if (!userId) {

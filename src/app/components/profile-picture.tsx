@@ -4,10 +4,8 @@
 // Shared utilities for uploading, fetching, and caching profile pictures.
 // v4 — cache-bust for proxy re-compile
 
-import { projectId, publicAnonKey } from "/utils/supabase/info";
-
-const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-8a5950b5`;
-const AUTH_HEADER = { Authorization: `Bearer ${publicAnonKey}` };
+const SERVER = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
+const AUTH_HEADER = { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` };
 
 // -- Client-side image resizing --
 // Resizes an image file to fit within maxSize×maxSize, returns a JPEG data URL.

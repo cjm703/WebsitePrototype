@@ -7,13 +7,11 @@
  * Cache-bust v3
  */
 
-import { projectId, publicAnonKey } from "/utils/supabase/info";
-
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-8a5950b5/auth-codes`;
+const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
 
 const headers = () => ({
   "Content-Type": "application/json",
-  Authorization: `Bearer ${publicAnonKey}`,
+  Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
 });
 
 /** Resilient fetch wrapper with timeout and retry */
