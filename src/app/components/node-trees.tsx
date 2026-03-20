@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { retro } from "./retro-styles";
 import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight } from "lucide-react";
-import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
-import { firstColor, ts } from "./player-theme";
+import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 
 // ═══════════════════════════════════════════════
@@ -34,30 +33,6 @@ export interface NodeTree {
   connections: { from: string; to: string }[]; // node id pairs
 }
 
-// ═══════════════════════════════════════════════
-// LocalStorage helpers
-// ═══════════════════════════════════════════════
-
-const STORAGE_KEY = "inet-dm-node-trees";
-const UNLOCK_KEY_PREFIX = "inet-nodetree-unlocks-";
-
-export function loadNodeTrees(): NodeTree[] {
-  try { return safeGetJson(STORAGE_KEY, []); } catch { return []; }
-}
-
-export function saveNodeTrees(trees: NodeTree[]) {
-  safeSetJson(STORAGE_KEY, trees);
-}
-
-export function loadUnlocks(userId: string): Record<string, string[]> {
-  try { return safeGetJson(UNLOCK_KEY_PREFIX + userId, {}); } catch { return {}; }
-}
-
-export function saveUnlocks(userId: string, unlocks: Record<string, string[]>) {
-  safeSetJson(UNLOCK_KEY_PREFIX + userId, unlocks);
-}
-
-const fc = firstColor;
 
 // ═══════════════════════════════════════════════
 // Card type for display
@@ -195,43 +170,140 @@ interface PlayerNodeTreeViewerProps {
 }
 
 export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeViewerProps) {
-  const [trees, setTrees] = useState<NodeTree[]>(() => loadNodeTrees());
+  const [trees, setTrees] = useState<NodeTree[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [viewingCard, setViewingCard] = useState<CardRef | null>(null);
-  const [unlocks, setUnlocks] = useState<Record<string, string[]>>(() => loadUnlocks(playerId));
+  const [unlocks, setUnlocks] = useState<Record<string, string[]>>({});
 
-  // Refresh data periodically (DM may add trees)
-  useEffect(() => {
-    const iv = setInterval(() => setTrees(loadNodeTrees()), 3000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const myTrees = useMemo(() => trees.filter(t => t.assignedTo.includes(playerId) || t.assignedTo.includes("all")), [trees, playerId]);
 
   useEffect(() => {
-    if (myTrees.length > 0 && (!selectedTreeId || !myTrees.find(t => t.id === selectedTreeId))) {
+    let cancelled = false;
+
+    async function loadViewerData() {
+      try {
+        setError(null);
+
+        const [treeData, unlockData] = await Promise.all([
+          appStore.listNodeTrees<NodeTree>(),
+          appStore.loadPlayerNodeTreeUnlocks<Record<string, string[]>>(playerId, {}),
+        ]);
+
+        if (cancelled) return;
+
+        setTrees(treeData);
+        setUnlocks(unlockData);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load node trees");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadViewerData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [playerId]);
+
+  const myTrees = useMemo(
+    () => trees.filter((t) => t.assignedTo.includes(playerId) || t.assignedTo.includes("all")),
+    [trees, playerId],
+  );
+
+  useEffect(() => {
+    if (myTrees.length === 0) {
+      setSelectedTreeId(null);
+      setSelectedNodeId(null);
+      return;
+    }
+
+    if (!selectedTreeId || !myTrees.find((t) => t.id === selectedTreeId)) {
       setSelectedTreeId(myTrees[0].id);
+      setSelectedNodeId(null);
     }
   }, [myTrees, selectedTreeId]);
 
-  const activeTree = myTrees.find(t => t.id === selectedTreeId) || null;
+  const activeTree = myTrees.find((t) => t.id === selectedTreeId) || null;
   const treeUnlocks = (selectedTreeId && unlocks[selectedTreeId]) || [];
-  const isNodeUnlocked = useCallback((nodeId: string) => treeUnlocks.includes(nodeId), [treeUnlocks]);
-  const canUnlockNode = useCallback((node: NodeTreeNode) => {
-    if (isNodeUnlocked(node.id)) return false;
-    return node.prerequisites.every(preId => treeUnlocks.includes(preId));
-  }, [treeUnlocks, isNodeUnlocked]);
 
-  const handleUnlockNode = useCallback((nodeId: string) => {
-    const newUnlocks = { ...unlocks, [selectedTreeId!]: [...treeUnlocks, nodeId] };
-    setUnlocks(newUnlocks);
-    saveUnlocks(playerId, newUnlocks);
-  }, [unlocks, selectedTreeId, treeUnlocks, playerId]);
+  const isNodeUnlocked = useCallback(
+    (nodeId: string) => treeUnlocks.includes(nodeId),
+    [treeUnlocks],
+  );
 
-  const selectedNode = activeTree?.nodes.find(n => n.id === selectedNodeId) || null;
-  const nodeCards = selectedNode ? selectedNode.cardIds.map(cid => cards.find(c => c.id === cid)).filter(Boolean) as CardRef[] : [];
-  const maxRank = useMemo(() => activeTree ? Math.max(0, ...activeTree.nodes.map(n => n.rank)) : 0, [activeTree]);
+  const canUnlockNode = useCallback(
+    (node: NodeTreeNode) => {
+      if (isNodeUnlocked(node.id)) return false;
+      return node.prerequisites.every((preId) => treeUnlocks.includes(preId));
+    },
+    [treeUnlocks, isNodeUnlocked],
+  );
+
+  const handleUnlockNode = useCallback(
+    async (nodeId: string) => {
+      if (!selectedTreeId) return;
+
+      const currentTreeUnlocks = unlocks[selectedTreeId] || [];
+      if (currentTreeUnlocks.includes(nodeId)) return;
+
+      const newUnlocks = {
+        ...unlocks,
+        [selectedTreeId]: [...currentTreeUnlocks, nodeId],
+      };
+
+      try {
+        setError(null);
+        await appStore.savePlayerNodeTreeUnlocks(playerId, newUnlocks);
+        setUnlocks(newUnlocks);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to unlock node");
+      }
+    },
+    [unlocks, selectedTreeId, playerId],
+  );
+
+  const selectedNode = activeTree?.nodes.find((n) => n.id === selectedNodeId) || null;
+  const nodeCards = selectedNode
+    ? selectedNode.cardIds
+        .map((cid) => cards.find((c) => c.id === cid))
+        .filter(Boolean) as CardRef[]
+    : [];
+  const maxRank = useMemo(
+    () => (activeTree ? Math.max(0, ...activeTree.nodes.map((n) => n.rank)) : 0),
+    [activeTree],
+  );
+
+  if (loading) {
+    return (
+      <div className="text-center py-8">
+        <GitBranch size={36} style={{ color: "#2A3A5B", margin: "0 auto 12px" }} />
+        <div className="text-[14px] mb-2" style={{ color: "#5A6A8A", fontWeight: 600 }}>
+          LOADING NODE TREES
+        </div>
+        <div className="text-[12px]" style={S_DIM}>Loading saved node tree data...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <GitBranch size={36} style={{ color: "#5A2A2A", margin: "0 auto 12px" }} />
+        <div className="text-[14px] mb-2" style={{ color: "#FF8A8A", fontWeight: 600 }}>
+          NODE TREE ERROR
+        </div>
+        <div className="text-[12px]" style={{ color: "#D8A0A0" }}>{error}</div>
+      </div>
+    );
+  }
 
   if (myTrees.length === 0) {
     return (
@@ -422,7 +494,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
                           <Unlock size={12} /> Unlocked
                         </div>
                       ) : canUnlockNode(selectedNode) ? (
-                        <button onClick={() => handleUnlockNode(selectedNode.id)} className={`${retro.button} w-full text-[11px] flex items-center justify-center gap-1.5 py-2`} style={{ color: "#080820", background: resolveNodeColor(selectedNode) }}>
+                        <button onClick={async () => { await handleUnlockNode(selectedNode.id); }} className={`${retro.button} w-full text-[11px] flex items-center justify-center gap-1.5 py-2`} style={{ color: "#080820", background: resolveNodeColor(selectedNode) }}>
                           <Unlock size={12} /> Unlock Node
                         </button>
                       ) : (
@@ -504,7 +576,9 @@ interface DMNodeTreeBuilderProps {
 type DmEditorTab = "properties" | "prereqs" | "cards" | "connections";
 
 export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNodeUnassign }: DMNodeTreeBuilderProps) {
-  const [trees, setTrees] = useState<NodeTree[]>(() => loadNodeTrees());
+  const [trees, setTrees] = useState<NodeTree[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [showNewTreeForm, setShowNewTreeForm] = useState(false);
@@ -521,59 +595,165 @@ export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNode
   const [confirmDeleteTree, setConfirmDeleteTree] = useState<string | null>(null);
   const [renamingTreeId, setRenamingTreeId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const treesRef = useRef<NodeTree[]>([]);
 
-  useEffect(() => { saveNodeTrees(trees); }, [trees]);
 
   const selectedTree = trees.find(t => t.id === selectedTreeId) || null;
   const editingNode = selectedTree?.nodes.find(n => n.id === editingNodeId) || null;
 
+  useEffect(() => {
+    treesRef.current = trees;
+  }, [trees]);
+
+
+async function persistTrees(next: NodeTree[]) {
+  treesRef.current = next;
+  setTrees(next);
+
+  try {
+    setError(null);
+    await appStore.saveNodeTrees(next);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : "Failed to save node trees");
+    throw err;
+  }
+}
+
+const commitRenameTree = useCallback(async (treeId: string) => {
+  const trimmed = renameValue.trim();
+  if (!trimmed) {
+    setRenamingTreeId(null);
+    return;
+  }
+
+  const next = treesRef.current.map((tr) =>
+    tr.id === treeId ? { ...tr, name: trimmed } : tr
+  );
+
+  await persistTrees(next);
+  setRenamingTreeId(null);
+}, [renameValue]);
+
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadDmNodeTrees() {
+    try {
+      setError(null);
+      const data = await appStore.listNodeTrees<NodeTree>();
+
+      if (cancelled) return;
+      setTrees(data);
+    } catch (err) {
+      if (!cancelled) {
+        setError(err instanceof Error ? err.message : "Failed to load node trees");
+      }
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    }
+  }
+
+  void loadDmNodeTrees();
+
+  return () => {
+    cancelled = true;
+  };
+}, []);
+
   // ── Tree CRUD ──
-  const createTree = useCallback(() => {
+  const createTree = useCallback(async () => {
     const name = newTreeName.trim();
     if (!name) return;
+
     const tree: NodeTree = {
       id: `nt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      name, assignedTo: [], nodes: [], connections: [],
+      name,
+      assignedTo: [],
+      nodes: [],
+      connections: [],
     };
-    setTrees(prev => [...prev, tree]);
+
+    await persistTrees([...treesRef.current, tree]);
     setSelectedTreeId(tree.id);
     setNewTreeName("");
     setShowNewTreeForm(false);
   }, [newTreeName]);
 
-  const deleteTree = useCallback((id: string) => {
-    const tree = trees.find(t => t.id === id);
+  const deleteTree = useCallback(async (id: string) => {
+    const currentTrees = treesRef.current;
+    const tree = currentTrees.find((t) => t.id === id);
+
     if (tree) {
       for (const node of tree.nodes) {
-        for (const cid of node.cardIds) { onCardNodeUnassign?.(cid); }
+        for (const cid of node.cardIds) {
+          onCardNodeUnassign?.(cid);
+        }
       }
     }
-    setTrees(prev => prev.filter(t => t.id !== id));
-    if (selectedTreeId === id) { setSelectedTreeId(null); setEditingNodeId(null); }
-    setConfirmDeleteTree(null);
-  }, [selectedTreeId, trees, onCardNodeUnassign]);
 
-  const duplicateTree = useCallback((id: string) => {
-    const src = trees.find(t => t.id === id);
+    const next = currentTrees.filter((t) => t.id !== id);
+    await persistTrees(next);
+
+    if (selectedTreeId === id) {
+      setSelectedTreeId(null);
+      setEditingNodeId(null);
+    }
+
+    setConfirmDeleteTree(null);
+  }, [selectedTreeId, onCardNodeUnassign]);
+
+  const duplicateTree = useCallback(async (id: string) => {
+    const currentTrees = treesRef.current;
+    const src = currentTrees.find((t) => t.id === id);
     if (!src) return;
+
     const newId = `nt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const nodeIdMap: Record<string, string> = {};
-    const newNodes = src.nodes.map(n => {
+
+    const newNodes = src.nodes.map((n) => {
       const nid = `nd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       nodeIdMap[n.id] = nid;
-      return { ...n, id: nid, prerequisites: [...n.prerequisites], cardIds: [...n.cardIds] };
+      return {
+        ...n,
+        id: nid,
+        prerequisites: [...n.prerequisites],
+        cardIds: [...n.cardIds],
+      };
     });
-    newNodes.forEach(n => { n.prerequisites = n.prerequisites.map(p => nodeIdMap[p] || p); });
-    const newConns = src.connections.map(c => ({ from: nodeIdMap[c.from] || c.from, to: nodeIdMap[c.to] || c.to }));
-    const clone: NodeTree = { id: newId, name: src.name + " (Copy)", assignedTo: [], nodes: newNodes, connections: newConns };
-    setTrees(prev => [...prev, clone]);
-    setSelectedTreeId(newId);
-  }, [trees]);
 
-  const updateTree = useCallback((updater: (t: NodeTree) => NodeTree) => {
+    newNodes.forEach((n) => {
+      n.prerequisites = n.prerequisites.map((p) => nodeIdMap[p] || p);
+    });
+
+    const newConns = src.connections.map((c) => ({
+      from: nodeIdMap[c.from] || c.from,
+      to: nodeIdMap[c.to] || c.to,
+    }));
+
+    const clone: NodeTree = {
+      id: newId,
+      name: src.name + " (Copy)",
+      assignedTo: [],
+      nodes: newNodes,
+      connections: newConns,
+    };
+
+    await persistTrees([...currentTrees, clone]);
+    setSelectedTreeId(newId);
+  }, []);
+
+  const updateTree = useCallback(async (updater: (t: NodeTree) => NodeTree) => {
     if (!selectedTreeId) return;
-    setTrees(prev => prev.map(t => t.id === selectedTreeId ? updater(t) : t));
+
+    const next = treesRef.current.map((t) =>
+      t.id === selectedTreeId ? updater(t) : t
+    );
+
+    await persistTrees(next);
   }, [selectedTreeId]);
+
 
   // ─��� Node CRUD ──
   const addNode = useCallback(() => {
@@ -630,6 +810,24 @@ export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNode
     }));
   }, [updateTree]);
 
+  const updateNodeLocal = useCallback((nodeId: string, updates: Partial<NodeTreeNode>) => {
+    if (!selectedTreeId) return;
+
+    setTrees((prev) => {
+      const next = prev.map((t) =>
+        t.id === selectedTreeId
+          ? {
+              ...t,
+              nodes: t.nodes.map((n) => n.id === nodeId ? { ...n, ...updates } : n),
+            }
+          : t
+      );
+
+      treesRef.current = next;
+      return next;
+    });
+  }, [selectedTreeId]);
+
   // ── Connections ──
   const toggleConnection = useCallback((fromId: string, toId: string) => {
     if (fromId === toId) return;
@@ -673,21 +871,31 @@ export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNode
 
   const handleSvgMouseMove = useCallback((e: React.MouseEvent) => {
     if (!draggingNode || !svgRef.current) return;
+
     const rect = svgRef.current.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * 500;
     const svgY = ((e.clientY - rect.top) / rect.height) * 500;
+
     let newX = Math.max(0, Math.min(100, (svgX - 20) / 4.6));
     const mxR = Math.max(maxRank, 5);
     const yNorm = Math.max(0, Math.min(100, ((460 - svgY) / 420) * 100));
     let newRank = Math.round((yNorm / 100) * mxR);
+
     if (snapToGrid) {
       newX = Math.round(newX / 5) * 5;
       newRank = Math.max(0, newRank);
     }
-    updateNode(draggingNode, { x: newX, rank: newRank });
-  }, [draggingNode, maxRank, updateNode, snapToGrid]);
 
-  const handleSvgMouseUp = useCallback(() => setDraggingNode(null), []);
+    updateNodeLocal(draggingNode, { x: newX, rank: newRank });
+  }, [draggingNode, maxRank, snapToGrid, updateNodeLocal]);
+
+  const handleSvgMouseUp = useCallback(async () => {
+    if (!draggingNode) return;
+
+    const latestTrees = treesRef.current;
+    setDraggingNode(null);
+    await persistTrees(latestTrees);
+  }, [draggingNode]);
 
   // ── Card search ──
   const filteredCards = useMemo(() => {
@@ -716,6 +924,22 @@ export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNode
     const q = nodeSearch.toLowerCase();
     return sorted.filter(n => n.label.toLowerCase().includes(q));
   }, [selectedTree, nodeSearch]);
+
+  if (loading) {
+    return (
+      <div className="text-[12px] text-center py-6" style={S_DIM}>
+        Loading node trees...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-[12px] text-center py-6" style={S_RED}>
+        {error}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -755,13 +979,17 @@ export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNode
               >
                 <GitBranch size={13} style={{ color: selectedTreeId === t.id ? NT_ACCENT : "#4A5A7A" }} />
                 {renamingTreeId === t.id ? (
-                  <input autoFocus value={renameValue}
+                  <input
+                    autoFocus
+                    value={renameValue}
                     onChange={e => setRenameValue(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") { setTrees(prev => prev.map(tr => tr.id === t.id ? { ...tr, name: renameValue.trim() || tr.name } : tr)); setRenamingTreeId(null); }
+                    onKeyDown={async e => {
+                      if (e.key === "Enter") await commitRenameTree(t.id);
                       if (e.key === "Escape") setRenamingTreeId(null);
                     }}
-                    onBlur={() => { setTrees(prev => prev.map(tr => tr.id === t.id ? { ...tr, name: renameValue.trim() || tr.name } : tr)); setRenamingTreeId(null); }}
+                    onBlur={async () => {
+                      await commitRenameTree(t.id);
+                    }}
                     className={`${retro.sunken} bg-[#0A0A28] px-2 py-0.5 text-[12px] flex-1 outline-none`}
                     style={{ color: NT_ACCENT }}
                     onClick={e => e.stopPropagation()}

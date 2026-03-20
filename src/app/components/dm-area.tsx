@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
+import { appStore } from "@/lib/app-store";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -20,7 +21,7 @@ import {
   initialWikiTags as sharedInitialWikiTags,
 } from "./initial-data";
 import { readErrorLog, clearErrorLog, removeLogEntry, type ErrorLogEntry } from "./error-logger";
-import { setAuthCode, verifyAuthCode, getAuthStatuses, removeAuthCode, migrateAuthCodes } from "./auth-utils";
+import { setAuthCode, verifyAuthCode, getAuthStatuses, removeAuthCode } from "./auth-utils";
 import { DMArcadeManager } from "./dm-arcade-manager";
 import { DMCalendarWeather } from "./dm-calendar-weather";
 import { DMNewsManager } from "./dm-news-manager";
@@ -28,7 +29,6 @@ import { DMCustomizeSection } from "./dm-customize-section";
 import { DMWikiSection } from "./dm-wiki-section";
 import { DMTagsSection } from "./dm-tags-section";
 import { RichTextEditor } from "./rich-text-editor";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
 import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import type {
@@ -36,7 +36,6 @@ import type {
   ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo,
   DMNotification, NewsArticle, LoginProfile,
 } from "./types";
-import { useEntityManager } from "./use-entity-manager";
 import {
   DM_PANEL, DM_TAG_BADGE, DM_OVERLAY,
   DM_BTN_SAVE, DM_BTN_CANCEL, DM_BTN_EDIT_ICON, DM_BTN_DELETE_ICON,
@@ -88,6 +87,10 @@ function formatOwners(assignedTo: string[], players: { id: string; name: string 
   return assignedTo.map((id) => players.find((p) => p.id === id)?.name || "Unknown").join(", ");
 }
 
+function getSaveError(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
+}
+
 // ========================
 // Initial Data (imported from shared module)
 // ========================
@@ -110,20 +113,14 @@ interface CustomReaction {
   label: string;
 }
 
-function loadCustomReactions(): CustomReaction[] {
-  return safeGetJson("inet-community-custom-reactions", []);
-}
 
-function saveCustomReactions(reactions: CustomReaction[]) {
-  safeSetJson("inet-community-custom-reactions", reactions);
-}
 
 const BUILTIN_EMOJI_PREVIEW = [
   { emoji: "👍", label: "Thumbs Up" },
   { emoji: "❤️", label: "Heart" },
   { emoji: "😂", label: "Laugh" },
   { emoji: "🔥", label: "Fire" },
-  { emoji: "���", label: "Skull" },
+  { emoji: "💀", label: "Skull" },
   { emoji: "⚔️", label: "Swords" },
   { emoji: "🎲", label: "Dice" },
   { emoji: "🐉", label: "Dragon" },
@@ -131,31 +128,24 @@ const BUILTIN_EMOJI_PREVIEW = [
   { emoji: "✨", label: "Sparkles" },
 ];
 
-function DMReactionManager({ inputClass, inputStyle, labelStyle }: { inputClass: string; inputStyle: React.CSSProperties; labelStyle: React.CSSProperties }) {
-  const [reactions, setReactions] = useState<CustomReaction[]>(loadCustomReactions);
+function DMReactionManager({
+  reactions,
+  onSave,
+  inputClass,
+  inputStyle,
+  labelStyle,
+}: {
+  reactions: CustomReaction[];
+  onSave: (next: CustomReaction[]) => Promise<void>;
+  inputClass: string;
+  inputStyle: React.CSSProperties;
+  labelStyle: React.CSSProperties;
+}) {
   const [newEmoji, setNewEmoji] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
   const [editEmoji, setEditEmoji] = useState("");
   const [editLabel, setEditLabel] = useState("");
-
-  const addReaction = () => {
-    const emoji = newEmoji.trim();
-    const label = newLabel.trim();
-    if (!emoji || !label) return;
-    const id = `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const updated = [...reactions, { id, emoji, label }];
-    setReactions(updated);
-    saveCustomReactions(updated);
-    setNewEmoji("");
-    setNewLabel("");
-  };
-
-  const removeReaction = (id: string) => {
-    const updated = reactions.filter(r => r.id !== id);
-    setReactions(updated);
-    saveCustomReactions(updated);
-  };
 
   const startEdit = (r: CustomReaction) => {
     setEditId(r.id);
@@ -163,11 +153,36 @@ function DMReactionManager({ inputClass, inputStyle, labelStyle }: { inputClass:
     setEditLabel(r.label);
   };
 
-  const saveEdit = () => {
+  const addReaction = async () => {
+    const emoji = newEmoji.trim();
+    const label = newLabel.trim();
+    if (!emoji || !label) return;
+
+    const id = `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const updated = [...reactions, { id, emoji, label }];
+    await onSave(updated);
+
+    setNewEmoji("");
+    setNewLabel("");
+  };
+
+  const removeReaction = async (id: string) => {
+    const updated = reactions.filter((r) => r.id !== id);
+    await onSave(updated);
+  };
+
+  const saveEdit = async () => {
     if (!editId) return;
-    const updated = reactions.map(r => r.id === editId ? { ...r, emoji: editEmoji.trim() || r.emoji, label: editLabel.trim() || r.label } : r);
-    setReactions(updated);
-    saveCustomReactions(updated);
+    const updated = reactions.map((r) =>
+      r.id === editId
+        ? {
+            ...r,
+            emoji: editEmoji.trim() || r.emoji,
+            label: editLabel.trim() || r.label,
+          }
+        : r
+    );
+    await onSave(updated);
     setEditId(null);
   };
 
@@ -224,7 +239,7 @@ function DMReactionManager({ inputClass, inputStyle, labelStyle }: { inputClass:
                   className={inputClass}
                   style={{ ...inputStyle, flex: 1 }}
                   maxLength={32}
-                  onKeyDown={(e) => { if (e.key === "Enter") saveEdit(); }}
+                  onKeyDown={async (e) => { if (e.key === "Enter") saveEdit(); }}
                 />
                 <button onClick={saveEdit} className="text-[11px] px-2 py-1" style={DM_BTN_SAVE}>Save</button>
                 <button onClick={() => setEditId(null)} className="text-[11px] px-2 py-1" style={DM_BTN_CANCEL}>Cancel</button>
@@ -271,7 +286,7 @@ function DMReactionManager({ inputClass, inputStyle, labelStyle }: { inputClass:
               className={inputClass}
               style={inputStyle}
               maxLength={32}
-              onKeyDown={(e) => { if (e.key === "Enter") addReaction(); }}
+              onKeyDown={async (e) => { if (e.key === "Enter") addReaction(); }}
             />
           </div>
           <div className="shrink-0 pt-3.5">
@@ -301,7 +316,20 @@ function DMReactionManager({ inputClass, inputStyle, labelStyle }: { inputClass:
 // ========================
 // Component
 // ========================
-type SectionId = "players" | "items" | "cards" | "info" | "pages" | "tags" | "notifs" | "news" | "customize" | "arcade" | "reactions" | "nodetrees";
+type SectionId =
+  | "players"
+  | "items"
+  | "cards"
+  | "info"
+  | "pages"
+  | "tags"
+  | "notifs"
+  | "news"
+  | "customize"
+  | "calendar"
+  | "arcade"
+  | "reactions"
+  | "nodetrees";
 
 const DM_INPUT_CLASS = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`;
 
@@ -329,12 +357,12 @@ export function DMArea() {
   const [dmCardsSubTab, setDmCardsSubTab] = useState<"cards" | "levelabilities">("cards");
 
   // Players
-  const [players, setPlayers] = useState<PlayerData[]>(() => safeGetJson("inet-dm-players", initialPlayers));
+  const [players, setPlayers] = useState<PlayerData[]>([]);
   const [editingPlayer, setEditingPlayer] = useState<PlayerData | null>(null);
   const [isAddingNewPlayer, setIsAddingNewPlayer] = useState(false);
 
   // Recently deleted players (reversible)
-  const [deletedPlayers, setDeletedPlayers] = useState<PlayerData[]>(() => safeGetJson("inet-dm-deleted-players", []));
+  const [deletedPlayers, setDeletedPlayers] = useState<PlayerData[]>([]);
 
   // Deletion flow state machine: null → "confirm1" → "confirm2" → deleted
   const [deleteTarget, setDeleteTarget] = useState<PlayerData | null>(null);
@@ -349,52 +377,46 @@ export function DMArea() {
   const [hasAuthCodeMap, setHasAuthCodeMap] = useState<Record<string, boolean>>({});
 
   // Tags
-  const [itemTags, setItemTags] = useState<TagDefinition[]>(() => safeGetJson("inet-dm-itemTags", initialItemTags));
-  const [cardTags, setCardTags] = useState<TagDefinition[]>(() => safeGetJson("inet-dm-cardTags", initialCardTags));
-  const [infoTags, setInfoTags] = useState<TagDefinition[]>(() => safeGetJson("inet-dm-infoTags", initialInfoTags));
-  const [statusTags, setStatusTags] = useState<TagDefinition[]>(() => safeGetJson("inet-dm-statusTags", initialStatusTags));
-  const [wikiTags, setWikiTags] = useState<TagDefinition[]>(() => safeGetJson("inet-dm-wikiTags", initialWikiTags));
+  const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
+  const [cardTags, setCardTags] = useState<TagDefinition[]>([]);
+  const [infoTags, setInfoTags] = useState<TagDefinition[]>([]);
+  const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
+  const [wikiTags, setWikiTags] = useState<TagDefinition[]>([]);
 
-  // Items (with migration for legacy string assignedTo)
-  const { items: managedItems, setItems: setManagedItems, editing: editingItem, setEditing: setEditingItem, isAdding: isAddingNewItem, setIsAdding: setIsAddingNewItem } =
-    useEntityManager<ManagedItem>("inet-dm-items", initialItems as ManagedItem[], { transform: migrateAssignedTo });
-
-  // Cards
-  const { items: managedCards, setItems: setManagedCards, editing: editingCard, setEditing: setEditingCard, isAdding: isAddingNewCard, setIsAdding: setIsAddingNewCard } =
-    useEntityManager<ManagedCard>("inet-dm-cards", initialCards as ManagedCard[], { transform: migrateAssignedTo });
 
   // Info
-  const { items: managedInfos, setItems: setManagedInfos, editing: editingInfo, setEditing: setEditingInfo, isAdding: isAddingNewInfo, setIsAdding: setIsAddingNewInfo } =
-    useEntityManager<ManagedInfo>("inet-dm-infos", initialInfos as ManagedInfo[], { transform: migrateAssignedTo });
   const [followUpInfoId, setFollowUpInfoId] = useState<string | null>(null);
   const [followUpText, setFollowUpText] = useState("");
 
   // Info Sub-Tabs (DM-managed)
   type InfoSubTab = { id: string; name: string; order: number };
-  const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>(() => safeGetJson("inet-dm-info-subtabs", []));
+  const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
   const [newInfoSubTabName, setNewInfoSubTabName] = useState("");
+  const [editingItem, setEditingItem] = useState<ManagedItem | null>(null);
+  const [isAddingNewItem, setIsAddingNewItem] = useState(false);
   const [editingInfoSubTabId, setEditingInfoSubTabId] = useState<string | null>(null);
   const [editingInfoSubTabName, setEditingInfoSubTabName] = useState("");
-  useDebouncedJsonStorage("inet-dm-info-subtabs", infoSubTabs, 400);
+  const [managedItems, setManagedItems] = useState<ManagedItem[]>([]);
+  const [managedCards, setManagedCards] = useState<ManagedCard[]>([]);
+  const [editingCard, setEditingCard] = useState<ManagedCard | null>(null);
+  const [isAddingNewCard, setIsAddingNewCard] = useState(false);
+  const [managedInfos, setManagedInfos] = useState<ManagedInfo[]>([]);
+  const [editingInfo, setEditingInfo] = useState<ManagedInfo | null>(null);
+  const [isAddingNewInfo, setIsAddingNewInfo] = useState(false);
+  const [dmLoading, setDmLoading] = useState(true);
+  const [dmError, setDmError] = useState<string | null>(null);
+  const [dmNotifications, setDmNotifications] = useState<DMNotification[]>([]);
+  const [editingNotif, setEditingNotif] = useState<DMNotification | null>(null);
+  const [isAddingNewNotif, setIsAddingNewNotif] = useState(false);
+  const [reactions, setReactions] = useState<CustomReaction[]>([]);
 
-  // Persist remaining DM state to localStorage (debounced)
-  useDebouncedJsonStorage("inet-dm-players", players, 400);
-  useDebouncedJsonStorage("inet-dm-deleted-players", deletedPlayers, 400);
-  useDebouncedJsonStorage("inet-dm-itemTags", itemTags, 400);
-  useDebouncedJsonStorage("inet-dm-cardTags", cardTags, 400);
-  useDebouncedJsonStorage("inet-dm-infoTags", infoTags, 400);
-  useDebouncedJsonStorage("inet-dm-statusTags", statusTags, 400);
-  useDebouncedJsonStorage("inet-dm-wikiTags", wikiTags, 400);
 
   // Notifications (DM-created)
-  const { items: dmNotifications, setItems: setDmNotifications, editing: editingNotif, setEditing: setEditingNotif, isAdding: isAddingNewNotif, setIsAdding: setIsAddingNewNotif } =
-    useEntityManager<DMNotification>("inet-dm-notifications", []);
   const [notifPlayerSelection, setNotifPlayerSelection] = useState<Record<string, boolean>>({});
   const [notifAllPlayers, setNotifAllPlayers] = useState(true);
 
   // Level Abilities (DM editor - per-player localStorage keys)
   type LevelCategory = { id: string; name: string; order: number; cardIds: string[]; description?: string };
-  const getLevelCatsKey = (playerId: string) => `inet-level-categories-${playerId}`;
   const [laSelectedPlayerId, setLaSelectedPlayerId] = useState<string>("");
   const [levelCategories, setLevelCategories] = useState<LevelCategory[]>([]);
   const [laEditingLevel, setLaEditingLevel] = useState<string | null>(null);
@@ -404,33 +426,181 @@ export function DMArea() {
   const [laEditingDesc, setLaEditingDesc] = useState<string | null>(null);
   const [laCopyConfirm, setLaCopyConfirm] = useState(false);
 
-  // Load level categories when selected player changes; auto-create from player level if empty
-  useEffect(() => {
-    if (laSelectedPlayerId) {
-      const key = getLevelCatsKey(laSelectedPlayerId);
-      let cats: LevelCategory[] = safeGetJson(key, []);
-      if (cats.length === 0) {
-        const p = players.find(pl => pl.id === laSelectedPlayerId);
-        if (p && p.level > 0) {
-          cats = Array.from({ length: p.level }, (_, i) => ({
-            id: `lvl-${Date.now()}-${i}`,
-            name: `Level ${i + 1}`,
-            order: p.level - 1 - i,
-            cardIds: [],
-            description: "",
-          }));
-          safeSetJson(key, cats);
-        }
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadDmState() {
+    try {
+      const [
+        playersData,
+        deletedPlayersData,
+        itemTagData,
+        cardTagData,
+        infoTagData,
+        statusTagData,
+        wikiTagData,
+        itemsData,
+        cardsData,
+        infosData,
+        infoSubTabData,
+        notificationData,
+        reactionData,
+      ] = await Promise.all([
+        appStore.listPlayers<PlayerData>(),
+        appStore.listDeletedPlayers<PlayerData>(),
+        appStore.listTags<TagDefinition>("item"),
+        appStore.listTags<TagDefinition>("card"),
+        appStore.listTags<TagDefinition>("info"),
+        appStore.listTags<TagDefinition>("status"),
+        appStore.listTags<TagDefinition>("wiki"),
+        appStore.listItems<ManagedItem>(),
+        appStore.listCards<ManagedCard>(),
+        appStore.listInfos<ManagedInfo>(),
+        appStore.listInfoSubTabs<InfoSubTab>(),
+        appStore.listNotifications<DMNotification>(),
+        appStore.listCustomReactions<CustomReaction>(),
+      ]);
+
+      if (cancelled) return;
+
+      setPlayers(playersData.length ? playersData : (initialPlayers as PlayerData[]));
+      setDeletedPlayers(deletedPlayersData);
+      setItemTags(itemTagData.length ? itemTagData : initialItemTags);
+      setCardTags(cardTagData.length ? cardTagData : initialCardTags);
+      setInfoTags(infoTagData.length ? infoTagData : initialInfoTags);
+      setStatusTags(statusTagData.length ? statusTagData : initialStatusTags);
+      setWikiTags(wikiTagData.length ? wikiTagData : initialWikiTags);
+      setManagedItems(itemsData.length ? itemsData : migrateAssignedTo(initialItems as ManagedItem[]));
+      setManagedCards(cardsData.length ? cardsData : migrateAssignedTo(initialCards as ManagedCard[]));
+      setManagedInfos(infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]));
+      setInfoSubTabs(infoSubTabData);
+      setDmNotifications(notificationData);
+      setReactions(reactionData);
+    } catch (err) {
+      if (!cancelled) {
+        setDmError(err instanceof Error ? err.message : "Failed to load DM data");
       }
-      setLevelCategories(cats);
-      setLaEditingLevel(null);
-      setLaAddingLevel(false);
-      setLaNewLevelName("");
-      setLaCollapsedLevels(new Set());
-      setLaEditingDesc(null);
-      setLaCopyConfirm(false);
+    } finally {
+      if (!cancelled) {
+        setDmLoading(false);
+      }
     }
-  }, [laSelectedPlayerId, players]);
+  }
+
+
+
+  loadDmState();
+  return () => {
+    cancelled = true;
+  };
+}, []);
+
+async function persistPlayers(next: PlayerData[]) {
+  try {
+    setDmError(null);
+    await appStore.savePlayers(next);
+    setPlayers(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save players"));
+    throw err;
+  }
+}
+
+async function persistDeletedPlayers(next: PlayerData[]) {
+  try {
+    setDmError(null);
+    await appStore.saveDeletedPlayers(next);
+    setDeletedPlayers(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save deleted players"));
+    throw err;
+  }
+}
+
+async function persistItems(next: ManagedItem[]) {
+  try {
+    setDmError(null);
+    await appStore.saveItems(next);
+    setManagedItems(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save items"));
+    throw err;
+  }
+}
+
+async function persistCards(next: ManagedCard[]) {
+  try {
+    setDmError(null);
+    await appStore.saveCards(next);
+    setManagedCards(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save cards"));
+    throw err;
+  }
+}
+
+async function persistInfos(next: ManagedInfo[]) {
+  try {
+    setDmError(null);
+    await appStore.saveInfos(next);
+    setManagedInfos(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save info"));
+    throw err;
+  }
+}
+
+async function persistNotifications(next: DMNotification[]) {
+  try {
+    setDmError(null);
+    await appStore.saveNotifications(next);
+    setDmNotifications(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save notifications"));
+    throw err;
+  }
+}
+
+async function persistInfoSubTabs(next: InfoSubTab[]) {
+  try {
+    setDmError(null);
+    await appStore.saveInfoSubTabs(next);
+    setInfoSubTabs(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save info sub-tabs"));
+    throw err;
+  }
+}
+
+async function persistTags(
+  kind: "item" | "card" | "info" | "status" | "wiki",
+  next: TagDefinition[],
+) {
+  try {
+    setDmError(null);
+    await appStore.saveTags(kind, next);
+
+    if (kind === "item") setItemTags(next);
+    if (kind === "card") setCardTags(next);
+    if (kind === "info") setInfoTags(next);
+    if (kind === "status") setStatusTags(next);
+    if (kind === "wiki") setWikiTags(next);
+  } catch (err) {
+    setDmError(getSaveError(err, `Failed to save ${kind} tags`));
+    throw err;
+  }
+}
+
+async function persistCustomReactions(next: CustomReaction[]) {
+  try {
+    setDmError(null);
+    await appStore.saveCustomReactions(next);
+    setReactions(next);
+  } catch (err) {
+    setDmError(getSaveError(err, "Failed to save custom reactions"));
+    throw err;
+  }
+}
 
   // Auto-select first player when entering Level Abilities
   useEffect(() => {
@@ -439,27 +609,91 @@ export function DMArea() {
     }
   }, [dmCardsSubTab, laSelectedPlayerId, players]);
 
-  const saveLevelCategories = useCallback((cats: LevelCategory[]) => {
-    setLevelCategories(cats);
-    if (laSelectedPlayerId) {
-      safeSetJson(getLevelCatsKey(laSelectedPlayerId), cats);
+  const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
+    if (!laSelectedPlayerId) return;
+
+    try {
+      setDmError(null);
+      await appStore.savePlayerLevelCategories(laSelectedPlayerId, cats);
+      setLevelCategories(cats);
+    } catch (err) {
+      setDmError(getSaveError(err, "Failed to save level categories"));
+      throw err;
     }
   }, [laSelectedPlayerId]);
 
-  const copyLevelCategoriesToAllPlayers = useCallback(() => {
+  const copyLevelCategoriesToAllPlayers = useCallback(async () => {
     if (!laSelectedPlayerId) return;
-    const currentCats = safeGetJson(getLevelCatsKey(laSelectedPlayerId), []);
-    players.forEach(p => {
-      if (p.id !== laSelectedPlayerId) {
-        safeSetJson(getLevelCatsKey(p.id), JSON.parse(JSON.stringify(currentCats)));
+
+    try {
+      setDmError(null);
+
+      const currentCats = await appStore.loadPlayerLevelCategories<LevelCategory[]>(laSelectedPlayerId, []);
+
+      for (const p of players) {
+        if (p.id !== laSelectedPlayerId) {
+          await appStore.savePlayerLevelCategories(
+            p.id,
+            JSON.parse(JSON.stringify(currentCats)),
+          );
+        }
       }
-    });
-    setLaCopyConfirm(false);
+
+      setLaCopyConfirm(false);
+    } catch (err) {
+      setDmError(getSaveError(err, "Failed to copy level categories to all players"));
+    }
   }, [laSelectedPlayerId, players]);
 
   // Error & report log (read from localStorage)
   const [errorLog, setErrorLog] = useState<ErrorLogEntry[]>(() => readErrorLog());
   const [errorLogFilter, setErrorLogFilter] = useState<"all" | "error" | "report">("all");
+
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadLevelCategories() {
+    if (!laSelectedPlayerId) return;
+
+    try {
+      const existing = await appStore.loadPlayerLevelCategories<LevelCategory[]>(laSelectedPlayerId, []);
+      let cats = existing;
+
+      if (cats.length === 0) {
+        const p = players.find((pl) => pl.id === laSelectedPlayerId);
+        if (p && p.level > 0) {
+          cats = Array.from({ length: p.level }, (_, i) => ({
+            id: `lvl-${Date.now()}-${i}`,
+            name: `Level ${i + 1}`,
+            order: p.level - 1 - i,
+            cardIds: [],
+            description: "",
+          }));
+          await appStore.savePlayerLevelCategories(laSelectedPlayerId, cats);
+        }
+      }
+
+      if (cancelled) return;
+      setLevelCategories(cats);
+      setLaEditingLevel(null);
+      setLaAddingLevel(false);
+      setLaNewLevelName("");
+      setLaCollapsedLevels(new Set());
+      setLaEditingDesc(null);
+      setLaCopyConfirm(false);
+    } catch (err) {
+      if (!cancelled) {
+        setDmError(getSaveError(err, "Failed to load level categories"));
+      }
+    }
+  }
+
+  void loadLevelCategories();
+
+  return () => {
+    cancelled = true;
+  };
+}, [laSelectedPlayerId, players]);
 
   // Reload error log on focus
   useEffect(() => {
@@ -515,34 +749,17 @@ export function DMArea() {
 
   // On mount: migrate any legacy plain-text auth codes to the server, then sync profiles
   useEffect(() => {
+    if (dmLoading) return;
+
     (async () => {
-      // Migrate legacy plain-text codes to server
-      const codesToMigrate: Array<{ profileId: string; plainCode: string }> = [];
-      for (const p of players) {
-        if (p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-          codesToMigrate.push({ profileId: p.id, plainCode: p.authCode });
-        }
-      }
-      if (codesToMigrate.length > 0) {
-        try {
-          const migrated = await migrateAuthCodes(codesToMigrate);
-          console.log(`DM area: migrated ${migrated} legacy auth codes to server`);
-        } catch (err) {
-          console.error("Auth code migration error:", err);
-        }
-        // Clear plain-text codes from player data
-        const cleaned = players.map((p) => {
-          if (p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-            return { ...p, authCode: "" };
-          }
-          return p;
-        });
-        setPlayers(cleaned);
+      const ids = players.map((p) => p.id);
+      if (ids.length === 0) {
+        setHasAuthCodeMap({});
+        syncProfilesToLocalStorage(players);
+        return;
       }
 
-      // Resolve which profiles have server-side auth codes
       try {
-        const ids = players.map((p) => p.id);
         const statuses = await getAuthStatuses(ids);
         setHasAuthCodeMap(statuses);
       } catch (err) {
@@ -551,22 +768,8 @@ export function DMArea() {
 
       syncProfilesToLocalStorage(players);
     })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dmLoading, players, syncProfilesToLocalStorage]);
 
-  // Re-read player data from localStorage on focus so DM sees player-side changes (e.g. HP edits)
-  useEffect(() => {
-    const onFocus = () => {
-      try {
-        const raw = safeGetItem("inet-dm-players");
-        if (raw) {
-          const stored: PlayerData[] = JSON.parse(raw);
-          setPlayers(stored);
-        }
-      } catch {}
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
 
   // ========================
   // Player handlers
@@ -583,23 +786,28 @@ export function DMArea() {
   };
   const handleSavePlayer = async () => {
     if (!editingPlayer) return;
-    // Send auth code to server if the DM typed a new one
+
     if (pendingAuthCode) {
       try {
+        setDmError(null);
         await setAuthCode(editingPlayer.id, pendingAuthCode);
         setHasAuthCodeMap((prev) => ({ ...prev, [editingPlayer.id]: true }));
       } catch (err) {
-        console.error("Failed to set auth code on server:", err);
+        setDmError(getSaveError(err, "Failed to save authorization code"));
+        return;
       }
     }
-    // Save player data locally (authCode field no longer stores the actual code)
+
     const playerToSave = { ...editingPlayer, authCode: "" };
-    let updated: PlayerData[];
-    if (isAddingNewPlayer) updated = [...players, playerToSave];
-    else updated = players.map((p) => (p.id === playerToSave.id ? playerToSave : p));
-    setPlayers(updated);
+    const updated = isAddingNewPlayer
+      ? [...players, playerToSave]
+      : players.map((p) => (p.id === playerToSave.id ? playerToSave : p));
+
+    await persistPlayers(updated);
     syncProfilesToLocalStorage(updated);
-    setEditingPlayer(null); setIsAddingNewPlayer(false);
+
+    setEditingPlayer(null);
+    setIsAddingNewPlayer(false);
     setPendingAuthCode("");
   };
   // Step 1: Initiate deletion ����� show first confirm modal
@@ -628,13 +836,21 @@ export function DMArea() {
       setDeletePasswordError(true);
       return;
     }
+
     if (!deleteTarget) return;
-    // Move to recently deleted
-    setDeletedPlayers((prev) => [...prev, deleteTarget]);
-    const updated = players.filter((p) => p.id !== deleteTarget.id);
-    setPlayers(updated);
-    syncProfilesToLocalStorage(updated);
-    if (editingPlayer?.id === deleteTarget.id) { setEditingPlayer(null); setIsAddingNewPlayer(false); }
+
+    const nextDeleted = [...deletedPlayers, deleteTarget];
+    const updatedPlayers = players.filter((p) => p.id !== deleteTarget.id);
+
+    await persistDeletedPlayers(nextDeleted);
+    await persistPlayers(updatedPlayers);
+    syncProfilesToLocalStorage(updatedPlayers);
+
+    if (editingPlayer?.id === deleteTarget.id) {
+      setEditingPlayer(null);
+      setIsAddingNewPlayer(false);
+    }
+
     cancelDelete();
   };
   // Cancel deletion flow
@@ -645,28 +861,38 @@ export function DMArea() {
     setDeletePasswordError(false);
   };
   // Restore a recently deleted player
-  const restoreDeletedPlayer = (id: string) => {
+  const restoreDeletedPlayer = async (id: string) => {
     const player = deletedPlayers.find((p) => p.id === id);
     if (!player) return;
+
     const updatedDeleted = deletedPlayers.filter((p) => p.id !== id);
-    setDeletedPlayers(updatedDeleted);
     const updatedPlayers = [...players, player];
-    setPlayers(updatedPlayers);
+
+    await persistDeletedPlayers(updatedDeleted);
+    await persistPlayers(updatedPlayers);
     syncProfilesToLocalStorage(updatedPlayers);
   };
   // Permanently remove a single recently deleted player (also remove server-side auth code)
   const permanentlyDeletePlayer = async (id: string) => {
-    setDeletedPlayers((prev) => prev.filter((p) => p.id !== id));
     try {
+      setDmError(null);
       await removeAuthCode(id);
-      setHasAuthCodeMap((prev) => { const next = { ...prev }; delete next[id]; return next; });
+
+      setHasAuthCodeMap((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+
+      const nextDeleted = deletedPlayers.filter((p) => p.id !== id);
+      await persistDeletedPlayers(nextDeleted);
     } catch (err) {
-      console.error("Failed to remove auth code for deleted player:", err);
+      setDmError(getSaveError(err, "Failed to permanently delete player"));
     }
   };
   // Clear all recently deleted
-  const clearAllDeletedPlayers = () => {
-    setDeletedPlayers([]);
+  const clearAllDeletedPlayers = async () => {
+    await persistDeletedPlayers([]);
   };
   const handleCancelPlayerEdit = () => { setEditingPlayer(null); setIsAddingNewPlayer(false); setPendingAuthCode(""); };
   const updatePlayerField = <K extends keyof PlayerData>(key: K, value: PlayerData[K]) => {
@@ -688,52 +914,60 @@ export function DMArea() {
     originalAssignedToRef.current = [];
     setIsAddingNewItem(true);
   };
-  const handleSaveItem = () => {
-    if (!editingItem) return;
-    if (isAddingNewItem) {
-      setManagedItems((prev) => [...prev, editingItem]);
-    } else {
-      const originalPlayers = originalAssignedToRef.current;
-      // Determine which player IDs are newly added
-      const resolveIds = (arr: string[]) => arr.includes("all") ? players.map(p => p.id) : arr;
-      const oldIds = new Set(resolveIds(originalPlayers));
-      const newIds = resolveIds(editingItem.assignedTo);
-      const newlyAdded = newIds.filter(id => !oldIds.has(id));
-      // Update the original item (keep its current assignedTo minus newly added, or keep as-is if "all" logic)
-      setManagedItems((prev) => {
-        let updated = prev.map((i) => (i.id === editingItem.id ? editingItem : i));
-        // Create duplicates for each newly added player
-        for (const playerId of newlyAdded) {
-          const duplicate: ManagedItem = {
-            ...editingItem,
-            id: `mi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            assignedTo: [playerId],
-            customFields: { ...editingItem.customFields },
-            duplicatedFrom: editingItem.name || "Unknown Item",
-          };
-          updated = [...updated, duplicate];
+const handleSaveItem = async () => {
+  if (!editingItem) return;
+
+  if (isAddingNewItem) {
+    await persistItems([...managedItems, editingItem]);
+  } else {
+    const originalPlayers = originalAssignedToRef.current;
+    const resolveIds = (arr: string[]) =>
+      arr.includes("all") ? players.map((p) => p.id) : arr;
+
+    const oldIds = new Set(resolveIds(originalPlayers));
+    const newIds = resolveIds(editingItem.assignedTo);
+    const newlyAdded = newIds.filter((id) => !oldIds.has(id));
+
+    let updated = managedItems.map((i) => (i.id === editingItem.id ? editingItem : i));
+
+    for (const playerId of newlyAdded) {
+      const duplicate: ManagedItem = {
+        ...editingItem,
+        id: `mi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        assignedTo: [playerId],
+        customFields: { ...editingItem.customFields },
+        duplicatedFrom: editingItem.name || "Unknown Item",
+      };
+      updated = [...updated, duplicate];
+    }
+
+    if (newlyAdded.length > 0) {
+      const newlyAddedSet = new Set(newlyAdded);
+      updated = updated.map((i) => {
+        if (i.id === editingItem.id) {
+          const kept = editingItem.assignedTo.includes("all")
+            ? resolveIds(editingItem.assignedTo).filter((id) => !newlyAddedSet.has(id))
+            : editingItem.assignedTo.filter((id) => !newlyAddedSet.has(id));
+          return { ...i, assignedTo: kept };
         }
-        // If there were new duplicates, remove the newly added players from the original item's assignedTo
-        if (newlyAdded.length > 0) {
-          const newlyAddedSet = new Set(newlyAdded);
-          updated = updated.map(i => {
-            if (i.id === editingItem.id) {
-              const kept = editingItem.assignedTo.includes("all")
-                ? resolveIds(editingItem.assignedTo).filter(id => !newlyAddedSet.has(id))
-                : editingItem.assignedTo.filter(id => !newlyAddedSet.has(id));
-              return { ...i, assignedTo: kept };
-            }
-            return i;
-          });
-        }
-        return updated;
+        return i;
       });
     }
-    setEditingItem(null); setIsAddingNewItem(false);
-  };
-  const handleDeleteItem = (id: string) => {
-    setManagedItems((prev) => prev.filter((i) => i.id !== id));
-    if (editingItem?.id === id) { setEditingItem(null); setIsAddingNewItem(false); }
+
+    await persistItems(updated);
+  }
+
+  setEditingItem(null);
+  setIsAddingNewItem(false);
+};
+  const handleDeleteItem = async (id: string) => {
+    const next = managedItems.filter((i) => i.id !== id);
+    await persistItems(next);
+
+    if (editingItem?.id === id) {
+      setEditingItem(null);
+      setIsAddingNewItem(false);
+    }
   };
   const handleCancelItemEdit = () => { setEditingItem(null); setIsAddingNewItem(false); };
   const updateItemField = <K extends keyof ManagedItem>(key: K, value: ManagedItem[K]) => {
@@ -774,32 +1008,46 @@ export function DMArea() {
     });
     setIsAddingNewCard(true);
   };
-  const handleSaveCard = () => {
+  const handleSaveCard = async () => {
     if (!editingCard) return;
-    if (isAddingNewCard) setManagedCards((prev) => [...prev, editingCard]);
-    else setManagedCards((prev) => prev.map((c) => (c.id === editingCard.id ? editingCard : c)));
-    // Sync node tree assignment: add/remove card from node trees
+
+    const next = isAddingNewCard
+      ? [...managedCards, editingCard]
+      : managedCards.map((c) => (c.id === editingCard.id ? editingCard : c));
+
+    await persistCards(next);
+
     const trees = loadNodeTrees();
     let treesChanged = false;
+
     for (const tree of trees) {
       for (const node of tree.nodes) {
         const hasCard = node.cardIds.includes(editingCard.id);
         const shouldHave = editingCard.nodeTreeId === tree.id && editingCard.nodeId === node.id;
+
         if (shouldHave && !hasCard && node.cardIds.length < 3) {
           node.cardIds.push(editingCard.id);
           treesChanged = true;
         } else if (!shouldHave && hasCard) {
-          node.cardIds = node.cardIds.filter(cid => cid !== editingCard.id);
+          node.cardIds = node.cardIds.filter((cid) => cid !== editingCard.id);
           treesChanged = true;
         }
       }
     }
+
     if (treesChanged) saveNodeTrees(trees);
-    setEditingCard(null); setIsAddingNewCard(false);
+
+    setEditingCard(null);
+    setIsAddingNewCard(false);
   };
-  const handleDeleteCard = (id: string) => {
-    setManagedCards((prev) => prev.filter((c) => c.id !== id));
-    if (editingCard?.id === id) { setEditingCard(null); setIsAddingNewCard(false); }
+  const handleDeleteCard = async (id: string) => {
+    const next = managedCards.filter((c) => c.id !== id);
+    await persistCards(next);
+
+    if (editingCard?.id === id) {
+      setEditingCard(null);
+      setIsAddingNewCard(false);
+    }
   };
   const handleCancelCardEdit = () => { setEditingCard(null); setIsAddingNewCard(false); };
   const updateCardField = <K extends keyof ManagedCard>(key: K, value: ManagedCard[K]) => {
@@ -826,15 +1074,26 @@ export function DMArea() {
     });
     setIsAddingNewInfo(true);
   };
-  const handleSaveInfo = () => {
+  const handleSaveInfo = async () => {
     if (!editingInfo) return;
-    if (isAddingNewInfo) setManagedInfos((prev) => [...prev, editingInfo]);
-    else setManagedInfos((prev) => prev.map((n) => (n.id === editingInfo.id ? editingInfo : n)));
-    setEditingInfo(null); setIsAddingNewInfo(false);
+
+    const next = isAddingNewInfo
+      ? [...managedInfos, editingInfo]
+      : managedInfos.map((n) => (n.id === editingInfo.id ? editingInfo : n));
+
+    await persistInfos(next);
+
+    setEditingInfo(null);
+    setIsAddingNewInfo(false);
   };
-  const handleDeleteInfo = (id: string) => {
-    setManagedInfos((prev) => prev.filter((n) => n.id !== id));
-    if (editingInfo?.id === id) { setEditingInfo(null); setIsAddingNewInfo(false); }
+  const handleDeleteInfo = async (id: string) => {
+    const next = managedInfos.filter((n) => n.id !== id);
+    await persistInfos(next);
+
+    if (editingInfo?.id === id) {
+      setEditingInfo(null);
+      setIsAddingNewInfo(false);
+    }
   };
   const handleCancelInfoEdit = () => { setEditingInfo(null); setIsAddingNewInfo(false); };
   const updateInfoField = <K extends keyof ManagedInfo>(key: K, value: ManagedInfo[K]) => {
@@ -862,7 +1121,7 @@ export function DMArea() {
     setIsAddingNewNotif(true);
   };
 
-  const handleSaveNotif = () => {
+  const handleSaveNotif = async () => {
     if (!editingNotif || !editingNotif.subject.trim()) return;
     const assignedTo: string[] = notifAllPlayers
       ? ["ALL"]
@@ -878,14 +1137,23 @@ export function DMArea() {
       createdAt: isAddingNewNotif ? ts : editingNotif.createdAt,
     };
 
-    if (isAddingNewNotif) setDmNotifications((prev) => [finalNotif, ...prev]);
-    else setDmNotifications((prev) => prev.map((n) => (n.id === finalNotif.id ? finalNotif : n)));
-    setEditingNotif(null); setIsAddingNewNotif(false);
+    const next = isAddingNewNotif
+      ? [finalNotif, ...dmNotifications]
+      : dmNotifications.map((n) => (n.id === finalNotif.id ? finalNotif : n));
+
+    await persistNotifications(next);
+    setEditingNotif(null);
+    setIsAddingNewNotif(false);
   };
 
-  const handleDeleteNotif = (id: string) => {
-    setDmNotifications((prev) => prev.filter((n) => n.id !== id));
-    if (editingNotif?.id === id) { setEditingNotif(null); setIsAddingNewNotif(false); }
+  const handleDeleteNotif = async (id: string) => {
+    const next = dmNotifications.filter((n) => n.id !== id);
+    await persistNotifications(next);
+
+    if (editingNotif?.id === id) {
+      setEditingNotif(null);
+      setIsAddingNewNotif(false);
+    }
   };
 
   const handleCancelNotifEdit = () => { setEditingNotif(null); setIsAddingNewNotif(false); };
@@ -964,7 +1232,7 @@ export function DMArea() {
             return (
               <button
                 key={s.id}
-                onClick={() => { setActiveSection(s.id); setEditingPlayer(null); setIsAddingNewPlayer(false); setEditingItem(null); setIsAddingNewItem(false); setEditingCard(null); setIsAddingNewCard(false); setEditingInfo(null); setIsAddingNewInfo(false); setEditingNotif(null); setIsAddingNewNotif(false); }}
+                onClick={async () => { setActiveSection(s.id); setEditingPlayer(null); setIsAddingNewPlayer(false); setEditingItem(null); setIsAddingNewItem(false); setEditingCard(null); setIsAddingNewCard(false); setEditingInfo(null); setIsAddingNewInfo(false); setEditingNotif(null); setIsAddingNewNotif(false); }}
                 className={`${activeSection === s.id ? retro.sunken + " bg-[#0E0E35]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-5 py-2 text-[13px] flex items-center gap-2 transition-colors`}
                 style={dmTabStyle(activeSection === s.id)}
               >
@@ -977,6 +1245,17 @@ export function DMArea() {
 
         {/* Content */}
         <div className={`${retro.raised} bg-[#0E0E35] p-6 flex-1`}>
+          {dmLoading && (
+            <div className="text-[12px] mb-3" style={S_MUTED}>
+              Loading DM data...
+            </div>
+          )}
+
+          {dmError && (
+            <div className="text-[12px] mb-3" style={S_RED}>
+              {dmError}
+            </div>
+          )}
 
           {/* ======================================================= */}
           {/* PLAYERS                                                  */}
@@ -1101,11 +1380,35 @@ export function DMArea() {
                             <div className="text-[11px]" style={S_MUTED}>{player.class} · Level {player.level}</div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <button onClick={() => { setEditingPlayer({ damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: 100, exhaustion: 0, maxExhaustion: 6, ...player }); setIsAddingNewPlayer(false); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
-                              <Edit size={12} className="inline mr-1" />Edit
+                            <button
+                              onClick={() => {
+                                setEditingPlayer({
+                                  damageReduction: 0,
+                                  tempHP: 0,
+                                  currentWeight: 0,
+                                  maxWeight: 100,
+                                  exhaustion: 0,
+                                  maxExhaustion: 6,
+                                  ...player,
+                                });
+                                setIsAddingNewPlayer(false);
+                              }}
+                              className={`${retro.button} px-3 py-1 text-[11px]`}
+                              style={S_ACCENT}
+                            >
+                              <Edit size={12} className="inline mr-1" />
+                              Edit
                             </button>
-                            <button onClick={() => initiateDeletePlayer(player)} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_RED}>
-                              <Trash2 size={12} className="inline mr-1" />Remove
+
+                            <button
+                              onClick={() => {
+                                initiateDeletePlayer(player);
+                              }}
+                              className={`${retro.button} px-3 py-1 text-[11px]`}
+                              style={S_RED}
+                            >
+                              <Trash2 size={12} className="inline mr-1" />
+                              Remove
                             </button>
                           </div>
                         </div>
@@ -1219,7 +1522,7 @@ export function DMArea() {
                             type="password"
                             value={deletePassword}
                             onChange={(e) => { setDeletePassword(e.target.value); setDeletePasswordError(false); }}
-                            onKeyDown={(e) => { if (e.key === "Enter") confirmDeletePlayer(); }}
+                            onKeyDown={async (e) => { if (e.key === "Enter") confirmDeletePlayer(); }}
                             placeholder="Enter DM auth code..."
                             className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`}
                             style={dmErrBorder(!!deletePasswordError)}
@@ -1474,7 +1777,7 @@ export function DMArea() {
                                   <label className="text-[9px]" style={DM_EFFECT_LABEL}>Effect #{i + 1}</label>
                                   {effectKeys.length > 1 && (
                                     <button
-                                      onClick={() => {
+                                      onClick={async () => {
                                         const cf = { ...editingItem.customFields };
                                         delete cf[key];
                                         setEditingItem({ ...editingItem, customFields: cf });
@@ -1564,7 +1867,7 @@ export function DMArea() {
                               </div>
                               <div className="flex items-center gap-2">
                                 <button
-                                  onClick={() => {
+                                  onClick={async () => {
                                     const currentIds = new Set(item.assignedTo.includes("all") ? players.map(p => p.id) : item.assignedTo);
                                     const missing = players.filter(p => !currentIds.has(p.id));
                                     if (missing.length === 0) return;
@@ -1575,7 +1878,7 @@ export function DMArea() {
                                       customFields: { ...item.customFields },
                                       duplicatedFrom: item.name || "Unknown Item",
                                     }));
-                                    setManagedItems(prev => [...prev, ...newItems]);
+                                    await persistItems([...managedItems, ...newItems]);
                                   }}
                                   className={`${retro.button} px-3 py-1 text-[11px]`}
                                   style={{ color: "#C4A0FF" }}
@@ -1583,7 +1886,7 @@ export function DMArea() {
                                 >
                                   <Copy size={12} className="inline mr-1" />Duplicate to All
                                 </button>
-                                <button onClick={() => { originalAssignedToRef.current = [...item.assignedTo]; setEditingItem({ ...item, customFields: { ...item.customFields } }); setIsAddingNewItem(false); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
+                                <button onClick={async () => { originalAssignedToRef.current = [...item.assignedTo]; setEditingItem({ ...item, customFields: { ...item.customFields } }); setIsAddingNewItem(false); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
                                   <Edit size={12} className="inline mr-1" />Edit
                                 </button>
                                 <button onClick={() => handleDeleteItem(item.id)} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_RED}>
@@ -1824,7 +2127,9 @@ export function DMArea() {
                                   <div key={cf.key}>
                                     {cfLabel}
                                     <select value={isValid ? currentVal : "__invalid__"} onChange={(e) => updateCardCustomField(cf.key, e.target.value === "__invalid__" ? "" : e.target.value)} className={inputClass} style={inputStyle}>
-                                      <option value="">— Select {buffTypeVal === "attribute" ? "Attribute" : buffTypeVal === "skill" ? "Skill" : "Resource"} ��</option>
+                                      <option value="">
+                                        — Select {buffTypeVal === "attribute" ? "Attribute" : buffTypeVal === "skill" ? "Skill" : "Resource"} —
+                                      </option>
                                       {!isValid && <option value="__invalid__" disabled style={S_RED}>⚠ "{currentVal}" (not recognized)</option>}
                                       {options.map(o => <option key={o} value={o}>{o}</option>)}
                                     </select>
@@ -1935,7 +2240,7 @@ export function DMArea() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
-                                <button onClick={() => { setEditingCard({ ...card, customFields: { ...card.customFields } }); setIsAddingNewCard(false); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
+                                <button onClick={async () => { setEditingCard({ ...card, customFields: { ...card.customFields } }); setIsAddingNewCard(false); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
                                   <Edit size={12} className="inline mr-1" />Edit
                                 </button>
                                 <button onClick={() => handleDeleteCard(card.id)} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_RED}>
@@ -1992,20 +2297,36 @@ export function DMArea() {
                       <div className="flex flex-wrap gap-1.5 mb-3">
                         {players.map(p => {
                           const isActive = laSelectedPlayerId === p.id;
-                          const pCats: LevelCategory[] = isActive ? levelCategories : safeGetJson(getLevelCatsKey(p.id), []);
-                          const totalCards = pCats.reduce((sum, c) => sum + c.cardIds.length, 0);
+                          const totalCards = isActive
+                            ? levelCategories.reduce((sum, c) => sum + c.cardIds.length, 0)
+                            : 0;
+
                           return (
                             <button
                               key={p.id}
                               onClick={() => setLaSelectedPlayerId(p.id)}
                               className={`${isActive ? retro.sunken + " bg-[#0C0C2E]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
-                              style={{ color: isActive ? "#FFD700" : "#8A9ABB", fontWeight: isActive ? 600 : 400, borderBottom: isActive ? "2px solid #FFD700" : "2px solid transparent" }}
+                              style={{
+                                color: isActive ? "#FFD700" : "#8A9ABB",
+                                fontWeight: isActive ? 600 : 400,
+                                borderBottom: isActive ? "2px solid #FFD700" : "2px solid transparent",
+                              }}
                             >
                               <User size={12} />
                               {p.name}
-                              <span className="text-[9px] px-1 py-0.5 ml-0.5" style={{ background: "#0A0A28", color: isActive ? "#FFD700" : "#5A6A8A", border: `1px solid ${isActive ? "#FFD70044" : "#1A1A4B"}` }}>
-                                {pCats.length} lvl · {totalCards} cards
-                              </span>
+
+                              {isActive && (
+                                <span
+                                  className="text-[9px] px-1 py-0.5 ml-0.5"
+                                  style={{
+                                    background: "#0A0A28",
+                                    color: "#FFD700",
+                                    border: "1px solid #FFD70044",
+                                  }}
+                                >
+                                  {levelCategories.length} lvl · {totalCards} cards
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -2057,7 +2378,7 @@ export function DMArea() {
                               placeholder="Level name (e.g. Level 1, Tier 2...)"
                               className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] flex-1 outline-none`}
                               style={{ color: "#FFD700" }}
-                              onKeyDown={e => {
+                              onKeyDown={async (e) => {
                                 if (e.key === "Enter" && laNewLevelName.trim()) {
                                   const newCat = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardIds: [] as string[], description: "" };
                                   saveLevelCategories([...levelCategories, newCat]);
@@ -2067,7 +2388,7 @@ export function DMArea() {
                               autoFocus
                             />
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if (laNewLevelName.trim()) {
                                   const newCat = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardIds: [] as string[], description: "" };
                                   saveLevelCategories([...levelCategories, newCat]);
@@ -2076,7 +2397,7 @@ export function DMArea() {
                               }}
                               className={`${retro.button} px-3 py-2 text-[11px]`} style={S_GREEN_BTN}
                             ><Plus size={12} /> Add</button>
-                            <button onClick={() => { setLaAddingLevel(false); setLaNewLevelName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}>
+                            <button onClick={async () => { setLaAddingLevel(false); setLaNewLevelName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}>
                               <X size={12} />
                             </button>
                           </div>
@@ -2137,7 +2458,7 @@ export function DMArea() {
                                       onClick={e => e.stopPropagation()}
                                       onChange={e => saveLevelCategories(levelCategories.map(lc => lc.id === level.id ? { ...lc, name: e.target.value } : lc))}
                                       onBlur={() => setLaEditingLevel(null)}
-                                      onKeyDown={e => { if (e.key === "Enter") setLaEditingLevel(null); }}
+                                      onKeyDown={async (e) => { if (e.key === "Enter") setLaEditingLevel(null); }}
                                       className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[13px] flex-1 outline-none`}
                                       style={{ color: "#FFD700" }}
                                       autoFocus
@@ -2150,13 +2471,13 @@ export function DMArea() {
                                   </span>
                                   <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                                     {levelIdx > 0 && (
-                                      <button onClick={() => {
+                                      <button onClick={async () => {
                                         const prev = sortedLevels[levelIdx - 1];
                                         saveLevelCategories(levelCategories.map(l => l.id === level.id ? { ...l, order: prev.order } : l.id === prev.id ? { ...l, order: level.order } : l));
                                       }} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#7A8AAA" }} title="Move up"><ChevronUp size={12} /></button>
                                     )}
                                     {levelIdx < sortedLevels.length - 1 && (
-                                      <button onClick={() => {
+                                      <button onClick={async () => {
                                         const next = sortedLevels[levelIdx + 1];
                                         saveLevelCategories(levelCategories.map(l => l.id === level.id ? { ...l, order: next.order } : l.id === next.id ? { ...l, order: level.order } : l));
                                       }} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#7A8AAA" }} title="Move down"><ChevronDown size={12} /></button>
@@ -2274,11 +2595,18 @@ export function DMArea() {
               <DMNodeTreeBuilder
                 players={players.map(p => ({ id: p.id, name: p.name }))}
                 cards={managedCards.map(c => ({ id: c.id, name: c.name, type: c.type, effect: c.effect, actionCost: c.actionCost }))}
-                onCardNodeAssign={(cardId, treeId, nodeId) => {
-                  setManagedCards(prev => prev.map(c => c.id === cardId ? { ...c, nodeTreeId: treeId, nodeId } : c));
+                onCardNodeAssign={async (cardId, treeId, nodeId) => {
+                  const next = managedCards.map((c) =>
+                    c.id === cardId ? { ...c, nodeTreeId: treeId, nodeId } : c
+                  );
+                  await persistCards(next);
                 }}
-                onCardNodeUnassign={(cardId) => {
-                  setManagedCards(prev => prev.map(c => c.id === cardId ? { ...c, nodeTreeId: "", nodeId: "" } : c));
+
+                onCardNodeUnassign={async (cardId) => {
+                  const next = managedCards.map((c) =>
+                    c.id === cardId ? { ...c, nodeTreeId: "", nodeId: "" } : c
+                  );
+                  await persistCards(next);
                 }}
               />
             </div>
@@ -2316,16 +2644,23 @@ export function DMArea() {
                               onChange={(e) => setEditingInfoSubTabName(e.target.value)}
                               className={inputClass}
                               style={{ ...inputStyle, width: 120 }}
-                              onKeyDown={(e) => {
+                              onKeyDown={async (e) => {
                                 if (e.key === "Enter" && editingInfoSubTabName.trim()) {
-                                  setInfoSubTabs(prev => prev.map(s => s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s));
+                                  const next = infoSubTabs.map((s) =>
+                                    s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s
+                                  );
+                                  await persistInfoSubTabs(next);
                                   setEditingInfoSubTabId(null);
                                 }
                               }}
                             />
-                            <button onClick={() => {
+                            <button onClick={async () => {
                               if (editingInfoSubTabName.trim()) {
-                                setInfoSubTabs(prev => prev.map(s => s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s));
+                                const next = infoSubTabs.map((s) =>
+                                  s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s
+                                );
+                                await persistInfoSubTabs(next);
+                                setEditingInfoSubTabId(null);
                               }
                               setEditingInfoSubTabId(null);
                             }} className="text-[10px]" style={S_GREEN_BTN}>✓</button>
@@ -2337,10 +2672,17 @@ export function DMArea() {
                             <span className="text-[9px] ml-1" style={S_DIM}>
                               ({managedInfos.filter(i => i.infoSubTab === st.id).length})
                             </span>
-                            <button onClick={() => { setEditingInfoSubTabId(st.id); setEditingInfoSubTabName(st.name); }} className="text-[10px] ml-1 hover:opacity-80" style={S_ACCENT}>
+                            <button onClick={async () => { setEditingInfoSubTabId(st.id); setEditingInfoSubTabName(st.name); }} className="text-[10px] ml-1 hover:opacity-80" style={S_ACCENT}>
                               <Edit size={10} />
                             </button>
-                            <button onClick={() => setInfoSubTabs(prev => prev.filter(s => s.id !== st.id))} className="text-[10px] hover:opacity-80" style={S_RED}>
+                            <button
+                              onClick={async () => {
+                                const next = infoSubTabs.filter((s) => s.id !== st.id);
+                                await persistInfoSubTabs(next);
+                              }}
+                              className="text-[10px] hover:opacity-80"
+                              style={S_RED}
+                            >
                               <Trash2 size={10} />
                             </button>
                           </div>
@@ -2356,17 +2698,29 @@ export function DMArea() {
                       placeholder="New sub-tab name..."
                       className={inputClass}
                       style={{ ...inputStyle, width: 200 }}
-                      onKeyDown={(e) => {
+                      onKeyDown={async (e) => {
                         if (e.key === "Enter" && newInfoSubTabName.trim()) {
-                          setInfoSubTabs(prev => [...prev, { id: `ist-${Date.now()}`, name: newInfoSubTabName.trim(), order: prev.length }]);
+                          const next = [
+                            ...infoSubTabs,
+                            {
+                              id: `ist-${Date.now()}`,
+                              name: newInfoSubTabName.trim(),
+                              order: infoSubTabs.length,
+                            },
+                          ];
+                          await persistInfoSubTabs(next);
                           setNewInfoSubTabName("");
                         }
                       }}
                     />
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (!newInfoSubTabName.trim()) return;
-                        setInfoSubTabs(prev => [...prev, { id: `ist-${Date.now()}`, name: newInfoSubTabName.trim(), order: prev.length }]);
+                        const next = [
+                          ...infoSubTabs,
+                          { id: `ist-${Date.now()}`, name: newInfoSubTabName.trim(), order: infoSubTabs.length },
+                        ];
+                        await persistInfoSubTabs(next);
                         setNewInfoSubTabName("");
                       }}
                       disabled={!newInfoSubTabName.trim()}
@@ -2545,14 +2899,39 @@ export function DMArea() {
                                 )}
                               </div>
                               <div className="flex items-center gap-2">
-                                <button onClick={() => { setFollowUpInfoId(followUpInfoId === info.id ? null : info.id); setFollowUpText(""); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_WARN}>
-                                  <Send size={12} className="inline mr-1" />Follow-up
+                                <button
+                                  onClick={() => {
+                                    setFollowUpInfoId(followUpInfoId === info.id ? null : info.id);
+                                    setFollowUpText("");
+                                  }}
+                                  className={`${retro.button} px-3 py-1 text-[11px]`}
+                                  style={S_WARN}
+                                >
+                                  <Send size={12} className="inline mr-1" />
+                                  Follow-up
                                 </button>
-                                <button onClick={() => { setEditingInfo({ ...info, customFields: { ...info.customFields } }); setIsAddingNewInfo(false); }} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
-                                  <Edit size={12} className="inline mr-1" />Edit
+
+                                <button
+                                  onClick={() => {
+                                    setEditingInfo({ ...info, customFields: { ...info.customFields } });
+                                    setIsAddingNewInfo(false);
+                                  }}
+                                  className={`${retro.button} px-3 py-1 text-[11px]`}
+                                  style={S_ACCENT}
+                                >
+                                  <Edit size={12} className="inline mr-1" />
+                                  Edit
                                 </button>
-                                <button onClick={() => handleDeleteInfo(info.id)} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_RED}>
-                                  <Trash2 size={12} className="inline mr-1" />Remove
+
+                                <button
+                                  onClick={() => {
+                                    handleDeleteInfo(info.id);
+                                  }}
+                                  className={`${retro.button} px-3 py-1 text-[11px]`}
+                                  style={S_RED}
+                                >
+                                  <Trash2 size={12} className="inline mr-1" />
+                                  Remove
                                 </button>
                               </div>
                             </div>
@@ -2581,20 +2960,25 @@ export function DMArea() {
                                 <div className="text-[10px] mb-2" style={S_WARN_HDR}>ADD FOLLOW-UP</div>
                                 <RichTextEditor value={followUpText} onChange={setFollowUpText} placeholder="Enter follow-up details..." minHeight={60} />
                                 <div className="flex gap-2 mt-2">
-                                  <button onClick={() => {
+                                  <button onClick={async () => {
                                     if (!followUpText.trim()) return;
                                     const newFollowUp: InfoFollowUp = {
                                       id: `fu-${Date.now()}`,
                                       content: followUpText,
                                       createdAt: new Date().toLocaleString(),
                                     };
-                                    setManagedInfos(prev => prev.map(i => i.id === info.id ? { ...i, followUps: [...(i.followUps || []), newFollowUp] } : i));
+                                    const nextInfos = managedInfos.map((i) =>
+                                      i.id === info.id
+                                        ? { ...i, followUps: [...(i.followUps || []), newFollowUp] }
+                                        : i
+                                    );
+                                    await persistInfos(nextInfos);
                                     setFollowUpText("");
                                     setFollowUpInfoId(null);
                                   }} className={`${retro.button} px-4 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
                                     <Send size={11} /> Add Follow-up
                                   </button>
-                                  <button onClick={() => { setFollowUpInfoId(null); setFollowUpText(""); }} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_TEXT}>Cancel</button>
+                                  <button onClick={async () => { setFollowUpInfoId(null); setFollowUpText(""); }} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_TEXT}>Cancel</button>
                                 </div>
                               </div>
                             )}
@@ -2606,8 +2990,13 @@ export function DMArea() {
                                       <div className="text-[9px] mb-0.5" style={S_MUTED}>{fu.createdAt}</div>
                                       <div className="text-[11px]" style={DM_FOLLOW_UP_TEXT}>{fu.content.replace(/<[^>]*>/g, "").length > 80 ? fu.content.replace(/<[^>]*>/g, "").slice(0, 80) + "..." : fu.content.replace(/<[^>]*>/g, "")}</div>
                                     </div>
-                                    <button onClick={() => {
-                                      setManagedInfos(prev => prev.map(i => i.id === info.id ? { ...i, followUps: (i.followUps || []).filter(f => f.id !== fu.id) } : i));
+                                    <button onClick={async () => {
+                                      const nextInfos = managedInfos.map((i) =>
+                                        i.id === info.id
+                                          ? { ...i, followUps: (i.followUps || []).filter((f) => f.id !== fu.id) }
+                                          : i
+                                      );
+                                      await persistInfos(nextInfos);
                                     }} className="hover:opacity-80 shrink-0 mt-1">
                                       <X size={10} style={S_RED} />
                                     </button>
@@ -2669,7 +3058,7 @@ export function DMArea() {
                     <label className="text-[10px] block mb-2" style={labelStyle}>Send to:</label>
                     <div className="flex items-center gap-3 mb-3">
                       <button
-                        onClick={() => { setNotifAllPlayers(true); setNotifPlayerSelection({}); }}
+                        onClick={async () => { setNotifAllPlayers(true); setNotifPlayerSelection({}); }}
                         className="text-[11px] px-3 py-1.5 transition-colors"
                         style={dmActiveBtn(notifAllPlayers)}
                       >
@@ -2896,11 +3285,16 @@ export function DMArea() {
           {/* ======================================================= */}
           {activeSection === "tags" && (
             <DMTagsSection
-              itemTags={itemTags} setItemTags={setItemTags}
-              cardTags={cardTags} setCardTags={setCardTags}
-              infoTags={infoTags} setInfoTags={setInfoTags}
-              statusTags={statusTags} setStatusTags={setStatusTags}
-              wikiTags={wikiTags} setWikiTags={setWikiTags}
+              itemTags={itemTags}
+              cardTags={cardTags}
+              infoTags={infoTags}
+              statusTags={statusTags}
+              wikiTags={wikiTags}
+              onSaveItemTags={(next) => persistTags("item", next)}
+              onSaveCardTags={(next) => persistTags("card", next)}
+              onSaveInfoTags={(next) => persistTags("info", next)}
+              onSaveStatusTags={(next) => persistTags("status", next)}
+              onSaveWikiTags={(next) => persistTags("wiki", next)}
             />
           )}
 
@@ -2937,7 +3331,13 @@ export function DMArea() {
           {/* ======================================================= */}
           {activeSection === "reactions" && (
             <div style={DISPLAY_CONTENTS}>
-              <DMReactionManager inputClass={inputClass} inputStyle={inputStyle} labelStyle={labelStyle} />
+              <DMReactionManager
+                reactions={reactions}
+                onSave={persistCustomReactions}
+                inputClass={inputClass}
+                inputStyle={inputStyle}
+                labelStyle={labelStyle}
+              />
             </div>
           )}
 

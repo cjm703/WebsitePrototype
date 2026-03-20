@@ -47,40 +47,68 @@ function registerRoutes(prefix: string) {
     return c.json({ success: true });
   });
 
-  app.post(`${prefix}/auth-codes/verify`, async (c) => {
-    const { profileId, code } = await c.req.json();
+app.post(`${prefix}/auth-codes/verify`, async (c) => {
+  try {
+    const body = await c.req.json();
+    console.log("VERIFY BODY:", body);
+
+    const { profileId, code } = body;
     if (!profileId || typeof profileId !== "string") {
       return c.json({ error: "Missing or invalid profileId" }, 400);
     }
 
-    const stored = await kv.get(authKey(profileId));
+    const key = authKey(profileId);
+    console.log("VERIFY KEY:", key);
+
+    const stored = await kv.get(key);
+    console.log("VERIFY STORED:", stored);
+
     if (!stored || !stored.hash) {
       return c.json({ valid: true, hasCode: false });
     }
 
     const inputHash = await sha256(code || "");
+    const valid = inputHash === stored.hash;
+
     return c.json({
-      valid: inputHash === stored.hash,
+      valid,
       hasCode: true,
     });
-  });
+  } catch (err) {
+    console.log("VERIFY ERROR FULL:", err);
+    return c.json({ error: String(err) }, 500);
+  }
+});
 
   app.post(`${prefix}/auth-codes/status`, async (c) => {
-    const { profileIds } = await c.req.json();
-    if (!Array.isArray(profileIds)) {
-      return c.json({ error: "profileIds must be an array" }, 400);
-    }
+    try {
+      const body = await c.req.json();
+      console.log("STATUS BODY:", body);
 
-    const statuses: Record<string, boolean> = {};
-    if (profileIds.length > 0) {
-      const keys = profileIds.map(authKey);
-      const values = await kv.mget(keys);
-      profileIds.forEach((id, i) => {
-        statuses[id] = !!(values[i] && values[i].hash);
-      });
-    }
+      const { profileIds } = body;
+      if (!Array.isArray(profileIds)) {
+        return c.json({ error: "profileIds must be an array" }, 400);
+      }
 
-    return c.json({ statuses });
+      const statuses: Record<string, boolean> = {};
+
+      if (profileIds.length > 0) {
+        const keys = profileIds.map(authKey);
+        console.log("STATUS KEYS:", keys);
+
+        const values = await kv.mget(keys);
+        console.log("STATUS VALUES:", values);
+
+        profileIds.forEach((id, i) => {
+          statuses[id] = !!(values[i] && values[i].hash);
+        });
+      }
+
+      return c.json({ statuses });
+    } catch (err) {
+      console.log("STATUS ERROR FULL:", err);
+      return c.json({ error: String(err) }, 500);
+    }
   });
 
   app.delete(`${prefix}/auth-codes/:profileId`, async (c) => {
@@ -173,9 +201,24 @@ function registerRoutes(prefix: string) {
     await kv.del(pfpKey(userId));
     return c.json({ success: true });
   });
+
+  app.get(`${prefix}/debug-kv`, async (c) => {
+    try {
+      const testKey = "debug-test";
+      await kv.set(testKey, { ok: true, time: Date.now() });
+      const value = await kv.get(testKey);
+
+      return c.json({
+        success: true,
+        value,
+      });
+    } catch (err) {
+      console.log("DEBUG KV ERROR:", err);
+      return c.json({ error: String(err) }, 500);
+    }
+  });
 }
 
 registerRoutes("/make-server-8a5950b5");
-registerRoutes("");
 
 Deno.serve(app.fetch);
