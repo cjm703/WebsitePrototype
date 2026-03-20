@@ -11,7 +11,8 @@ import { getOwnedStickers } from "./game-leaderboard";
 import { playDiceRoll, playTabClick, playSuccessChime } from "./sound-effects";
 import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
-import { PlayerNodeTreeViewer, loadNodeTrees } from "./node-trees";
+import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
+import { appStore } from "@/lib/app-store";
 import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo, TagDefinition } from "./types";
@@ -312,6 +313,7 @@ export function PersonalFiles() {
   const [activeTab, setActiveTab] = useState<"character" | "inventory" | "cards" | "information">("character");
   const [inventorySubTab, setInventorySubTab] = useState<"equipped" | "effects" | "consumables" | "general">("equipped");
   const [cardsSubTab, setCardsSubTab] = useState<"cards" | "nodetrees" | "levelabilities">("cards");
+  const [playerNodeTrees, setPlayerNodeTrees] = useState<NodeTree[]>([]);
 
   // ── Quick items for Sources/Money panels ��─
   const currentUserForQuick = safeGetItem("inet-user") || "";
@@ -419,6 +421,36 @@ export function PersonalFiles() {
     };
     window.addEventListener("focus", onFocus2);
     return () => window.removeEventListener("focus", onFocus2);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPersonalNodeTrees() {
+      try {
+        const trees = await appStore.listNodeTrees<NodeTree>();
+        if (!cancelled) {
+          setPlayerNodeTrees(trees);
+        }
+      } catch {
+        if (!cancelled) {
+          setPlayerNodeTrees([]);
+        }
+      }
+    }
+
+    void loadPersonalNodeTrees();
+
+    const onFocus = () => {
+      void loadPersonalNodeTrees();
+    };
+
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   // ========================
@@ -3788,7 +3820,11 @@ export function PersonalFiles() {
                   {selectedCard ? (
                     renderCardDetail(selectedCard)
                   ) : (() => {
-                    const nodeTrees = loadNodeTrees().filter(t => player && (t.assignedTo.includes(player.id) || t.assignedTo.includes("all")));
+                    const nodeTrees = player
+                      ? playerNodeTrees.filter(
+                          (t) => t.assignedTo.includes(player.id) || t.assignedTo.includes("all")
+                        )
+                      : [];
                     const activeTree = cardTreeFilter ? nodeTrees.find(t => t.id === cardTreeFilter) : null;
                     const activeNode = activeTree && cardNodeFilter ? activeTree.nodes.find(n => n.id === cardNodeFilter) : null;
                     return (

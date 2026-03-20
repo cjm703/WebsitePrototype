@@ -8,7 +8,7 @@ import {
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
   Newspaper, Copy, Zap, ChevronUp,
 } from "lucide-react";
-import { DMNodeTreeBuilder, loadNodeTrees, saveNodeTrees } from "./node-trees";
+import { DMNodeTreeBuilder, type NodeTree } from "./node-trees";
 import {
   initialPlayers as sharedInitialPlayers,
   initialItemTags as sharedInitialItemTags,
@@ -409,6 +409,7 @@ export function DMArea() {
   const [editingNotif, setEditingNotif] = useState<DMNotification | null>(null);
   const [isAddingNewNotif, setIsAddingNewNotif] = useState(false);
   const [reactions, setReactions] = useState<CustomReaction[]>([]);
+  const [nodeTrees, setNodeTrees] = useState<NodeTree[]>([]);
 
 
   // Notifications (DM-created)
@@ -445,6 +446,7 @@ useEffect(() => {
         infoSubTabData,
         notificationData,
         reactionData,
+        nodeTreeData,
       ] = await Promise.all([
         appStore.listPlayers<PlayerData>(),
         appStore.listDeletedPlayers<PlayerData>(),
@@ -459,6 +461,7 @@ useEffect(() => {
         appStore.listInfoSubTabs<InfoSubTab>(),
         appStore.listNotifications<DMNotification>(),
         appStore.listCustomReactions<CustomReaction>(),
+        appStore.listNodeTrees<NodeTree>(),
       ]);
 
       if (cancelled) return;
@@ -475,6 +478,7 @@ useEffect(() => {
       setManagedInfos(infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]));
       setInfoSubTabs(infoSubTabData);
       setDmNotifications(notificationData);
+      setNodeTrees(nodeTreeData);
       setReactions(reactionData);
     } catch (err) {
       if (!cancelled) {
@@ -1011,31 +1015,44 @@ const handleSaveItem = async () => {
   const handleSaveCard = async () => {
     if (!editingCard) return;
 
-    const next = isAddingNewCard
+    const nextCards = isAddingNewCard
       ? [...managedCards, editingCard]
       : managedCards.map((c) => (c.id === editingCard.id ? editingCard : c));
 
-    await persistCards(next);
+    await persistCards(nextCards);
 
-    const trees = loadNodeTrees();
     let treesChanged = false;
 
-    for (const tree of trees) {
-      for (const node of tree.nodes) {
+    const nextTrees = nodeTrees.map((tree) => {
+      const nextNodes = tree.nodes.map((node) => {
         const hasCard = node.cardIds.includes(editingCard.id);
-        const shouldHave = editingCard.nodeTreeId === tree.id && editingCard.nodeId === node.id;
+        const shouldHave =
+          editingCard.nodeTreeId === tree.id && editingCard.nodeId === node.id;
 
-        if (shouldHave && !hasCard && node.cardIds.length < 3) {
-          node.cardIds.push(editingCard.id);
+        if (shouldHave && !hasCard) {
+          if (node.cardIds.length >= 3) return node;
           treesChanged = true;
-        } else if (!shouldHave && hasCard) {
-          node.cardIds = node.cardIds.filter((cid) => cid !== editingCard.id);
-          treesChanged = true;
+          return { ...node, cardIds: [...node.cardIds, editingCard.id] };
         }
-      }
-    }
 
-    if (treesChanged) saveNodeTrees(trees);
+        if (!shouldHave && hasCard) {
+          treesChanged = true;
+          return {
+            ...node,
+            cardIds: node.cardIds.filter((cid) => cid !== editingCard.id),
+          };
+        }
+
+        return node;
+      });
+
+      return { ...tree, nodes: nextNodes };
+    });
+
+    if (treesChanged) {
+      await appStore.saveNodeTrees(nextTrees);
+      setNodeTrees(nextTrees);
+    }
 
     setEditingCard(null);
     setIsAddingNewCard(false);
@@ -2038,7 +2055,7 @@ const handleSaveItem = async () => {
                             className={`${inputClass} cursor-pointer`} style={inputStyle}
                           >
                             <option value="">-- None --</option>
-                            {loadNodeTrees().map(t => (
+                            {nodeTrees.map((t) => (
                               <option key={t.id} value={t.id}>{t.name}</option>
                             ))}
                           </select>
@@ -2052,9 +2069,12 @@ const handleSaveItem = async () => {
                             disabled={!editingCard.nodeTreeId}
                           >
                             <option value="">-- None --</option>
-                            {editingCard.nodeTreeId && loadNodeTrees().find(t => t.id === editingCard.nodeTreeId)?.nodes.map(n => (
-                              <option key={n.id} value={n.id}>{n.label}</option>
-                            ))}
+                            {editingCard.nodeTreeId &&
+                              nodeTrees
+                                .find((t) => t.id === editingCard.nodeTreeId)
+                                ?.nodes.map((n) => (
+                                  <option key={n.id} value={n.id}>{n.label}</option>
+                                ))}
                           </select>
                         </div>
                       </div>
@@ -2233,9 +2253,13 @@ const handleSaveItem = async () => {
                                 <div className="text-[11px]" style={S_MUTED}>
                                   {card.type} · Assigned to: {ownerStr}
                                   {card.nodeTreeId && (() => {
-                                    const nt = loadNodeTrees().find(t => t.id === card.nodeTreeId);
-                                    const nd = nt?.nodes.find(n => n.id === card.nodeId);
-                                    return nt ? <span style={DISPLAY_CONTENTS}> · <GitBranch size={9} className="inline" style={DM_NODE_ICON} /> {nt.name}{nd ? ` / ${nd.label}` : ""}</span> : null;
+                                    const nt = nodeTrees.find((t) => t.id === card.nodeTreeId);
+                                    const nd = nt?.nodes.find((n) => n.id === card.nodeId);
+                                    return nt ? (
+                                      <span style={DISPLAY_CONTENTS}>
+                                        {" "}· <GitBranch size={9} className="inline" style={DM_NODE_ICON} /> {nt.name}{nd ? ` / ${nd.label}` : ""}
+                                      </span>
+                                    ) : null;
                                   })()}
                                 </div>
                               </div>
