@@ -1,57 +1,109 @@
-import {
-  listCollection,
-  replaceCollection,
-  listTagCollection,
-  replaceTagCollection,
-  loadPlayerDoc,
-  savePlayerDoc,
-} from "./db-core";
+const PLAYER_STATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5/player-state`;
+const LOGOUT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5/session/logout`;
 
-export const appStore = {
-  listNodeTrees: <T>() => listCollection<T>("app_node_trees"),
-  saveNodeTrees: <T extends { id: string }>(rows: T[]) => replaceCollection("app_node_trees", rows),
+function sessionHeaders() {
+  const token = localStorage.getItem("inet-session-token") || "";
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+}
 
-  loadPlayerNodeTreeUnlocks: <T>(playerId: string, fallback: T) =>
-    loadPlayerDoc("player_node_tree_unlocks", playerId, fallback),
-  savePlayerNodeTreeUnlocks: <T>(playerId: string, data: T) =>
-    savePlayerDoc("player_node_tree_unlocks", playerId, data),
+async function callPlayerState<T>(method: "GET" | "POST", body?: unknown): Promise<T> {
+  const res = await fetch(PLAYER_STATE_URL, {
+    method,
+    headers: sessionHeaders(),
+    body: method === "POST" ? JSON.stringify(body) : undefined,
+  });
 
-  listPlayers: <T>() => listCollection<T>("app_players"),
-  savePlayers: <T extends { id: string }>(rows: T[]) => replaceCollection("app_players", rows),
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`player-state ${method} failed: ${res.status} ${text}`);
+  }
 
-  listDeletedPlayers: <T>() => listCollection<T>("app_deleted_players"),
-  saveDeletedPlayers: <T extends { id: string }>(rows: T[]) => replaceCollection("app_deleted_players", rows),
+  return res.json();
+}
 
-  listItems: <T>() => listCollection<T>("app_items"),
-  saveItems: <T extends { id: string }>(rows: T[]) => replaceCollection("app_items", rows),
+export const playerStore = {
+  loadPlayerState: <T>() => callPlayerState<T>("GET"),
 
-  listCards: <T>() => listCollection<T>("app_cards"),
-  saveCards: <T extends { id: string }>(rows: T[]) => replaceCollection("app_cards", rows),
+  savePlayerPatch: (playerPatch: unknown) =>
+    callPlayerState("POST", { playerPatch }),
 
-  listInfos: <T>() => listCollection<T>("app_infos"),
-  saveInfos: <T extends { id: string }>(rows: T[]) => replaceCollection("app_infos", rows),
+  loadQuickItems: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.quickItems ?? fallback) as T;
+  },
+  saveQuickItems: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { quickItems: data }),
 
-  listInfoSubTabs: <T>() => listCollection<T>("app_info_subtabs"),
-  saveInfoSubTabs: <T extends { id: string }>(rows: T[]) => replaceCollection("app_info_subtabs", rows),
+  loadSourceUsage: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.sourceUsage ?? fallback) as T;
+  },
+  saveSourceUsage: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { sourceUsage: data }),
 
-  listNotifications: <T>() => listCollection<T>("app_notifications"),
-  saveNotifications: <T extends { id: string }>(rows: T[]) => replaceCollection("app_notifications", rows),
+  loadActivityLog: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.activityLog ?? fallback) as T;
+  },
+  saveActivityLog: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { activityLog: data }),
 
-  listNews: <T>() => listCollection<T>("app_news"),
-  saveNews: <T extends { id: string }>(rows: T[]) => replaceCollection("app_news", rows),
+  loadSkillSettings: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.skillSettings ?? fallback) as T;
+  },
+  saveSkillSettings: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { skillSettings: data }),
 
-  listSites: <T>() => listCollection<T>("app_sites"),
-  saveSites: <T extends { id: string }>(rows: T[]) => replaceCollection("app_sites", rows),
+  loadSkillProficiencies: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.skillProficiencies ?? fallback) as T;
+  },
+  saveSkillProficiencies: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { skillProficiencies: data }),
 
-  listCustomPanelStyles: <T>() => listCollection<T>("app_custom_panel_styles"),
-  saveCustomPanelStyles: <T extends { id: string }>(rows: T[]) => replaceCollection("app_custom_panel_styles", rows),
+  loadEquipmentSlots: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.equipmentSlots ?? fallback) as T;
+  },
+  saveEquipmentSlots: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { equipmentSlots: data }),
 
-  listCustomReactions: <T>() => listCollection<T>("community_custom_reactions"),
-  saveCustomReactions: <T extends { id: string }>(rows: T[]) => replaceCollection("community_custom_reactions", rows),
+  loadStatusEffects: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.statusEffects ?? fallback) as T;
+  },
+  saveStatusEffects: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { statusEffects: data }),
 
-  listTags: <T>(kind: "item" | "card" | "info" | "status" | "wiki") => listTagCollection<T>(kind),
-  saveTags: <T extends { id: string }>(kind: "item" | "card" | "info" | "status" | "wiki", rows: T[]) => replaceTagCollection(kind, rows),
+  loadLevelCategories: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.levelCategories ?? fallback) as T;
+  },
+  saveLevelCategories: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { levelCategories: data }),
 
-  loadPlayerLevelCategories: <T>(playerId: string, fallback: T) => loadPlayerDoc("player_level_categories", playerId, fallback),
-  savePlayerLevelCategories: <T>(playerId: string, data: T) => savePlayerDoc("player_level_categories", playerId, data),
+  loadNodeUnlocks: async <T>(_playerId: string, fallback: T) => {
+    const data = await callPlayerState<any>("GET");
+    return (data.nodeUnlocks ?? fallback) as T;
+  },
+  saveNodeUnlocks: <T>(_playerId: string, data: T) =>
+    callPlayerState("POST", { nodeUnlocks: data }),
+
+  saveOwnedItem: (item: unknown) =>
+    callPlayerState("POST", { saveItem: item }),
+
+  deleteOwnedItem: (deleteItemId: string) =>
+    callPlayerState("POST", { deleteItemId }),
+
+  logoutSession: async () => {
+    const res = await fetch(LOGOUT_URL, {
+      method: "POST",
+      headers: sessionHeaders(),
+    });
+    if (!res.ok) throw new Error(`logout failed: ${res.status}`);
+  },
 };
