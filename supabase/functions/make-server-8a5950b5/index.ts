@@ -1,9 +1,18 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
+import { logger } from "npm:hono/logger"
+import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.ts";
 
+
 const app = new Hono();
+
+const admin = () =>
+  createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+
 
 app.use("*", logger(console.log));
 app.use(
@@ -24,6 +33,57 @@ async function sha256(plain: string): Promise<string> {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
+
+function sessionTokenKey(rawToken: string) {
+  return sha256(rawToken);
+}
+
+async function createSession(playerId: string) {
+  const rawToken = crypto.randomUUID() + crypto.randomUUID();
+  const tokenHash = await sessionTokenKey(rawToken);
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+
+  const supabase = admin();
+  const { error } = await supabase.from("app_sessions").insert({
+    token_hash: tokenHash,
+    player_id: playerId,
+    expires_at: expiresAt,
+    revoked: false,
+  });
+
+  if (error) throw new Error(error.message);
+
+  return { rawToken, expiresAt };
+}
+
+async function resolveSessionPlayerId(c: any): Promise<string> {
+  const auth = c.req.header("Authorization") || "";
+  const rawToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!rawToken) throw new Error("Missing session token");
+
+  const tokenHash = await sessionTokenKey(rawToken);
+  const supabase = admin();
+
+  const { data, error } = await supabase
+    .from("app_sessions")
+    .select("player_id, expires_at, revoked")
+    .eq("token_hash", tokenHash)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Invalid session");
+  if (data.revoked) throw new Error("Session revoked");
+  if (new Date(data.expires_at).getTime() < Date.now()) throw new Error("Session expired");
+
+  return data.player_id;
+}
+
+function requireDM(playerId: string) {
+  if (playerId !== "dm") {
+    throw new Error("DM access only");
+  }
+}
+
 
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
@@ -63,16 +123,35 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
     const stored = await kv.get(key);
     console.log("VERIFY STORED:", stored);
 
+    const playerId = profileId;
+
     if (!stored || !stored.hash) {
-      return c.json({ valid: true, hasCode: false });
+      const session = await createSession(playerId);
+      return c.json({
+        valid: true,
+        hasCode: false,
+        playerId,
+        sessionToken: session.rawToken,
+      });
     }
 
     const inputHash = await sha256(code || "");
     const valid = inputHash === stored.hash;
 
+    if (!valid) {
+      return c.json({
+        valid: false,
+        hasCode: true,
+      });
+    }
+
+    const session = await createSession(playerId);
+
     return c.json({
-      valid,
+      valid: true,
       hasCode: true,
+      playerId,
+      sessionToken: session.rawToken,
     });
   } catch (err) {
     console.log("VERIFY ERROR FULL:", err);
@@ -107,6 +186,30 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
       return c.json({ statuses });
     } catch (err) {
       console.log("STATUS ERROR FULL:", err);
+      return c.json({ error: String(err) }, 500);
+    }
+  });
+
+  app.get(`${prefix}/auth-codes/profiles`, async (c) => {
+    try {
+      const supabase = admin();
+
+      const { data, error } = await supabase
+        .from("app_players")
+        .select("id, data")
+        .order("updated_at", { ascending: false });
+
+      if (error) return c.json({ error: error.message }, 500);
+
+      const profiles = (data ?? []).map((row: any) => ({
+        id: row.id,
+        name: row.data?.name ?? row.id,
+        class: row.data?.class ?? row.data?.className ?? null,
+        level: row.data?.level ?? 1,
+      }));
+
+      return c.json({ profiles });
+    } catch (err) {
       return c.json({ error: String(err) }, 500);
     }
   });
@@ -201,6 +304,236 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
     await kv.del(pfpKey(userId));
     return c.json({ success: true });
   });
+
+  app.get(`${prefix}/player-state`, async (c) => {
+    try {
+      const playerId = await resolveSessionPlayerId(c);
+      const supabase = admin();
+
+      const [
+        playerRes,
+        quickItemsRes,
+        sourceUsageRes,
+        activityLogRes,
+        skillSettingsRes,
+        skillProfRes,
+        equipSlotsRes,
+        statusEffectsRes,
+        levelCategoriesRes,
+        nodeUnlocksRes,
+      ] = await Promise.all([
+        supabase.from("app_players").select("data").eq("id", playerId).maybeSingle(),
+        supabase.from("player_quick_items").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_source_usage_log").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_activity_log").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_skill_settings").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_skill_proficiencies").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_equipment_slots").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_status_effects").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_level_categories").select("data").eq("player_id", playerId).maybeSingle(),
+        supabase.from("player_node_tree_unlocks").select("data").eq("player_id", playerId).maybeSingle(),
+      ]);
+
+      const firstError =
+        playerRes.error || quickItemsRes.error || sourceUsageRes.error || activityLogRes.error ||
+        skillSettingsRes.error || skillProfRes.error || equipSlotsRes.error || statusEffectsRes.error ||
+        levelCategoriesRes.error || nodeUnlocksRes.error;
+
+      if (firstError) return c.json({ error: firstError.message }, 500);
+
+      return c.json({
+        player: playerRes.data ? { id: playerId, ...(playerRes.data.data ?? {}) } : null,
+        quickItems: quickItemsRes.data?.data ?? [],
+        sourceUsage: sourceUsageRes.data?.data ?? [],
+        activityLog: activityLogRes.data?.data ?? [],
+        skillSettings: skillSettingsRes.data?.data ?? { proficiencyBonus: 2 },
+        skillProficiencies: skillProfRes.data?.data ?? {},
+        equipmentSlots: equipSlotsRes.data?.data ?? null,
+        statusEffects: statusEffectsRes.data?.data ?? [],
+        levelCategories: levelCategoriesRes.data?.data ?? [],
+        nodeUnlocks: nodeUnlocksRes.data?.data ?? {},
+      });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
+    }
+  });
+
+  app.post(`${prefix}/player-state`, async (c) => {
+    try {
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const supabase = admin();
+      const now = new Date().toISOString();
+
+      const writes: Promise<any>[] = [];
+
+      if ("quickItems" in body) {
+        writes.push(
+          supabase.from("player_quick_items").upsert(
+            { player_id: playerId, data: body.quickItems, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("sourceUsage" in body) {
+        writes.push(
+          supabase.from("player_source_usage_log").upsert(
+            { player_id: playerId, data: body.sourceUsage, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("activityLog" in body) {
+        writes.push(
+          supabase.from("player_activity_log").upsert(
+            { player_id: playerId, data: body.activityLog, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("skillSettings" in body) {
+        writes.push(
+          supabase.from("player_skill_settings").upsert(
+            { player_id: playerId, data: body.skillSettings, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("skillProficiencies" in body) {
+        writes.push(
+          supabase.from("player_skill_proficiencies").upsert(
+            { player_id: playerId, data: body.skillProficiencies, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("equipmentSlots" in body) {
+        writes.push(
+          supabase.from("player_equipment_slots").upsert(
+            { player_id: playerId, data: body.equipmentSlots, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("statusEffects" in body) {
+        writes.push(
+          supabase.from("player_status_effects").upsert(
+            { player_id: playerId, data: body.statusEffects, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("levelCategories" in body) {
+        writes.push(
+          supabase.from("player_level_categories").upsert(
+            { player_id: playerId, data: body.levelCategories, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("nodeUnlocks" in body) {
+        writes.push(
+          supabase.from("player_node_tree_unlocks").upsert(
+            { player_id: playerId, data: body.nodeUnlocks, updated_at: now },
+            { onConflict: "player_id" }
+          )
+        );
+      }
+
+      if ("playerPatch" in body) {
+        const { data: currentPlayerRow, error: currentPlayerError } = await supabase
+          .from("app_players")
+          .select("data")
+          .eq("id", playerId)
+          .maybeSingle();
+
+        if (currentPlayerError) return c.json({ error: currentPlayerError.message }, 500);
+
+        const currentPlayer = currentPlayerRow?.data ?? {};
+
+        writes.push(
+          supabase.from("app_players").upsert(
+            {
+              id: playerId,
+              data: { ...currentPlayer, ...body.playerPatch },
+              updated_at: now,
+            },
+            { onConflict: "id" }
+          )
+        );
+      }
+
+      if ("saveItem" in body) {
+        const item = body.saveItem;
+        if (!item || !item.id) return c.json({ error: "Invalid saveItem payload" }, 400);
+
+        writes.push(
+          supabase.from("app_items").upsert(
+            {
+              id: item.id,
+              data: item,
+              updated_at: now,
+            },
+            { onConflict: "id" }
+          )
+        );
+      }
+
+      if ("deleteItemId" in body) {
+        writes.push(
+          supabase.from("app_items").delete().eq("id", body.deleteItemId)
+        );
+      }
+
+      const results = await Promise.all(writes);
+      const firstError = results.find((r: any) => r?.error)?.error;
+      if (firstError) return c.json({ error: firstError.message }, 500);
+
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
+    }
+  });
+
+    app.post(`${prefix}/session/logout`, async (c) => {
+      try {
+        const auth = c.req.header("Authorization") || "";
+        const rawToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+        if (!rawToken) return c.json({ error: "Missing session token" }, 400);
+
+        const tokenHash = await sessionTokenKey(rawToken);
+        const supabase = admin();
+
+        const { error } = await supabase
+          .from("app_sessions")
+          .update({ revoked: true })
+          .eq("token_hash", tokenHash);
+
+        if (error) return c.json({ error: error.message }, 500);
+        return c.json({ ok: true });
+      } catch (err) {
+        return c.json({ error: String(err) }, 500);
+      }
+    });
+
+    app.get(`${prefix}/dm/test`, async (c) => {
+      try {
+        const playerId = await resolveSessionPlayerId(c);
+        requireDM(playerId);
+
+        return c.json({ ok: true, dm: true });
+      } catch (err) {
+        return c.json({ error: String(err) }, 403);
+      }
+    });
 
   app.get(`${prefix}/debug-kv`, async (c) => {
     try {
