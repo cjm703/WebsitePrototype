@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { User, Package, CreditCard, Info, Search, Tag, X, ChevronLeft, ChevronRight, ArrowLeft, Minus, Plus, Trash2, ChevronDown, Shield, Zap, Coins, Sword, Backpack, Crown, Eye, Gem, Shirt, Hand, Footprints, CircleDot, Save, Lock, Edit, Unlock, Sparkles, GitBranch, MessageSquare, SkipForward, Play, Dices, Banknote, Star, Scale, Clock, History, Flame, RefreshCw } from "lucide-react";
@@ -9,11 +9,11 @@ import { getPlayerTheme, buildPageGradient, isGradient, firstColor, ts, type Pla
 import { DISPLAY_CONTENTS, SUNKEN_INPUT, SUNKEN_INPUT_DIM, S_MUTED, S_DIM, S_SUBTLE, S_TEXT, S_RED, S_GREEN_BTN, S_LABEL, S_LINK, S_WARN, S_ACCENT } from "./shared-styles";
 import { getOwnedStickers } from "./game-leaderboard";
 import { playDiceRoll, playTabClick, playSuccessChime } from "./sound-effects";
-import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
 import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
 import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
+import { playerStore } from "@/lib/player-store";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo, TagDefinition } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
@@ -34,6 +34,7 @@ interface StatusEffectRow {
   buffValue?: string; // numeric buff value; can use P for potency
   targetType?: "self" | "enemy"; // from card "Target: Self" / "Target: Enemy" tags
 }
+
 
 type BuffSource = { label: string; value: number; type: "equip" | "status"; statusId?: string };
 type BuffEntry = { key: string; category: "attribute" | "skill" | "resource"; total: number; sources: BuffSource[] };
@@ -272,17 +273,6 @@ const DEFAULT_EQUIP_SLOTS: EquipSlotState = Object.fromEntries(
   EQUIP_SLOT_DEFS.map(s => [s.id, { itemId: null }])
 ) as EquipSlotState;
 
-function loadEquipSlots(userId: string): EquipSlotState {
-  try {
-    const raw = safeGetItem(`inet-equip-slots-${userId}`);
-    return raw ? { ...DEFAULT_EQUIP_SLOTS, ...JSON.parse(raw) } : { ...DEFAULT_EQUIP_SLOTS };
-  } catch { return { ...DEFAULT_EQUIP_SLOTS }; }
-}
-
-function saveEquipSlots(userId: string, slots: EquipSlotState) {
-  safeSetJson(`inet-equip-slots-${userId}`, slots);
-}
-
 // ========================
 // Helpers
 // ========================
@@ -314,13 +304,174 @@ export function PersonalFiles() {
   const [inventorySubTab, setInventorySubTab] = useState<"equipped" | "effects" | "consumables" | "general">("equipped");
   const [cardsSubTab, setCardsSubTab] = useState<"cards" | "nodetrees" | "levelabilities">("cards");
   const [playerNodeTrees, setPlayerNodeTrees] = useState<NodeTree[]>([]);
+  const currentUser = safeGetItem("inet-user") || "";
+  const currentUserId = safeGetItem("inet-user-id") || "";
 
-  // ── Quick items for Sources/Money panels ��─
-  const currentUserForQuick = safeGetItem("inet-user") || "";
-  const [quickItems, setQuickItems] = useState<QuickItem[]>(() => {
-    try { return safeGetJson(`inet-quick-items-${currentUserForQuick}`, []); } catch { return []; }
-  });
-  useDebouncedJsonStorage(`inet-quick-items-${currentUserForQuick}`, quickItems, 400);
+  const [saveToast, setSaveToast] = useState<"saving" | "saved" | "error" | null>(null);
+    const saveToastTimerRef = useRef<number | null>(null);
+
+    const showSaveToast = useCallback((state: "saving" | "saved" | "error") => {
+      setSaveToast(state);
+
+      if (saveToastTimerRef.current) {
+        window.clearTimeout(saveToastTimerRef.current);
+      }
+
+      if (state !== "saving") {
+        saveToastTimerRef.current = window.setTimeout(() => {
+          setSaveToast(null);
+        }, 1400);
+      }
+  }, []);
+
+const saveOpIdRef = useRef(0);
+
+const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
+  const opId = ++saveOpIdRef.current;
+  showSaveToast("saving");
+
+  try {
+    await saveFn();
+
+    if (saveOpIdRef.current === opId) {
+      showSaveToast("saved");
+    }
+  } catch (err) {
+    if (saveOpIdRef.current === opId) {
+      showSaveToast("error");
+    }
+    throw err;
+  }
+}, [showSaveToast]);
+
+
+  const [isHydrating, setIsHydrating] = useState(true);
+  const [quickItems, setQuickItems] = useState<QuickItem[]>([]);
+  const [sourceUsed, setSourceUsed] = useState<SourceUsageEntry[]>([]);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const [proficiencyBonus, setProficiencyBonus] = useState(2);
+  const [skillProficiencies, setSkillProficiencies] = useState<Record<string, false | "prof" | "expert">>({});
+  const [equipSlots, setEquipSlots] = useState<EquipSlotState>({ ...DEFAULT_EQUIP_SLOTS });
+  const [statusEffects, setStatusEffects] = useState<StatusEffectRow[]>([]);
+  const [allPlayers, setAllPlayers] = useState<PlayerData[]>([]);
+  const [allItems, setAllItems] = useState<ManagedItem[]>([]);
+  const [allCards, setAllCards] = useState<ManagedCard[]>([]);
+  const [allInfos, setAllInfos] = useState<ManagedInfo[]>([]);
+  const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
+  const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
+  const [infoSubTabs, setInfoSubTabs] = useState<{ id: string; name: string; order: number }[]>([]);
+
+  const hydratePersonalFiles = useCallback(async () => {
+    if (!currentUserId) {
+      setIsHydrating(false);
+      return;
+    }
+
+    setIsHydrating(true);
+    try {
+      const [
+        players,
+        items,
+        cards,
+        infos,
+        itemTagRows,
+        statusTagRows,
+        infoSubTabRows,
+        quickItemsDoc,
+        sourceUsageDoc,
+        activityLogDoc,
+        skillSettingsDoc,
+        skillProfDoc,
+        equipSlotsDoc,
+        statusEffectsDoc,
+      ] = await Promise.all([
+        appStore.listPlayers<PlayerData>(),
+        appStore.listItems<ManagedItem>(),
+        appStore.listCards<ManagedCard>(),
+        appStore.listInfos<ManagedInfo>(),
+        appStore.listTags<TagDefinition>("item"),
+        appStore.listTags<TagDefinition>("status"),
+        appStore.listInfoSubTabs<{ id: string; name: string; order: number }>(),
+        playerStore.loadQuickItems<QuickItem[]>(currentUserId, []),
+        playerStore.loadSourceUsage<SourceUsageEntry[]>(currentUserId, []),
+        playerStore.loadActivityLog<ActivityLogEntry[]>(currentUserId, []),
+        playerStore.loadSkillSettings<{ proficiencyBonus: number }>(currentUserId, { proficiencyBonus: 2 }),
+        playerStore.loadSkillProficiencies<Record<string, false | "prof" | "expert">>(currentUserId, {}),
+        playerStore.loadEquipmentSlots<EquipSlotState>(currentUserId, { ...DEFAULT_EQUIP_SLOTS }),
+        playerStore.loadStatusEffects<StatusEffectRow[]>(currentUserId, []),
+      ]);
+
+      setAllPlayers(players);
+      setAllItems(items);
+      setAllCards(cards);
+      setAllInfos(infos);
+      setItemTags(itemTagRows);
+      setStatusTags(statusTagRows);
+      setInfoSubTabs(infoSubTabRows);
+      setQuickItems(quickItemsDoc);
+      setSourceUsed(sourceUsageDoc);
+      setActivityLog(activityLogDoc);
+      setProficiencyBonus(skillSettingsDoc.proficiencyBonus ?? 2);
+      setSkillProficiencies(skillProfDoc);
+      setEquipSlots({ ...DEFAULT_EQUIP_SLOTS, ...equipSlotsDoc });
+      setStatusEffects(statusEffectsDoc);
+    } finally {
+      setIsHydrating(false);
+    }
+  }, [currentUserId]);
+
+  const hasHydratedRef = useRef(false);
+
+  useEffect(() => {
+    void hydratePersonalFiles();
+
+    const onFocus = () => {
+      void hydratePersonalFiles();
+    };
+
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [hydratePersonalFiles]);
+
+  useEffect(() => {
+    if (!isHydrating) hasHydratedRef.current = true;
+  }, [isHydrating]);
+
+  useEffect(() => {
+    if (!hasHydratedRef.current || !currentUserId) return;
+
+    const timer = window.setTimeout(() => {
+      showSaveToast("saving");
+
+      void Promise.all([
+        playerStore.saveQuickItems(currentUserId, quickItems),
+        playerStore.saveSourceUsage(currentUserId, sourceUsed),
+        playerStore.saveActivityLog(currentUserId, activityLog),
+        playerStore.saveSkillSettings(currentUserId, { proficiencyBonus }),
+        playerStore.saveSkillProficiencies(currentUserId, skillProficiencies),
+        playerStore.saveEquipmentSlots(currentUserId, equipSlots),
+        playerStore.saveStatusEffects(currentUserId, statusEffects),
+      ])
+        .then(() => showSaveToast("saved"))
+        .catch(() => showSaveToast("error"));
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    currentUserId,
+    quickItems,
+    sourceUsed,
+    activityLog,
+    proficiencyBonus,
+    skillProficiencies,
+    equipSlots,
+    statusEffects,
+    isHydrating,
+    showSaveToast,
+  ]);
+
+
+  // ── Quick items for Sources/Money panels ──
   const [addingQuickCategory, setAddingQuickCategory] = useState<"source" | "money" | "consumable" | null>(null);
   const [quickName, setQuickName] = useState("");
   const [quickQty, setQuickQty] = useState("1");
@@ -330,6 +481,10 @@ export function PersonalFiles() {
   const [viewingQuickItem, setViewingQuickItem] = useState<QuickItem | null>(null);
   const [editingQuickItem, setEditingQuickItem] = useState<QuickItem | null>(null);
   const [hoveredSourceTotal, setHoveredSourceTotal] = useState(false);
+
+  const addActivityLog = (action: ActivityLogEntry["action"], category: ActivityLogEntry["category"], itemName: string, detail: string) => {
+    setActivityLog(prev => [{ id: `al-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, action, category, itemName, detail, timestamp: Date.now() }, ...prev].slice(0, 50));
+  };
 
   const addQuickItem = (cat: "source" | "money" | "consumable") => {
     if (!quickName.trim()) return;
@@ -352,48 +507,9 @@ export function PersonalFiles() {
     setQuickItems(prev => prev.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty + delta) } : i));
   };
 
-  // ── Source Usage Tracking ──
-  const [sourceUsed, setSourceUsed] = useState<SourceUsageEntry[]>(() => {
-    try { return safeGetJson(`inet-source-used-${currentUserForQuick}`, []); } catch { return []; }
-  });
-  useDebouncedJsonStorage(`inet-source-used-${currentUserForQuick}`, sourceUsed, 400);
-
-  // ── Activity Log ──
-  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>(() => {
-    try { return safeGetJson(`inet-activity-log-${currentUserForQuick}`, []); } catch { return []; }
-  });
-  useDebouncedJsonStorage(`inet-activity-log-${currentUserForQuick}`, activityLog, 400);
-  const addActivityLog = (action: ActivityLogEntry["action"], category: ActivityLogEntry["category"], itemName: string, detail: string) => {
-    setActivityLog(prev => [{ id: `al-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, action, category, itemName, detail, timestamp: Date.now() }, ...prev].slice(0, 50));
-  };
-
-  // Current user
-  const currentUser = safeGetItem("inet-user") || "";
-
-  // Proficiency bonus & per-skill proficiency
-  const [proficiencyBonus, setProficiencyBonus] = useState<number>(() => {
-    try { return safeGetJson(`inet-prof-bonus-${currentUser}`, 2); } catch { return 2; }
-  });
-  // Skill proficiency: false/undefined = none, "prof" = proficient, "expert" = expertise (2x bonus)
-  // Migrate old boolean values: true → "prof"
-  const [skillProficiencies, setSkillProficiencies] = useState<Record<string, false | "prof" | "expert">>(() => {
-    try {
-      const raw = safeGetJson(`inet-skill-prof-${currentUser}`, {});
-      const migrated: Record<string, false | "prof" | "expert"> = {};
-      for (const [k, v] of Object.entries(raw)) {
-        if (v === true) migrated[k] = "prof";
-        else if (v === "prof" || v === "expert") migrated[k] = v as "prof" | "expert";
-        else migrated[k] = false;
-      }
-      return migrated;
-    } catch { return {}; }
-  });
-  useDebouncedJsonStorage(`inet-prof-bonus-${currentUser}`, proficiencyBonus, 300);
-  useDebouncedJsonStorage(`inet-skill-prof-${currentUser}`, skillProficiencies, 300);
   const toggleSkillProf = useCallback((skill: string) => {
     setSkillProficiencies(prev => {
       const cur = prev[skill];
-      // Cycle: none → prof → expert → none
       if (!cur) return { ...prev, [skill]: "prof" };
       if (cur === "prof") return { ...prev, [skill]: "expert" };
       return { ...prev, [skill]: false };
@@ -401,7 +517,6 @@ export function PersonalFiles() {
   }, []);
 
   // Equipment slot state
-  const [equipSlots, setEquipSlots] = useState<EquipSlotState>(() => loadEquipSlots(currentUser));
   const [equipSearch, setEquipSearch] = useState("");
   const [equipFilterCat, setEquipFilterCat] = useState<string>("All");
   const [assigningSlot, setAssigningSlot] = useState<EquipSlotId | null>(null);
@@ -453,35 +568,25 @@ export function PersonalFiles() {
     };
   }, []);
 
-  // ========================
-  // Load all DM data from localStorage (single source of truth)
-  // ========================
-  const loadAllData = useCallback(() => {
-    const allPlayers: PlayerData[] = safeGetJson("inet-dm-players", []);
-    const player = allPlayers.find((p) => p.name === currentUser) || null;
-    const items: ManagedItem[] = safeGetJson("inet-dm-items", []);
-    const cards: ManagedCard[] = safeGetJson("inet-dm-cards", []);
-    const infos: ManagedInfo[] = safeGetJson("inet-dm-infos", []);
+  const player = useMemo(
+    () => allPlayers.find((p) => p.id === currentUserId) || null,
+    [allPlayers, currentUserId]
+  );
 
-    const playerItems = player ? items.filter((i) => isAssignedTo(i.assignedTo, player.id)) : [];
-    const playerCards = player ? cards.filter((c) => isAssignedTo(c.assignedTo, player.id)) : [];
-    const playerInfos = player
-      ? infos.filter((i) => isAssignedTo(i.assignedTo, player.id) || isAssignedTo(i.assignedTo, "all"))
-      : [];
+  const playerItems = useMemo(
+    () => player ? allItems.filter((i) => isAssignedTo(i.assignedTo, player.id)) : [],
+    [allItems, player]
+  );
 
-    return { player, playerItems, playerCards, playerInfos };
-  }, [currentUser]);
+  const playerCards = useMemo(
+    () => player ? allCards.filter((c) => isAssignedTo(c.assignedTo, player.id)) : [],
+    [allCards, player]
+  );
 
-  const [data, setData] = useState(loadAllData);
-
-  // Re-read from localStorage when the window gains focus (picks up DM changes)
-  useEffect(() => {
-    const onFocus = () => setData(loadAllData());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [loadAllData]);
-
-  const { player, playerItems, playerCards, playerInfos } = data;
+  const playerInfos = useMemo(
+    () => player ? allInfos.filter((i) => isAssignedTo(i.assignedTo, player.id) || isAssignedTo(i.assignedTo, "all")) : [],
+    [allInfos, player]
+  );
 
   // ========================
   // Editable HP & Wounds — write back to inet-dm-players
@@ -498,33 +603,27 @@ export function PersonalFiles() {
   }, [player?.id, player?.currentHP, player?.currentWounds]);
 
   // Write HP/wounds changes back to inet-dm-players
-  const persistPlayerField = useCallback(
-    (updates: Partial<PlayerData>) => {
-      if (!player) return;
-      const allPlayers: PlayerData[] = safeGetJson("inet-dm-players", []);
-      const updated = allPlayers.map((p) =>
-        p.id === player.id ? { ...p, ...updates } : p
-      );
-      safeSetJson("inet-dm-players", updated);
-      // Also update local data state so everything stays in sync
-      setData((prev) => ({
-        ...prev,
-        player: prev.player ? { ...prev.player, ...updates } : prev.player,
-      }));
-    },
-    [player]
-  );
+  const persistPlayerField = useCallback(async (updates: Partial<PlayerData>) => {
+    if (!player) return;
+
+    const updatedPlayers = allPlayers.map((p) =>
+      p.id === player.id ? { ...p, ...updates } : p
+    );
+
+    setAllPlayers(updatedPlayers);
+    await runSaveWithToast(() => appStore.savePlayers(updatedPlayers));
+  }, [player, allPlayers, runSaveWithToast]);
 
   const handleSetHP = (newHP: number) => {
     const clamped = Math.max(0, Math.min(player?.maxHP ?? 0, newHP));
     setCurrentHP(clamped);
-    persistPlayerField({ currentHP: clamped });
+    void persistPlayerField({ currentHP: clamped });
   };
 
   const handleSetWounds = (newWounds: number) => {
     const clamped = Math.max(0, Math.min(player?.totalWounds ?? 0, newWounds));
     setCurrentWounds(clamped);
-    persistPlayerField({ currentWounds: clamped });
+    void persistPlayerField({ currentWounds: clamped });
   };
 
   // ========================
@@ -546,11 +645,11 @@ export function PersonalFiles() {
     }
   }, [player?.id, player?.tempHP, player?.damageReduction, player?.currentWeight, player?.exhaustion, player?.speed]);
 
-  const handleSetTempHP = (v: number) => { const c = Math.max(0, v); setTempHP(c); persistPlayerField({ tempHP: c }); };
-  const handleSetDR = (v: number) => { const c = Math.max(0, v); setDamageReduction(c); persistPlayerField({ damageReduction: c }); };
-  const handleSetWeight = (v: number) => { const c = Math.max(0, v); setCurrentWeight(c); persistPlayerField({ currentWeight: c }); };
-  const handleSetExhaustion = (v: number) => { const c = Math.max(0, Math.min(player?.maxExhaustion ?? 6, v)); setExhaustion(c); persistPlayerField({ exhaustion: c }); };
-  const handleSetMovement = (v: number) => { const c = Math.max(0, v); setCurrentMovement(c); };
+  const handleSetTempHP = (v: number) => { const c = Math.max(0, v); setTempHP(c); void persistPlayerField({ tempHP: c }); };
+  const handleSetDR = (v: number) => { const c = Math.max(0, v); setDamageReduction(c); void persistPlayerField({ damageReduction: c }); };
+  const handleSetWeight = (v: number) => { const c = Math.max(0, v); setCurrentWeight(c); void persistPlayerField({ currentWeight: c }); };
+  const handleSetExhaustion = (v: number) => { const c = Math.max(0, Math.min(player?.maxExhaustion ?? 6, v)); setExhaustion(c); void persistPlayerField({ exhaustion: c }); };
+  const handleSetMovement = (v: number) => { const c = Math.max(0, v); setCurrentMovement(c); void persistPlayerField({ speed: String(c) }); };
 
   // ========================
   // Character sub-tab (Resources vs Status Effects)
@@ -561,23 +660,8 @@ export function PersonalFiles() {
   // ========================
   // Status Effects & Ability Duration Tracker
   // ========================
-  const statusTags: StatusTag[] = safeGetJson("inet-dm-statusTags", []);
-  const seStorageKey = player ? `inet-player-${player.id}-statusEffects` : "";
-  const [statusEffects, setStatusEffects] = useState<StatusEffectRow[]>(() => seStorageKey ? safeGetJson(seStorageKey, []) : []);
   const [selectedEffectIds, setSelectedEffectIds] = useState<Set<string>>(new Set());
   const [nameDropdownOpenId, setNameDropdownOpenId] = useState<string | null>(null);
-
-  // Persist status effects
-  useEffect(() => {
-    if (seStorageKey) safeSetJson(seStorageKey, statusEffects);
-  }, [statusEffects, seStorageKey]);
-
-  // Reload on focus
-  useEffect(() => {
-    const onFocus = () => { if (seStorageKey) setStatusEffects(safeGetJson(seStorageKey, [])); };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [seStorageKey]);
 
   const addStatusEffect = () => {
     setStatusEffects((prev) => [...prev, { id: `se-${Date.now()}`, name: "", potency: "", duration: "", damage: "", effect: "" }]);
@@ -700,7 +784,6 @@ export function PersonalFiles() {
   const [selectedItem, setSelectedItem] = useState<ManagedItem | null>(null);
 
   // ─��� Player item creation & editing ──
-  const itemTags: TagDefinition[] = safeGetJson("inet-dm-itemTags", []);
   const [editingPlayerItem, setEditingPlayerItem] = useState<ManagedItem | null>(null);
   const [isNewPlayerItem, setIsNewPlayerItem] = useState(false);
 
@@ -729,25 +812,27 @@ export function PersonalFiles() {
     const has = editingPlayerItem.tags.includes(tagName);
     updateEditorField("tags", has ? editingPlayerItem.tags.filter((t) => t !== tagName) : [...editingPlayerItem.tags, tagName]);
   };
-  const savePlayerItem = () => {
+  const savePlayerItem = async () => {
     if (!editingPlayerItem || !editingPlayerItem.name.trim()) return;
-    const allItems: ManagedItem[] = safeGetJson("inet-dm-items", []);
-    if (isNewPlayerItem) {
-      allItems.push(editingPlayerItem);
-    } else {
-      const idx = allItems.findIndex(i => i.id === editingPlayerItem.id);
-      if (idx >= 0) allItems[idx] = editingPlayerItem;
-    }
-    safeSetJson("inet-dm-items", allItems);
+
+    const updatedItems = isNewPlayerItem
+      ? [...allItems, editingPlayerItem]
+      : allItems.map(i => i.id === editingPlayerItem.id ? editingPlayerItem : i);
+
+    setAllItems(updatedItems);
+    await runSaveWithToast(() => appStore.saveItems(updatedItems));
     setEditingPlayerItem(null);
     setIsNewPlayerItem(false);
-    setData(loadAllData());
   };
-  const deletePlayerItem = (id: string) => {
-    const allItems: ManagedItem[] = safeGetJson("inet-dm-items", []);
-    safeSetJson("inet-dm-items", allItems.filter(i => i.id !== id));
-    if (editingPlayerItem?.id === id) { setEditingPlayerItem(null); setIsNewPlayerItem(false); }
-    setData(loadAllData());
+  const deletePlayerItem = async (id: string) => {
+    const updatedItems = allItems.filter(i => i.id !== id);
+    setAllItems(updatedItems);
+    await runSaveWithToast(() => appStore.saveItems(updatedItems));
+
+    if (editingPlayerItem?.id === id) {
+      setEditingPlayerItem(null);
+      setIsNewPlayerItem(false);
+    }
   };
 
   // Cards state
@@ -759,43 +844,36 @@ export function PersonalFiles() {
   const [cardSortBy, setCardSortBy] = useState<"default" | "level" | "actionType" | "sourceType">("default");
 
   // Level Abilities state (per-player)
-  const levelCatsKey = player ? `inet-level-categories-${player.id}` : null;
-  const loadOrAutoCreateLevelCats = useCallback((): { id: string; name: string; order: number; cardIds: string[]; description?: string }[] => {
-    if (!levelCatsKey) return [];
-    let cats: { id: string; name: string; order: number; cardIds: string[]; description?: string }[] = safeGetJson(levelCatsKey, []);
-    if (cats.length === 0 && player && player.level > 0) {
-      cats = Array.from({ length: player.level }, (_, i) => ({
-        id: `lvl-${Date.now()}-${i}`,
-        name: `Level ${i + 1}`,
-        order: player.level - 1 - i,
-        cardIds: [],
-        description: "",
-      }));
-      safeSetJson(levelCatsKey, cats);
+  const loadLevelCategories = useCallback(async () => {
+    if (!player?.id) return [];
+
+    const existing = await appStore.loadPlayerLevelCategories(player.id, []);
+    if (existing.length > 0) return existing;
+
+    const generated = Array.from({ length: player.level }, (_, i) => ({
+      id: `lvl-${Date.now()}-${i}`,
+      name: `Level ${i + 1}`,
+      order: player.level - 1 - i,
+      cardIds: [],
+      description: "",
+    }));
+
+    await appStore.savePlayerLevelCategories(player.id, generated);
+    return generated;
+  }, [player]);
+
+  const [levelCategories, setLevelCategories] = useState<{ id: string; name: string; order: number; cardIds: string[]; description?: string }[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      const cats = await loadLevelCategories();
+      if (!cancelled) setLevelCategories(cats);
     }
-    return cats;
-  }, [levelCatsKey, player]);
-  const [levelCategories, setLevelCategories] = useState<{ id: string; name: string; order: number; cardIds: string[]; description?: string }[]>(() => loadOrAutoCreateLevelCats());
-  // Reload level categories on focus, storage event, player change, or tab switch
-  useEffect(() => {
-    setLevelCategories(loadOrAutoCreateLevelCats());
-  }, [loadOrAutoCreateLevelCats]);
-  // Also reload fresh from localStorage when switching to the levelabilities sub-tab
-  useEffect(() => {
-    if (cardsSubTab === "levelabilities" && levelCatsKey) {
-      setLevelCategories(safeGetJson(levelCatsKey, []));
-    }
-  }, [cardsSubTab, levelCatsKey]);
-  useEffect(() => {
-    if (!levelCatsKey) return;
-    const reload = () => setLevelCategories(safeGetJson(levelCatsKey, []));
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === levelCatsKey) reload();
-    };
-    window.addEventListener("focus", reload);
-    window.addEventListener("storage", onStorage);
-    return () => { window.removeEventListener("focus", reload); window.removeEventListener("storage", onStorage); };
-  }, [levelCatsKey]);
+    void run();
+    return () => { cancelled = true; };
+  }, [loadLevelCategories]);
+
   const [collapsedLevels, setCollapsedLevels] = useState<Set<string>>(new Set());
   const [laSearch, setLaSearch] = useState("");
   const [laActiveTags, setLaActiveTags] = useState<string[]>([]);
@@ -803,12 +881,14 @@ export function PersonalFiles() {
   const [laEditingLevel, setLaEditingLevel] = useState<string | null>(null);
   const [laNewLevelName, setLaNewLevelName] = useState("");
   const [laAddingLevel, setLaAddingLevel] = useState(false);
-  const isDM = (safeGetItem("inet-user-id") || "") === "dm" || currentUser === "DM";
+  const isDM = currentUserId === "dm" || currentUser === "DM";
 
-  const saveLevelCategories = useCallback((cats: typeof levelCategories) => {
+  const saveLevelCategories = useCallback(async (cats: typeof levelCategories) => {
     setLevelCategories(cats);
-    if (levelCatsKey) safeSetJson(levelCatsKey, cats);
-  }, [levelCatsKey]);
+    if (player?.id) {
+      await runSaveWithToast(() => appStore.savePlayerLevelCategories(player.id, cats));
+    }
+  }, [player, runSaveWithToast]);
 
   const toggleLevelCollapse = useCallback((id: string) => {
     setCollapsedLevels(prev => {
@@ -827,7 +907,6 @@ export function PersonalFiles() {
   const [infoSortBy, setInfoSortBy] = useState<"title" | "category" | "newest">("newest");
   const [expandedInfoId, setExpandedInfoId] = useState<string | null>(null);
   const [infoSubTabFilter, setInfoSubTabFilter] = useState<string | null>(null);
-  const infoSubTabs: { id: string; name: string; order: number }[] = safeGetJson("inet-dm-info-subtabs", []);
 
   // Skills data — calculated from actual player stats
   const skillCategories = useMemo(() => {
@@ -948,12 +1027,11 @@ export function PersonalFiles() {
   }, [sourceUsed]);
 
   // ── Balance Source — subtract used source from all source items ──
-  const handleBalanceSource = () => {
+  const handleBalanceSource = async () => {
     if (sourceUsed.length === 0) return;
     const remaining: Record<string, number> = { ...sourceUsedByType };
     const balancedNames: string[] = [];
 
-    // Helper: try to deduct from remaining by source type
     const tryDeduct = (st: string, available: number): number => {
       let toDeduct = 0;
       if (remaining[st] && remaining[st] > 0) {
@@ -975,7 +1053,6 @@ export function PersonalFiles() {
       return toDeduct;
     };
 
-    // 1) Deduct from QuickItems (priority first)
     const updatedQuick = [...quickItems];
     const sourceQuickIdxs = updatedQuick
       .map((qi, idx) => ({ qi, idx }))
@@ -996,33 +1073,42 @@ export function PersonalFiles() {
     }
     setQuickItems(updatedQuick);
 
-    // 2) Deduct from inventory source items (Source::Source Points)
     const hasRemaining = Object.values(remaining).some(v => v > 0);
     if (hasRemaining) {
-      const allItems: ManagedItem[] = safeGetJson("inet-dm-items", []);
+      const updatedItems = [...allItems];
       let itemsChanged = false;
+
       for (const item of sourceItems) {
         const pts = parseInt(item.customFields["Source::Source Points"] || "0", 10);
         if (pts <= 0) continue;
+
         let st = "All";
         for (const t of item.tags) {
           const m = t.match(/^Source Type:\s*(.+)$/i);
           if (m) { st = m[1].trim(); break; }
         }
+
         const toDeduct = tryDeduct(st, pts);
         if (toDeduct > 0) {
           const newPts = Math.max(0, pts - toDeduct);
-          const idx = allItems.findIndex(i => i.id === item.id);
+          const idx = updatedItems.findIndex(i => i.id === item.id);
           if (idx !== -1) {
-            allItems[idx] = { ...allItems[idx], customFields: { ...allItems[idx].customFields, "Source::Source Points": String(newPts) } };
+            updatedItems[idx] = {
+              ...updatedItems[idx],
+              customFields: {
+                ...updatedItems[idx].customFields,
+                "Source::Source Points": String(newPts),
+              },
+            };
             itemsChanged = true;
           }
           balancedNames.push(`${item.name} (-${toDeduct})`);
         }
       }
+
       if (itemsChanged) {
-        safeSetJson("inet-dm-items", allItems);
-        setData(loadAllData());
+        setAllItems(updatedItems);
+        await runSaveWithToast(() => appStore.saveItems(updatedItems));
       }
     }
 
@@ -1055,11 +1141,10 @@ export function PersonalFiles() {
       } else {
         next[slotId] = { itemId };
       }
-      saveEquipSlots(currentUser, next);
       return next;
     });
     setAssigningSlot(null);
-  }, [currentUser]);
+  }, []);
 
   const getItemForSlot = useCallback((slotId: EquipSlotId): ManagedItem | null => {
     const assignment = equipSlots[slotId];
@@ -3996,7 +4081,7 @@ export function PersonalFiles() {
                           {laFilteredCards.length} card{laFilteredCards.length !== 1 ? "s" : ""}
                         </span>
                         <button
-                          onClick={() => { if (levelCatsKey) { setLevelCategories(safeGetJson(levelCatsKey, [])); setData(loadAllData()); } }}
+                          onClick={() => { void (async () => { await hydratePersonalFiles(); if (player?.id) { const cats = await appStore.loadPlayerLevelCategories(player.id, []); setLevelCategories(cats); } })(); }}
                           className={`${retro.raised} px-2 py-1 text-[9px] flex items-center gap-1 ml-auto hover:brightness-125 transition-colors`}
                           style={{ background: theme.cardBg, color: theme.labelColor }}
                           title="Sync level categories from DM changes"
@@ -4221,7 +4306,7 @@ export function PersonalFiles() {
                         cardBg: theme.cardBg,
                         panelBorder: theme.panelBorder,
                       }}
-                      cards={(safeGetJson("inet-dm-cards", []) as ManagedCard[]).map(c => ({ id: c.id, name: c.name, type: c.type, effect: c.effect, actionCost: c.actionCost }))}
+                      cards={allCards.map(c => ({ id: c.id, name: c.name, type: c.type, effect: c.effect, actionCost: c.actionCost }))}
                     />
                   )}
                 </div>
@@ -4360,6 +4445,32 @@ export function PersonalFiles() {
       {player && (
         <MascotPopup context={mascotContext} statusEffectAdded={lastAddedStatusEffect} />
       )}
+
+            {saveToast && (
+              <div
+                className="fixed bottom-4 right-4 z-[200] px-3 py-2 text-[12px] rounded"
+                style={{
+                  background:
+                    saveToast === "error"
+                      ? "#5A1F1F"
+                      : saveToast === "saving"
+                      ? "#1F2A5A"
+                      : "#1F5A2E",
+                  color: "#fff",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                }}
+              >
+                {saveToast === "saving"
+                  ? "Saving..."
+                  : saveToast === "saved"
+                  ? "Saved"
+                  : "Save failed"}
+              </div>
+            )}
+          </div>
+        );
+      }
     </div>
   );
 }
