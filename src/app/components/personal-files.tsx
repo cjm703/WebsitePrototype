@@ -41,6 +41,7 @@ type BuffEntry = { key: string; category: "attribute" | "skill" | "resource"; to
 interface QuickItem { id: string; name: string; qty: number; description?: string; category: "source" | "money" | "consumable"; sourceAmount?: number; sourceType?: string; priority?: boolean; }
 interface SourceUsageEntry { id: string; cardName: string; sourceType: string; amount: number; timestamp: number; }
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
+interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
 
 // ========================
 // Dice Expression Parser — supports NdM dice, P (potency), (), and full PEMDAS
@@ -353,6 +354,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [skillProficiencies, setSkillProficiencies] = useState<Record<string, false | "prof" | "expert">>({});
   const [equipSlots, setEquipSlots] = useState<EquipSlotState>({ ...DEFAULT_EQUIP_SLOTS });
   const [statusEffects, setStatusEffects] = useState<StatusEffectRow[]>([]);
+  const [levelCategories, setLevelCategories] = useState<LevelCategory[]>([]);
   const [allPlayers, setAllPlayers] = useState<PlayerData[]>([]);
   const [allItems, setAllItems] = useState<ManagedItem[]>([]);
   const [allCards, setAllCards] = useState<ManagedCard[]>([]);
@@ -4044,9 +4046,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           {laFilteredCards.length} card{laFilteredCards.length !== 1 ? "s" : ""}
                         </span>
                         <button
-                          onClick={() => {
-                            void hydratePersonalFiles();
-                          }}
+                          onClick={() => { void hydratePersonalFiles(); }}
                           className={`${retro.raised} px-2 py-1 text-[9px] flex items-center gap-1 ml-auto hover:brightness-125 transition-colors`}
                           style={{ background: theme.cardBg, color: theme.labelColor }}
                           title="Sync level categories from DM changes"
