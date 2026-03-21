@@ -68,6 +68,35 @@ async function createSession(playerId: string) {
   return { rawToken, expiresAt };
 }
 
+
+async function ensurePlayerExists(playerId: string) {
+  const supabase = admin();
+
+  const { data, error } = await supabase
+    .from("app_players")
+    .select("id")
+    .eq("id", playerId)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (data) return;
+
+  const now = new Date().toISOString();
+
+  const { error: insertError } = await supabase
+    .from("app_players")
+    .insert({
+      id: playerId,
+      data: {
+        name: playerId,
+      },
+      updated_at: now,
+    });
+
+  if (insertError) throw new Error(insertError.message);
+}
+
+
 function getSessionToken(c: any): string {
   return (c.req.header("X-Session-Token") || "").trim();
 }
@@ -144,6 +173,8 @@ function registerRoutes(prefix: string) {
       console.log("VERIFY STORED:", stored);
 
       const playerId = profileId;
+
+      await ensurePlayerExists(playerId);
 
       if (!stored || !stored.hash) {
         const session = await createSession(playerId);
