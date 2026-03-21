@@ -12,6 +12,7 @@ const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-
 const headers = () => ({
   "Content-Type": "application/json",
   Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+  apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
 });
 
 /** Resilient fetch wrapper with timeout and retry */
@@ -67,21 +68,31 @@ export async function setAuthCode(
  * Returns { valid, hasCode }.
  * - If `hasCode` is false the profile has no code — always valid.
  */
+
+export type VerifyAuthCodeResult = {
+  valid: boolean;
+  hasCode: boolean;
+  playerId?: string;
+  sessionToken?: string;
+};
+
 export async function verifyAuthCode(
   profileId: string,
   code: string
-): Promise<{ valid: boolean; hasCode: boolean }> {
+): Promise<VerifyAuthCodeResult> {
   const res = await resilientFetch(`${API_BASE}/verify`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ profileId, code }),
   });
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(
       `Failed to verify auth code for ${profileId}: ${body.error || res.statusText}`
     );
   }
+
   return res.json();
 }
 

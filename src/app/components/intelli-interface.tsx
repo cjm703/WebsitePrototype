@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { logoutPlayerSession } from "@/lib/player-state-api";
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { S_MUTED, S_SUBTLE, S_TEXT, S_RED, S_ACCENT, S_GREEN_BTN, SUNKEN_INPUT } from "./shared-styles";
@@ -266,10 +267,17 @@ export function IntelliInterface() {
     navigate(`/interface/inet-search?q=${encodeURIComponent(query)}`);
   };
 
-  const handleLogout = () => {
-    safeRemoveItem("inet-user");
-    safeRemoveItem("inet-user-id");
-    navigate("/");
+  const handleLogout = async () => {
+    try {
+      await logoutPlayerSession();
+    } catch (err) {
+      console.warn("Session logout failed:", err);
+    } finally {
+      safeRemoveItem("inet-user");
+      safeRemoveItem("inet-user-id");
+      safeRemoveItem("inet-session-token");
+      navigate("/");
+    }
   };
 
   const sections = [

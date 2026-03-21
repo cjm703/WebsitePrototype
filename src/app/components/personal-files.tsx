@@ -13,7 +13,7 @@ import { safeGetItem } from "./safe-storage";
 import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
 import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
-import { playerStore } from "@/lib/player-store";
+import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo, TagDefinition } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
@@ -377,13 +377,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         itemTagRows,
         statusTagRows,
         infoSubTabRows,
-        quickItemsDoc,
-        sourceUsageDoc,
-        activityLogDoc,
-        skillSettingsDoc,
-        skillProfDoc,
-        equipSlotsDoc,
-        statusEffectsDoc,
+        playerState,
       ] = await Promise.all([
         appStore.listPlayers<PlayerData>(),
         appStore.listItems<ManagedItem>(),
@@ -392,13 +386,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         appStore.listTags<TagDefinition>("item"),
         appStore.listTags<TagDefinition>("status"),
         appStore.listInfoSubTabs<{ id: string; name: string; order: number }>(),
-        playerStore.loadQuickItems<QuickItem[]>(currentUserId, []),
-        playerStore.loadSourceUsage<SourceUsageEntry[]>(currentUserId, []),
-        playerStore.loadActivityLog<ActivityLogEntry[]>(currentUserId, []),
-        playerStore.loadSkillSettings<{ proficiencyBonus: number }>(currentUserId, { proficiencyBonus: 2 }),
-        playerStore.loadSkillProficiencies<Record<string, false | "prof" | "expert">>(currentUserId, {}),
-        playerStore.loadEquipmentSlots<EquipSlotState>(currentUserId, { ...DEFAULT_EQUIP_SLOTS }),
-        playerStore.loadStatusEffects<StatusEffectRow[]>(currentUserId, []),
+        loadPlayerState(),
       ]);
 
       setAllPlayers(players);
@@ -408,13 +396,15 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setItemTags(itemTagRows);
       setStatusTags(statusTagRows);
       setInfoSubTabs(infoSubTabRows);
-      setQuickItems(quickItemsDoc);
-      setSourceUsed(sourceUsageDoc);
-      setActivityLog(activityLogDoc);
-      setProficiencyBonus(skillSettingsDoc.proficiencyBonus ?? 2);
-      setSkillProficiencies(skillProfDoc);
-      setEquipSlots({ ...DEFAULT_EQUIP_SLOTS, ...equipSlotsDoc });
-      setStatusEffects(statusEffectsDoc);
+
+      setQuickItems(playerState.quickItems ?? []);
+      setSourceUsed(playerState.sourceUsage ?? []);
+      setActivityLog(playerState.activityLog ?? []);
+      setProficiencyBonus(playerState.skillSettings?.proficiencyBonus ?? 2);
+      setSkillProficiencies(playerState.skillProficiencies ?? {});
+      setEquipSlots({ ...DEFAULT_EQUIP_SLOTS, ...(playerState.equipmentSlots ?? {}) });
+      setStatusEffects(playerState.statusEffects ?? []);
+      setLevelCategories(playerState.levelCategories ?? []);
     } finally {
       setIsHydrating(false);
     }
@@ -443,17 +433,21 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const timer = window.setTimeout(() => {
       showSaveToast("saving");
 
-      void Promise.all([
-        playerStore.saveQuickItems(currentUserId, quickItems),
-        playerStore.saveSourceUsage(currentUserId, sourceUsed),
-        playerStore.saveActivityLog(currentUserId, activityLog),
-        playerStore.saveSkillSettings(currentUserId, { proficiencyBonus }),
-        playerStore.saveSkillProficiencies(currentUserId, skillProficiencies),
-        playerStore.saveEquipmentSlots(currentUserId, equipSlots),
-        playerStore.saveStatusEffects(currentUserId, statusEffects),
-      ])
+      void savePlayerState({
+        quickItems,
+        sourceUsage: sourceUsed,
+        activityLog,
+        skillSettings: { proficiencyBonus },
+        skillProficiencies,
+        equipmentSlots: equipSlots,
+        statusEffects,
+        levelCategories,
+      })
         .then(() => showSaveToast("saved"))
-        .catch(() => showSaveToast("error"));
+        .catch((err) => {
+          console.error("Personal Files save failed:", err);
+          showSaveToast("error");
+        });
     }, 400);
 
     return () => window.clearTimeout(timer);
@@ -844,35 +838,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [cardSortBy, setCardSortBy] = useState<"default" | "level" | "actionType" | "sourceType">("default");
 
   // Level Abilities state (per-player)
-  const loadLevelCategories = useCallback(async () => {
-    if (!player?.id) return [];
-
-    const existing = await appStore.loadPlayerLevelCategories(player.id, []);
-    if (existing.length > 0) return existing;
-
-    const generated = Array.from({ length: player.level }, (_, i) => ({
-      id: `lvl-${Date.now()}-${i}`,
-      name: `Level ${i + 1}`,
-      order: player.level - 1 - i,
-      cardIds: [],
-      description: "",
-    }));
-
-    await appStore.savePlayerLevelCategories(player.id, generated);
-    return generated;
-  }, [player]);
-
-  const [levelCategories, setLevelCategories] = useState<{ id: string; name: string; order: number; cardIds: string[]; description?: string }[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      const cats = await loadLevelCategories();
-      if (!cancelled) setLevelCategories(cats);
-    }
-    void run();
-    return () => { cancelled = true; };
-  }, [loadLevelCategories]);
 
   const [collapsedLevels, setCollapsedLevels] = useState<Set<string>>(new Set());
   const [laSearch, setLaSearch] = useState("");
@@ -885,10 +850,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const saveLevelCategories = useCallback(async (cats: typeof levelCategories) => {
     setLevelCategories(cats);
-    if (player?.id) {
-      await runSaveWithToast(() => appStore.savePlayerLevelCategories(player.id, cats));
-    }
-  }, [player, runSaveWithToast]);
+  }, []);
 
   const toggleLevelCollapse = useCallback((id: string) => {
     setCollapsedLevels(prev => {

@@ -172,9 +172,12 @@ export function LoginPage() {
       return;
     }
 
+    let result;
+
     try {
       // Verify auth code via server
-      const result = await verifyAuthCode(selectedProfile.id, password);
+      result = await verifyAuthCode(selectedProfile.id, password);
+
       if (!result.valid) {
         setError("INVALID AUTHORIZATION CODE");
         return;
@@ -190,7 +193,11 @@ export function LoginPage() {
 
     setTimeout(() => {
       try { safeSetItem("inet-user", selectedProfile.name); } catch {}
-      try { safeSetItem("inet-user-id", selectedProfile.id); } catch {}
+      try { safeSetItem("inet-user-id", result.playerId ?? selectedProfile.id); } catch {}
+      try {
+        if (result.sessionToken) safeSetItem("inet-session-token", result.sessionToken);
+      } catch {}
+
       navigate("/interface");
     }, 800);
   };

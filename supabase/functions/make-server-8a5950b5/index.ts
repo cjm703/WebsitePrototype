@@ -19,7 +19,7 @@ app.use(
   "/*",
   cors({
     origin: "*",
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "apikey", "X-Session-Token"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -56,9 +56,17 @@ async function createSession(playerId: string) {
   return { rawToken, expiresAt };
 }
 
+function getSessionToken(c: any): string {
+  const custom = c.req.header("X-Session-Token") || "";
+  if (custom) return custom;
+
+  const auth = c.req.header("Authorization") || "";
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+}
+
 async function resolveSessionPlayerId(c: any): Promise<string> {
   const auth = c.req.header("Authorization") || "";
-  const rawToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const rawToken = getSessionToken(c);
   if (!rawToken) throw new Error("Missing session token");
 
   const tokenHash = await sessionTokenKey(rawToken);
@@ -506,7 +514,7 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
     app.post(`${prefix}/session/logout`, async (c) => {
       try {
         const auth = c.req.header("Authorization") || "";
-        const rawToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+         const rawToken = getSessionToken(c);
         if (!rawToken) return c.json({ error: "Missing session token" }, 400);
 
         const tokenHash = await sessionTokenKey(rawToken);
