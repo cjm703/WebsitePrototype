@@ -88,6 +88,7 @@ async function ensurePlayerExists(playerId: string) {
     .insert({
       id: playerId,
       data: {
+        id: playerId,
         name: playerId,
       },
       updated_at: now,
@@ -130,6 +131,74 @@ function requireDM(playerId: string) {
 
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
+
+
+async function listEntityRows(table: "app_players" | "app_deleted_players") {
+  const supabase = admin();
+  const { data, error } = await supabase
+    .from(table)
+    .select("id, data")
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    ...(row.data ?? {}),
+  }));
+}
+
+async function replaceEntityRows(
+  table: "app_players" | "app_deleted_players",
+  rows: Array<{ id: string; [key: string]: any }>,
+) {
+  const supabase = admin();
+  const now = new Date().toISOString();
+
+  const nextIds = rows
+    .map((row) => typeof row?.id === "string" ? row.id.trim() : "")
+    .filter(Boolean);
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from(table)
+    .select("id");
+
+  if (existingError) throw new Error(existingError.message);
+
+  const existingIds = (existingRows ?? []).map((row: any) => row.id as string);
+  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
+
+  const payload = rows.map((row) => ({
+    id: row.id,
+    data: { ...row, id: row.id },
+    updated_at: now,
+  }));
+
+  if (payload.length > 0) {
+    const { error: upsertError } = await supabase
+      .from(table)
+      .upsert(payload, { onConflict: "id" });
+
+    if (upsertError) throw new Error(upsertError.message);
+  }
+
+  if (idsToDelete.length > 0) {
+    if (table === "app_players") {
+      const { error: revokeError } = await supabase
+        .from("app_sessions")
+        .delete()
+        .in("player_id", idsToDelete);
+      if (revokeError) throw new Error(revokeError.message);
+    }
+
+    const { error: deleteError } = await supabase
+      .from(table)
+      .delete()
+      .in("id", idsToDelete);
+
+    if (deleteError) throw new Error(deleteError.message);
+  }
+}
 
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
@@ -602,6 +671,77 @@ function registerRoutes(prefix: string) {
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 500);
+    }
+  });
+
+
+  app.get(`${prefix}/dm/players`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const players = await listEntityRows("app_players");
+      return c.json({ players });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/players/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const body = await c.req.json();
+      if (!Array.isArray(body?.players)) {
+        return c.json({ error: "players must be an array" }, 400);
+      }
+
+      await replaceEntityRows("app_players", body.players);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/deleted-players`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const players = await listEntityRows("app_deleted_players");
+      return c.json({ players });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/deleted-players/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const body = await c.req.json();
+      if (!Array.isArray(body?.players)) {
+        return c.json({ error: "players must be an array" }, 400);
+      }
+
+      await replaceEntityRows("app_deleted_players", body.players);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
     }
   });
 

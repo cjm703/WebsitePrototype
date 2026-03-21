@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -448,8 +449,8 @@ useEffect(() => {
         reactionData,
         nodeTreeData,
       ] = await Promise.all([
-        appStore.listPlayers<PlayerData>(),
-        appStore.listDeletedPlayers<PlayerData>(),
+        loadDMPlayers() as Promise<PlayerData[]>,
+        loadDMDeletedPlayers() as Promise<PlayerData[]>,
         appStore.listTags<TagDefinition>("item"),
         appStore.listTags<TagDefinition>("card"),
         appStore.listTags<TagDefinition>("info"),
@@ -502,7 +503,7 @@ useEffect(() => {
 async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await appStore.savePlayers(next);
+    await saveDMPlayers(next as unknown as Record<string, unknown>[]);
     setPlayers(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save players"));
@@ -513,7 +514,7 @@ async function persistPlayers(next: PlayerData[]) {
 async function persistDeletedPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await appStore.saveDeletedPlayers(next);
+    await saveDMDeletedPlayers(next as unknown as Record<string, unknown>[]);
     setDeletedPlayers(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save deleted players"));

@@ -61,3 +61,27 @@ export async function logoutPlayerSession() {
     safeRemoveItem("inet-session-token");
   }
 }
+
+export async function loadDMPlayers() {
+  const body = await apiFetch("/dm/players", { method: "GET" });
+  return body.players ?? [];
+}
+
+export async function saveDMPlayers(players: Record<string, unknown>[]) {
+  return apiFetch("/dm/players/save", {
+    method: "POST",
+    body: JSON.stringify({ players }),
+  });
+}
+
+export async function loadDMDeletedPlayers() {
+  const body = await apiFetch("/dm/deleted-players", { method: "GET" });
+  return body.players ?? [];
+}
+
+export async function saveDMDeletedPlayers(players: Record<string, unknown>[]) {
+  return apiFetch("/dm/deleted-players/save", {
+    method: "POST",
+    body: JSON.stringify({ players }),
+  });
+}

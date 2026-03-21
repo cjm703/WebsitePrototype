@@ -372,7 +372,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setIsHydrating(true);
     try {
       const [
-        players,
         items,
         cards,
         infos,
@@ -381,7 +380,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         infoSubTabRows,
         playerState,
       ] = await Promise.all([
-        appStore.listPlayers<PlayerData>(),
         appStore.listItems<ManagedItem>(),
         appStore.listCards<ManagedCard>(),
         appStore.listInfos<ManagedInfo>(),
@@ -391,7 +389,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         loadPlayerState(),
       ]);
 
-      setAllPlayers(players);
+      setAllPlayers(playerState.player ? [playerState.player] : []);
       setAllItems(items);
       setAllCards(cards);
       setAllInfos(infos);
@@ -603,13 +601,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const persistPlayerField = useCallback(async (updates: Partial<PlayerData>) => {
     if (!player) return;
 
-    const updatedPlayers = allPlayers.map((p) =>
-      p.id === player.id ? { ...p, ...updates } : p
-    );
+    const updatedPlayer = { ...player, ...updates };
 
-    setAllPlayers(updatedPlayers);
-    await runSaveWithToast(() => appStore.savePlayers(updatedPlayers));
-  }, [player, allPlayers, runSaveWithToast]);
+    setAllPlayers([updatedPlayer]);
+    await runSaveWithToast(() => savePlayerState({ playerPatch: updates }));
+  }, [player, runSaveWithToast]);
 
   const handleSetHP = (newHP: number) => {
     const clamped = Math.max(0, Math.min(player?.maxHP ?? 0, newHP));
