@@ -65,7 +65,7 @@ export async function setAuthCode(
 
 /**
  * Verify a plain-text code against the server-stored hash.
- * Returns { valid, hasCode }.
+ * Returns { valid, hasCode } and, on success, may also include playerId/sessionToken.
  * - If `hasCode` is false the profile has no code — always valid.
  */
 

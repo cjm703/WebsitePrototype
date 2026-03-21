@@ -460,6 +460,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     skillProficiencies,
     equipSlots,
     statusEffects,
+    levelCategories,
     isHydrating,
     showSaveToast,
   ]);
@@ -4043,7 +4044,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           {laFilteredCards.length} card{laFilteredCards.length !== 1 ? "s" : ""}
                         </span>
                         <button
-                          onClick={() => { void (async () => { await hydratePersonalFiles(); if (player?.id) { const cats = await appStore.loadPlayerLevelCategories(player.id, []); setLevelCategories(cats); } })(); }}
+                          onClick={() => {
+                            void hydratePersonalFiles();
+                          }}
                           className={`${retro.raised} px-2 py-1 text-[9px] flex items-center gap-1 ml-auto hover:brightness-125 transition-colors`}
                           style={{ background: theme.cardBg, color: theme.labelColor }}
                           title="Sync level categories from DM changes"

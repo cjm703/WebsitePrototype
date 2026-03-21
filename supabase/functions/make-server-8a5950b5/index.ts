@@ -1,9 +1,8 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger"
+import { logger } from "npm:hono/logger";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.ts";
-
 
 const app = new Hono();
 
@@ -12,7 +11,6 @@ const admin = () =>
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-
 
 app.use("*", logger(console.log));
 app.use(
@@ -57,15 +55,18 @@ async function createSession(playerId: string) {
 }
 
 function getSessionToken(c: any): string {
-  const custom = c.req.header("X-Session-Token") || "";
+  const custom = (c.req.header("X-Session-Token") || "").trim();
   if (custom) return custom;
 
   const auth = c.req.header("Authorization") || "";
-  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const anonKey = (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
+
+  if (!bearer || bearer === anonKey) return "";
+  return bearer;
 }
 
 async function resolveSessionPlayerId(c: any): Promise<string> {
-  const auth = c.req.header("Authorization") || "";
   const rawToken = getSessionToken(c);
   if (!rawToken) throw new Error("Missing session token");
 
@@ -92,7 +93,6 @@ function requireDM(playerId: string) {
   }
 }
 
-
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 
@@ -115,57 +115,57 @@ function registerRoutes(prefix: string) {
     return c.json({ success: true });
   });
 
-app.post(`${prefix}/auth-codes/verify`, async (c) => {
-  try {
-    const body = await c.req.json();
-    console.log("VERIFY BODY:", body);
+  app.post(`${prefix}/auth-codes/verify`, async (c) => {
+    try {
+      const body = await c.req.json();
+      console.log("VERIFY BODY:", body);
 
-    const { profileId, code } = body;
-    if (!profileId || typeof profileId !== "string") {
-      return c.json({ error: "Missing or invalid profileId" }, 400);
-    }
+      const { profileId, code } = body;
+      if (!profileId || typeof profileId !== "string") {
+        return c.json({ error: "Missing or invalid profileId" }, 400);
+      }
 
-    const key = authKey(profileId);
-    console.log("VERIFY KEY:", key);
+      const key = authKey(profileId);
+      console.log("VERIFY KEY:", key);
 
-    const stored = await kv.get(key);
-    console.log("VERIFY STORED:", stored);
+      const stored = await kv.get(key);
+      console.log("VERIFY STORED:", stored);
 
-    const playerId = profileId;
+      const playerId = profileId;
 
-    if (!stored || !stored.hash) {
+      if (!stored || !stored.hash) {
+        const session = await createSession(playerId);
+        return c.json({
+          valid: true,
+          hasCode: false,
+          playerId,
+          sessionToken: session.rawToken,
+        });
+      }
+
+      const inputHash = await sha256(code || "");
+      const valid = inputHash === stored.hash;
+
+      if (!valid) {
+        return c.json({
+          valid: false,
+          hasCode: true,
+        });
+      }
+
       const session = await createSession(playerId);
+
       return c.json({
         valid: true,
-        hasCode: false,
+        hasCode: true,
         playerId,
         sessionToken: session.rawToken,
       });
+    } catch (err) {
+      console.log("VERIFY ERROR FULL:", err);
+      return c.json({ error: String(err) }, 500);
     }
-
-    const inputHash = await sha256(code || "");
-    const valid = inputHash === stored.hash;
-
-    if (!valid) {
-      return c.json({
-        valid: false,
-        hasCode: true,
-      });
-    }
-
-    const session = await createSession(playerId);
-
-    return c.json({
-      valid: true,
-      hasCode: true,
-      playerId,
-      sessionToken: session.rawToken,
-    });
-  } catch (err) {
-    console.log("VERIFY ERROR FULL:", err);
-    return c.json({ error: String(err) }, 500);
-  }
-});
+  });
 
   app.post(`${prefix}/auth-codes/status`, async (c) => {
     try {
@@ -379,8 +379,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_quick_items").upsert(
             { player_id: playerId, data: body.quickItems, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -388,8 +388,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_source_usage_log").upsert(
             { player_id: playerId, data: body.sourceUsage, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -397,8 +397,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_activity_log").upsert(
             { player_id: playerId, data: body.activityLog, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -406,8 +406,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_skill_settings").upsert(
             { player_id: playerId, data: body.skillSettings, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -415,8 +415,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_skill_proficiencies").upsert(
             { player_id: playerId, data: body.skillProficiencies, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -424,8 +424,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_equipment_slots").upsert(
             { player_id: playerId, data: body.equipmentSlots, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -433,8 +433,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_status_effects").upsert(
             { player_id: playerId, data: body.statusEffects, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -442,8 +442,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_level_categories").upsert(
             { player_id: playerId, data: body.levelCategories, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -451,8 +451,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
         writes.push(
           supabase.from("player_node_tree_unlocks").upsert(
             { player_id: playerId, data: body.nodeUnlocks, updated_at: now },
-            { onConflict: "player_id" }
-          )
+            { onConflict: "player_id" },
+          ),
         );
       }
 
@@ -474,8 +474,8 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
               data: { ...currentPlayer, ...body.playerPatch },
               updated_at: now,
             },
-            { onConflict: "id" }
-          )
+            { onConflict: "id" },
+          ),
         );
       }
 
@@ -490,15 +490,13 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
               data: item,
               updated_at: now,
             },
-            { onConflict: "id" }
-          )
+            { onConflict: "id" },
+          ),
         );
       }
 
       if ("deleteItemId" in body) {
-        writes.push(
-          supabase.from("app_items").delete().eq("id", body.deleteItemId)
-        );
+        writes.push(supabase.from("app_items").delete().eq("id", body.deleteItemId));
       }
 
       const results = await Promise.all(writes);
@@ -511,37 +509,36 @@ app.post(`${prefix}/auth-codes/verify`, async (c) => {
     }
   });
 
-    app.post(`${prefix}/session/logout`, async (c) => {
-      try {
-        const auth = c.req.header("Authorization") || "";
-         const rawToken = getSessionToken(c);
-        if (!rawToken) return c.json({ error: "Missing session token" }, 400);
+  app.post(`${prefix}/session/logout`, async (c) => {
+    try {
+      const rawToken = getSessionToken(c);
+      if (!rawToken) return c.json({ error: "Missing session token" }, 400);
 
-        const tokenHash = await sessionTokenKey(rawToken);
-        const supabase = admin();
+      const tokenHash = await sessionTokenKey(rawToken);
+      const supabase = admin();
 
-        const { error } = await supabase
-          .from("app_sessions")
-          .update({ revoked: true })
-          .eq("token_hash", tokenHash);
+      const { error } = await supabase
+        .from("app_sessions")
+        .update({ revoked: true })
+        .eq("token_hash", tokenHash);
 
-        if (error) return c.json({ error: error.message }, 500);
-        return c.json({ ok: true });
-      } catch (err) {
-        return c.json({ error: String(err) }, 500);
-      }
-    });
+      if (error) return c.json({ error: error.message }, 500);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 500);
+    }
+  });
 
-    app.get(`${prefix}/dm/test`, async (c) => {
-      try {
-        const playerId = await resolveSessionPlayerId(c);
-        requireDM(playerId);
+  app.get(`${prefix}/dm/test`, async (c) => {
+    try {
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
 
-        return c.json({ ok: true, dm: true });
-      } catch (err) {
-        return c.json({ error: String(err) }, 403);
-      }
-    });
+      return c.json({ ok: true, dm: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
 
   app.get(`${prefix}/debug-kv`, async (c) => {
     try {
