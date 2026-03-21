@@ -828,19 +828,24 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const savePlayerItem = async () => {
     if (!editingPlayerItem || !editingPlayerItem.name.trim()) return;
 
+    const itemToSave = editingPlayerItem;
     const updatedItems = isNewPlayerItem
-      ? [...allItems, editingPlayerItem]
-      : allItems.map(i => i.id === editingPlayerItem.id ? editingPlayerItem : i);
+      ? [...allItems, itemToSave]
+      : allItems.map(i => i.id === itemToSave.id ? itemToSave : i);
 
     setAllItems(updatedItems);
-    await runSaveWithToast(() => appStore.saveItems(updatedItems));
+    await runSaveWithToast(async () => {
+      await savePlayerState({ saveItem: itemToSave });
+    });
     setEditingPlayerItem(null);
     setIsNewPlayerItem(false);
   };
   const deletePlayerItem = async (id: string) => {
     const updatedItems = allItems.filter(i => i.id !== id);
     setAllItems(updatedItems);
-    await runSaveWithToast(() => appStore.saveItems(updatedItems));
+    await runSaveWithToast(async () => {
+      await savePlayerState({ deleteItemId: id });
+    });
 
     if (editingPlayerItem?.id === id) {
       setEditingPlayerItem(null);
@@ -1089,7 +1094,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
       if (itemsChanged) {
         setAllItems(updatedItems);
-        await runSaveWithToast(() => appStore.saveItems(updatedItems));
+        await runSaveWithToast(async () => {
+          const changedSourceItems = updatedItems.filter((item) =>
+            isAssignedTo(item.assignedTo, player?.id || "") &&
+            item.tags.some((t) => t.toLowerCase() === "source")
+          );
+
+          for (const item of changedSourceItems) {
+            await savePlayerState({ saveItem: item });
+          }
+        });
       }
     }
 
