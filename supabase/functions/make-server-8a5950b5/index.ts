@@ -12,6 +12,20 @@ const admin = () =>
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
+const expectedApiKey = (
+  Deno.env.get("SB_PUBLISHABLE_KEY") ||
+  Deno.env.get("SUPABASE_ANON_KEY") ||
+  ""
+).trim();
+
+function requireApiKey(c: any) {
+  const apiKey = (c.req.header("apikey") || "").trim();
+  if (!expectedApiKey || apiKey !== expectedApiKey) {
+    return c.json({ error: "Invalid API key" }, 401);
+  }
+  return null;
+}
+
 app.use("*", logger(console.log));
 app.use(
   "/*",
@@ -55,15 +69,7 @@ async function createSession(playerId: string) {
 }
 
 function getSessionToken(c: any): string {
-  const custom = (c.req.header("X-Session-Token") || "").trim();
-  if (custom) return custom;
-
-  const auth = c.req.header("Authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  const anonKey = (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
-
-  if (!bearer || bearer === anonKey) return "";
-  return bearer;
+  return (c.req.header("X-Session-Token") || "").trim();
 }
 
 async function resolveSessionPlayerId(c: any): Promise<string> {
@@ -102,6 +108,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/auth-codes/set`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const { profileId, code } = await c.req.json();
     if (!profileId || typeof profileId !== "string") {
       return c.json({ error: "Missing or invalid profileId" }, 400);
@@ -117,6 +126,9 @@ function registerRoutes(prefix: string) {
 
   app.post(`${prefix}/auth-codes/verify`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const body = await c.req.json();
       console.log("VERIFY BODY:", body);
 
@@ -169,6 +181,9 @@ function registerRoutes(prefix: string) {
 
   app.post(`${prefix}/auth-codes/status`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const body = await c.req.json();
       console.log("STATUS BODY:", body);
 
@@ -200,6 +215,9 @@ function registerRoutes(prefix: string) {
 
   app.get(`${prefix}/auth-codes/profiles`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const supabase = admin();
 
       const { data, error } = await supabase
@@ -223,6 +241,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.delete(`${prefix}/auth-codes/:profileId`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const profileId = c.req.param("profileId");
     if (!profileId) {
       return c.json({ error: "Missing profileId" }, 400);
@@ -233,6 +254,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/auth-codes/migrate`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const { codes } = await c.req.json();
     if (!Array.isArray(codes)) {
       return c.json({ error: "codes must be an array" }, 400);
@@ -253,6 +277,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/profile-picture/upload`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const { userId, imageData } = await c.req.json();
     if (!userId || typeof userId !== "string") {
       return c.json({ error: "Missing or invalid userId" }, 400);
@@ -272,6 +299,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.get(`${prefix}/profile-picture/:userId`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const userId = c.req.param("userId");
     if (!userId) {
       return c.json({ error: "Missing userId" }, 400);
@@ -286,6 +316,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/profile-picture/batch`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const { userIds } = await c.req.json();
     if (!Array.isArray(userIds)) {
       return c.json({ error: "userIds must be an array" }, 400);
@@ -304,6 +337,9 @@ function registerRoutes(prefix: string) {
   });
 
   app.delete(`${prefix}/profile-picture/:userId`, async (c) => {
+    const unauthorized = requireApiKey(c);
+    if (unauthorized) return unauthorized;
+
     const userId = c.req.param("userId");
     if (!userId) {
       return c.json({ error: "Missing userId" }, 400);
@@ -315,6 +351,9 @@ function registerRoutes(prefix: string) {
 
   app.get(`${prefix}/player-state`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const playerId = await resolveSessionPlayerId(c);
       const supabase = admin();
 
@@ -368,6 +407,9 @@ function registerRoutes(prefix: string) {
 
   app.post(`${prefix}/player-state`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const playerId = await resolveSessionPlayerId(c);
       const body = await c.req.json();
       const supabase = admin();
@@ -511,6 +553,9 @@ function registerRoutes(prefix: string) {
 
   app.post(`${prefix}/session/logout`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const rawToken = getSessionToken(c);
       if (!rawToken) return c.json({ error: "Missing session token" }, 400);
 
@@ -531,6 +576,9 @@ function registerRoutes(prefix: string) {
 
   app.get(`${prefix}/dm/test`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const playerId = await resolveSessionPlayerId(c);
       requireDM(playerId);
 
@@ -542,6 +590,9 @@ function registerRoutes(prefix: string) {
 
   app.get(`${prefix}/debug-kv`, async (c) => {
     try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
       const testKey = "debug-test";
       await kv.set(testKey, { ok: true, time: Date.now() });
       const value = await kv.get(testKey);
