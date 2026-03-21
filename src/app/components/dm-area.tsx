@@ -105,6 +105,30 @@ const initialItems: ManagedItem[] = sharedInitialItems;
 const initialCards: ManagedCard[] = sharedInitialCards;
 const initialInfos: ManagedInfo[] = sharedInitialInfos;
 
+function mergePlayerWithTemplate(player: PlayerData): PlayerData {
+  const template = initialPlayers.find((p) => p.id === player.id);
+  return {
+    ...(template ?? {} as PlayerData),
+    ...player,
+    stats: { ...defaultStats, ...(template?.stats ?? {}), ...(player.stats ?? {}) },
+  } as PlayerData;
+}
+
+function mergePlayersWithDefaults(players: PlayerData[]): PlayerData[] {
+  const merged = new Map<string, PlayerData>();
+
+  for (const player of initialPlayers as PlayerData[]) {
+    merged.set(player.id, mergePlayerWithTemplate(player));
+  }
+
+  for (const player of players) {
+    if (!player?.id) continue;
+    merged.set(player.id, mergePlayerWithTemplate(player));
+  }
+
+  return Array.from(merged.values());
+}
+
 // ========================
 // Custom Reaction Manager (embedded in DM Area)
 // ========================
@@ -467,8 +491,8 @@ useEffect(() => {
 
       if (cancelled) return;
 
-      setPlayers(playersData.length ? playersData : (initialPlayers as PlayerData[]));
-      setDeletedPlayers(deletedPlayersData);
+      setPlayers(mergePlayersWithDefaults(playersData));
+      setDeletedPlayers(mergePlayersWithDefaults(deletedPlayersData));
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
       setInfoTags(infoTagData.length ? infoTagData : initialInfoTags);
@@ -504,7 +528,7 @@ async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
     await saveDMPlayers(next as unknown as Record<string, unknown>[]);
-    setPlayers(next);
+    setPlayers(mergePlayersWithDefaults(next));
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save players"));
     throw err;
@@ -515,7 +539,7 @@ async function persistDeletedPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
     await saveDMDeletedPlayers(next as unknown as Record<string, unknown>[]);
-    setDeletedPlayers(next);
+    setDeletedPlayers(mergePlayersWithDefaults(next));
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save deleted players"));
     throw err;
@@ -904,7 +928,7 @@ useEffect(() => {
     if (editingPlayer) setEditingPlayer({ ...editingPlayer, [key]: value });
   };
   const updatePlayerStat = (stat: keyof PlayerStats, value: number) => {
-    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...editingPlayer.stats, [stat]: value } });
+    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...defaultStats, ...(editingPlayer.stats ?? {}), [stat]: value } });
   };
 
   // ========================
@@ -1312,11 +1336,11 @@ const handleSaveItem = async () => {
                   <div className="mb-4">
                     <div className="text-[10px] mb-2" style={labelStyle}>ATTRIBUTES:</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                      {(Object.keys(editingPlayer.stats) as (keyof PlayerStats)[]).map((stat) => (
+                      {(Object.keys(editingPlayer.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
                         <div key={stat}>
                           <label className="text-[10px] block mb-1" style={S_ACCENT_HDR}>{stat}</label>
-                          <input type="number" value={editingPlayer.stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
-                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(editingPlayer.stats[stat])}</div>
+                          <input type="number" value={(editingPlayer.stats ?? defaultStats)[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
+                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod((editingPlayer.stats ?? defaultStats)[stat])}</div>
                         </div>
                       ))}
                     </div>
@@ -1407,7 +1431,8 @@ const handleSaveItem = async () => {
                                   maxWeight: 100,
                                   exhaustion: 0,
                                   maxExhaustion: 6,
-                                  ...player,
+                                  ...mergePlayerWithTemplate(player),
+                                  stats: { ...defaultStats, ...(mergePlayerWithTemplate(player).stats ?? {}) },
                                 });
                                 setIsAddingNewPlayer(false);
                               }}
@@ -1431,10 +1456,10 @@ const handleSaveItem = async () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
-                          {(Object.keys(player.stats) as (keyof PlayerStats)[]).map((stat) => (
+                          {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
                             <div key={stat} className="text-center">
                               <div className="text-[9px]" style={S_ACCENT_HDR}>{stat}</div>
-                              <div className="text-[13px]" style={S_TEXT}>{player.stats[stat]} ({statMod(player.stats[stat])})</div>
+                              <div className="text-[13px]" style={S_TEXT}>{(player.stats ?? defaultStats)[stat]} ({statMod((player.stats ?? defaultStats)[stat])})</div>
                             </div>
                           ))}
                         </div>

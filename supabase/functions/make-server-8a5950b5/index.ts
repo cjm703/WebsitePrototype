@@ -6,6 +6,13 @@ import * as kv from "./kv_store.ts";
 
 const app = new Hono();
 
+const KNOWN_PROFILE_SEEDS = [
+  { id: "dm", name: "DM" },
+  { id: "player-1", name: "Player 1" },
+  { id: "player-2", name: "Player 2" },
+  { id: "player-3", name: "Player 3" },
+];
+
 const admin = () =>
   createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -69,34 +76,57 @@ async function createSession(playerId: string) {
 }
 
 
-async function ensurePlayerExists(playerId: string) {
+async function ensurePlayerExists(playerId: string, fallbackName?: string) {
   const supabase = admin();
 
   const { data, error } = await supabase
     .from("app_players")
-    .select("id")
+    .select("id, data")
     .eq("id", playerId)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  if (data) return;
 
   const now = new Date().toISOString();
 
-  const { error: insertError } = await supabase
-    .from("app_players")
-    .insert({
-      id: playerId,
-      data: {
+  if (!data) {
+    const { error: insertError } = await supabase
+      .from("app_players")
+      .insert({
         id: playerId,
-        name: playerId,
-      },
-      updated_at: now,
-    });
+        data: {
+          id: playerId,
+          name: fallbackName || playerId,
+        },
+        updated_at: now,
+      });
 
-  if (insertError) throw new Error(insertError.message);
+    if (insertError) throw new Error(insertError.message);
+    return;
+  }
+
+  const nextData = {
+    ...(data.data ?? {}),
+    id: playerId,
+  };
+
+  if (!nextData.name) nextData.name = fallbackName || playerId;
+
+  if (JSON.stringify(nextData) !== JSON.stringify(data.data ?? {})) {
+    const { error: updateError } = await supabase
+      .from("app_players")
+      .update({ data: nextData, updated_at: now })
+      .eq("id", playerId);
+
+    if (updateError) throw new Error(updateError.message);
+  }
 }
 
+async function ensureKnownProfiles() {
+  for (const profile of KNOWN_PROFILE_SEEDS) {
+    await ensurePlayerExists(profile.id, profile.name);
+  }
+}
 
 function getSessionToken(c: any): string {
   return (c.req.header("X-Session-Token") || "").trim();
@@ -243,7 +273,7 @@ function registerRoutes(prefix: string) {
 
       const playerId = profileId;
 
-      await ensurePlayerExists(playerId);
+      await ensurePlayerExists(playerId, playerId === "dm" ? "DM" : undefined);
 
       if (!stored || !stored.hash) {
         const session = await createSession(playerId);
@@ -317,6 +347,8 @@ function registerRoutes(prefix: string) {
     try {
       const unauthorized = requireApiKey(c);
       if (unauthorized) return unauthorized;
+
+      await ensureKnownProfiles();
 
       const supabase = admin();
 
