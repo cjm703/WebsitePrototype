@@ -4446,31 +4446,28 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         <MascotPopup context={mascotContext} statusEffectAdded={lastAddedStatusEffect} />
       )}
 
-            {saveToast && (
-              <div
-                className="fixed bottom-4 right-4 z-[200] px-3 py-2 text-[12px] rounded"
-                style={{
-                  background:
-                    saveToast === "error"
-                      ? "#5A1F1F"
-                      : saveToast === "saving"
-                      ? "#1F2A5A"
-                      : "#1F5A2E",
-                  color: "#fff",
-                  border: "1px solid rgba(255,255,255,0.18)",
-                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
-                }}
-              >
-                {saveToast === "saving"
-                  ? "Saving..."
-                  : saveToast === "saved"
-                  ? "Saved"
-                  : "Save failed"}
-              </div>
-            )}
-          </div>
-        );
-      }
+      {saveToast && (
+        <div
+          className="fixed bottom-4 right-4 z-[200] px-3 py-2 text-[12px] rounded"
+          style={{
+            background:
+              saveToast === "error"
+                ? "#5A1F1F"
+                : saveToast === "saving"
+                ? "#1F2A5A"
+                : "#1F5A2E",
+            color: "#fff",
+            border: "1px solid rgba(255,255,255,0.18)",
+            boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+          }}
+        >
+          {saveToast === "saving"
+            ? "Saving..."
+            : saveToast === "saved"
+            ? "Saved"
+            : "Save failed"}
+        </div>
+      )}
     </div>
   );
 }
