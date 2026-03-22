@@ -1452,10 +1452,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
         {/* Effect areas */}
         {item.tags.includes("Effect") && (() => {
-          const effectKeys = Object.keys(item.customFields)
+          const effectKeys = Object.keys(item.customFields ?? {})
             .filter(k => k.startsWith("Effect::"))
             .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-            .filter(k => item.customFields[k]?.trim());
+            .filter(k => (item.customFields ?? {})[k]?.trim());
           if (effectKeys.length === 0) return null;
           return (
             <div className="mb-4">
@@ -2120,8 +2120,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     ATTRIBUTES
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {(Object.keys(player.stats) as (keyof PlayerStats)[]).map((stat) => {
-                      const base = player.stats[stat];
+                    {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => {
+                      const base = (player.stats ?? defaultStats)[stat];
                       const eBuff = equipBuffs.attrBuffs[stat] || 0;
                       const sBuff = seBuffs.attrBuffs[stat] || 0;
                       const buff = eBuff + sBuff;
@@ -2992,7 +2992,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                           {/* Effect areas (when "Effect" tag is active) */}
                           {editingPlayerItem.tags.includes("Effect") && (() => {
-                            const effectKeys = Object.keys(editingPlayerItem.customFields)
+                            const effectKeys = Object.keys(editingPlayerItem.customFields ?? {})
                               .filter(k => k.startsWith("Effect::"))
                               .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
                             if (effectKeys.length === 0) effectKeys.push("Effect::0");
@@ -3401,10 +3401,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           ) : (
                             <div className="space-y-4">
                               {effectItems.map((item) => {
-                                const effectKeys = Object.keys(item.customFields)
+                                const effectKeys = Object.keys(item.customFields ?? {})
                                   .filter(k => k.startsWith("Effect::"))
                                   .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-                                  .filter(k => item.customFields[k]?.trim());
+                                  .filter(k => (item.customFields ?? {})[k]?.trim());
 
                                 return (
                                   <div key={item.id} className={`${retro.raised} p-4`} style={{ background: theme.cardBg }}>
