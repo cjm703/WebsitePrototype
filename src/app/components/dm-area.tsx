@@ -449,8 +449,8 @@ useEffect(() => {
         reactionData,
         nodeTreeData,
       ] = await Promise.all([
-        appStore.listPlayers<PlayerData>(),
-        appStore.listDeletedPlayers<PlayerData>(),
+        loadDMPlayers() as Promise<PlayerData[]>,
+        loadDMDeletedPlayers() as Promise<PlayerData[]>,
         appStore.listTags<TagDefinition>("item"),
         appStore.listTags<TagDefinition>("card"),
         appStore.listTags<TagDefinition>("info"),
@@ -503,7 +503,7 @@ useEffect(() => {
 async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await appStore.savePlayers(next);
+    await saveDMPlayers(next as unknown as Record<string, unknown>[]);
     setPlayers(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save players"));
@@ -514,7 +514,7 @@ async function persistPlayers(next: PlayerData[]) {
 async function persistDeletedPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await appStore.saveDeletedPlayers(next);
+    await saveDMDeletedPlayers(next as unknown as Record<string, unknown>[]);
     setDeletedPlayers(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save deleted players"));
