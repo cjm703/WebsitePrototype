@@ -57,15 +57,10 @@ async function createSession(playerId: string) {
 }
 
 function getSessionToken(c: any): string {
-  const custom = c.req.header("X-Session-Token") || "";
-  if (custom) return custom;
-
-  const auth = c.req.header("Authorization") || "";
-  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return c.req.header("X-Session-Token") || "";
 }
 
 async function resolveSessionPlayerId(c: any): Promise<string> {
-  const auth = c.req.header("Authorization") || "";
   const rawToken = getSessionToken(c);
   if (!rawToken) throw new Error("Missing session token");
 
@@ -90,6 +85,25 @@ function requireDM(playerId: string) {
   if (playerId !== "dm") {
     throw new Error("DM access only");
   }
+}
+
+const expectedApiKey =
+  Deno.env.get("SB_PUBLISHABLE_KEY") ||
+  Deno.env.get("SUPABASE_ANON_KEY") ||
+  "";
+
+function requireApiKey(c: any) {
+  const auth = c.req.header("Authorization") || "";
+  const apiKeyHeader = c.req.header("apikey") || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+
+  const provided = apiKeyHeader || bearer;
+
+  if (!expectedApiKey || !provided || provided !== expectedApiKey) {
+    return c.json({ error: "Invalid API key" }, 401);
+  }
+
+  return null;
 }
 
 
