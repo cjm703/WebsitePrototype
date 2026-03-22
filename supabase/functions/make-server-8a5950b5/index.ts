@@ -27,7 +27,11 @@ const expectedApiKey = (
 
 function requireApiKey(c: any) {
   const apiKey = (c.req.header("apikey") || "").trim();
-  if (!expectedApiKey || apiKey !== expectedApiKey) {
+  const auth = (c.req.header("Authorization") || "").trim();
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const provided = apiKey || bearer;
+
+  if (!expectedApiKey || provided !== expectedApiKey) {
     return c.json({ error: "Invalid API key" }, 401);
   }
   return null;

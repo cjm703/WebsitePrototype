@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories, deleteDMPlayer } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -468,7 +468,7 @@ useEffect(() => {
       if (cancelled) return;
 
       setPlayers(playersData);
-      setDeletedPlayers(deletedPlayersData);
+      setDeletedPlayers(deletedPlayersData.filter((p) => p.id !== "dm"));
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
       setInfoTags(infoTagData.length ? infoTagData : initialInfoTags);
@@ -833,6 +833,12 @@ useEffect(() => {
         setDeletePasswordError(true);
         return;
       }
+
+      try {
+        if (result.sessionToken) safeSetItem("inet-session-token", result.sessionToken);
+        safeSetItem("inet-user-id", result.playerId ?? "dm");
+        safeSetItem("inet-user", "DM");
+      } catch {}
     } catch (err) {
       console.error("DM auth verification error:", err);
       setDeletePasswordError(true);
@@ -841,11 +847,13 @@ useEffect(() => {
 
     if (!deleteTarget) return;
 
-    const nextDeleted = [...deletedPlayers, deleteTarget];
+    await deleteDMPlayer(deleteTarget.id);
+
+    const nextDeleted = [...deletedPlayers.filter((p) => p.id !== "dm"), deleteTarget];
     const updatedPlayers = players.filter((p) => p.id !== deleteTarget.id);
 
-    await persistDeletedPlayers(nextDeleted);
-    await persistPlayers(updatedPlayers);
+    setDeletedPlayers(nextDeleted);
+    setPlayers(updatedPlayers);
     syncProfilesToLocalStorage(updatedPlayers);
 
     if (editingPlayer?.id === deleteTarget.id) {
@@ -901,7 +909,9 @@ useEffect(() => {
     if (editingPlayer) setEditingPlayer({ ...editingPlayer, [key]: value });
   };
   const updatePlayerStat = (stat: keyof PlayerStats, value: number) => {
-    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...editingPlayer.stats, [stat]: value } });
+    if (!editingPlayer) return;
+    const stats = editingPlayer.stats ?? defaultStats;
+    setEditingPlayer({ ...editingPlayer, stats: { ...stats, [stat]: value } });
   };
 
   // ========================
@@ -1309,16 +1319,13 @@ const handleSaveItem = async () => {
                   <div className="mb-4">
                     <div className="text-[10px] mb-2" style={labelStyle}>ATTRIBUTES:</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                      {(() => {
-                        const stats = editingPlayer.stats ?? defaultStats;
-                        return (Object.keys(stats) as (keyof PlayerStats)[]).map((stat) => (
+                      {(Object.keys(editingPlayer.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
                         <div key={stat}>
                           <label className="text-[10px] block mb-1" style={S_ACCENT_HDR}>{stat}</label>
-                          <input type="number" value={stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
-                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(stats[stat])}</div>
+                          <input type="number" value={(editingPlayer.stats ?? defaultStats)[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
+                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod((editingPlayer.stats ?? defaultStats)[stat])}</div>
                         </div>
-                      ));
-                      })()}
+                      ))}
                     </div>
                   </div>
                   <div className="mb-4">
@@ -1431,15 +1438,12 @@ const handleSaveItem = async () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
-                          {(() => {
-                            const stats = player.stats ?? defaultStats;
-                            return (Object.keys(stats) as (keyof PlayerStats)[]).map((stat) => (
+                          {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
                             <div key={stat} className="text-center">
                               <div className="text-[9px]" style={S_ACCENT_HDR}>{stat}</div>
-                              <div className="text-[13px]" style={S_TEXT}>{stats[stat]} ({statMod(stats[stat])})</div>
+                              <div className="text-[13px]" style={S_TEXT}>{(player.stats ?? defaultStats)[stat]} ({statMod((player.stats ?? defaultStats)[stat])})</div>
                             </div>
-                          ));
-                          })()}
+                          ))}
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
                           <div><div className="text-[9px]" style={S_MUTED}>HP</div><div className="text-[12px]" style={dmHpColor(player.currentHP, player.maxHP)}>{player.currentHP}/{player.maxHP}</div></div>
