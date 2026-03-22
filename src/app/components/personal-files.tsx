@@ -604,9 +604,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const mergedPlayer = { ...player, ...updates };
 
     setAllPlayers([mergedPlayer]);
-    await runSaveWithToast(() =>
-      savePlayerState({ playerPatch: updates as Record<string, unknown> })
-    );
+    await runSaveWithToast(() => savePlayerState({ playerPatch: updates as Record<string, unknown> }));
   }, [player, allPlayers, runSaveWithToast]);
 
   const handleSetHP = (newHP: number) => {
@@ -810,11 +808,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const savePlayerItem = async () => {
     if (!editingPlayerItem || !editingPlayerItem.name.trim()) return;
 
-    const updatedItems = isNewPlayerItem
-      ? [...allItems, editingPlayerItem]
-      : allItems.map(i => i.id === editingPlayerItem.id ? editingPlayerItem : i);
-
     const itemToSave = editingPlayerItem;
+    const updatedItems = isNewPlayerItem
+      ? [...allItems, itemToSave]
+      : allItems.map(i => i.id === itemToSave.id ? itemToSave : i);
 
     setAllItems(updatedItems);
     await runSaveWithToast(() => savePlayerState({ saveItem: itemToSave }));
@@ -1074,10 +1071,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       if (itemsChanged) {
         setAllItems(updatedItems);
         await runSaveWithToast(async () => {
-          for (const item of updatedItems) {
-            if (isAssignedTo(item.assignedTo, player?.id || "") && item.tags.some((t) => t.toLowerCase() === "source")) {
-              await savePlayerState({ saveItem: item });
-            }
+          const changedItems = updatedItems.filter((item) =>
+            item.assignedTo.includes(player?.id || "") &&
+            item.tags.some((t) => t.toLowerCase() === "source")
+          );
+          for (const item of changedItems) {
+            await savePlayerState({ saveItem: item });
           }
         });
       }
@@ -1454,7 +1453,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           const effectKeys = Object.keys(item.customFields ?? {})
             .filter(k => k.startsWith("Effect::"))
             .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-            .filter(k => item.customFields?.[k]?.trim());
+            .filter(k => item.customFields[k]?.trim());
           if (effectKeys.length === 0) return null;
           return (
             <div className="mb-4">
@@ -3403,7 +3402,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 const effectKeys = Object.keys(item.customFields ?? {})
                                   .filter(k => k.startsWith("Effect::"))
                                   .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-                                  .filter(k => item.customFields?.[k]?.trim());
+                                  .filter(k => item.customFields[k]?.trim());
 
                                 return (
                                   <div key={item.id} className={`${retro.raised} p-4`} style={{ background: theme.cardBg }}>

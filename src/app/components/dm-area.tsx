@@ -738,7 +738,16 @@ useEffect(() => {
   // ========================
   // Profile sync: write player profiles + DM to localStorage for login page
   // ========================
-  const syncProfilesToLocalStorage = useCallback((_playerList: PlayerData[]) => {}, []);
+  const syncProfilesToLocalStorage = useCallback((playerList: PlayerData[]) => {
+    const profiles: LoginProfile[] = playerList.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: `${p.class} · Level ${p.level}`,
+    }));
+    // Always include the DM profile (auth codes live on server, not here)
+    profiles.push({ id: "dm", name: "DM", description: "System Administrator · Full Access" });
+    safeSetJson("inet-profiles", profiles);
+  }, []);
 
   // On mount: migrate any legacy plain-text auth codes to the server, then sync profiles
   useEffect(() => {
@@ -824,9 +833,6 @@ useEffect(() => {
         setDeletePasswordError(true);
         return;
       }
-      if (result.sessionToken) safeSetItem("inet-session-token", result.sessionToken);
-      if (result.playerId) safeSetItem("inet-user-id", result.playerId);
-      safeSetItem("inet-user", "DM");
     } catch (err) {
       console.error("DM auth verification error:", err);
       setDeletePasswordError(true);
@@ -840,7 +846,7 @@ useEffect(() => {
 
     await persistDeletedPlayers(nextDeleted);
     await persistPlayers(updatedPlayers);
-    // Profiles now load from server on the login page; no local sync needed here.
+    syncProfilesToLocalStorage(updatedPlayers);
 
     if (editingPlayer?.id === deleteTarget.id) {
       setEditingPlayer(null);
@@ -866,7 +872,7 @@ useEffect(() => {
 
     await persistDeletedPlayers(updatedDeleted);
     await persistPlayers(updatedPlayers);
-    // Profiles now load from server on the login page; no local sync needed here.
+    syncProfilesToLocalStorage(updatedPlayers);
   };
   // Permanently remove a single recently deleted player (also remove server-side auth code)
   const permanentlyDeletePlayer = async (id: string) => {
@@ -1303,11 +1309,11 @@ const handleSaveItem = async () => {
                   <div className="mb-4">
                     <div className="text-[10px] mb-2" style={labelStyle}>ATTRIBUTES:</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                      {(Object.keys(editingPlayer.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 }) as (keyof PlayerStats)[]).map((stat) => (
+                      {(Object.keys(editingPlayer.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
                         <div key={stat}>
                           <label className="text-[10px] block mb-1" style={S_ACCENT_HDR}>{stat}</label>
-                          <input type="number" value={(editingPlayer.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 })[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
-                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod((editingPlayer.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 })[stat])}</div>
+                          <input type="number" value={editingPlayer.stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
+                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(editingPlayer.stats[stat])}</div>
                         </div>
                       ))}
                     </div>
@@ -1422,10 +1428,10 @@ const handleSaveItem = async () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
-                          {(Object.keys(player.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 }) as (keyof PlayerStats)[]).map((stat) => (
+                          {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
                             <div key={stat} className="text-center">
                               <div className="text-[9px]" style={S_ACCENT_HDR}>{stat}</div>
-                              <div className="text-[13px]" style={S_TEXT}>{(player.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 })[stat]} ({statMod((player.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 })[stat])})</div>
+                              <div className="text-[13px]" style={S_TEXT}>{player.stats[stat]} ({statMod(player.stats[stat])})</div>
                             </div>
                           ))}
                         </div>
