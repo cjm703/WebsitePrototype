@@ -6,13 +6,6 @@ import * as kv from "./kv_store.ts";
 
 const app = new Hono();
 
-const KNOWN_PROFILE_SEEDS = [
-  { id: "dm", name: "DM" },
-  { id: "player-1", name: "Player 1" },
-  { id: "player-2", name: "Player 2" },
-  { id: "player-3", name: "Player 3" },
-];
-
 const admin = () =>
   createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -76,57 +69,33 @@ async function createSession(playerId: string) {
 }
 
 
-async function ensurePlayerExists(playerId: string, fallbackName?: string) {
+async function ensurePlayerExists(playerId: string) {
   const supabase = admin();
 
   const { data, error } = await supabase
     .from("app_players")
-    .select("id, data")
+    .select("id")
     .eq("id", playerId)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
+  if (data) return;
 
   const now = new Date().toISOString();
 
-  if (!data) {
-    const { error: insertError } = await supabase
-      .from("app_players")
-      .insert({
-        id: playerId,
-        data: {
-          id: playerId,
-          name: fallbackName || playerId,
-        },
-        updated_at: now,
-      });
+  const { error: insertError } = await supabase
+    .from("app_players")
+    .insert({
+      id: playerId,
+      data: {
+        name: playerId,
+      },
+      updated_at: now,
+    });
 
-    if (insertError) throw new Error(insertError.message);
-    return;
-  }
-
-  const nextData = {
-    ...(data.data ?? {}),
-    id: playerId,
-  };
-
-  if (!nextData.name) nextData.name = fallbackName || playerId;
-
-  if (JSON.stringify(nextData) !== JSON.stringify(data.data ?? {})) {
-    const { error: updateError } = await supabase
-      .from("app_players")
-      .update({ data: nextData, updated_at: now })
-      .eq("id", playerId);
-
-    if (updateError) throw new Error(updateError.message);
-  }
+  if (insertError) throw new Error(insertError.message);
 }
 
-async function ensureKnownProfiles() {
-  for (const profile of KNOWN_PROFILE_SEEDS) {
-    await ensurePlayerExists(profile.id, profile.name);
-  }
-}
 
 function getSessionToken(c: any): string {
   return (c.req.header("X-Session-Token") || "").trim();
@@ -159,173 +128,48 @@ function requireDM(playerId: string) {
   }
 }
 
-const authKey = (profileId: string) => `inet-authcode::${profileId}`;
-const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 
-
-async function listEntityRows(table: "app_players" | "app_deleted_players") {
-  const supabase = admin();
-  const { data, error } = await supabase
-    .from(table)
-    .select("id, data")
-    .order("updated_at", { ascending: false });
-
-  if (error) throw new Error(error.message);
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    ...(row.data ?? {}),
-  }));
-}
-
-async function replaceEntityRows(
-  table: "app_players" | "app_deleted_players",
-  rows: Array<{ id: string; [key: string]: any }>,
-) {
-  const supabase = admin();
-  const now = new Date().toISOString();
-
-  const nextIds = rows
-    .map((row) => typeof row?.id === "string" ? row.id.trim() : "")
-    .filter(Boolean);
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from(table)
-    .select("id");
-
-  if (existingError) throw new Error(existingError.message);
-
-  const existingIds = (existingRows ?? []).map((row: any) => row.id as string);
-  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
-
-  const payload = rows.map((row) => ({
-    id: row.id,
-    data: { ...row, id: row.id },
-    updated_at: now,
-  }));
-
-  if (payload.length > 0) {
-    const { error: upsertError } = await supabase
-      .from(table)
-      .upsert(payload, { onConflict: "id" });
-
-    if (upsertError) throw new Error(upsertError.message);
-  }
-
-  if (idsToDelete.length > 0) {
-    if (table === "app_players") {
-      const { error: revokeError } = await supabase
-        .from("app_sessions")
-        .delete()
-        .in("player_id", idsToDelete);
-      if (revokeError) throw new Error(revokeError.message);
-    }
-
-    const { error: deleteError } = await supabase
-      .from(table)
-      .delete()
-      .in("id", idsToDelete);
-
-    if (deleteError) throw new Error(deleteError.message);
-  }
-}
-
-type DMCollectionKey =
-  | "players"
-  | "deleted-players"
-  | "items"
-  | "cards"
-  | "infos"
-  | "node-trees"
-  | "notifications"
-  | "info-subtabs"
-  | "custom-reactions";
-
-const DM_COLLECTIONS: Record<DMCollectionKey, { table: string; responseKey: string; requestKey: string; revokeSessions?: boolean }> = {
-  "players": { table: "app_players", responseKey: "players", requestKey: "players", revokeSessions: true },
-  "deleted-players": { table: "app_deleted_players", responseKey: "players", requestKey: "players" },
-  "items": { table: "app_items", responseKey: "items", requestKey: "items" },
-  "cards": { table: "app_cards", responseKey: "cards", requestKey: "cards" },
-  "infos": { table: "app_infos", responseKey: "infos", requestKey: "infos" },
-  "node-trees": { table: "app_node_trees", responseKey: "nodeTrees", requestKey: "nodeTrees" },
-  "notifications": { table: "app_notifications", responseKey: "notifications", requestKey: "notifications" },
-  "info-subtabs": { table: "app_info_subtabs", responseKey: "infoSubTabs", requestKey: "infoSubTabs" },
-  "custom-reactions": { table: "community_custom_reactions", responseKey: "reactions", requestKey: "reactions" },
+const DM_COLLECTIONS: Record<string, string> = {
+  players: "app_players",
+  "deleted-players": "app_deleted_players",
+  items: "app_items",
+  cards: "app_cards",
+  infos: "app_infos",
+  "node-trees": "app_node_trees",
+  notifications: "app_notifications",
+  "info-subtabs": "app_info_subtabs",
+  "custom-reactions": "app_custom_reactions",
 };
 
-async function listCollectionRows(table: string) {
+function dedupeRows(rows: any[]) {
+  return Array.from(new Map((rows ?? []).map((row: any) => [row.id, row])).values());
+}
+
+async function listEntityRows(table: string) {
   const supabase = admin();
   const { data, error } = await supabase
     .from(table)
     .select("id, data")
     .order("updated_at", { ascending: false });
-
   if (error) throw new Error(error.message);
-
-  return (data ?? []).map((row: any) => ({
-    id: row.id,
-    ...(row.data ?? {}),
-  }));
+  return (data ?? []).map((row: any) => ({ id: row.id, ...(row.data ?? {}) }));
 }
 
-async function replaceCollectionRows(
-  table: string,
-  rows: Array<{ id: string; [key: string]: any }>,
-  opts?: { revokeSessions?: boolean },
-) {
+async function replaceEntityRows(table: string, rows: any[]) {
   const supabase = admin();
   const now = new Date().toISOString();
-
-  const dedupedRows = Array.from(
-    new Map(
-      rows
-        .filter((row) => typeof row?.id === "string" && row.id.trim())
-        .map((row) => [row.id.trim(), { ...row, id: row.id.trim() }])
-    ).values()
-  );
-
-  const nextIds = dedupedRows.map((row) => row.id);
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from(table)
-    .select("id");
-
-  if (existingError) throw new Error(existingError.message);
-
-  const existingIds = (existingRows ?? []).map((row: any) => row.id as string);
-  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
-
-  const payload = dedupedRows.map((row) => ({
+  const normalized = dedupeRows(rows).map((row: any) => ({
     id: row.id,
-    data: { ...row, id: row.id },
+    data: row,
     updated_at: now,
   }));
-
-  if (payload.length > 0) {
-    const { error: upsertError } = await supabase
-      .from(table)
-      .upsert(payload, { onConflict: "id" });
-
-    if (upsertError) throw new Error(upsertError.message);
-  }
-
-  if (idsToDelete.length > 0) {
-    if (opts?.revokeSessions) {
-      const { error: revokeError } = await supabase
-        .from("app_sessions")
-        .delete()
-        .in("player_id", idsToDelete);
-      if (revokeError) throw new Error(revokeError.message);
-    }
-
-    const { error: deleteError } = await supabase
-      .from(table)
-      .delete()
-      .in("id", idsToDelete);
-
-    if (deleteError) throw new Error(deleteError.message);
-  }
+  const { error } = await supabase.from(table).upsert(normalized, { onConflict: "id" });
+  if (error) throw new Error(error.message);
+  return { ok: true };
 }
+
+const authKey = (profileId: string) => `inet-authcode::${profileId}`;
+const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
@@ -370,7 +214,7 @@ function registerRoutes(prefix: string) {
 
       const playerId = profileId;
 
-      await ensurePlayerExists(playerId, playerId === "dm" ? "DM" : undefined);
+      await ensurePlayerExists(playerId);
 
       if (!stored || !stored.hash) {
         const session = await createSession(playerId);
@@ -444,8 +288,6 @@ function registerRoutes(prefix: string) {
     try {
       const unauthorized = requireApiKey(c);
       if (unauthorized) return unauthorized;
-
-      await ensureKnownProfiles();
 
       const supabase = admin();
 
@@ -803,179 +645,6 @@ function registerRoutes(prefix: string) {
     }
   });
 
-
-  app.get(`${prefix}/dm/players`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      const players = await listEntityRows("app_players");
-      return c.json({ players });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.post(`${prefix}/dm/players/save`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      const body = await c.req.json();
-      if (!Array.isArray(body?.players)) {
-        return c.json({ error: "players must be an array" }, 400);
-      }
-
-      await replaceEntityRows("app_players", body.players);
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.get(`${prefix}/dm/deleted-players`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      const players = await listEntityRows("app_deleted_players");
-      return c.json({ players });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.post(`${prefix}/dm/deleted-players/save`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      const body = await c.req.json();
-      if (!Array.isArray(body?.players)) {
-        return c.json({ error: "players must be an array" }, 400);
-      }
-
-      await replaceEntityRows("app_deleted_players", body.players);
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.get(`${prefix}/dm/:collection`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      const collection = c.req.param("collection") as DMCollectionKey;
-      const meta = DM_COLLECTIONS[collection];
-      if (!meta || collection === "players" || collection === "deleted-players") {
-        return c.json({ error: "Unknown DM collection" }, 404);
-      }
-
-      const rows = await listCollectionRows(meta.table);
-      return c.json({ [meta.responseKey]: rows });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.post(`${prefix}/dm/:collection/save`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      const collection = c.req.param("collection") as DMCollectionKey;
-      const meta = DM_COLLECTIONS[collection];
-      if (!meta || collection === "players" || collection === "deleted-players") {
-        return c.json({ error: "Unknown DM collection" }, 404);
-      }
-
-      const body = await c.req.json();
-      const rows = body?.[meta.requestKey];
-      if (!Array.isArray(rows)) {
-        return c.json({ error: `${meta.requestKey} must be an array` }, 400);
-      }
-
-      await replaceCollectionRows(meta.table, rows, { revokeSessions: meta.revokeSessions });
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.get(`${prefix}/dm/player-level-categories/:playerId`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const requesterId = await resolveSessionPlayerId(c);
-      requireDM(requesterId);
-
-      const playerId = c.req.param("playerId");
-      if (!playerId) return c.json({ error: "Missing playerId" }, 400);
-
-      const supabase = admin();
-      const { data, error } = await supabase
-        .from("player_level_categories")
-        .select("data")
-        .eq("player_id", playerId)
-        .maybeSingle();
-
-      if (error) return c.json({ error: error.message }, 500);
-      return c.json({ levelCategories: data?.data ?? [] });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.post(`${prefix}/dm/player-level-categories/save`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const requesterId = await resolveSessionPlayerId(c);
-      requireDM(requesterId);
-
-      const body = await c.req.json();
-      if (!body?.playerId || !Array.isArray(body?.levelCategories)) {
-        return c.json({ error: "playerId and levelCategories are required" }, 400);
-      }
-
-      const supabase = admin();
-      const now = new Date().toISOString();
-      const { error } = await supabase
-        .from("player_level_categories")
-        .upsert(
-          { player_id: body.playerId, data: body.levelCategories, updated_at: now },
-          { onConflict: "player_id" },
-        );
-
-      if (error) return c.json({ error: error.message }, 500);
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
   app.get(`${prefix}/dm/test`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
@@ -987,6 +656,97 @@ function registerRoutes(prefix: string) {
       return c.json({ ok: true, dm: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/:collection`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const collection = c.req.param("collection");
+      const table = DM_COLLECTIONS[collection];
+      if (!table) return c.json({ error: "Unknown DM collection" }, 404);
+
+      const rows = await listEntityRows(table);
+      return c.json({ rows });
+    } catch (err) {
+      const message = String(err);
+      const authError = /session|DM access|Invalid API key/i.test(message);
+      return c.json({ error: message }, authError ? 403 : 500);
+    }
+  });
+
+  app.post(`${prefix}/dm/:collection/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const collection = c.req.param("collection");
+      const table = DM_COLLECTIONS[collection];
+      if (!table) return c.json({ error: "Unknown DM collection" }, 404);
+
+      const body = await c.req.json();
+      const rows = Array.isArray(body?.rows) ? body.rows : [];
+      const result = await replaceEntityRows(table, rows);
+      return c.json(result);
+    } catch (err) {
+      const message = String(err);
+      const authError = /session|DM access|Invalid API key/i.test(message);
+      return c.json({ error: message }, authError ? 403 : 500);
+    }
+  });
+
+  app.get(`${prefix}/dm/player-level-categories/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await resolveSessionPlayerId(c);
+      requireDM(dmId);
+
+      const playerId = c.req.param("playerId");
+      const supabase = admin();
+      const { data, error } = await supabase
+        .from("player_level_categories")
+        .select("data")
+        .eq("player_id", playerId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return c.json({ rows: data?.data ?? [] });
+    } catch (err) {
+      const message = String(err);
+      const authError = /session|DM access|Invalid API key/i.test(message);
+      return c.json({ error: message }, authError ? 403 : 500);
+    }
+  });
+
+  app.post(`${prefix}/dm/player-level-categories/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await resolveSessionPlayerId(c);
+      requireDM(dmId);
+
+      const body = await c.req.json();
+      const playerId = body?.playerId;
+      const rows = Array.isArray(body?.rows) ? body.rows : [];
+      if (!playerId) return c.json({ error: "Missing playerId" }, 400);
+
+      const supabase = admin();
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from("player_level_categories")
+        .upsert({ player_id: playerId, data: rows, updated_at: now }, { onConflict: "player_id" });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = String(err);
+      const authError = /session|DM access|Invalid API key/i.test(message);
+      return c.json({ error: message }, authError ? 403 : 500);
     }
   });
 

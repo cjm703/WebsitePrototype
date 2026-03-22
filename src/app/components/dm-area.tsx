@@ -833,11 +833,9 @@ useEffect(() => {
         setDeletePasswordError(true);
         return;
       }
-      if (result.sessionToken) {
-        safeSetItem("inet-session-token", result.sessionToken);
-        safeSetItem("inet-user-id", result.playerId ?? "dm");
-        safeSetItem("inet-user", "DM");
-      }
+      if (result.sessionToken) safeSetItem("inet-session-token", result.sessionToken);
+      if (result.playerId) safeSetItem("inet-user-id", result.playerId);
+      safeSetItem("inet-user", "DM");
     } catch (err) {
       console.error("DM auth verification error:", err);
       setDeletePasswordError(true);
@@ -851,7 +849,7 @@ useEffect(() => {
 
     await persistDeletedPlayers(nextDeleted);
     await persistPlayers(updatedPlayers);
-    syncProfilesToLocalStorage(updatedPlayers);
+    // Profiles now load from server on the login page; no local sync needed here.
 
     if (editingPlayer?.id === deleteTarget.id) {
       setEditingPlayer(null);
@@ -877,7 +875,7 @@ useEffect(() => {
 
     await persistDeletedPlayers(updatedDeleted);
     await persistPlayers(updatedPlayers);
-    syncProfilesToLocalStorage(updatedPlayers);
+    // Profiles now load from server on the login page; no local sync needed here.
   };
   // Permanently remove a single recently deleted player (also remove server-side auth code)
   const permanentlyDeletePlayer = async (id: string) => {

@@ -810,10 +810,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const savePlayerItem = async () => {
     if (!editingPlayerItem || !editingPlayerItem.name.trim()) return;
 
-    const itemToSave = editingPlayerItem;
     const updatedItems = isNewPlayerItem
-      ? [...allItems, itemToSave]
-      : allItems.map(i => i.id === itemToSave.id ? itemToSave : i);
+      ? [...allItems, editingPlayerItem]
+      : allItems.map(i => i.id === editingPlayerItem.id ? editingPlayerItem : i);
+
+    const itemToSave = editingPlayerItem;
 
     setAllItems(updatedItems);
     await runSaveWithToast(() => savePlayerState({ saveItem: itemToSave }));
@@ -1073,12 +1074,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       if (itemsChanged) {
         setAllItems(updatedItems);
         await runSaveWithToast(async () => {
-          const changedItems = updatedItems.filter((item) =>
-            item.assignedTo.includes(player?.id || "") &&
-            item.tags.some((t) => t.toLowerCase() === "source")
-          );
-          for (const item of changedItems) {
-            await savePlayerState({ saveItem: item });
+          for (const item of updatedItems) {
+            if (isAssignedTo(item.assignedTo, player?.id || "") && item.tags.some((t) => t.toLowerCase() === "source")) {
+              await savePlayerState({ saveItem: item });
+            }
           }
         });
       }
@@ -1455,7 +1454,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           const effectKeys = Object.keys(item.customFields ?? {})
             .filter(k => k.startsWith("Effect::"))
             .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-            .filter(k => (item.customFields ?? {})[k]?.trim());
+            .filter(k => item.customFields?.[k]?.trim());
           if (effectKeys.length === 0) return null;
           return (
             <div className="mb-4">
@@ -2120,8 +2119,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     ATTRIBUTES
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => {
-                      const base = (player.stats ?? defaultStats)[stat];
+                    {(Object.keys(player.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 }) as (keyof PlayerStats)[]).map((stat) => {
+                      const base = (player.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 })[stat];
                       const eBuff = equipBuffs.attrBuffs[stat] || 0;
                       const sBuff = seBuffs.attrBuffs[stat] || 0;
                       const buff = eBuff + sBuff;
@@ -3404,7 +3403,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 const effectKeys = Object.keys(item.customFields ?? {})
                                   .filter(k => k.startsWith("Effect::"))
                                   .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-                                  .filter(k => (item.customFields ?? {})[k]?.trim());
+                                  .filter(k => item.customFields?.[k]?.trim());
 
                                 return (
                                   <div key={item.id} className={`${retro.raised} p-4`} style={{ background: theme.cardBg }}>
