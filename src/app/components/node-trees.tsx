@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { retro } from "./retro-styles";
 import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight } from "lucide-react";
 import { appStore } from "@/lib/app-store";
+import { loadDMNodeTrees, saveDMNodeTrees } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 
 // ═══════════════════════════════════════════════
@@ -612,7 +613,7 @@ async function persistTrees(next: NodeTree[]) {
 
   try {
     setError(null);
-    await appStore.saveNodeTrees(next);
+    await saveDMNodeTrees(next as unknown as Record<string, unknown>[]);
   } catch (err) {
     setError(err instanceof Error ? err.message : "Failed to save node trees");
     throw err;
@@ -640,7 +641,7 @@ useEffect(() => {
   async function loadDmNodeTrees() {
     try {
       setError(null);
-      const data = await appStore.listNodeTrees<NodeTree>();
+      const data = await loadDMNodeTrees() as NodeTree[];
 
       if (cancelled) return;
       setTrees(data);

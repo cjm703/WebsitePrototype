@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -104,30 +104,6 @@ const initialWikiTags: TagDefinition[] = sharedInitialWikiTags;
 const initialItems: ManagedItem[] = sharedInitialItems;
 const initialCards: ManagedCard[] = sharedInitialCards;
 const initialInfos: ManagedInfo[] = sharedInitialInfos;
-
-function mergePlayerWithTemplate(player: PlayerData): PlayerData {
-  const template = initialPlayers.find((p) => p.id === player.id);
-  return {
-    ...(template ?? {} as PlayerData),
-    ...player,
-    stats: { ...defaultStats, ...(template?.stats ?? {}), ...(player.stats ?? {}) },
-  } as PlayerData;
-}
-
-function mergePlayersWithDefaults(players: PlayerData[]): PlayerData[] {
-  const merged = new Map<string, PlayerData>();
-
-  for (const player of initialPlayers as PlayerData[]) {
-    merged.set(player.id, mergePlayerWithTemplate(player));
-  }
-
-  for (const player of players) {
-    if (!player?.id) continue;
-    merged.set(player.id, mergePlayerWithTemplate(player));
-  }
-
-  return Array.from(merged.values());
-}
 
 // ========================
 // Custom Reaction Manager (embedded in DM Area)
@@ -473,26 +449,26 @@ useEffect(() => {
         reactionData,
         nodeTreeData,
       ] = await Promise.all([
-        loadDMPlayers() as Promise<PlayerData[]>,
-        loadDMDeletedPlayers() as Promise<PlayerData[]>,
+        appStore.listPlayers<PlayerData>(),
+        appStore.listDeletedPlayers<PlayerData>(),
         appStore.listTags<TagDefinition>("item"),
         appStore.listTags<TagDefinition>("card"),
         appStore.listTags<TagDefinition>("info"),
         appStore.listTags<TagDefinition>("status"),
         appStore.listTags<TagDefinition>("wiki"),
-        appStore.listItems<ManagedItem>(),
-        appStore.listCards<ManagedCard>(),
-        appStore.listInfos<ManagedInfo>(),
-        appStore.listInfoSubTabs<InfoSubTab>(),
-        appStore.listNotifications<DMNotification>(),
-        appStore.listCustomReactions<CustomReaction>(),
-        appStore.listNodeTrees<NodeTree>(),
+        loadDMItems() as Promise<ManagedItem[]>,
+        loadDMCards() as Promise<ManagedCard[]>,
+        loadDMInfos() as Promise<ManagedInfo[]>,
+        loadDMInfoSubTabs() as Promise<InfoSubTab[]>,
+        loadDMNotifications() as Promise<DMNotification[]>,
+        loadDMCustomReactions() as Promise<CustomReaction[]>,
+        loadDMNodeTrees() as Promise<NodeTree[]>,
       ]);
 
       if (cancelled) return;
 
-      setPlayers(mergePlayersWithDefaults(playersData));
-      setDeletedPlayers(mergePlayersWithDefaults(deletedPlayersData));
+      setPlayers(playersData.length ? playersData : (initialPlayers as PlayerData[]));
+      setDeletedPlayers(deletedPlayersData);
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
       setInfoTags(infoTagData.length ? infoTagData : initialInfoTags);
@@ -527,8 +503,8 @@ useEffect(() => {
 async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await saveDMPlayers(next as unknown as Record<string, unknown>[]);
-    setPlayers(mergePlayersWithDefaults(next));
+    await appStore.savePlayers(next);
+    setPlayers(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save players"));
     throw err;
@@ -538,8 +514,8 @@ async function persistPlayers(next: PlayerData[]) {
 async function persistDeletedPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await saveDMDeletedPlayers(next as unknown as Record<string, unknown>[]);
-    setDeletedPlayers(mergePlayersWithDefaults(next));
+    await appStore.saveDeletedPlayers(next);
+    setDeletedPlayers(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save deleted players"));
     throw err;
@@ -549,7 +525,7 @@ async function persistDeletedPlayers(next: PlayerData[]) {
 async function persistItems(next: ManagedItem[]) {
   try {
     setDmError(null);
-    await appStore.saveItems(next);
+    await saveDMItems(next as unknown as Record<string, unknown>[]);
     setManagedItems(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save items"));
@@ -560,7 +536,7 @@ async function persistItems(next: ManagedItem[]) {
 async function persistCards(next: ManagedCard[]) {
   try {
     setDmError(null);
-    await appStore.saveCards(next);
+    await saveDMCards(next as unknown as Record<string, unknown>[]);
     setManagedCards(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save cards"));
@@ -571,7 +547,7 @@ async function persistCards(next: ManagedCard[]) {
 async function persistInfos(next: ManagedInfo[]) {
   try {
     setDmError(null);
-    await appStore.saveInfos(next);
+    await saveDMInfos(next as unknown as Record<string, unknown>[]);
     setManagedInfos(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save info"));
@@ -582,7 +558,7 @@ async function persistInfos(next: ManagedInfo[]) {
 async function persistNotifications(next: DMNotification[]) {
   try {
     setDmError(null);
-    await appStore.saveNotifications(next);
+    await saveDMNotifications(next as unknown as Record<string, unknown>[]);
     setDmNotifications(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save notifications"));
@@ -593,7 +569,7 @@ async function persistNotifications(next: DMNotification[]) {
 async function persistInfoSubTabs(next: InfoSubTab[]) {
   try {
     setDmError(null);
-    await appStore.saveInfoSubTabs(next);
+    await saveDMInfoSubTabs(next as unknown as Record<string, unknown>[]);
     setInfoSubTabs(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save info sub-tabs"));
@@ -623,7 +599,7 @@ async function persistTags(
 async function persistCustomReactions(next: CustomReaction[]) {
   try {
     setDmError(null);
-    await appStore.saveCustomReactions(next);
+    await saveDMCustomReactions(next as unknown as Record<string, unknown>[]);
     setReactions(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save custom reactions"));
@@ -643,7 +619,7 @@ async function persistCustomReactions(next: CustomReaction[]) {
 
     try {
       setDmError(null);
-      await appStore.savePlayerLevelCategories(laSelectedPlayerId, cats);
+      await saveDMPlayerLevelCategories(laSelectedPlayerId, cats);
       setLevelCategories(cats);
     } catch (err) {
       setDmError(getSaveError(err, "Failed to save level categories"));
@@ -657,14 +633,11 @@ async function persistCustomReactions(next: CustomReaction[]) {
     try {
       setDmError(null);
 
-      const currentCats = await appStore.loadPlayerLevelCategories<LevelCategory[]>(laSelectedPlayerId, []);
+      const currentCats = await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[];
 
       for (const p of players) {
         if (p.id !== laSelectedPlayerId) {
-          await appStore.savePlayerLevelCategories(
-            p.id,
-            JSON.parse(JSON.stringify(currentCats)),
-          );
+          await saveDMPlayerLevelCategories(p.id, JSON.parse(JSON.stringify(currentCats)));
         }
       }
 
@@ -685,7 +658,7 @@ useEffect(() => {
     if (!laSelectedPlayerId) return;
 
     try {
-      const existing = await appStore.loadPlayerLevelCategories<LevelCategory[]>(laSelectedPlayerId, []);
+      const existing = await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[];
       let cats = existing;
 
       if (cats.length === 0) {
@@ -698,7 +671,7 @@ useEffect(() => {
             cardIds: [],
             description: "",
           }));
-          await appStore.savePlayerLevelCategories(laSelectedPlayerId, cats);
+          await saveDMPlayerLevelCategories(laSelectedPlayerId, cats);
         }
       }
 
@@ -928,7 +901,7 @@ useEffect(() => {
     if (editingPlayer) setEditingPlayer({ ...editingPlayer, [key]: value });
   };
   const updatePlayerStat = (stat: keyof PlayerStats, value: number) => {
-    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...defaultStats, ...(editingPlayer.stats ?? {}), [stat]: value } });
+    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...editingPlayer.stats, [stat]: value } });
   };
 
   // ========================
@@ -1075,7 +1048,7 @@ const handleSaveItem = async () => {
     });
 
     if (treesChanged) {
-      await appStore.saveNodeTrees(nextTrees);
+      await saveDMNodeTrees(nextTrees as unknown as Record<string, unknown>[]);
       setNodeTrees(nextTrees);
     }
 
@@ -1336,11 +1309,11 @@ const handleSaveItem = async () => {
                   <div className="mb-4">
                     <div className="text-[10px] mb-2" style={labelStyle}>ATTRIBUTES:</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                      {(Object.keys(editingPlayer.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
+                      {(Object.keys(editingPlayer.stats) as (keyof PlayerStats)[]).map((stat) => (
                         <div key={stat}>
                           <label className="text-[10px] block mb-1" style={S_ACCENT_HDR}>{stat}</label>
-                          <input type="number" value={(editingPlayer.stats ?? defaultStats)[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
-                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod((editingPlayer.stats ?? defaultStats)[stat])}</div>
+                          <input type="number" value={editingPlayer.stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
+                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(editingPlayer.stats[stat])}</div>
                         </div>
                       ))}
                     </div>
@@ -1431,8 +1404,7 @@ const handleSaveItem = async () => {
                                   maxWeight: 100,
                                   exhaustion: 0,
                                   maxExhaustion: 6,
-                                  ...mergePlayerWithTemplate(player),
-                                  stats: { ...defaultStats, ...(mergePlayerWithTemplate(player).stats ?? {}) },
+                                  ...player,
                                 });
                                 setIsAddingNewPlayer(false);
                               }}
@@ -1456,10 +1428,10 @@ const handleSaveItem = async () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
-                          {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
+                          {(Object.keys(player.stats) as (keyof PlayerStats)[]).map((stat) => (
                             <div key={stat} className="text-center">
                               <div className="text-[9px]" style={S_ACCENT_HDR}>{stat}</div>
-                              <div className="text-[13px]" style={S_TEXT}>{(player.stats ?? defaultStats)[stat]} ({statMod((player.stats ?? defaultStats)[stat])})</div>
+                              <div className="text-[13px]" style={S_TEXT}>{player.stats[stat]} ({statMod(player.stats[stat])})</div>
                             </div>
                           ))}
                         </div>

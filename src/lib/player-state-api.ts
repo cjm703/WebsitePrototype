@@ -62,26 +62,98 @@ export async function logoutPlayerSession() {
   }
 }
 
-export async function loadDMPlayers() {
-  const body = await apiFetch("/dm/players", { method: "GET" });
-  return body.players ?? [];
+async function loadDMRows(path: string, key: string) {
+  const body = await apiFetch(path, { method: "GET" });
+  return body?.[key] ?? [];
 }
 
-export async function saveDMPlayers(players: Record<string, unknown>[]) {
-  return apiFetch("/dm/players/save", {
+async function saveDMRows(path: string, key: string, rows: Record<string, unknown>[]) {
+  return apiFetch(path, {
     method: "POST",
-    body: JSON.stringify({ players }),
+    body: JSON.stringify({ [key]: rows }),
   });
 }
 
+export async function loadDMPlayers() {
+  return loadDMRows("/dm/players", "players");
+}
+
+export async function saveDMPlayers(players: Record<string, unknown>[]) {
+  return saveDMRows("/dm/players/save", "players", players);
+}
+
 export async function loadDMDeletedPlayers() {
-  const body = await apiFetch("/dm/deleted-players", { method: "GET" });
-  return body.players ?? [];
+  return loadDMRows("/dm/deleted-players", "players");
 }
 
 export async function saveDMDeletedPlayers(players: Record<string, unknown>[]) {
-  return apiFetch("/dm/deleted-players/save", {
+  return saveDMRows("/dm/deleted-players/save", "players", players);
+}
+
+export async function loadDMItems() {
+  return loadDMRows("/dm/items", "items");
+}
+
+export async function saveDMItems(items: Record<string, unknown>[]) {
+  return saveDMRows("/dm/items/save", "items", items);
+}
+
+export async function loadDMCards() {
+  return loadDMRows("/dm/cards", "cards");
+}
+
+export async function saveDMCards(cards: Record<string, unknown>[]) {
+  return saveDMRows("/dm/cards/save", "cards", cards);
+}
+
+export async function loadDMInfos() {
+  return loadDMRows("/dm/infos", "infos");
+}
+
+export async function saveDMInfos(infos: Record<string, unknown>[]) {
+  return saveDMRows("/dm/infos/save", "infos", infos);
+}
+
+export async function loadDMNodeTrees() {
+  return loadDMRows("/dm/node-trees", "nodeTrees");
+}
+
+export async function saveDMNodeTrees(nodeTrees: Record<string, unknown>[]) {
+  return saveDMRows("/dm/node-trees/save", "nodeTrees", nodeTrees);
+}
+
+export async function loadDMNotifications() {
+  return loadDMRows("/dm/notifications", "notifications");
+}
+
+export async function saveDMNotifications(notifications: Record<string, unknown>[]) {
+  return saveDMRows("/dm/notifications/save", "notifications", notifications);
+}
+
+export async function loadDMInfoSubTabs() {
+  return loadDMRows("/dm/info-subtabs", "infoSubTabs");
+}
+
+export async function saveDMInfoSubTabs(infoSubTabs: Record<string, unknown>[]) {
+  return saveDMRows("/dm/info-subtabs/save", "infoSubTabs", infoSubTabs);
+}
+
+export async function loadDMCustomReactions() {
+  return loadDMRows("/dm/custom-reactions", "reactions");
+}
+
+export async function saveDMCustomReactions(reactions: Record<string, unknown>[]) {
+  return saveDMRows("/dm/custom-reactions/save", "reactions", reactions);
+}
+
+export async function loadDMPlayerLevelCategories(playerId: string) {
+  const body = await apiFetch(`/dm/player-level-categories/${encodeURIComponent(playerId)}`, { method: "GET" });
+  return body?.levelCategories ?? [];
+}
+
+export async function saveDMPlayerLevelCategories(playerId: string, levelCategories: unknown[]) {
+  return apiFetch("/dm/player-level-categories/save", {
     method: "POST",
-    body: JSON.stringify({ players }),
+    body: JSON.stringify({ playerId, levelCategories }),
   });
 }

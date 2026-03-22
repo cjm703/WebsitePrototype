@@ -1,17 +1,11 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
+import { logger } from "npm:hono/logger"
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.ts";
 
-const app = new Hono();
 
-const KNOWN_PROFILE_SEEDS = [
-  { id: "dm", name: "DM" },
-  { id: "player-1", name: "Player 1" },
-  { id: "player-2", name: "Player 2" },
-  { id: "player-3", name: "Player 3" },
-];
+const app = new Hono();
 
 const admin = () =>
   createClient(
@@ -19,19 +13,6 @@ const admin = () =>
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-const expectedApiKey = (
-  Deno.env.get("SB_PUBLISHABLE_KEY") ||
-  Deno.env.get("SUPABASE_ANON_KEY") ||
-  ""
-).trim();
-
-function requireApiKey(c: any) {
-  const apiKey = (c.req.header("apikey") || "").trim();
-  if (!expectedApiKey || apiKey !== expectedApiKey) {
-    return c.json({ error: "Invalid API key" }, 401);
-  }
-  return null;
-}
 
 app.use("*", logger(console.log));
 app.use(
@@ -75,64 +56,16 @@ async function createSession(playerId: string) {
   return { rawToken, expiresAt };
 }
 
-
-async function ensurePlayerExists(playerId: string, fallbackName?: string) {
-  const supabase = admin();
-
-  const { data, error } = await supabase
-    .from("app_players")
-    .select("id, data")
-    .eq("id", playerId)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-
-  const now = new Date().toISOString();
-
-  if (!data) {
-    const { error: insertError } = await supabase
-      .from("app_players")
-      .insert({
-        id: playerId,
-        data: {
-          id: playerId,
-          name: fallbackName || playerId,
-        },
-        updated_at: now,
-      });
-
-    if (insertError) throw new Error(insertError.message);
-    return;
-  }
-
-  const nextData = {
-    ...(data.data ?? {}),
-    id: playerId,
-  };
-
-  if (!nextData.name) nextData.name = fallbackName || playerId;
-
-  if (JSON.stringify(nextData) !== JSON.stringify(data.data ?? {})) {
-    const { error: updateError } = await supabase
-      .from("app_players")
-      .update({ data: nextData, updated_at: now })
-      .eq("id", playerId);
-
-    if (updateError) throw new Error(updateError.message);
-  }
-}
-
-async function ensureKnownProfiles() {
-  for (const profile of KNOWN_PROFILE_SEEDS) {
-    await ensurePlayerExists(profile.id, profile.name);
-  }
-}
-
 function getSessionToken(c: any): string {
-  return (c.req.header("X-Session-Token") || "").trim();
+  const custom = c.req.header("X-Session-Token") || "";
+  if (custom) return custom;
+
+  const auth = c.req.header("Authorization") || "";
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
 
 async function resolveSessionPlayerId(c: any): Promise<string> {
+  const auth = c.req.header("Authorization") || "";
   const rawToken = getSessionToken(c);
   if (!rawToken) throw new Error("Missing session token");
 
@@ -159,11 +92,36 @@ function requireDM(playerId: string) {
   }
 }
 
+
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 
 
-async function listEntityRows(table: "app_players" | "app_deleted_players") {
+
+type DMCollectionKey =
+  | "players"
+  | "deleted-players"
+  | "items"
+  | "cards"
+  | "infos"
+  | "node-trees"
+  | "notifications"
+  | "info-subtabs"
+  | "custom-reactions";
+
+const DM_COLLECTIONS: Record<DMCollectionKey, { table: string; responseKey: string; requestKey: string; revokeSessions?: boolean }> = {
+  "players": { table: "app_players", responseKey: "players", requestKey: "players", revokeSessions: true },
+  "deleted-players": { table: "app_deleted_players", responseKey: "players", requestKey: "players" },
+  "items": { table: "app_items", responseKey: "items", requestKey: "items" },
+  "cards": { table: "app_cards", responseKey: "cards", requestKey: "cards" },
+  "infos": { table: "app_infos", responseKey: "infos", requestKey: "infos" },
+  "node-trees": { table: "app_node_trees", responseKey: "nodeTrees", requestKey: "nodeTrees" },
+  "notifications": { table: "app_notifications", responseKey: "notifications", requestKey: "notifications" },
+  "info-subtabs": { table: "app_info_subtabs", responseKey: "infoSubTabs", requestKey: "infoSubTabs" },
+  "custom-reactions": { table: "community_custom_reactions", responseKey: "reactions", requestKey: "reactions" },
+};
+
+async function listCollectionRows(table: string) {
   const supabase = admin();
   const { data, error } = await supabase
     .from(table)
@@ -178,16 +136,23 @@ async function listEntityRows(table: "app_players" | "app_deleted_players") {
   }));
 }
 
-async function replaceEntityRows(
-  table: "app_players" | "app_deleted_players",
+async function replaceCollectionRows(
+  table: string,
   rows: Array<{ id: string; [key: string]: any }>,
+  opts?: { revokeSessions?: boolean },
 ) {
   const supabase = admin();
   const now = new Date().toISOString();
 
-  const nextIds = rows
-    .map((row) => typeof row?.id === "string" ? row.id.trim() : "")
-    .filter(Boolean);
+  const dedupedRows = Array.from(
+    new Map(
+      rows
+        .filter((row) => typeof row?.id === "string" && row.id.trim())
+        .map((row) => [row.id.trim(), { ...row, id: row.id.trim() }])
+    ).values()
+  );
+
+  const nextIds = dedupedRows.map((row) => row.id);
 
   const { data: existingRows, error: existingError } = await supabase
     .from(table)
@@ -198,7 +163,7 @@ async function replaceEntityRows(
   const existingIds = (existingRows ?? []).map((row: any) => row.id as string);
   const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
 
-  const payload = rows.map((row) => ({
+  const payload = dedupedRows.map((row) => ({
     id: row.id,
     data: { ...row, id: row.id },
     updated_at: now,
@@ -213,7 +178,7 @@ async function replaceEntityRows(
   }
 
   if (idsToDelete.length > 0) {
-    if (table === "app_players") {
+    if (opts?.revokeSessions) {
       const { error: revokeError } = await supabase
         .from("app_sessions")
         .delete()
@@ -229,16 +194,12 @@ async function replaceEntityRows(
     if (deleteError) throw new Error(deleteError.message);
   }
 }
-
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
     return c.json({ status: "ok", prefix });
   });
 
   app.post(`${prefix}/auth-codes/set`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const { profileId, code } = await c.req.json();
     if (!profileId || typeof profileId !== "string") {
       return c.json({ error: "Missing or invalid profileId" }, 400);
@@ -252,68 +213,60 @@ function registerRoutes(prefix: string) {
     return c.json({ success: true });
   });
 
-  app.post(`${prefix}/auth-codes/verify`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
+app.post(`${prefix}/auth-codes/verify`, async (c) => {
+  try {
+    const body = await c.req.json();
+    console.log("VERIFY BODY:", body);
 
-      const body = await c.req.json();
-      console.log("VERIFY BODY:", body);
+    const { profileId, code } = body;
+    if (!profileId || typeof profileId !== "string") {
+      return c.json({ error: "Missing or invalid profileId" }, 400);
+    }
 
-      const { profileId, code } = body;
-      if (!profileId || typeof profileId !== "string") {
-        return c.json({ error: "Missing or invalid profileId" }, 400);
-      }
+    const key = authKey(profileId);
+    console.log("VERIFY KEY:", key);
 
-      const key = authKey(profileId);
-      console.log("VERIFY KEY:", key);
+    const stored = await kv.get(key);
+    console.log("VERIFY STORED:", stored);
 
-      const stored = await kv.get(key);
-      console.log("VERIFY STORED:", stored);
+    const playerId = profileId;
 
-      const playerId = profileId;
-
-      await ensurePlayerExists(playerId, playerId === "dm" ? "DM" : undefined);
-
-      if (!stored || !stored.hash) {
-        const session = await createSession(playerId);
-        return c.json({
-          valid: true,
-          hasCode: false,
-          playerId,
-          sessionToken: session.rawToken,
-        });
-      }
-
-      const inputHash = await sha256(code || "");
-      const valid = inputHash === stored.hash;
-
-      if (!valid) {
-        return c.json({
-          valid: false,
-          hasCode: true,
-        });
-      }
-
+    if (!stored || !stored.hash) {
       const session = await createSession(playerId);
-
       return c.json({
         valid: true,
-        hasCode: true,
+        hasCode: false,
         playerId,
         sessionToken: session.rawToken,
       });
-    } catch (err) {
-      console.log("VERIFY ERROR FULL:", err);
-      return c.json({ error: String(err) }, 500);
     }
-  });
+
+    const inputHash = await sha256(code || "");
+    const valid = inputHash === stored.hash;
+
+    if (!valid) {
+      return c.json({
+        valid: false,
+        hasCode: true,
+      });
+    }
+
+    const session = await createSession(playerId);
+
+    return c.json({
+      valid: true,
+      hasCode: true,
+      playerId,
+      sessionToken: session.rawToken,
+    });
+  } catch (err) {
+    console.log("VERIFY ERROR FULL:", err);
+    return c.json({ error: String(err) }, 500);
+  }
+});
 
   app.post(`${prefix}/auth-codes/status`, async (c) => {
     try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
       const body = await c.req.json();
       console.log("STATUS BODY:", body);
 
@@ -345,11 +298,6 @@ function registerRoutes(prefix: string) {
 
   app.get(`${prefix}/auth-codes/profiles`, async (c) => {
     try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      await ensureKnownProfiles();
-
       const supabase = admin();
 
       const { data, error } = await supabase
@@ -373,9 +321,6 @@ function registerRoutes(prefix: string) {
   });
 
   app.delete(`${prefix}/auth-codes/:profileId`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const profileId = c.req.param("profileId");
     if (!profileId) {
       return c.json({ error: "Missing profileId" }, 400);
@@ -386,9 +331,6 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/auth-codes/migrate`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const { codes } = await c.req.json();
     if (!Array.isArray(codes)) {
       return c.json({ error: "codes must be an array" }, 400);
@@ -409,9 +351,6 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/profile-picture/upload`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const { userId, imageData } = await c.req.json();
     if (!userId || typeof userId !== "string") {
       return c.json({ error: "Missing or invalid userId" }, 400);
@@ -431,9 +370,6 @@ function registerRoutes(prefix: string) {
   });
 
   app.get(`${prefix}/profile-picture/:userId`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const userId = c.req.param("userId");
     if (!userId) {
       return c.json({ error: "Missing userId" }, 400);
@@ -448,9 +384,6 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/profile-picture/batch`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const { userIds } = await c.req.json();
     if (!Array.isArray(userIds)) {
       return c.json({ error: "userIds must be an array" }, 400);
@@ -469,9 +402,6 @@ function registerRoutes(prefix: string) {
   });
 
   app.delete(`${prefix}/profile-picture/:userId`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
-
     const userId = c.req.param("userId");
     if (!userId) {
       return c.json({ error: "Missing userId" }, 400);
@@ -483,9 +413,6 @@ function registerRoutes(prefix: string) {
 
   app.get(`${prefix}/player-state`, async (c) => {
     try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
       const playerId = await resolveSessionPlayerId(c);
       const supabase = admin();
 
@@ -539,9 +466,6 @@ function registerRoutes(prefix: string) {
 
   app.post(`${prefix}/player-state`, async (c) => {
     try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
       const playerId = await resolveSessionPlayerId(c);
       const body = await c.req.json();
       const supabase = admin();
@@ -553,8 +477,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_quick_items").upsert(
             { player_id: playerId, data: body.quickItems, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -562,8 +486,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_source_usage_log").upsert(
             { player_id: playerId, data: body.sourceUsage, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -571,8 +495,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_activity_log").upsert(
             { player_id: playerId, data: body.activityLog, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -580,8 +504,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_skill_settings").upsert(
             { player_id: playerId, data: body.skillSettings, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -589,8 +513,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_skill_proficiencies").upsert(
             { player_id: playerId, data: body.skillProficiencies, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -598,8 +522,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_equipment_slots").upsert(
             { player_id: playerId, data: body.equipmentSlots, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -607,8 +531,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_status_effects").upsert(
             { player_id: playerId, data: body.statusEffects, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -616,8 +540,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_level_categories").upsert(
             { player_id: playerId, data: body.levelCategories, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -625,8 +549,8 @@ function registerRoutes(prefix: string) {
         writes.push(
           supabase.from("player_node_tree_unlocks").upsert(
             { player_id: playerId, data: body.nodeUnlocks, updated_at: now },
-            { onConflict: "player_id" },
-          ),
+            { onConflict: "player_id" }
+          )
         );
       }
 
@@ -648,8 +572,8 @@ function registerRoutes(prefix: string) {
               data: { ...currentPlayer, ...body.playerPatch },
               updated_at: now,
             },
-            { onConflict: "id" },
-          ),
+            { onConflict: "id" }
+          )
         );
       }
 
@@ -664,13 +588,15 @@ function registerRoutes(prefix: string) {
               data: item,
               updated_at: now,
             },
-            { onConflict: "id" },
-          ),
+            { onConflict: "id" }
+          )
         );
       }
 
       if ("deleteItemId" in body) {
-        writes.push(supabase.from("app_items").delete().eq("id", body.deleteItemId));
+        writes.push(
+          supabase.from("app_items").delete().eq("id", body.deleteItemId)
+        );
       }
 
       const results = await Promise.all(writes);
@@ -683,28 +609,26 @@ function registerRoutes(prefix: string) {
     }
   });
 
-  app.post(`${prefix}/session/logout`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
+    app.post(`${prefix}/session/logout`, async (c) => {
+      try {
+        const auth = c.req.header("Authorization") || "";
+         const rawToken = getSessionToken(c);
+        if (!rawToken) return c.json({ error: "Missing session token" }, 400);
 
-      const rawToken = getSessionToken(c);
-      if (!rawToken) return c.json({ error: "Missing session token" }, 400);
+        const tokenHash = await sessionTokenKey(rawToken);
+        const supabase = admin();
 
-      const tokenHash = await sessionTokenKey(rawToken);
-      const supabase = admin();
+        const { error } = await supabase
+          .from("app_sessions")
+          .update({ revoked: true })
+          .eq("token_hash", tokenHash);
 
-      const { error } = await supabase
-        .from("app_sessions")
-        .update({ revoked: true })
-        .eq("token_hash", tokenHash);
-
-      if (error) return c.json({ error: error.message }, 500);
-      return c.json({ ok: true });
-    } catch (err) {
-      return c.json({ error: String(err) }, 500);
-    }
-  });
+        if (error) return c.json({ error: error.message }, 500);
+        return c.json({ ok: true });
+      } catch (err) {
+        return c.json({ error: String(err) }, 500);
+      }
+    });
 
 
   app.get(`${prefix}/dm/players`, async (c) => {
@@ -715,7 +639,7 @@ function registerRoutes(prefix: string) {
       const playerId = await resolveSessionPlayerId(c);
       requireDM(playerId);
 
-      const players = await listEntityRows("app_players");
+      const players = await listCollectionRows("app_players");
       return c.json({ players });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -735,7 +659,7 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "players must be an array" }, 400);
       }
 
-      await replaceEntityRows("app_players", body.players);
+      await replaceCollectionRows("app_players", body.players, { revokeSessions: true });
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -750,7 +674,7 @@ function registerRoutes(prefix: string) {
       const playerId = await resolveSessionPlayerId(c);
       requireDM(playerId);
 
-      const players = await listEntityRows("app_deleted_players");
+      const players = await listCollectionRows("app_deleted_players");
       return c.json({ players });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -770,14 +694,14 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "players must be an array" }, 400);
       }
 
-      await replaceEntityRows("app_deleted_players", body.players);
+      await replaceCollectionRows("app_deleted_players", body.players);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
     }
   });
 
-  app.get(`${prefix}/dm/test`, async (c) => {
+  app.get(`${prefix}/dm/:collection`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
       if (unauthorized) return unauthorized;
@@ -785,17 +709,113 @@ function registerRoutes(prefix: string) {
       const playerId = await resolveSessionPlayerId(c);
       requireDM(playerId);
 
-      return c.json({ ok: true, dm: true });
+      const collection = c.req.param("collection") as DMCollectionKey;
+      const meta = DM_COLLECTIONS[collection];
+      if (!meta || collection === "players" || collection === "deleted-players") {
+        return c.json({ error: "Unknown DM collection" }, 404);
+      }
+
+      const rows = await listCollectionRows(meta.table);
+      return c.json({ [meta.responseKey]: rows });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
     }
   });
 
-  app.get(`${prefix}/debug-kv`, async (c) => {
+  app.post(`${prefix}/dm/:collection/save`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
       if (unauthorized) return unauthorized;
 
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const collection = c.req.param("collection") as DMCollectionKey;
+      const meta = DM_COLLECTIONS[collection];
+      if (!meta || collection === "players" || collection === "deleted-players") {
+        return c.json({ error: "Unknown DM collection" }, 404);
+      }
+
+      const body = await c.req.json();
+      const rows = body?.[meta.requestKey];
+      if (!Array.isArray(rows)) {
+        return c.json({ error: `${meta.requestKey} must be an array` }, 400);
+      }
+
+      await replaceCollectionRows(meta.table, rows, { revokeSessions: meta.revokeSessions });
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/player-level-categories/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const playerId = c.req.param("playerId");
+      if (!playerId) return c.json({ error: "Missing playerId" }, 400);
+
+      const supabase = admin();
+      const { data, error } = await supabase
+        .from("player_level_categories")
+        .select("data")
+        .eq("player_id", playerId)
+        .maybeSingle();
+
+      if (error) return c.json({ error: error.message }, 500);
+      return c.json({ levelCategories: data?.data ?? [] });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/player-level-categories/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      if (!body?.playerId || !Array.isArray(body?.levelCategories)) {
+        return c.json({ error: "playerId and levelCategories are required" }, 400);
+      }
+
+      const supabase = admin();
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from("player_level_categories")
+        .upsert(
+          { player_id: body.playerId, data: body.levelCategories, updated_at: now },
+          { onConflict: "player_id" }
+        );
+
+      if (error) return c.json({ error: error.message }, 500);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/test`, async (c) => {
+      try {
+        const playerId = await resolveSessionPlayerId(c);
+        requireDM(playerId);
+
+        return c.json({ ok: true, dm: true });
+      } catch (err) {
+        return c.json({ error: String(err) }, 403);
+      }
+    });
+
+  app.get(`${prefix}/debug-kv`, async (c) => {
+    try {
       const testKey = "debug-test";
       await kv.set(testKey, { ok: true, time: Date.now() });
       const value = await kv.get(testKey);
