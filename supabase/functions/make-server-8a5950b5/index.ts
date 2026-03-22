@@ -19,8 +19,12 @@ const expectedApiKey = (
 ).trim();
 
 function requireApiKey(c: any) {
-  const apiKey = (c.req.header("apikey") || "").trim();
-  if (!expectedApiKey || apiKey !== expectedApiKey) {
+  const apiKeyHeader = (c.req.header("apikey") || "").trim();
+  const authHeader = (c.req.header("Authorization") || "").trim();
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const provided = apiKeyHeader || bearer;
+
+  if (!expectedApiKey || !provided || provided !== expectedApiKey) {
     return c.json({ error: "Invalid API key" }, 401);
   }
   return null;
@@ -88,6 +92,7 @@ async function ensurePlayerExists(playerId: string) {
     .insert({
       id: playerId,
       data: {
+        id: playerId,
         name: playerId,
       },
       updated_at: now,
