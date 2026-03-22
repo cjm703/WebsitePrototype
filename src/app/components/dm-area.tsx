@@ -901,7 +901,7 @@ useEffect(() => {
     if (editingPlayer) setEditingPlayer({ ...editingPlayer, [key]: value });
   };
   const updatePlayerStat = (stat: keyof PlayerStats, value: number) => {
-    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...editingPlayer.stats, [stat]: value } });
+    if (editingPlayer) setEditingPlayer({ ...editingPlayer, stats: { ...(editingPlayer.stats ?? defaultStats), [stat]: value } });
   };
 
   // ========================
@@ -1361,6 +1361,8 @@ const handleSaveItem = async () => {
                     </label>
                     <input
                       type="password"
+                      id="dm-player-auth-code"
+                      name="dm-player-auth-code"
                       value={pendingAuthCode}
                       onChange={(e) => setPendingAuthCode(e.target.value)}
                       placeholder={hasAuthCodeMap[editingPlayer.id] ? "Enter new code to change..." : "Set login authorization code..."}
