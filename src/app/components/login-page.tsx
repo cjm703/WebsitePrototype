@@ -5,7 +5,7 @@ import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_ACCENT, S_RED } from "./shared-styl
 import { LogIn, Shield, User, ChevronDown, X } from "lucide-react";
 import { initialPlayers } from "./initial-data";
 import { verifyAuthCode, getAuthStatuses, migrateAuthCodes } from "./auth-utils";
-import { safeGetItem, safeSetItem } from "./safe-storage";
+import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
 import type { LoginProfile } from "./types";
 
 interface LegacyProfile {
@@ -54,9 +54,30 @@ function fallbackProfiles(): LoginProfile[] {
   return profiles;
 }
 
+
+function loadCachedProfiles(): LoginProfile[] {
+  try {
+    const raw = safeGetItem("inet-profiles");
+    if (!raw) return [];
+    const parsed: LegacyProfile[] = JSON.parse(raw);
+    const profiles: LoginProfile[] = parsed
+      .filter((p) => p.id !== "dm")
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        hasAuthCode: false,
+        description: p.description,
+      }));
+    return [...profiles, DM_PROFILE];
+  } catch {
+    return [];
+  }
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
-  const [profiles, setProfiles] = useState<LoginProfile[]>(fallbackProfiles);
+  const [profiles, setProfiles] = useState<LoginProfile[]>(loadCachedProfiles);
+  const [profilesLoading, setProfilesLoading] = useState(loadCachedProfiles().length === 0);
   const [selectedProfile, setSelectedProfile] = useState<LoginProfile | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [password, setPassword] = useState("");
@@ -104,17 +125,29 @@ export function LoginPage() {
         const serverProfiles = await fetchProfilesFromServer();
         const withDm = [...serverProfiles.filter((p) => p.id !== "dm"), DM_PROFILE];
         const statuses = await getAuthStatuses(withDm.map((p) => p.id));
+        const hydrated = withDm.map((p) => ({ ...p, hasAuthCode: p.id === "dm" ? true : (statuses[p.id] ?? false) }));
+        try {
+          safeSetJson("inet-profiles", hydrated
+            .filter((p) => p.id !== "dm")
+            .map((p) => ({ id: p.id, name: p.name, description: p.description, authCode: "" })));
+        } catch {}
         if (!cancelled) {
-          setProfiles(withDm.map((p) => ({ ...p, hasAuthCode: p.id === "dm" ? true : (statuses[p.id] ?? false) })));
+          setProfiles(hydrated);
+          setProfilesLoading(false);
         }
       } catch (err) {
         console.error("Failed to fetch auth statuses/profiles from server:", err);
         try {
-          const statuses = await getAuthStatuses(fallbackProfiles().map((p) => p.id));
+          const cached = loadCachedProfiles();
+          const base = cached.length > 0 ? cached : fallbackProfiles();
+          const statuses = await getAuthStatuses(base.map((p) => p.id));
           if (!cancelled) {
-            setProfiles(fallbackProfiles().map((p) => ({ ...p, hasAuthCode: p.id === "dm" ? true : (statuses[p.id] ?? false) })));
+            setProfiles(base.map((p) => ({ ...p, hasAuthCode: p.id === "dm" ? true : (statuses[p.id] ?? false) })));
+            setProfilesLoading(false);
           }
-        } catch {}
+        } catch {
+          if (!cancelled) setProfilesLoading(false);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -201,6 +234,9 @@ export function LoginPage() {
               )}
               <ChevronDown size={16} />
             </button>
+            {profilesLoading && profiles.length === 0 && (
+              <div className="mt-2 text-[11px]" style={S_DIM}>Loading profiles from server...</div>
+            )}
             {menuOpen && (
               <div className="absolute z-20 mt-1 w-full border bg-[#0C0C2E]" style={{ borderColor: "#1A1A4B" }}>
                 {agentProfiles.length > 0 && (
