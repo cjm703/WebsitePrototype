@@ -835,6 +835,12 @@ useEffect(() => {
         setDeletePasswordError(true);
         return;
       }
+
+      if (result.sessionToken) {
+        safeSetItem("inet-session-token", result.sessionToken);
+        safeSetItem("inet-user-id", result.playerId ?? "dm");
+        safeSetItem("inet-user", "DM");
+      }
     } catch (err) {
       console.error("DM auth verification error:", err);
       setDeletePasswordError(true);

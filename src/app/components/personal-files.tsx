@@ -372,7 +372,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setIsHydrating(true);
     try {
       const [
-        players,
         items,
         cards,
         infos,
@@ -381,7 +380,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         infoSubTabRows,
         playerState,
       ] = await Promise.all([
-        appStore.listPlayers<PlayerData>(),
         appStore.listItems<ManagedItem>(),
         appStore.listCards<ManagedCard>(),
         appStore.listInfos<ManagedInfo>(),
@@ -391,7 +389,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         loadPlayerState(),
       ]);
 
-      setAllPlayers(players);
+      setAllPlayers(playerState.player ? [playerState.player as PlayerData] : []);
       setAllItems(items);
       setAllCards(cards);
       setAllInfos(infos);
