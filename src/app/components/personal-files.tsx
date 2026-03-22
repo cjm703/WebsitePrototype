@@ -14,7 +14,6 @@ import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
 import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
-import { initialPlayers as sharedInitialPlayers } from "./initial-data";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo, TagDefinition } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
@@ -373,6 +372,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setIsHydrating(true);
     try {
       const [
+        players,
         items,
         cards,
         infos,
@@ -381,6 +381,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         infoSubTabRows,
         playerState,
       ] = await Promise.all([
+        appStore.listPlayers<PlayerData>(),
         appStore.listItems<ManagedItem>(),
         appStore.listCards<ManagedCard>(),
         appStore.listInfos<ManagedInfo>(),
@@ -390,7 +391,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         loadPlayerState(),
       ]);
 
-      setAllPlayers(playerState.player ? [playerState.player] : []);
+      setAllPlayers(players);
       setAllItems(items);
       setAllCards(cards);
       setAllInfos(infos);
@@ -564,29 +565,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     };
   }, []);
 
-  const player = useMemo(() => {
-    const rawPlayer = allPlayers.find((p) => p.id === currentUserId) || null;
-    const template = (sharedInitialPlayers as PlayerData[]).find((p) => p.id === currentUserId)
-      || (sharedInitialPlayers as PlayerData[])[0]
-      || null;
-
-    if (!rawPlayer && !template) return null;
-    if (!template) return rawPlayer;
-    if (!rawPlayer) return template;
-
-    return {
-      ...template,
-      ...rawPlayer,
-      stats: {
-        ...(template.stats || {}),
-        ...((rawPlayer as any).stats || {}),
-      },
-      customFields: {
-        ...((template as any).customFields || {}),
-        ...((rawPlayer as any).customFields || {}),
-      },
-    } as PlayerData;
-  }, [allPlayers, currentUserId]);
+  const player = useMemo(
+    () => allPlayers.find((p) => p.id === currentUserId) || null,
+    [allPlayers, currentUserId]
+  );
 
   const playerItems = useMemo(
     () => player ? allItems.filter((i) => isAssignedTo(i.assignedTo, player.id)) : [],
@@ -621,11 +603,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const persistPlayerField = useCallback(async (updates: Partial<PlayerData>) => {
     if (!player) return;
 
-    const updatedPlayer = { ...player, ...updates };
+    const updatedPlayers = allPlayers.map((p) =>
+      p.id === player.id ? { ...p, ...updates } : p
+    );
 
-    setAllPlayers([updatedPlayer]);
-    await runSaveWithToast(() => savePlayerState({ playerPatch: updates }));
-  }, [player, runSaveWithToast]);
+    setAllPlayers(updatedPlayers);
+    await runSaveWithToast(() => appStore.savePlayers(updatedPlayers));
+  }, [player, allPlayers, runSaveWithToast]);
 
   const handleSetHP = (newHP: number) => {
     const clamped = Math.max(0, Math.min(player?.maxHP ?? 0, newHP));
@@ -1095,12 +1079,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       if (itemsChanged) {
         setAllItems(updatedItems);
         await runSaveWithToast(async () => {
-          const changedSourceItems = updatedItems.filter((item) =>
-            isAssignedTo(item.assignedTo, player?.id || "") &&
+          const changedItems = updatedItems.filter((item) =>
+            item.assignedTo.includes(player?.id || "") &&
             item.tags.some((t) => t.toLowerCase() === "source")
           );
 
-          for (const item of changedSourceItems) {
+          for (const item of changedItems) {
             await savePlayerState({ saveItem: item });
           }
         });
@@ -1475,7 +1459,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
         {/* Effect areas */}
         {item.tags.includes("Effect") && (() => {
-          const effectKeys = Object.keys(item.customFields || {})
+          const effectKeys = Object.keys(item.customFields)
             .filter(k => k.startsWith("Effect::"))
             .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
             .filter(k => item.customFields[k]?.trim());
@@ -2143,7 +2127,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     ATTRIBUTES
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {(Object.keys(player.stats || {}) as (keyof PlayerStats)[]).map((stat) => {
+                    {(Object.keys(player.stats) as (keyof PlayerStats)[]).map((stat) => {
                       const base = player.stats[stat];
                       const eBuff = equipBuffs.attrBuffs[stat] || 0;
                       const sBuff = seBuffs.attrBuffs[stat] || 0;
@@ -3015,7 +2999,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                           {/* Effect areas (when "Effect" tag is active) */}
                           {editingPlayerItem.tags.includes("Effect") && (() => {
-                            const effectKeys = Object.keys(editingPlayerItem.customFields || {})
+                            const effectKeys = Object.keys(editingPlayerItem.customFields)
                               .filter(k => k.startsWith("Effect::"))
                               .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
                             if (effectKeys.length === 0) effectKeys.push("Effect::0");
@@ -3424,7 +3408,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           ) : (
                             <div className="space-y-4">
                               {effectItems.map((item) => {
-                                const effectKeys = Object.keys(item.customFields || {})
+                                const effectKeys = Object.keys(item.customFields)
                                   .filter(k => k.startsWith("Effect::"))
                                   .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
                                   .filter(k => item.customFields[k]?.trim());

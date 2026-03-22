@@ -467,7 +467,7 @@ useEffect(() => {
 
       if (cancelled) return;
 
-      setPlayers(playersData.length ? playersData : (initialPlayers as PlayerData[]));
+      setPlayers(playersData);
       setDeletedPlayers(deletedPlayersData);
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
@@ -739,11 +739,13 @@ useEffect(() => {
   // Profile sync: write player profiles + DM to localStorage for login page
   // ========================
   const syncProfilesToLocalStorage = useCallback((playerList: PlayerData[]) => {
-    const profiles: LoginProfile[] = playerList.map((p) => ({
-      id: p.id,
-      name: p.name,
-      description: `${p.class} · Level ${p.level}`,
-    }));
+    const profiles: LoginProfile[] = playerList
+      .filter((p) => typeof p?.id === "string" && p.id.trim())
+      .map((p) => ({
+        id: p.id,
+        name: p.name || p.id,
+        description: `${p.class || "Unknown"} · Level ${p.level ?? 1}`,
+      }));
     // Always include the DM profile (auth codes live on server, not here)
     profiles.push({ id: "dm", name: "DM", description: "System Administrator · Full Access" });
     safeSetJson("inet-profiles", profiles);
