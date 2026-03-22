@@ -19,12 +19,8 @@ const expectedApiKey = (
 ).trim();
 
 function requireApiKey(c: any) {
-  const apiKeyHeader = (c.req.header("apikey") || "").trim();
-  const authHeader = (c.req.header("Authorization") || "").trim();
-  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  const provided = apiKeyHeader || bearer;
-
-  if (!expectedApiKey || !provided || provided !== expectedApiKey) {
+  const apiKey = (c.req.header("apikey") || "").trim();
+  if (!expectedApiKey || apiKey !== expectedApiKey) {
     return c.json({ error: "Invalid API key" }, 401);
   }
   return null;
@@ -92,7 +88,6 @@ async function ensurePlayerExists(playerId: string) {
     .insert({
       id: playerId,
       data: {
-        id: playerId,
         name: playerId,
       },
       updated_at: now,
@@ -143,7 +138,7 @@ const DM_COLLECTIONS: Record<string, string> = {
   "node-trees": "app_node_trees",
   notifications: "app_notifications",
   "info-subtabs": "app_info_subtabs",
-  "custom-reactions": "app_custom_reactions",
+  "custom-reactions": "community_custom_reactions",
 };
 
 function dedupeRows(rows: any[]) {
