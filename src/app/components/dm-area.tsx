@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories, deleteDMPlayer } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -468,7 +468,7 @@ useEffect(() => {
       if (cancelled) return;
 
       setPlayers(playersData);
-      setDeletedPlayers(deletedPlayersData.filter((p) => p.id !== "dm"));
+      setDeletedPlayers(deletedPlayersData);
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
       setInfoTags(infoTagData.length ? infoTagData : initialInfoTags);
@@ -841,13 +841,11 @@ useEffect(() => {
 
     if (!deleteTarget) return;
 
-    await deleteDMPlayer(deleteTarget.id);
-
-    const nextDeleted = [...deletedPlayers.filter((p) => p.id !== "dm"), deleteTarget];
+    const nextDeleted = [...deletedPlayers, deleteTarget];
     const updatedPlayers = players.filter((p) => p.id !== deleteTarget.id);
 
-    setDeletedPlayers(nextDeleted);
-    setPlayers(updatedPlayers);
+    await persistDeletedPlayers(nextDeleted);
+    await persistPlayers(updatedPlayers);
     syncProfilesToLocalStorage(updatedPlayers);
 
     if (editingPlayer?.id === deleteTarget.id) {
@@ -1311,13 +1309,16 @@ const handleSaveItem = async () => {
                   <div className="mb-4">
                     <div className="text-[10px] mb-2" style={labelStyle}>ATTRIBUTES:</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                      {(Object.keys(editingPlayer.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
+                      {(() => {
+                        const stats = editingPlayer.stats ?? defaultStats;
+                        return (Object.keys(stats) as (keyof PlayerStats)[]).map((stat) => (
                         <div key={stat}>
                           <label className="text-[10px] block mb-1" style={S_ACCENT_HDR}>{stat}</label>
-                          <input type="number" value={editingPlayer.stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
-                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(editingPlayer.stats[stat])}</div>
+                          <input type="number" value={stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
+                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(stats[stat])}</div>
                         </div>
-                      ))}
+                      ));
+                      })()}
                     </div>
                   </div>
                   <div className="mb-4">
@@ -1430,12 +1431,15 @@ const handleSaveItem = async () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
-                          {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
+                          {(() => {
+                            const stats = player.stats ?? defaultStats;
+                            return (Object.keys(stats) as (keyof PlayerStats)[]).map((stat) => (
                             <div key={stat} className="text-center">
                               <div className="text-[9px]" style={S_ACCENT_HDR}>{stat}</div>
-                              <div className="text-[13px]" style={S_TEXT}>{player.stats[stat]} ({statMod(player.stats[stat])})</div>
+                              <div className="text-[13px]" style={S_TEXT}>{stats[stat]} ({statMod(stats[stat])})</div>
                             </div>
-                          ))}
+                          ));
+                          })()}
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
                           <div><div className="text-[9px]" style={S_MUTED}>HP</div><div className="text-[12px]" style={dmHpColor(player.currentHP, player.maxHP)}>{player.currentHP}/{player.maxHP}</div></div>
