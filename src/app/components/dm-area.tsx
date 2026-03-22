@@ -739,13 +739,11 @@ useEffect(() => {
   // Profile sync: write player profiles + DM to localStorage for login page
   // ========================
   const syncProfilesToLocalStorage = useCallback((playerList: PlayerData[]) => {
-    const profiles: LoginProfile[] = playerList
-      .filter((p) => typeof p?.id === "string" && p.id.trim())
-      .map((p) => ({
-        id: p.id,
-        name: p.name || p.id,
-        description: `${p.class || "Unknown"} · Level ${p.level ?? 1}`,
-      }));
+    const profiles: LoginProfile[] = playerList.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: `${p.class} · Level ${p.level}`,
+    }));
     // Always include the DM profile (auth codes live on server, not here)
     profiles.push({ id: "dm", name: "DM", description: "System Administrator · Full Access" });
     safeSetJson("inet-profiles", profiles);
@@ -835,7 +833,6 @@ useEffect(() => {
         setDeletePasswordError(true);
         return;
       }
-
       if (result.sessionToken) {
         safeSetItem("inet-session-token", result.sessionToken);
         safeSetItem("inet-user-id", result.playerId ?? "dm");
@@ -1317,11 +1314,11 @@ const handleSaveItem = async () => {
                   <div className="mb-4">
                     <div className="text-[10px] mb-2" style={labelStyle}>ATTRIBUTES:</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                      {(Object.keys(editingPlayer.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
+                      {(Object.keys(editingPlayer.stats) as (keyof PlayerStats)[]).map((stat) => (
                         <div key={stat}>
                           <label className="text-[10px] block mb-1" style={S_ACCENT_HDR}>{stat}</label>
-                          <input type="number" value={(editingPlayer.stats ?? defaultStats)[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
-                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod((editingPlayer.stats ?? defaultStats)[stat])}</div>
+                          <input type="number" value={editingPlayer.stats[stat]} onChange={(e) => updatePlayerStat(stat, Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className={`${retro.sunken} bg-[#0A0A28] px-2 py-2 text-[13px] w-full outline-none text-center`} style={inputStyle} />
+                          <div className="text-[9px] text-center mt-0.5" style={S_MUTED}>MOD: {statMod(editingPlayer.stats[stat])}</div>
                         </div>
                       ))}
                     </div>
@@ -1436,10 +1433,10 @@ const handleSaveItem = async () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-3">
-                          {(Object.keys(player.stats ?? defaultStats) as (keyof PlayerStats)[]).map((stat) => (
+                          {(Object.keys(player.stats) as (keyof PlayerStats)[]).map((stat) => (
                             <div key={stat} className="text-center">
                               <div className="text-[9px]" style={S_ACCENT_HDR}>{stat}</div>
-                              <div className="text-[13px]" style={S_TEXT}>{(player.stats ?? defaultStats)[stat]} ({statMod((player.stats ?? defaultStats)[stat])})</div>
+                              <div className="text-[13px]" style={S_TEXT}>{player.stats[stat]} ({statMod(player.stats[stat])})</div>
                             </div>
                           ))}
                         </div>
@@ -1774,7 +1771,7 @@ const handleSaveItem = async () => {
                     {/* Effect areas (when "Effect" tag is active) */}
                     {editingItem.tags.includes("Effect") && (() => {
                       // Gather existing effect keys in order
-                      const effectKeys = Object.keys(editingItem.customFields ?? {})
+                      const effectKeys = Object.keys(editingItem.customFields)
                         .filter(k => k.startsWith("Effect::"))
                         .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
                       if (effectKeys.length === 0) effectKeys.push("Effect::0");

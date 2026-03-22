@@ -601,12 +601,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const persistPlayerField = useCallback(async (updates: Partial<PlayerData>) => {
     if (!player) return;
 
-    const updatedPlayers = allPlayers.map((p) =>
-      p.id === player.id ? { ...p, ...updates } : p
-    );
+    const mergedPlayer = { ...player, ...updates };
 
-    setAllPlayers(updatedPlayers);
-    await runSaveWithToast(() => appStore.savePlayers(updatedPlayers));
+    setAllPlayers([mergedPlayer]);
+    await runSaveWithToast(() =>
+      savePlayerState({ playerPatch: updates as Record<string, unknown> })
+    );
   }, [player, allPlayers, runSaveWithToast]);
 
   const handleSetHP = (newHP: number) => {
@@ -816,18 +816,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       : allItems.map(i => i.id === itemToSave.id ? itemToSave : i);
 
     setAllItems(updatedItems);
-    await runSaveWithToast(async () => {
-      await savePlayerState({ saveItem: itemToSave });
-    });
+    await runSaveWithToast(() => savePlayerState({ saveItem: itemToSave }));
     setEditingPlayerItem(null);
     setIsNewPlayerItem(false);
   };
   const deletePlayerItem = async (id: string) => {
     const updatedItems = allItems.filter(i => i.id !== id);
     setAllItems(updatedItems);
-    await runSaveWithToast(async () => {
-      await savePlayerState({ deleteItemId: id });
-    });
+    await runSaveWithToast(() => savePlayerState({ deleteItemId: id }));
 
     if (editingPlayerItem?.id === id) {
       setEditingPlayerItem(null);
@@ -1081,7 +1077,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             item.assignedTo.includes(player?.id || "") &&
             item.tags.some((t) => t.toLowerCase() === "source")
           );
-
           for (const item of changedItems) {
             await savePlayerState({ saveItem: item });
           }
