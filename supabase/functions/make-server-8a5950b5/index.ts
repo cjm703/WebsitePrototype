@@ -8,9 +8,6 @@ const app = new Hono();
 
 const KNOWN_PROFILE_SEEDS = [
   { id: "dm", name: "DM" },
-  { id: "player-1", name: "Player 1" },
-  { id: "player-2", name: "Player 2" },
-  { id: "player-3", name: "Player 3" },
 ];
 
 const admin = () =>
