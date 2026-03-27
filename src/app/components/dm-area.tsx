@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories, deleteDMPlayer } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -894,15 +894,22 @@ useEffect(() => {
         return next;
       });
 
-      const nextDeleted = deletedPlayers.filter((p) => p.id !== id);
-      await persistDeletedPlayers(nextDeleted);
+      await purgeDMDeletedPlayer(id);
+      const nextDeleted = deletedPlayers.filter((p) => p.id !== id && p.id !== "dm");
+      setDeletedPlayers(nextDeleted);
     } catch (err) {
       setDmError(getSaveError(err, "Failed to permanently delete player"));
     }
   };
   // Clear all recently deleted
   const clearAllDeletedPlayers = async () => {
-    await persistDeletedPlayers([]);
+    try {
+      setDmError(null);
+      await clearDMDeletedPlayers();
+      setDeletedPlayers([]);
+    } catch (err) {
+      setDmError(getSaveError(err, "Failed to clear deleted players"));
+    }
   };
   const handleCancelPlayerEdit = () => { setEditingPlayer(null); setIsAddingNewPlayer(false); setPendingAuthCode(""); };
   const updatePlayerField = <K extends keyof PlayerData>(key: K, value: PlayerData[K]) => {

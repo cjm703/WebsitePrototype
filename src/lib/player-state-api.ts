@@ -113,6 +113,21 @@ export async function saveDMPlayerLevelCategories(playerId: string, levelCategor
 }
 
 
+
+export async function purgeDMDeletedPlayer(playerId: string) {
+  return apiFetch("/dm/deleted-player/purge", {
+    method: "POST",
+    body: JSON.stringify({ playerId }),
+  });
+}
+
+export async function clearDMDeletedPlayers() {
+  return apiFetch("/dm/deleted-players/clear", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export async function deleteDMPlayer(playerId: string) {
   return apiFetch("/dm/player/delete", {
     method: "POST",

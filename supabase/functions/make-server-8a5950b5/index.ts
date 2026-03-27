@@ -386,6 +386,42 @@ async function movePlayerToDeleted(playerId: string) {
   if (deletePlayerError) throw new Error(deletePlayerError.message);
 }
 
+
+
+async function purgeDeletedPlayer(playerId: string) {
+  if (!playerId) throw new Error("Missing playerId");
+  if (playerId === "dm") throw new Error("Cannot purge dm");
+
+  const supabase = admin();
+
+  const { error: deleteDeletedError } = await supabase
+    .from("app_deleted_players")
+    .delete()
+    .eq("id", playerId);
+  if (deleteDeletedError) throw new Error(deleteDeletedError.message);
+
+  const childTables = [
+    "auth_codes",
+  ];
+
+  for (const table of childTables) {
+    const column = table === "auth_codes" ? "profile_id" : "player_id";
+    const { error } = await supabase.from(table).delete().eq(column, playerId);
+    if (error) throw new Error(error.message);
+  }
+}
+
+async function clearDeletedPlayers() {
+  const supabase = admin();
+
+  const { error: deleteError } = await supabase
+    .from("app_deleted_players")
+    .delete()
+    .neq("id", "dm");
+
+  if (deleteError) throw new Error(deleteError.message);
+}
+
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
     return c.json({ status: "ok", prefix });
@@ -912,6 +948,41 @@ function registerRoutes(prefix: string) {
       if (!playerId) return c.json({ error: "playerId is required" }, 400);
 
       await movePlayerToDeleted(playerId);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+
+  app.post(`${prefix}/dm/deleted-player/purge`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const sessionPlayerId = await resolveSessionPlayerId(c);
+      requireDM(sessionPlayerId);
+
+      const body = await c.req.json();
+      const playerId = typeof body?.playerId === "string" ? body.playerId : "";
+      if (!playerId) return c.json({ error: "playerId is required" }, 400);
+
+      await purgeDeletedPlayer(playerId);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/deleted-players/clear`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const sessionPlayerId = await resolveSessionPlayerId(c);
+      requireDM(sessionPlayerId);
+
+      await clearDeletedPlayers();
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

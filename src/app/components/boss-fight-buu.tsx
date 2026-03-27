@@ -12,39 +12,43 @@ import type { BossFightConfig } from "./boss-fight";
 const buuConfig: Partial<BossFightConfig> = {
   // ── Boss Identity ──────────────────────────────────────────────────────
   bossName: "BUU GNARPY",
-  bossMaxHp: 200,       // Phase 1 HP (same as normal)
-  playerMaxHp: 101,     // Player HP (same as normal)
+  bossMaxHp: 200, // Phase 1 HP (same as normal)
+  playerMaxHp: 101, // Player HP (same as normal)
   startingFood: 1,
 
   // ── Phase 2 Settings ──────────────────────────────────────────────────
   phase2Enabled: true,
-  phase2Placeholder: true,        // Phase 2 is a placeholder for now
-  phase2BossHp: 300,              // Boss gets 300 HP in phase 2
-  phase2DamageMultiplier: 1.5,    // All boss damage x1.5 in phase 2
-  phase2SpeedMultiplier: 1.25,    // Tractor beam pull etc. x1.25 faster in phase 2
+  phase2Placeholder: false,
+  phase2BossHp: 300,
+  phase2DamageMultiplier: 1.5,
+  phase2SpeedMultiplier: 1.25,
   phase2BossName: "Gnarpy Miku",
   phase2TransitionText:
-    "* BUU GNARPY's eyes glow with fury!\n* \"You think that was enough?!\"\n* BUU GNARPY transforms into GNARPY MIKU!",
-  phase2Colors: { bg: "#23ac38", accent: "#86cecb", text: "#fff100" },
+    '* BUU GNARPY\'s eyes glow with fury!\n* "You think that was enough?!"\n* BUU GNARPY transforms into GNARPY MIKU!',
+  phase2Colors: {
+    bg: "#23ac38",
+    accent: "#86cecb",
+    text: "#fff100",
+  },
 
   // ── Attack Damage Overrides (Phase 1 base values) ─────────────────────
   // These get multiplied by phase2DamageMultiplier during phase 2.
   // Uncomment and change any value to override the normal fight defaults.
 
-  // beamDamage: 16,             // Beam Wave (normal beams)
-  // rotateBeamDamage: 12,       // Beam Wave (rotating beam)
-  // bulletStormDamage: 25,      // Bullet Storm projectile hit
-  // bulletStormBeamDamage: 100,  // Bullet Storm final beam
-  // tractorBeamDamage: 12,      // Tractor Beam wall crush
-  // tractorMissileDamage: 8,    // Tractor Beam homing missiles
-  // pawBombDirectDamage: 22,    // Paw bomb direct hit
-  // pawBombSplashDamage: 4,     // Paw bomb splash
-  // siEnemyBulletDamage: 8,     // Space Invaders enemy bullets
-  // siBossBulletDamage: 10,     // Space Invaders boss bullets
-  // safezoneDamage: 10,         // Beam Wave safe zone lasers
+  // beamDamage: 16,
+  // rotateBeamDamage: 12,
+  // bulletStormDamage: 25,
+  // bulletStormBeamDamage: 100,
+  // tractorBeamDamage: 12,
+  // tractorMissileDamage: 8,
+  // pawBombDirectDamage: 22,
+  // pawBombSplashDamage: 4,
+  // siEnemyBulletDamage: 8,
+  // siBossBulletDamage: 10,
+  // safezoneDamage: 10,
 
   // ── Music ─────────────────────────────────────────────────────────────
-  // youtubeVideoId: "BPwvV1V1S8Y",  // Change to a different YouTube video ID
+  // youtubeVideoId: "BPwvV1V1S8Y",
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

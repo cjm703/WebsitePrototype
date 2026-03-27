@@ -1248,14 +1248,19 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
 
   // ── Auto-start attack on mount (for embedded battleBoxOnly mode) ──
   const autoStartRef = useRef(autoStartAttack);
+  const autoStartedRef = useRef(false);
   useEffect(() => {
     const attackToStart = autoStartRef.current;
-    if (attackToStart) {
+    const shouldAutoStart = !!attackToStart;
+    if (!autoStartedRef.current && shouldAutoStart) {
+      autoStartedRef.current = true;
       console.log("[Phase2] Auto-starting attack:", attackToStart);
-      const t = setTimeout(() => runAttack(attackToStart), 300);
+      const t = setTimeout(() => {
+        if (attackToStart) runAttack(attackToStart);
+      }, 300);
       return () => clearTimeout(t);
     }
-  }, []); // only on mount — reads from ref to avoid stale closure
+  }, []); // only on mount — reads from refs to avoid stale closure
 
   // ── Player movement loop + laser collision ──
   useEffect(() => {
@@ -2192,6 +2197,8 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
     const pattern = ATTACK_PATTERNS[name];
     if (!pattern) { console.warn("[Phase2] Unknown attack:", name); return; }
     console.log("[Phase2] Running attack:", name, "steps:", pattern.length);
+    if (attackTimeoutRef.current) { clearTimeout(attackTimeoutRef.current); attackTimeoutRef.current = undefined; }
+    if (stageTimeoutRef.current) { clearTimeout(stageTimeoutRef.current); stageTimeoutRef.current = undefined; }
     setIsAttacking(true);
     setCurrentAttack(name);
     let step = 0;
@@ -2236,6 +2243,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
         // Reset box to default size before returning to player menu
         setBoxW(BASE_W);
         setBoxH(BASE_H);
+        autoStartedRef.current = false;
         onAttackComplete?.();
         return;
       }
@@ -2445,6 +2453,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
     frustMgbFiringRef.current = false;
     setBoxW(BASE_W);
     setBoxH(BASE_H);
+    autoStartedRef.current = false;
   }, []);
 
   useImperativeHandle(ref, () => ({
@@ -2485,12 +2494,26 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
   }, [demoMode, runAttack]);
 
   // ── Cleanup ──
-  useEffect(() => () => {
-    cancelAnimationFrame(animRef.current);
-    if (attackTimeoutRef.current) clearTimeout(attackTimeoutRef.current);
-    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current);
-    if (mgBeamDissipateTimerRef.current) clearTimeout(mgBeamDissipateTimerRef.current);
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(animRef.current);
+      if (attackTimeoutRef.current) {
+        window.clearTimeout(attackTimeoutRef.current);
+        attackTimeoutRef.current = undefined;
+      }
+      if (stageTimeoutRef.current) {
+        window.clearTimeout(stageTimeoutRef.current);
+        stageTimeoutRef.current = undefined;
+      }
+      if (mgBeamDissipateTimerRef.current) {
+        window.clearTimeout(mgBeamDissipateTimerRef.current);
+        mgBeamDissipateTimerRef.current = null;
+      }
+      autoStartedRef.current = false;
+    };
   }, []);
+
+  const safeRenderBoxDims = renderBoxDims ?? { w: BASE_W, h: BASE_H };
 
   const bossHpPct = (bossHp / bossMaxHp) * 100;
   const playerHpPct = (playerHp / playerMaxHp) * 100;
@@ -2579,10 +2602,10 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
         position: "absolute",
         left: MGB_OVERFLOW - 15, right: MGB_OVERFLOW - 15,
         top: 0, bottom: 0,
-        background: `linear-gradient(0deg, 
-          ${L.teal}44 0%, ${L.green}bb 4%, ${L.teal}cc 12%, 
-          #00ffccbb 25%, ${L.green}cc 40%, ${L.teal}dd 50%, 
-          ${L.green}cc 60%, #00ffccbb 75%, 
+        background: `linear-gradient(0deg,
+          ${L.teal}44 0%, ${L.green}bb 4%, ${L.teal}cc 12%,
+          #00ffccbb 25%, ${L.green}cc 40%, ${L.teal}dd 50%,
+          ${L.green}cc 60%, #00ffccbb 75%,
           ${L.teal}cc 88%, ${L.green}bb 96%, ${L.teal}44 100%)`,
         boxShadow: `0 0 20px ${L.teal}99, 0 0 40px ${L.green}55, 0 0 80px ${L.teal}33, 0 0 120px #00ffcc15, inset 0 0 20px ${L.green}44`,
         animation: "p2-mgb-fire 1.4s ease-in-out infinite",
@@ -2590,9 +2613,9 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
         {/* Downward energy sweep */}
         <div style={{
           position: "absolute", inset: 0,
-          backgroundImage: `repeating-linear-gradient(180deg, 
-            transparent 0px, ${L.teal}28 6px, transparent 12px, 
-            #00ffcc22 18px, transparent 24px, 
+          backgroundImage: `repeating-linear-gradient(180deg,
+            transparent 0px, ${L.teal}28 6px, transparent 12px,
+            #00ffcc22 18px, transparent 24px,
             ${L.green}28 30px, transparent 36px)`,
           backgroundSize: "100% 72px",
           animation: "p2-mgb-sweep 0.45s linear infinite",
@@ -2600,9 +2623,9 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
         {/* Energy rings scrolling down */}
         <div style={{
           position: "absolute", inset: 0,
-          backgroundImage: `repeating-linear-gradient(0deg, 
-            transparent 0px, transparent 14px, 
-            #ffffff1a 14px, #ffffff2a 16px, #ffffff1a 18px, 
+          backgroundImage: `repeating-linear-gradient(0deg,
+            transparent 0px, transparent 14px,
+            #ffffff1a 14px, #ffffff2a 16px, #ffffff1a 18px,
             transparent 18px, transparent 44px)`,
           backgroundSize: "100% 62px",
           animation: "p2-mgb-rings 0.9s linear infinite",
@@ -3252,8 +3275,8 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
         }} />
         {/* ═══ Full-length lasers (4) ══�� */}
         {stageVisible && LASER_CONFIGS.map((cfg, i) => {
-          const rw = renderBoxDims.w;
-          const rh = renderBoxDims.h;
+          const rw = safeRenderBoxDims.w;
+          const rh = safeRenderBoxDims.h;
           const originX = cfg.pctX * rw;
           const angleDeg = laserAnglesRef.current[i] ?? 0;
           const laserLen = rh * 1.5;
@@ -3267,8 +3290,8 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
         })}
         {/* ═══ Spotlight beams (5) — static triangle + half-circle ═══ */}
         {stageVisible && BEAM_CONFIGS.map((cfg, i) => {
-          const rh = renderBoxDims.h;
-          const originX = cfg.pctX * renderBoxDims.w;
+          const rh = safeRenderBoxDims.h;
+          const originX = cfg.pctX * safeRenderBoxDims.w;
           const beamLen = rh * 0.25;
           const botW = BEAM_CONE_HALF_W * 2; // full width at bottom
           const circR = botW / 2; // half-circle radius matches cone bottom width
@@ -3466,8 +3489,8 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
 
           {/* ═══ Full-length lasers (4) ═══ */}
           {stageVisible && LASER_CONFIGS.map((cfg, i) => {
-            const rw = renderBoxDims.w;
-            const rh = renderBoxDims.h;
+            const rw = safeRenderBoxDims.w;
+            const rh = safeRenderBoxDims.h;
             const originX = cfg.pctX * rw;
             const angleDeg = laserAnglesRef.current[i] ?? 0;
             const laserLen = rh * 1.5;
@@ -3481,8 +3504,8 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
           })}
           {/* ═══ Spotlight beams (5) — static triangle + half-circle ═══ */}
           {stageVisible && BEAM_CONFIGS.map((cfg, i) => {
-            const rh = renderBoxDims.h;
-            const originX = cfg.pctX * renderBoxDims.w;
+            const rh = safeRenderBoxDims.h;
+            const originX = cfg.pctX * safeRenderBoxDims.w;
             const beamLen = rh * 0.25;
             const botW = BEAM_CONE_HALF_W * 2;
             const circR = botW / 2;
