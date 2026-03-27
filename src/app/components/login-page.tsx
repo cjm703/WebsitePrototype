@@ -8,7 +8,6 @@ import { verifyAuthCode, getAuthStatuses, migrateAuthCodes } from "./auth-utils"
 import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
 import type { LoginProfile } from "./types";
 
-// Legacy interface for reading old localStorage data during migration
 interface LegacyProfile {
   id: string;
   name: string;
@@ -19,7 +18,7 @@ interface LegacyProfile {
 const DM_PROFILE: LoginProfile = {
   id: "dm",
   name: "DM",
-  hasAuthCode: true, // DM always has a code (seeded server-side)
+  hasAuthCode: true,
   description: "System Administrator · Full Access",
 };
 
@@ -41,31 +40,32 @@ async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
   const data = await res.json().catch(() => ({}));
   const rows = Array.isArray((data as any)?.profiles) ? (data as any).profiles : [];
 
-  return rows.map((p: any) => ({
-    id: String(p.id),
-    name: String(p.name ?? p.id),
-    hasAuthCode: false,
-    description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
-  }));
+  return rows
+    .filter((p: any) => String(p?.id) !== "dm")
+    .map((p: any) => ({
+      id: String(p.id),
+      name: String(p.name ?? p.id),
+      hasAuthCode: false,
+      description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
+    }));
 }
 
 function loadProfilesSync(): LoginProfile[] {
   try {
-    // Primary source: build profiles directly from DM player data
     const playersRaw = safeGetItem("inet-dm-players");
     if (playersRaw) {
       const players: Array<{ id: string; name: string; class?: string; level?: number; authCode?: string }> = JSON.parse(playersRaw);
-      const profiles: LoginProfile[] = players.map((p) => ({
-        id: p.id,
-        name: p.name,
-        hasAuthCode: false, // will be resolved from server
-        description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
-      }));
-      profiles.push(DM_PROFILE);
-      return profiles;
+      const profiles: LoginProfile[] = players
+        .filter((p) => p.id !== "dm")
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          hasAuthCode: false,
+          description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
+        }));
+      return [...profiles, DM_PROFILE];
     }
 
-    // Fallback: read from inet-profiles (legacy / already synced)
     const raw = safeGetItem("inet-profiles");
     if (raw) {
       const parsed: LegacyProfile[] = JSON.parse(raw);
@@ -77,20 +77,90 @@ function loadProfilesSync(): LoginProfile[] {
           hasAuthCode: false,
           description: p.description,
         }));
-      profiles.push(DM_PROFILE);
-      return profiles;
+      return [...profiles, DM_PROFILE];
     }
   } catch {}
 
-  // Default if nothing in localStorage — use shared initial player data
-  const fallbackProfiles: LoginProfile[] = initialPlayers.map((p) => ({
-    id: p.id,
-    name: p.name,
-    hasAuthCode: false,
-    description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
-  }));
-  fallbackProfiles.push(DM_PROFILE);
-  return fallbackProfiles;
+  return [DM_PROFILE];
+}
+
+function LoadingLogo() {
+  return (
+    <>
+      <style>{`
+        @keyframes icorp-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes icorp-pulse {
+          0%, 100% { opacity: 0.85; }
+          50% { opacity: 1; }
+        }
+      `}</style>
+
+      <div className="flex flex-col items-center justify-center">
+        <div
+          className="relative"
+          style={{
+            width: 112,
+            height: 112,
+            filter: "drop-shadow(0 0 24px rgba(225, 196, 160, 0.18))",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: "9999px",
+              border: "4px solid #d7b186",
+              boxShadow: "0 0 0 2px rgba(86, 60, 34, 0.3) inset",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 16,
+              borderRadius: "9999px",
+              border: "4px solid #ead4b8",
+              boxShadow: "0 0 0 2px rgba(86, 60, 34, 0.25) inset",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#f3e6d3",
+              fontSize: 44,
+              fontWeight: 400,
+              lineHeight: 1,
+              fontFamily: "'Georgia', 'Times New Roman', serif",
+              animation: "icorp-spin 1.6s linear infinite",
+              textShadow: "0 0 12px rgba(255,255,255,0.08)",
+            }}
+          >
+            I
+          </div>
+        </div>
+
+        <div
+          className="mt-6 text-[11px] tracking-[0.35em]"
+          style={{
+            color: "#9cb8ff",
+            fontWeight: 700,
+            animation: "icorp-pulse 1.4s ease-in-out infinite",
+          }}
+        >
+          SYNCING PROFILES
+        </div>
+        <div className="mt-2 text-[10px]" style={{ color: "#6e8edc" }}>
+          Contacting Intelli secure profile registry...
+        </div>
+      </div>
+    </>
+  );
 }
 
 export function LoginPage() {
@@ -101,16 +171,17 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [profilesLoading, setProfilesLoading] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // On mount: migrate any legacy plain-text codes, then resolve profiles/auth statuses from server
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
-      // Step 1: Migrate legacy plain-text auth codes to the server
       try {
         const codesToMigrate: Array<{ profileId: string; plainCode: string }> = [];
         const playersRaw = safeGetItem("inet-dm-players");
+
         if (playersRaw) {
           try {
             const players: Array<{ id: string; authCode?: string }> = JSON.parse(playersRaw);
@@ -119,19 +190,15 @@ export function LoginPage() {
                 codesToMigrate.push({ profileId: p.id, plainCode: p.authCode });
               }
             }
-          } catch {
-            /* ignore corrupt inet-dm-players JSON */
-          }
+          } catch {}
         }
 
-        // Also check legacy inet-profiles
         const legacyRaw = safeGetItem("inet-profiles");
         if (legacyRaw) {
           try {
             const legacy: LegacyProfile[] = JSON.parse(legacyRaw);
             for (const p of legacy) {
               if (p.id !== "dm" && p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-                // Only add if not already queued from inet-dm-players
                 if (!codesToMigrate.some((c) => c.profileId === p.id)) {
                   codesToMigrate.push({ profileId: p.id, plainCode: p.authCode });
                 }
@@ -144,13 +211,12 @@ export function LoginPage() {
           const migrated = await migrateAuthCodes(codesToMigrate);
           console.log(`Migrated ${migrated} legacy auth codes to server`);
 
-          // Clean up: remove plain-text authCodes from localStorage
           if (playersRaw) {
             try {
               const players = JSON.parse(playersRaw);
               for (const p of players) {
                 if (p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-                  p.authCode = ""; // Clear plain text
+                  p.authCode = "";
                 }
               }
               safeSetJson("inet-dm-players", players);
@@ -161,11 +227,11 @@ export function LoginPage() {
         console.error("Auth code migration error:", err);
       }
 
-      // Step 2: Load profiles from server first so login reflects persisted backend state
-      let nextProfiles: LoginProfile[] = loadProfilesSync();
+      let nextProfiles: LoginProfile[] = [DM_PROFILE];
+
       try {
         const serverProfiles = await fetchProfilesFromServer();
-        nextProfiles = [...serverProfiles.filter((p) => p.id !== "dm"), DM_PROFILE];
+        nextProfiles = [...serverProfiles, DM_PROFILE];
 
         safeSetJson(
           "inet-profiles",
@@ -178,12 +244,13 @@ export function LoginPage() {
         );
       } catch (err) {
         console.error("Failed to fetch profiles from server, using fallback:", err);
+        nextProfiles = loadProfilesSync();
       }
 
-      // Step 3: Resolve auth statuses from server
       try {
         const ids = nextProfiles.map((p) => p.id);
         const statuses = await getAuthStatuses(ids);
+
         if (!cancelled) {
           setProfiles(
             nextProfiles.map((p) => ({
@@ -202,14 +269,18 @@ export function LoginPage() {
             }))
           );
         }
+      } finally {
+        if (!cancelled) {
+          setProfilesLoading(false);
+        }
       }
     })();
+
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -229,18 +300,16 @@ export function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (connecting) return;
+    if (connecting || profilesLoading) return;
+
     if (!selectedProfile) {
       setError("SELECT AN AGENT PROFILE TO CONTINUE");
       return;
     }
 
     let result: Awaited<ReturnType<typeof verifyAuthCode>>;
-
     try {
-      // Verify auth code via server
       result = await verifyAuthCode(selectedProfile.id, password);
-
       if (!result.valid) {
         setError("INVALID AUTHORIZATION CODE");
         return;
@@ -257,16 +326,27 @@ export function LoginPage() {
     setTimeout(() => {
       try { safeSetItem("inet-user", selectedProfile.name); } catch {}
       try { safeSetItem("inet-user-id", result.playerId ?? selectedProfile.id); } catch {}
-      try {
-        if (result.sessionToken) safeSetItem("inet-session-token", result.sessionToken);
-      } catch {}
-
+      try { if (result.sessionToken) safeSetItem("inet-session-token", result.sessionToken); } catch {}
       navigate("/interface");
     }, 800);
   };
 
   const agentProfiles = profiles.filter((p) => p.id !== "dm");
   const dmProfile = profiles.find((p) => p.id === "dm") || DM_PROFILE;
+
+  if (profilesLoading) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{
+          background: "radial-gradient(circle at center, #123b8a 0%, #0A2870 28%, #071d52 55%, #041233 100%)",
+          fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
+        }}
+      >
+        <LoadingLogo />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -276,9 +356,7 @@ export function LoginPage() {
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
       }}
     >
-      {/* Login Window */}
       <div className="w-full max-w-md">
-        {/* Window Title Bar */}
         <div
           className="flex items-center gap-2 px-3 py-2"
           style={{
@@ -298,12 +376,7 @@ export function LoginPage() {
           <div className="w-3 h-3" style={{ background: "#2A2A6B", border: "1px solid #3A3A8B" }} />
         </div>
 
-        {/* Window Body */}
-        <div
-          className={`${retro.raised} bg-[#0E0E35] p-6`}
-          style={{ borderTop: "none" }}
-        >
-          {/* Logo / Header */}
+        <div className={`${retro.raised} bg-[#0E0E35] p-6`} style={{ borderTop: "none" }}>
           <div className="text-center mb-6">
             <h1
               className="text-[36px] tracking-tight mb-1"
@@ -321,214 +394,206 @@ export function LoginPage() {
             </p>
           </div>
 
-          {/* Divider */}
           <div className="mb-5">
-            <div
-              className="h-[2px] w-full"
-              style={{
-                background: "linear-gradient(90deg, transparent, #2A2A6B, transparent)",
-              }}
-            />
+            <div className="h-[2px] w-full" style={{ background: "linear-gradient(90deg, transparent, #2A2A6B, transparent)" }} />
           </div>
 
-          {/* Agent Profile Selector */}
           <form onSubmit={handleLogin}>
-          <div className="mb-4">
-            <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-              SELECT AGENT PROFILE
-            </div>
+            <div className="mb-4">
+              <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
+                SELECT AGENT PROFILE
+              </div>
 
-            <div className="relative" ref={menuRef}>
-              {/* Selector button */}
-              <div
-                onClick={() => setMenuOpen(!menuOpen)}
-                className={`w-full text-left px-3 py-3 flex items-center gap-3 transition-all cursor-pointer ${retro.sunken} bg-[#0C0C2E] hover:bg-[#0E0E32]`}
-                style={{
-                  border: selectedProfile ? `1px solid ${selectedProfile.id === "dm" ? "#FF6A6A40" : "#4A7BFF40"}` : "1px solid #1A1A4B",
-                }}
-              >
-                {selectedProfile ? (
-                  <div style={DISPLAY_CONTENTS}>
-                    <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
-                      {selectedProfile.id === "dm" ? (
-                        <Shield size={16} style={S_RED} />
-                      ) : (
-                        <User size={16} style={S_ACCENT} />
-                      )}
+              <div className="relative" ref={menuRef}>
+                <div
+                  onClick={() => setMenuOpen(!menuOpen)}
+                  className={`w-full text-left px-3 py-3 flex items-center gap-3 transition-all cursor-pointer ${retro.sunken} bg-[#0C0C2E] hover:bg-[#0E0E32]`}
+                  style={{
+                    border: selectedProfile ? `1px solid ${selectedProfile.id === "dm" ? "#FF6A6A40" : "#4A7BFF40"}` : "1px solid #1A1A4B",
+                  }}
+                >
+                  {selectedProfile ? (
+                    <div style={DISPLAY_CONTENTS}>
+                      <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
+                        {selectedProfile.id === "dm" ? <Shield size={16} style={S_RED} /> : <User size={16} style={S_ACCENT} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] truncate" style={{ color: selectedProfile.id === "dm" ? "#FF6A6A" : "#C0D0F0", fontWeight: 600 }}>
+                          {selectedProfile.name}
+                        </div>
+                        <div className="text-[9px]" style={S_MUTED}>
+                          {selectedProfile.description}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedProfile(null);
+                          setPassword("");
+                          setError("");
+                        }}
+                        className="shrink-0 p-0.5 hover:opacity-80"
+                        style={S_MUTED}
+                      >
+                        <X size={12} />
+                      </button>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] truncate" style={{ color: selectedProfile.id === "dm" ? "#FF6A6A" : "#C0D0F0", fontWeight: 600 }}>
-                        {selectedProfile.name}
+                  ) : (
+                    <div style={DISPLAY_CONTENTS}>
+                      <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
+                        <User size={16} style={S_DIM} />
                       </div>
-                      <div className="text-[9px]" style={S_MUTED}>
-                        {selectedProfile.description}
+                      <div className="flex-1">
+                        <div className="text-[12px]" style={S_MUTED}>
+                          Choose a profile...
+                        </div>
                       </div>
+                      <ChevronDown size={14} style={S_MUTED} className={`transition-transform ${menuOpen ? "rotate-180" : ""}`} />
+                    </div>
+                  )}
+                </div>
+
+                {menuOpen && (
+                  <div
+                    className="absolute left-0 right-0 z-50 mt-1 max-h-[240px] overflow-y-auto"
+                    style={{
+                      background: "#0C0C2E",
+                      border: "2px solid #2A2A6B",
+                      boxShadow: "4px 4px 0px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 0, 0, 0.3)",
+                    }}
+                  >
+                    {agentProfiles.length > 0 && (
+                      <>
+                        <div className="px-3 py-1.5" style={{ background: "#0A0A25", borderBottom: "1px solid #1A1A4B" }}>
+                          <span className="text-[9px] tracking-wider" style={{ color: "#3A5A8A", fontWeight: 600 }}>
+                            AGENTS
+                          </span>
+                        </div>
+                        {agentProfiles.map((profile) => (
+                          <button
+                            type="button"
+                            key={profile.id}
+                            onClick={() => handleSelectProfile(profile)}
+                            className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-[#1A1A5B] transition-colors"
+                            style={{ borderBottom: "1px solid #1A1A3B" }}
+                          >
+                            <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
+                              <User size={14} style={S_ACCENT} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[12px] truncate" style={{ color: "#C0D0F0", fontWeight: 600 }}>
+                                {profile.name}
+                              </div>
+                              <div className="text-[9px]" style={S_MUTED}>
+                                {profile.description}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </>
+                    )}
+
+                    <div
+                      className="px-3 py-1.5"
+                      style={{
+                        background: "#0A0A25",
+                        borderBottom: "1px solid #1A1A4B",
+                        borderTop: agentProfiles.length > 0 ? "1px solid #2A2A5B" : "none",
+                      }}
+                    >
+                      <span className="text-[9px] tracking-wider" style={{ color: "#3A5A8A", fontWeight: 600 }}>
+                        ADMINISTRATOR
+                      </span>
                     </div>
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setSelectedProfile(null); setPassword(""); setError(""); }}
-                      className="shrink-0 p-0.5 hover:opacity-80"
-                      style={S_MUTED}
+                      onClick={() => handleSelectProfile(dmProfile)}
+                      className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-[#1A1A5B] transition-colors"
                     >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ) : (
-                  <div style={DISPLAY_CONTENTS}>
-                    <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
-                      <User size={16} style={S_DIM} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-[12px]" style={S_MUTED}>
-                        Choose a profile...
+                      <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
+                        <Shield size={14} style={S_RED} />
                       </div>
-                    </div>
-                    <ChevronDown size={14} style={S_MUTED} className={`transition-transform ${menuOpen ? "rotate-180" : ""}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] truncate" style={{ color: "#FF6A6A", fontWeight: 600 }}>
+                          {dmProfile.name}
+                        </div>
+                        <div className="text-[9px]" style={S_MUTED}>
+                          {dmProfile.description}
+                        </div>
+                      </div>
+                    </button>
                   </div>
                 )}
               </div>
+            </div>
 
-              {/* Dropdown menu */}
-              {menuOpen && (
-                <div
-                  className="absolute left-0 right-0 z-50 mt-1 max-h-[240px] overflow-y-auto"
-                  style={{
-                    background: "#0C0C2E",
-                    border: "2px solid #2A2A6B",
-                    boxShadow: "4px 4px 0px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 0, 0, 0.3)",
+            <div className="mb-4">
+              <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
+                AUTHORIZATION CODE
+              </div>
+              <div className={`${retro.sunken} bg-[#0C0C2E] flex items-center`}>
+                <input
+                  id="login-authorization-code"
+                  name="authorizationCode"
+                  type="password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError("");
                   }}
-                >
-                  {/* Agent profiles */}
-                  {agentProfiles.length > 0 && (
-                    <div style={DISPLAY_CONTENTS}>
-                      <div className="px-3 py-1.5" style={{ background: "#0A0A25", borderBottom: "1px solid #1A1A4B" }}>
-                        <span className="text-[9px] tracking-wider" style={{ color: "#3A5A8A", fontWeight: 600 }}>AGENTS</span>
-                      </div>
-                      {agentProfiles.map((profile) => (
-                        <button
-                          type="button"
-                          key={profile.id}
-                          onClick={() => handleSelectProfile(profile)}
-                          className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-[#1A1A5B] transition-colors"
-                          style={{ borderBottom: "1px solid #1A1A3B" }}
-                        >
-                          <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
-                            <User size={14} style={S_ACCENT} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[12px] truncate" style={{ color: "#C0D0F0", fontWeight: 600 }}>
-                              {profile.name}
-                            </div>
-                            <div className="text-[9px]" style={S_MUTED}>
-                              {profile.description}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* DM profile */}
-                  <div className="px-3 py-1.5" style={{ background: "#0A0A25", borderBottom: "1px solid #1A1A4B", borderTop: agentProfiles.length > 0 ? "1px solid #2A2A5B" : "none" }}>
-                    <span className="text-[9px] tracking-wider" style={{ color: "#3A5A8A", fontWeight: 600 }}>ADMINISTRATOR</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectProfile(dmProfile)}
-                    className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-[#1A1A5B] transition-colors"
-                  >
-                    <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
-                      <Shield size={14} style={S_RED} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] truncate" style={{ color: "#FF6A6A", fontWeight: 600 }}>
-                        {dmProfile.name}
-                      </div>
-                      <div className="text-[9px]" style={S_MUTED}>
-                        {dmProfile.description}
-                      </div>
-                    </div>
-                  </button>
+                  placeholder="Enter access code..."
+                  autoComplete="off"
+                  className="flex-1 px-3 py-2.5 bg-transparent outline-none text-[13px]"
+                  style={{ color: "#C0D0F0", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}
+                />
+              </div>
+              {selectedProfile && !selectedProfile.hasAuthCode && (
+                <div className="text-[9px] mt-1" style={{ color: "#4A9A5A" }}>
+                  No code required for this profile
+                </div>
+              )}
+              {selectedProfile && selectedProfile.hasAuthCode && (
+                <div className="text-[9px] mt-1" style={S_MUTED}>
+                  Enter the authorization code to continue
+                </div>
+              )}
+              {!selectedProfile && (
+                <div className="text-[9px] mt-1" style={S_DIM}>
+                  Select a profile first
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Password Field */}
-          <div className="mb-4">
-            <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-              AUTHORIZATION CODE
-            </div>
-            <div className={`${retro.sunken} bg-[#0C0C2E] flex items-center`}>
-              <input
-                id="auth-code"
-                name="auth-code"
-                type="password"
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setError(""); }}
-                placeholder="Enter access code..."
-                autoComplete="off"
-                className="flex-1 px-3 py-2.5 bg-transparent outline-none text-[13px]"
-                style={{ color: "#C0D0F0", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}
-              />
-            </div>
-            {selectedProfile && !selectedProfile.hasAuthCode && (
-              <div className="text-[9px] mt-1" style={{ color: "#4A9A5A" }}>
-                No code required for this profile
+            {error && (
+              <div className={`${retro.sunken} bg-[#1A0A0A] p-2 mb-4 text-center text-[11px]`} style={{ color: "#FF6A6A", border: "1px solid #4A1A1A" }}>
+                {error}
               </div>
             )}
-            {selectedProfile && selectedProfile.hasAuthCode && (
-              <div className="text-[9px] mt-1" style={S_MUTED}>
-                Enter the authorization code to continue
-              </div>
-            )}
-            {!selectedProfile && (
-              <div className="text-[9px] mt-1" style={S_DIM}>
-                Select a profile first
-              </div>
-            )}
-          </div>
 
-          {/* Error Message */}
-          {error && (
-            <div
-              className={`${retro.sunken} bg-[#1A0A0A] p-2 mb-4 text-center text-[11px]`}
-              style={{ color: "#FF6A6A", border: "1px solid #4A1A1A" }}
+            <button
+              type="submit"
+              disabled={connecting}
+              className={`${retro.button} w-full py-3 text-[13px] flex items-center justify-center gap-2 tracking-wide ${connecting ? "opacity-60" : ""}`}
+              style={{ color: "#C0D0F0", fontWeight: 600 }}
             >
-              {error}
-            </div>
-          )}
-
-          {/* Login Button */}
-          <button
-            type="submit"
-            disabled={connecting}
-            className={`${retro.button} w-full py-3 text-[13px] flex items-center justify-center gap-2 tracking-wide ${
-              connecting ? "opacity-60" : ""
-            }`}
-            style={{ color: "#C0D0F0", fontWeight: 600 }}
-          >
-            {connecting ? (
-              <div style={DISPLAY_CONTENTS}>
-                <span className="inline-block animate-pulse">ESTABLISHING CONNECTION...</span>
-              </div>
-            ) : (
-              <div style={DISPLAY_CONTENTS}>
-                <LogIn size={16} />
-                AUTHENTICATE &amp; CONNECT
-              </div>
-            )}
-          </button>
+              {connecting ? (
+                <div style={DISPLAY_CONTENTS}>
+                  <span className="inline-block animate-pulse">ESTABLISHING CONNECTION...</span>
+                </div>
+              ) : (
+                <div style={DISPLAY_CONTENTS}>
+                  <LogIn size={16} />
+                  AUTHENTICATE &amp; CONNECT
+                </div>
+              )}
+            </button>
           </form>
 
-          {/* Footer */}
           <div className="mt-5 text-center">
-            <div
-              className="h-[1px] w-full mb-3"
-              style={{ background: "linear-gradient(90deg, transparent, #1A1A4B, transparent)" }}
-            />
+            <div className="h-[1px] w-full mb-3" style={{ background: "linear-gradient(90deg, transparent, #1A1A4B, transparent)" }} />
             <p className="text-[9px]" style={{ color: "#2A3A5A" }}>
-              Intelli Corporation™ &copy; 2026 · Secure Access Terminal
+              Intelli Corporation™ © 2026 · Secure Access Terminal
             </p>
             <p className="text-[8px] mt-1" style={{ color: "#1A2A4A" }}>
               Unauthorized access is monitored and logged
