@@ -2116,17 +2116,17 @@ export function CommunityPage() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!communityReady) return;
+    if (!communityReady || !isDM) return;
     void saveNpcAccounts(npcAccounts).catch((error) => console.error("Failed to save NPC accounts", error));
-  }, [npcAccounts, communityReady]);
+  }, [npcAccounts, communityReady, isDM]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const [playerState, cards, items] = await Promise.all([
           currentUserId ? loadPlayerState().catch(() => ({})) : Promise.resolve({}),
-          loadDMCards<any>().catch(() => []),
-          loadDMItems<any>().catch(() => []),
+          isDM ? loadDMCards<any>().catch(() => []) : Promise.resolve([]),
+          isDM ? loadDMItems<any>().catch(() => []) : Promise.resolve([]),
         ]);
         if (cancelled) return;
         setCommandState(playerState || {});
@@ -2136,7 +2136,7 @@ export function CommunityPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [currentUserId]);
+  }, [currentUserId, isDM]);
 
 
   // Auto-scroll to bottom
@@ -2614,6 +2614,22 @@ export function CommunityPage() {
     return Array.from(new Set(source.map((i:any) => extractDisplayName(i)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [commandState.quickItems]);
 
+  const playerCommandSuggestions = useMemo(() => {
+    return allPlayers
+      .filter((p) => p.id !== currentUserId)
+      .map((player) => String(nicknames[player.id] || player.name || player.id || "").trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }, [allPlayers, currentUserId, nicknames]);
+
+  const filterPlayerCommandSuggestions = useCallback((query: string) => {
+    const q = normalizeLooseName(String(query || "").trim());
+    if (!q) return playerCommandSuggestions.slice(0, 50);
+    const starts = playerCommandSuggestions.filter((name) => normalizeLooseName(name).startsWith(q));
+    const contains = playerCommandSuggestions.filter((name) => !starts.includes(name) && normalizeLooseName(name).includes(q));
+    return [...starts, ...contains].slice(0, 50);
+  }, [playerCommandSuggestions]);
+
   const sendStructuredMessage = useCallback((partial: Partial<ChatMessage>, overrides?: { channelId?: string }) => {
     const baseChannelId = overrides?.channelId || activeChannelId;
     const msg: ChatMessage = {
@@ -2688,7 +2704,7 @@ export function CommunityPage() {
 
   const commandContextSuggestions = useMemo(() => {
     const trimmed = draft.trimStart();
-    if (!trimmed.startsWith("/")) return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
+    if (!trimmed.startsWith("/")) return { mode: "commands" as const, values: [] as string[], targetPlayer: "", commandName: "" };
     const raw = trimmed.slice(1);
     const [cmdWord = ""] = raw.split(/\s+/);
     const cmd = `/${cmdWord.toLowerCase()}`;
@@ -2696,23 +2712,36 @@ export function CommunityPage() {
 
     if (cmd === "/card") {
       const q = rest.toLowerCase();
-      return { mode: "card" as const, values: ownedCardSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
+      return { mode: "card" as const, values: ownedCardSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "", commandName: cmd };
     }
 
     if (cmd === "/inventory") {
       const q = rest.toLowerCase();
-      return { mode: "inventory" as const, values: ownedItemSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
+      return { mode: "inventory" as const, values: ownedItemSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "", commandName: cmd };
+    }
+
+    if (cmd === "/whisper" || cmd === "/ping" || cmd === "/ring") {
+      const targetMatch = commandPlayerPrefixMatch(rest);
+      const shouldSuggestPlayers = !targetMatch || (cmd === "/whisper" ? !targetMatch.remainder.trim() : cmd === "/ring" ? !/^\d+$/.test(targetMatch.remainder.trim()) : !!targetMatch.remainder.trim());
+      if (shouldSuggestPlayers) {
+        const query = targetMatch ? targetMatch.rawName : rest;
+        return { mode: "player" as const, values: filterPlayerCommandSuggestions(query), targetPlayer: "", commandName: cmd };
+      }
+      return { mode: "commands" as const, values: [] as string[], targetPlayer: targetMatch?.rawName || "", commandName: cmd };
     }
 
     if (cmd === "/inventory_transfer") {
       const transferText = rest;
       const targetMatch = commandPlayerPrefixMatch(transferText);
-      const itemQuery = (targetMatch ? targetMatch.remainder : transferText).trim().toLowerCase();
-      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: targetMatch ? targetMatch.rawName : "" };
+      if (!targetMatch) {
+        return { mode: "player" as const, values: filterPlayerCommandSuggestions(transferText), targetPlayer: "", commandName: cmd };
+      }
+      const itemQuery = targetMatch.remainder.trim().toLowerCase();
+      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: targetMatch.rawName, commandName: cmd };
     }
 
-    return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
-  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerPrefixMatch]);
+    return { mode: "commands" as const, values: [] as string[], targetPlayer: "", commandName: cmd };
+  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerPrefixMatch, filterPlayerCommandSuggestions]);
 
   const visibleSuggestionCount = commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.length : commandContextSuggestions.values.length;
 
@@ -2721,6 +2750,45 @@ export function CommunityPage() {
   }, [visibleSuggestionCount, activeCommandSuggestion]);
 
   const accent = firstColor(theme.accentColor);
+
+  const commandStepHint = useMemo(() => {
+    const trimmed = draft.trimStart();
+    if (!trimmed.startsWith("/")) return "";
+    const raw = trimmed.slice(1);
+    const [cmdWord = ""] = raw.split(/\s+/);
+    const cmd = `/${cmdWord.toLowerCase()}`;
+    const rest = raw.slice(cmdWord.length).trimStart();
+
+    if (trimmed === "/") return "Choose a command";
+    if (cmd === "/roll") return rest ? "" : "(number)d(number)+/-(number) or (attribute or skill)";
+    if (cmd === "/check") return rest ? "" : "(attribute or skill)";
+    if (cmd === "/whisper") {
+      const match = commandPlayerPrefixMatch(rest);
+      return !match ? "(player)" : match.remainder.trim() ? "" : "(message)";
+    }
+    if (cmd === "/announce") return rest ? "" : "(message)";
+    if (cmd === "/gm_roll") {
+      const parts = rest.split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return "(public/private)";
+      if (parts.length === 1) return "(number)d(number)+/-(number)";
+      if (parts.length === 2) return "[fudge visible die]";
+      return "";
+    }
+    if (cmd === "/character_sheet" || cmd === "/status_effects" || cmd === "/active_cards" || cmd === "/hp") return "";
+    if (cmd === "/card") return rest ? "" : "(card name)";
+    if (cmd === "/inventory") return rest ? "" : "(item name)";
+    if (cmd === "/inventory_transfer") {
+      const match = commandPlayerPrefixMatch(rest);
+      return !match ? "(player)" : match.remainder.trim() ? "" : "(item name)";
+    }
+    if (cmd === "/ping") return rest ? "" : "(player)";
+    if (cmd === "/ring") {
+      const match = commandPlayerPrefixMatch(rest);
+      return !match ? "(player)" : match.remainder.trim() ? "" : "(seconds up to 5)";
+    }
+    if (cmd === "/emote") return rest ? "" : "(action)";
+    return "";
+  }, [draft, commandPlayerPrefixMatch]);
 
   const applyCurrentSuggestion = useCallback((idx: number) => {
     if (commandContextSuggestions.mode === "card") {
@@ -2731,6 +2799,11 @@ export function CommunityPage() {
     if (commandContextSuggestions.mode === "inventory") {
       const value = commandContextSuggestions.values[idx];
       if (value) setDraft(`/inventory ${value}`);
+      return;
+    }
+    if (commandContextSuggestions.mode === "player") {
+      const value = commandContextSuggestions.values[idx];
+      if (value) setDraft(`${commandContextSuggestions.commandName} ${value} `);
       return;
     }
     if (commandContextSuggestions.mode === "inventory_transfer") {
@@ -3984,31 +4057,38 @@ export function CommunityPage() {
               >
                 <Image size={15} />
               </button>
-              <input
-                ref={inputRef}
-                type="text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (visibleSuggestionCount > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-                    e.preventDefault();
-                    setActiveCommandSuggestion(prev => {
-                      if (visibleSuggestionCount === 0) return 0;
-                      return e.key === "ArrowDown" ? (prev + 1) % visibleSuggestionCount : (prev - 1 + visibleSuggestionCount) % visibleSuggestionCount;
-                    });
-                    return;
-                  }
-                  if (visibleSuggestionCount > 0 && e.key === "Tab") {
-                    e.preventDefault();
-                    applyCurrentSuggestion(activeCommandSuggestion);
-                    return;
-                  }
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendFull(); }
-                }}
-                placeholder={activeNpc ? `Message as ${activeNpc.name}...` : activeChannel.type === "main" ? "Message #general-chat..." : `Message ${activeChannel.label}...`}
-                className="flex-1 bg-[#0A0A28] px-4 py-2.5 text-[13px] outline-none"
-                style={{ color: "#C0D0F0", border: `1px solid ${accent}22`, borderRadius: 2 }}
-              />
+              <div className="flex-1 min-w-0">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (visibleSuggestionCount > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                      e.preventDefault();
+                      setActiveCommandSuggestion(prev => {
+                        if (visibleSuggestionCount === 0) return 0;
+                        return e.key === "ArrowDown" ? (prev + 1) % visibleSuggestionCount : (prev - 1 + visibleSuggestionCount) % visibleSuggestionCount;
+                      });
+                      return;
+                    }
+                    if (visibleSuggestionCount > 0 && e.key === "Tab") {
+                      e.preventDefault();
+                      applyCurrentSuggestion(activeCommandSuggestion);
+                      return;
+                    }
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendFull(); }
+                  }}
+                  placeholder={activeNpc ? `Message as ${activeNpc.name}...` : activeChannel.type === "main" ? "Message #general-chat..." : `Message ${activeChannel.label}...`}
+                  className="w-full bg-[#0A0A28] px-4 py-2.5 text-[13px] outline-none"
+                  style={{ color: "#C0D0F0", border: `1px solid ${accent}22`, borderRadius: 2 }}
+                />
+                {commandStepHint && (
+                  <div className="px-1 pt-1 text-[10px]" style={{ color: "#7385A8" }}>
+                    Next: {commandStepHint}
+                  </div>
+                )}
+              </div>
               <button
                 onClick={handleSendFull}
                 disabled={!draft.trim() && !pendingImage}
