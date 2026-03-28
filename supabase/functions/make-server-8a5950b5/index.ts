@@ -240,7 +240,8 @@ type DMCollectionKey =
   | "node-trees"
   | "notifications"
   | "info-subtabs"
-  | "custom-reactions";
+  | "custom-reactions"
+  | "tags";
 
 const DM_COLLECTIONS: Record<DMCollectionKey, { table: string; responseKey: string; requestKey: string; revokeSessions?: boolean }> = {
   "players": { table: "app_players", responseKey: "players", requestKey: "players", revokeSessions: true },
@@ -252,6 +253,7 @@ const DM_COLLECTIONS: Record<DMCollectionKey, { table: string; responseKey: stri
   "notifications": { table: "app_notifications", responseKey: "notifications", requestKey: "notifications" },
   "info-subtabs": { table: "app_info_subtabs", responseKey: "infoSubTabs", requestKey: "infoSubTabs" },
   "custom-reactions": { table: "community_custom_reactions", responseKey: "reactions", requestKey: "reactions" },
+  "tags": { table: "app_tags", responseKey: "tags", requestKey: "tags" },
 };
 
 async function listCollectionRows(table: string) {
@@ -328,6 +330,79 @@ async function replaceCollectionRows(
   }
 }
 
+
+type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
+
+function assertTagKind(value: string): DMTagKind {
+  if (value === "item" || value === "card" || value === "info" || value === "status" || value === "wiki") {
+    return value;
+  }
+  throw new Error("Invalid tag kind");
+}
+
+async function listTagRows(kind: DMTagKind) {
+  const supabase = admin();
+  const { data, error } = await supabase
+    .from("app_tags")
+    .select("id, data")
+    .eq("kind", kind)
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((row: any) => ({
+    id: String(row?.data?.id ?? String(row.id).replace(/^.*?:/, "")),
+    ...(row.data ?? {}),
+  }));
+}
+
+async function replaceTagRows(kind: DMTagKind, rows: Array<{ id: string; [key: string]: any }>) {
+  const supabase = admin();
+  const now = new Date().toISOString();
+
+  const dedupedRows = Array.from(
+    new Map(
+      rows
+        .filter((row) => typeof row?.id === "string" && row.id.trim())
+        .map((row) => [row.id.trim(), { ...row, id: row.id.trim() }])
+    ).values()
+  );
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from("app_tags")
+    .select("id")
+    .eq("kind", kind);
+
+  if (existingError) throw new Error(existingError.message);
+
+  const nextIds = dedupedRows.map((row) => `${kind}:${row.id}`);
+  const existingIds = (existingRows ?? []).map((row: any) => String(row.id));
+  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
+
+  const payload = dedupedRows.map((row) => ({
+    id: `${kind}:${row.id}`,
+    kind,
+    data: { ...row, id: row.id },
+    updated_at: now,
+  }));
+
+  if (payload.length > 0) {
+    const { error: upsertError } = await supabase
+      .from("app_tags")
+      .upsert(payload, { onConflict: "id" });
+
+    if (upsertError) throw new Error(upsertError.message);
+  }
+
+  if (idsToDelete.length > 0) {
+    const { error: deleteError } = await supabase
+      .from("app_tags")
+      .delete()
+      .in("id", idsToDelete);
+
+    if (deleteError) throw new Error(deleteError.message);
+  }
+}
 
 async function movePlayerToDeleted(playerId: string) {
   if (playerId === "dm") throw new Error("Cannot delete dm");
@@ -1120,6 +1195,45 @@ function registerRoutes(prefix: string) {
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/tags/:kind`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const kind = assertTagKind(c.req.param("kind"));
+      const tags = await listTagRows(kind);
+      return c.json({ tags });
+    } catch (err) {
+      const message = String(err);
+      const authError = /session|DM access|Invalid API key/i.test(message);
+      return c.json({ error: message }, authError ? 403 : 500);
+    }
+  });
+
+  app.post(`${prefix}/dm/tags/:kind/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const kind = assertTagKind(c.req.param("kind"));
+      const body = await c.req.json();
+      const tags = Array.isArray(body?.tags) ? body.tags : [];
+
+      await replaceTagRows(kind, tags);
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = String(err);
+      const authError = /session|DM access|Invalid API key/i.test(message);
+      return c.json({ error: message }, authError ? 403 : 500);
     }
   });
 

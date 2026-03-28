@@ -97,8 +97,24 @@ export const saveDMNotifications = (notifications: Record<string, unknown>[]) =>
 export const loadDMInfoSubTabs = <T = Record<string, unknown>>() => loadDMCollection<T>("/dm/info-subtabs", "infoSubTabs");
 export const saveDMInfoSubTabs = (infoSubTabs: Record<string, unknown>[]) => saveDMCollection("/dm/info-subtabs/save", "infoSubTabs", infoSubTabs);
 
+
 export const loadDMCustomReactions = <T = Record<string, unknown>>() => loadDMCollection<T>("/dm/custom-reactions", "reactions");
 export const saveDMCustomReactions = (reactions: Record<string, unknown>[]) => saveDMCollection("/dm/custom-reactions/save", "reactions", reactions);
+
+export async function loadDMTags<T = Record<string, unknown>>(kind: "item" | "card" | "info" | "status" | "wiki") {
+  const body = await apiFetch(`/dm/tags/${encodeURIComponent(kind)}`, { method: "GET" });
+  return (body?.tags ?? []) as T[];
+}
+
+export async function saveDMTags(
+  kind: "item" | "card" | "info" | "status" | "wiki",
+  tags: Record<string, unknown>[],
+) {
+  return apiFetch(`/dm/tags/${encodeURIComponent(kind)}/save`, {
+    method: "POST",
+    body: JSON.stringify({ tags }),
+  });
+}
 
 export async function loadDMPlayerLevelCategories(playerId: string) {
   const body = await apiFetch(`/dm/player-level-categories/${playerId}`, { method: "GET" });

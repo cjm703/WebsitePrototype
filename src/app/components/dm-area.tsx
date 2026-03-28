@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, loadDMPlayerLevelCategories, saveDMPlayerLevelCategories, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -451,11 +451,11 @@ useEffect(() => {
       ] = await Promise.all([
         loadDMPlayers() as Promise<PlayerData[]>,
         loadDMDeletedPlayers() as Promise<PlayerData[]>,
-        appStore.listTags<TagDefinition>("item"),
-        appStore.listTags<TagDefinition>("card"),
-        appStore.listTags<TagDefinition>("info"),
-        appStore.listTags<TagDefinition>("status"),
-        appStore.listTags<TagDefinition>("wiki"),
+        loadDMTags<TagDefinition>("item"),
+        loadDMTags<TagDefinition>("card"),
+        loadDMTags<TagDefinition>("info"),
+        loadDMTags<TagDefinition>("status"),
+        loadDMTags<TagDefinition>("wiki"),
         loadDMItems() as Promise<ManagedItem[]>,
         loadDMCards() as Promise<ManagedCard[]>,
         loadDMInfos() as Promise<ManagedInfo[]>,
@@ -583,7 +583,7 @@ async function persistTags(
 ) {
   try {
     setDmError(null);
-    await appStore.saveTags(kind, next);
+    await saveDMTags(kind, next as unknown as Record<string, unknown>[]);
 
     if (kind === "item") setItemTags(next);
     if (kind === "card") setCardTags(next);
