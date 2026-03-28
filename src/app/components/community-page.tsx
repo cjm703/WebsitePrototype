@@ -1293,9 +1293,17 @@ interface ChatMessage {
   imageId?: string;
   edited?: boolean;
   editedAt?: number;
+  deleted?: boolean;
+  deletedAt?: number;
+  deletedBy?: string;
   reactions?: Record<string, string[]>; // reactionId -> userId[]
   nameColor?: string;   // sender-chosen name color
   chatColor?: string;   // sender-chosen message text color
+  replyToId?: string;
+  replyToSenderName?: string;
+  replyToText?: string;
+  replyToImageId?: string;
+  clientStatus?: "sending" | "sent" | "failed";
 }
 
 interface StoredImage {
@@ -1421,6 +1429,13 @@ function formatDate(ts: number): string {
   const d = new Date(ts);
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
+
+function summarizeReplyText(msg: ChatMessage): string {
+  if (msg.deleted) return "Deleted message";
+  if (msg.text?.trim()) return msg.text.trim();
+  if (msg.imageId) return "(image)";
+  return "(message)";
 }
 
 /* ── URL detection ────────────────────���────────────────────────────── */
@@ -1928,6 +1943,8 @@ export function CommunityPage() {
   // Messages
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [communityReady, setCommunityReady] = useState(false);
@@ -1969,10 +1986,11 @@ export function CommunityPage() {
     const unsubscribe = subscribeToCommunityMessages((message, eventType) => {
       setMessages(prev => {
         if (eventType === "DELETE") return prev.filter(m => m.id !== message.id);
+        const incoming = { ...message, clientStatus: "sent" as const };
         const index = prev.findIndex(m => m.id === message.id);
-        if (index === -1) return [...prev, message].sort((a, b) => a.timestamp - b.timestamp);
+        if (index === -1) return [...prev, incoming].sort((a, b) => a.timestamp - b.timestamp);
         const next = [...prev];
-        next[index] = message;
+        next[index] = { ...next[index], ...incoming };
         return next.sort((a, b) => a.timestamp - b.timestamp);
       });
       if (notifSoundRef.current && message.senderId !== currentUserId && eventType === "INSERT") playNotifBeep();
@@ -1994,6 +2012,15 @@ export function CommunityPage() {
   const channelMessages = useMemo(() => {
     return messages.filter(m => m.channelId === activeChannelId);
   }, [messages, activeChannelId]);
+
+  const scrollToMessage = useCallback((msgId?: string) => {
+    if (!msgId) return;
+    const el = document.getElementById(`msg-${msgId}`);
+    if (!el) return;
+    setHighlightedMsgId(msgId);
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => setHighlightedMsgId((prev) => (prev === msgId ? null : prev)), 1800);
+  }, []);
 
   // Unread counts per channel
   const [lastRead, setLastRead] = useState<Record<string, number>>({});
@@ -2072,12 +2099,18 @@ export function CommunityPage() {
   const saveEdit = () => {
     if (!editingMsgId) return;
     const text = editDraft.trim();
+    const editedAt = Date.now();
     setMessages(prev => prev.map(m =>
-      m.id === editingMsgId ? { ...m, text: text || m.text, edited: true, editedAt: Date.now() } : m
+      m.id === editingMsgId ? { ...m, text: text || m.text, edited: true, editedAt, clientStatus: "sending" } : m
     ));
     const updated = messages.find(m => m.id === editingMsgId);
     if (updated) {
-      void updateCommunityMessage({ ...updated, text: text || updated.text, edited: true, editedAt: Date.now() }).catch((error) => console.error("Failed to save edit", error));
+      void updateCommunityMessage({ ...updated, text: text || updated.text, edited: true, editedAt, clientStatus: "sent" })
+        .then(() => setMessages(prev => prev.map(m => m.id === editingMsgId ? { ...m, text: text || m.text, edited: true, editedAt, clientStatus: "sent" } : m)))
+        .catch((error) => {
+          console.error("Failed to save edit", error);
+          setMessages(prev => prev.map(m => m.id === editingMsgId ? { ...m, clientStatus: "failed" } : m));
+        });
     }
     setEditingMsgId(null);
     setEditDraft("");
@@ -2094,9 +2127,24 @@ export function CommunityPage() {
       });
       void deleteCommunityImage(msg.imageId).catch((error) => console.error("Failed to delete image", error));
     }
-    setMessages(prev => prev.filter(m => m.id !== msgId));
-    void removeCommunityMessage(msgId).catch((error) => console.error("Failed to delete message", error));
+    const deletedAt = Date.now();
+    setMessages(prev => prev.map(m => m.id === msgId ? {
+      ...m,
+      text: "",
+      imageId: undefined,
+      deleted: true,
+      deletedAt,
+      deletedBy: currentUserId,
+      clientStatus: "sending",
+    } : m));
+    void removeCommunityMessage(msgId)
+      .then(() => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, clientStatus: "sent" } : m)))
+      .catch((error) => {
+        console.error("Failed to delete message", error);
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, clientStatus: "failed" } : m));
+      });
     if (editingMsgId === msgId) cancelEdit();
+    if (replyingTo?.id === msgId) setReplyingTo(null);
   };
 
   // ── Updated send handler (with image support) ──
@@ -2123,6 +2171,11 @@ export function CommunityPage() {
       imageId: pendingImage?.id,
       nameColor: sendAsNpc ? activeNpc.color : (nameColor || undefined),
       chatColor: chatColor || undefined,
+      replyToId: replyingTo?.id,
+      replyToSenderName: replyingTo ? (nicknames[replyingTo.senderId] || replyingTo.senderName) : undefined,
+      replyToText: replyingTo ? summarizeReplyText(replyingTo) : undefined,
+      replyToImageId: replyingTo?.imageId,
+      clientStatus: "sending",
     };
     if (pendingImage) {
       const image = { id: pendingImage.id, data: pendingImage.data, timestamp: Date.now(), uploadedBy: currentUserId };
@@ -2130,10 +2183,28 @@ export function CommunityPage() {
       void saveCommunityImage(image).catch((error) => console.error("Failed to save image", error));
     }
     setMessages(prev => [...prev, msg]);
-    void sendCommunityMessage(msg).catch((error) => console.error("Failed to send message", error));
+    void sendCommunityMessage({ ...msg, clientStatus: "sent" })
+      .then(() => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, clientStatus: "sent" } : m)))
+      .catch((error) => {
+        console.error("Failed to send message", error);
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, clientStatus: "failed" } : m));
+      });
     setDraft("");
     setPendingImage(null);
+    setReplyingTo(null);
     inputRef.current?.focus();
+  };
+
+  const retryFailedMessage = (msgId: string) => {
+    const msg = messages.find(m => m.id === msgId);
+    if (!msg) return;
+    setMessages(prev => prev.map(m => m.id === msgId ? { ...m, clientStatus: "sending" } : m));
+    void sendCommunityMessage({ ...msg, clientStatus: "sent" })
+      .then(() => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, clientStatus: "sent" } : m)))
+      .catch((error) => {
+        console.error("Failed to resend message", error);
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, clientStatus: "failed" } : m));
+      });
   };
 
   // ── Paste image support (Ctrl+V) ──
@@ -2344,6 +2415,11 @@ export function CommunityPage() {
   }, [channelMessages, maxVisibleMsgs, showAllMessages, searchQuery]);
 
   const hiddenCount = channelMessages.length - visibleMessages.length;
+  const firstUnreadMessageId = useMemo(() => {
+    const lr = lastRead[activeChannelId] || 0;
+    const unread = visibleMessages.find(m => m.timestamp > lr && m.senderId !== currentUserId && !(isDM && m.senderId.startsWith("npc-")));
+    return unread?.id || null;
+  }, [activeChannelId, currentUserId, isDM, lastRead, visibleMessages]);
 
   // Group messages by date
   const groupedMessages = useMemo(() => {
@@ -3060,7 +3136,25 @@ export function CommunityPage() {
                                 {isMsgFromNpc && <span className="text-[9px] px-1 py-0" style={{ color: msg.nameColor || "#8A6ABB", background: "#0A0A1A", border: `1px solid ${msg.nameColor || "#8A6ABB"}33` }}>NPC</span>}
                                 {showTimestamps && <span className="text-[9px]" style={S_DIM}>{formatTime(msg.timestamp, use24h)}</span>}
                                 {msg.edited && <span className="text-[8px] italic" style={S_DIM}>(edited)</span>}
+                                {msg.deleted && <span className="text-[8px] italic" style={S_DIM}>(deleted)</span>}
+                                {msg.clientStatus === "sending" && <span className="text-[8px]" style={{ color: "#6A7A9A" }}>sending...</span>}
+                                {msg.clientStatus === "failed" && <span className="text-[8px]" style={{ color: "#C77A7A" }}>failed</span>}
                               </div>
+                            )}
+                            {(msg.replyToId || msg.replyToText) && (
+                              <button
+                                type="button"
+                                onClick={() => scrollToMessage(msg.replyToId)}
+                                className="mb-1 px-2 py-1 text-left hover:bg-[#FFFFFF08] transition-colors"
+                                style={{ background: "rgba(255,255,255,0.035)", borderLeft: `2px solid ${accent}99`, borderRadius: 4, maxWidth: 420 }}
+                              >
+                                <div className="text-[9px]" style={{ color: accent }}>
+                                  Replying to {msg.replyToSenderName || "message"}
+                                </div>
+                                <div className="text-[10px] truncate" style={{ color: "#8DA2C8" }}>
+                                  {msg.replyToText || (msg.replyToImageId ? "(image)" : "(message unavailable)")}
+                                </div>
+                              </button>
                             )}
                             {/* Message body or edit mode */}
                             {isEditing ? (
@@ -3079,7 +3173,11 @@ export function CommunityPage() {
                               </div>
                             ) : (
                               <div style={DISPLAY_CONTENTS}>
-                                {msg.text && (
+                                {msg.deleted ? (
+                                  <div className="leading-relaxed break-words italic" style={{ fontSize: fontSize, color: "#6A7A9A" }}>
+                                    Message deleted
+                                  </div>
+                                ) : msg.text && (
                                   <div className="leading-relaxed break-words" style={{ fontSize: fontSize }}>
                                     <RenderTextWithLinks text={msg.text} color={msgChatColor} fontSize={fontSize} />
                                     {!showHeader && msg.edited && <span className="text-[8px] italic ml-1.5" style={S_DIM}>(edited)</span>}
@@ -3174,7 +3272,7 @@ export function CommunityPage() {
                               </span>
                             )}
                             {/* Reaction button */}
-                            {!isEditing && (
+                            {!isEditing && !msg.deleted && (
                               <button
                                 onClick={() => setReactionPickerMsgId(reactionPickerMsgId === msg.id ? null : msg.id)}
                                 className="p-1 hover:bg-[#FFFFFF08] transition-colors rounded"
@@ -3183,7 +3281,26 @@ export function CommunityPage() {
                                 <SmilePlus size={11} style={{ color: "#5A7A9A" }} />
                               </button>
                             )}
-                            {canModify && !isEditing && (
+                            {!isEditing && !msg.deleted && (
+                              <button
+                                onClick={() => setReplyingTo(msg)}
+                                className="p-1 hover:bg-[#FFFFFF08] transition-colors rounded"
+                                title="Reply to message"
+                              >
+                                <ArrowLeft size={11} style={{ color: accent }} />
+                              </button>
+                            )}
+                            {msg.clientStatus === "failed" && (
+                              <button
+                                onClick={() => retryFailedMessage(msg.id)}
+                                className="px-1.5 py-1 hover:bg-[#FFFFFF08] transition-colors rounded text-[9px]"
+                                title="Retry send"
+                                style={{ color: "#C77A7A" }}
+                              >
+                                Retry
+                              </button>
+                            )}
+                            {canModify && !isEditing && !msg.deleted && (
                               <div style={DISPLAY_CONTENTS}>
                                 {isMe && (
                                   <button onClick={() => startEdit(msg)} className="p-1 hover:bg-[#FFFFFF08] transition-colors rounded" title="Edit message">
@@ -3256,6 +3373,7 @@ export function CommunityPage() {
                             )}
                           </div>
                         </div>
+                        </React.Fragment>
                       );
                     })}
                   </div>
@@ -3311,6 +3429,25 @@ export function CommunityPage() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+            {replyingTo && (
+              <div className="mb-2 flex items-start justify-between gap-2 px-2 py-1.5" style={{ background: "rgba(255,255,255,0.04)", borderLeft: `2px solid ${accent}`, borderRadius: 4 }}>
+                <button type="button" className="min-w-0 text-left flex-1" onClick={() => scrollToMessage(replyingTo.id)}>
+                  <div className="text-[10px]" style={{ color: accent }}>
+                    Replying to {nicknames[replyingTo.senderId] || replyingTo.senderName}
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "#8FA3C8" }}>
+                    {summarizeReplyText(replyingTo)}
+                  </div>
+                </button>
+                <button
+                  onClick={() => setReplyingTo(null)}
+                  className="p-1 hover:bg-[#FFFFFF08] rounded transition-colors shrink-0"
+                  title="Cancel reply"
+                >
+                  <X size={11} style={{ color: "#6A7A9A" }} />
+                </button>
               </div>
             )}
             {/* Pending image preview */}
