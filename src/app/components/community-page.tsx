@@ -1455,21 +1455,21 @@ function formatDate(ts: number): string {
 }
 
 const SLASH_COMMANDS: SlashCommandDef[] = [
-  { name: "/roll", usage: "/roll 2d6+3", description: "Roll dice or a named attribute/skill." },
-  { name: "/check", usage: "/check Stealth", description: "Roll a named check using your proficiencies." },
-  { name: "/gm_roll", usage: "/gm_roll private 1d20+5 17", description: "DM only. Public/private roll, optional fudged visible die." , permission: "dm"},
-  { name: "/announce", usage: "/announce The gates are closing.", description: "DM only. Send a highlighted announcement.", permission: "dm" },
-  { name: "/whisper", usage: "/whisper Alice hello", description: "Switch to the DM with that player and send the message there." },
+  { name: "/roll", usage: "/roll (number)d(number)+/-(number)", description: "Roll dice, or use /roll (attribute or skill)." },
+  { name: "/check", usage: "/check (attribute or skill)", description: "Roll a named check using your proficiencies." },
+  { name: "/gm_roll", usage: "/gm_roll (public/private) (number)d(number)+/-(number) [fudged visible die]", description: "DM only. Public/private roll with optional fudged visible die." , permission: "dm"},
+  { name: "/announce", usage: "/announce (message)", description: "DM only. Send a highlighted announcement.", permission: "dm" },
+  { name: "/whisper", usage: "/whisper (player) (message)", description: "Switch to the DM with that player and send the message there." },
   { name: "/character_sheet", usage: "/character_sheet", description: "Show a compact character sheet card." },
   { name: "/status_effects", usage: "/status_effects", description: "Show your current status effects." },
   { name: "/active_cards", usage: "/active_cards", description: "Show your current active cards/abilities." },
-  { name: "/card", usage: "/card Fireball", description: "Show a card you own." },
-  { name: "/inventory", usage: "/inventory Iron Sword", description: "Show an item you own." },
-  { name: "/inventory_transfer", usage: "/inventory_transfer Alice Iron Sword", description: "Offer to transfer an item to another player." },
+  { name: "/card", usage: "/card (card name)", description: "Show a card you own." },
+  { name: "/inventory", usage: "/inventory (item name)", description: "Show an item you own." },
+  { name: "/inventory_transfer", usage: "/inventory_transfer (player) (item name)", description: "Offer to transfer an item to another player." },
   { name: "/hp", usage: "/hp", description: "Show a compact HP and combat summary." },
-  { name: "/ping", usage: "/ping Alice", description: "Ping another player in chat." },
-  { name: "/ring", usage: "/ring Alice 3", description: "Play a sound for a player for up to 5 seconds." },
-  { name: "/emote", usage: "/emote nods solemnly", description: "Post an RP emote line." },
+  { name: "/ping", usage: "/ping (player)", description: "Ping another player in chat." },
+  { name: "/ring", usage: "/ring (player) (seconds up to 5)", description: "Play a sound for a player for up to 5 seconds." },
+  { name: "/emote", usage: "/emote (action)", description: "Post an RP emote line." },
 ];
 
 const CHECK_ALIASES: Record<string, string[]> = {
@@ -2602,9 +2602,52 @@ export function CommunityPage() {
     return eligible.filter(c => c.name.startsWith(cmd));
   }, [draft, isDM]);
 
+  const ownedCardSuggestions = useMemo(() => {
+    const unlocked = Object.entries(commandState.nodeUnlocks || {}).filter(([,v]) => !!v).map(([k]) => k);
+    const owned = commandCards.cards.filter((c:any) => unlocked.some((u:any) => normalizeLooseName(String(u)) === normalizeLooseName(c.id || c.name || c.title)));
+    const source = owned.length ? owned : commandCards.cards;
+    return Array.from(new Set(source.map((c:any) => extractDisplayName(c)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [commandCards.cards, commandState.nodeUnlocks]);
+
+  const ownedItemSuggestions = useMemo(() => {
+    const source = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
+    return Array.from(new Set(source.map((i:any) => extractDisplayName(i)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [commandState.quickItems]);
+
+  const commandContextSuggestions = useMemo(() => {
+    const trimmed = draft.trimStart();
+    if (!trimmed.startsWith("/")) return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
+    const raw = trimmed.slice(1);
+    const [cmdWord = "", ...restParts] = raw.split(/\s+/);
+    const cmd = `/${cmdWord.toLowerCase()}`;
+    const rest = raw.slice(cmdWord.length).trimStart();
+
+    if (cmd === "/card") {
+      const q = rest.toLowerCase();
+      return { mode: "card" as const, values: ownedCardSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
+    }
+
+    if (cmd === "/inventory") {
+      const q = rest.toLowerCase();
+      return { mode: "inventory" as const, values: ownedItemSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
+    }
+
+    if (cmd === "/inventory_transfer") {
+      const transferText = rest;
+      const parts = transferText.split(/\s+/).filter(Boolean);
+      const maybeTarget = parts.length > 0 ? commandPlayerLookup(parts[0]) : null;
+      const itemQuery = maybeTarget ? transferText.slice(parts[0].length).trimStart().toLowerCase() : transferText.toLowerCase();
+      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: maybeTarget ? parts[0] : "" };
+    }
+
+    return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
+  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerLookup]);
+
+  const visibleSuggestionCount = commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.length : commandContextSuggestions.values.length;
+
   useEffect(() => {
-    if (activeCommandSuggestion >= filteredCommandSuggestions.length) setActiveCommandSuggestion(0);
-  }, [filteredCommandSuggestions.length, activeCommandSuggestion]);
+    if (activeCommandSuggestion >= visibleSuggestionCount) setActiveCommandSuggestion(0);
+  }, [visibleSuggestionCount, activeCommandSuggestion]);
 
   const sendStructuredMessage = useCallback((partial: Partial<ChatMessage>, overrides?: { channelId?: string }) => {
     const baseChannelId = overrides?.channelId || activeChannelId;
@@ -2651,6 +2694,26 @@ export function CommunityPage() {
   }, [allPlayers, currentUserId, nicknames]);
 
   const accent = firstColor(theme.accentColor);
+
+  const applyCurrentSuggestion = useCallback((idx: number) => {
+    if (commandContextSuggestions.mode === "card") {
+      const value = commandContextSuggestions.values[idx];
+      if (value) setDraft(`/card ${value}`);
+      return;
+    }
+    if (commandContextSuggestions.mode === "inventory") {
+      const value = commandContextSuggestions.values[idx];
+      if (value) setDraft(`/inventory ${value}`);
+      return;
+    }
+    if (commandContextSuggestions.mode === "inventory_transfer") {
+      const value = commandContextSuggestions.values[idx];
+      if (value) setDraft(commandContextSuggestions.targetPlayer ? `/inventory_transfer ${commandContextSuggestions.targetPlayer} ${value}`.trim() : `/inventory_transfer ${value}`);
+      return;
+    }
+    const next = filteredCommandSuggestions[idx] || filteredCommandSuggestions[0];
+    if (next) setDraft(next.name + " ");
+  }, [commandContextSuggestions, filteredCommandSuggestions]);
 
   const renderSpecialMessage = useCallback((msg: ChatMessage) => {
     const payload = msg.commandPayload || {};
@@ -3167,21 +3230,31 @@ export function CommunityPage() {
                 <div className="text-[10px]" style={{ color: "#DCE8FF" }}>{lastPingNotice}</div>
               </div>
             )}
-            {filteredCommandSuggestions.length > 0 && (
-              <div className="mb-2 overflow-hidden" style={{ background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
-                {filteredCommandSuggestions.slice(0, 8).map((cmd, idx) => (
+            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
+              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
+                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
                   <button
-                    key={cmd.name}
+                    key={`${cmd.name}-${cmd.usage}`}
                     type="button"
-                    onClick={() => setDraft(cmd.usage + " ")}
+                    onClick={() => applyCurrentSuggestion(idx)}
                     className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 8) - 1 ? "1px solid #FFFFFF08" : "none" }}
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
                   >
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
                       {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
                     </div>
                     <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
+                  </button>
+                )) : commandContextSuggestions.values.map((value, idx) => (
+                  <button
+                    key={`${commandContextSuggestions.mode}-${value}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
                   </button>
                 ))}
               </div>
@@ -3888,18 +3961,17 @@ export function CommunityPage() {
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (filteredCommandSuggestions.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                  if (visibleSuggestionCount > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                     e.preventDefault();
                     setActiveCommandSuggestion(prev => {
-                      if (filteredCommandSuggestions.length === 0) return 0;
-                      return e.key === "ArrowDown" ? (prev + 1) % filteredCommandSuggestions.length : (prev - 1 + filteredCommandSuggestions.length) % filteredCommandSuggestions.length;
+                      if (visibleSuggestionCount === 0) return 0;
+                      return e.key === "ArrowDown" ? (prev + 1) % visibleSuggestionCount : (prev - 1 + visibleSuggestionCount) % visibleSuggestionCount;
                     });
                     return;
                   }
-                  if (filteredCommandSuggestions.length > 0 && e.key === "Tab") {
+                  if (visibleSuggestionCount > 0 && e.key === "Tab") {
                     e.preventDefault();
-                    const next = filteredCommandSuggestions[activeCommandSuggestion] || filteredCommandSuggestions[0];
-                    if (next) setDraft(next.usage + " ");
+                    applyCurrentSuggestion(activeCommandSuggestion);
                     return;
                   }
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendFull(); }
