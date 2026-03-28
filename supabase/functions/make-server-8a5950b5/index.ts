@@ -971,6 +971,408 @@ function registerRoutes(prefix: string) {
   });
 
 
+  async function listJsonRows(table: string) {
+    const supabase = admin();
+    const { data, error } = await supabase
+      .from(table)
+      .select("id, data")
+      .order("updated_at", { ascending: true });
+
+    if (error) throw new Error(error.message);
+
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      ...(row.data ?? {}),
+    }));
+  }
+
+  async function getPlayerScopedData(table: string, playerId: string, fallback: any) {
+    const supabase = admin();
+    const { data, error } = await supabase
+      .from(table)
+      .select("data")
+      .eq("player_id", playerId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data?.data ?? fallback;
+  }
+
+  async function upsertPlayerScopedData(table: string, playerId: string, dataValue: any) {
+    const supabase = admin();
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from(table)
+      .upsert(
+        { player_id: playerId, data: dataValue, updated_at: now },
+        { onConflict: "player_id" },
+      );
+
+    if (error) throw new Error(error.message);
+  }
+
+  async function upsertJsonEntity(table: string, id: string, dataValue: any) {
+    const supabase = admin();
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from(table)
+      .upsert(
+        { id, data: { ...(dataValue ?? {}), id }, updated_at: now },
+        { onConflict: "id" },
+      );
+
+    if (error) throw new Error(error.message);
+  }
+
+  app.get(`${prefix}/community/players`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+
+      const players = await listEntityRows("app_players");
+      return c.json({
+        players: players.map((player: any) => ({
+          id: player.id,
+          name: player.name || player.displayName || player.id,
+        })),
+      });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/community/messages`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+
+      const messages = await listJsonRows("community_messages");
+      return c.json({ messages });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/message/send`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const message = body?.message;
+
+      if (!message || typeof message?.id !== "string" || !message.id.trim()) {
+        return c.json({ error: "message.id is required" }, 400);
+      }
+
+      const ownerId = String(message.senderId || "");
+      if (requesterId !== "dm" && ownerId !== requesterId) {
+        return c.json({ error: "Cannot send messages for another player" }, 403);
+      }
+
+      await upsertJsonEntity("community_messages", message.id.trim(), message);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/message/update`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const message = body?.message;
+
+      if (!message || typeof message?.id !== "string" || !message.id.trim()) {
+        return c.json({ error: "message.id is required" }, 400);
+      }
+
+      const supabase = admin();
+      const { data: existing, error: existingError } = await supabase
+        .from("community_messages")
+        .select("data")
+        .eq("id", message.id.trim())
+        .maybeSingle();
+
+      if (existingError) return c.json({ error: existingError.message }, 500);
+      if (!existing?.data) return c.json({ error: "Message not found" }, 404);
+
+      const current = existing.data ?? {};
+      const senderId = String(current.senderId || message.senderId || "");
+      if (requesterId !== "dm" && senderId !== requesterId) {
+        return c.json({ error: "Cannot edit another player's message" }, 403);
+      }
+
+      const nextMessage = { ...current, ...message, id: message.id.trim() };
+      await upsertJsonEntity("community_messages", nextMessage.id, nextMessage);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/message/delete`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const id = typeof body?.id === "string" ? body.id.trim() : "";
+      if (!id) return c.json({ error: "id is required" }, 400);
+
+      const supabase = admin();
+      const { data: existing, error: existingError } = await supabase
+        .from("community_messages")
+        .select("data")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (existingError) return c.json({ error: existingError.message }, 500);
+      if (!existing?.data) return c.json({ error: "Message not found" }, 404);
+
+      const senderId = String(existing.data?.senderId || "");
+      if (requesterId !== "dm" && senderId !== requesterId) {
+        return c.json({ error: "Cannot delete another player's message" }, 403);
+      }
+
+      const { error } = await supabase
+        .from("community_messages")
+        .delete()
+        .eq("id", id);
+
+      if (error) return c.json({ error: error.message }, 500);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/community/read-state/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const playerId = c.req.param("playerId");
+      if (!playerId) return c.json({ error: "Missing playerId" }, 400);
+      if (requesterId !== "dm" && requesterId !== playerId) {
+        return c.json({ error: "Cannot read another player's read state" }, 403);
+      }
+
+      const channels = await getPlayerScopedData("community_read_state", playerId, {});
+      return c.json({ channels });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/read-state/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const playerId = typeof body?.playerId === "string" ? body.playerId.trim() : "";
+      const channels = body?.channels ?? {};
+      if (!playerId) return c.json({ error: "playerId is required" }, 400);
+      if (requesterId !== "dm" && requesterId !== playerId) {
+        return c.json({ error: "Cannot save another player's read state" }, 403);
+      }
+
+      await upsertPlayerScopedData("community_read_state", playerId, channels);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/community/profile/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const playerId = c.req.param("playerId");
+      if (!playerId) return c.json({ error: "Missing playerId" }, 400);
+      if (requesterId !== "dm" && requesterId !== playerId) {
+        return c.json({ error: "Cannot read another player's profile" }, 403);
+      }
+
+      const profile = await getPlayerScopedData("player_community_profile", playerId, { playerId });
+      return c.json({ profile: { playerId, ...(profile ?? {}) } });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/profile/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const playerId = typeof body?.playerId === "string" ? body.playerId.trim() : "";
+      const profile = body?.profile ?? {};
+      if (!playerId) return c.json({ error: "playerId is required" }, 400);
+      if (requesterId !== "dm" && requesterId !== playerId) {
+        return c.json({ error: "Cannot save another player's profile" }, 403);
+      }
+
+      await upsertPlayerScopedData("player_community_profile", playerId, { ...profile, playerId });
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/profiles/bulk`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const playerIds = Array.isArray(body?.playerIds)
+        ? body.playerIds.map((value: any) => String(value || "").trim()).filter(Boolean)
+        : [];
+
+      if (playerIds.length === 0) return c.json({ profiles: {} });
+
+      const supabase = admin();
+      const { data, error } = await supabase
+        .from("player_community_profile")
+        .select("player_id, data")
+        .in("player_id", playerIds);
+
+      if (error) return c.json({ error: error.message }, 500);
+
+      const profiles: Record<string, any> = {};
+      for (const playerId of playerIds) {
+        profiles[playerId] = { playerId };
+      }
+      for (const row of data ?? []) {
+        profiles[row.player_id] = { playerId: row.player_id, ...(row.data ?? {}) };
+      }
+
+      return c.json({ profiles });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/community/images`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+
+      const images = await listJsonRows("community_images");
+      return c.json({ images });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/image/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const image = body?.image;
+      if (!image || typeof image?.id !== "string" || !image.id.trim()) {
+        return c.json({ error: "image.id is required" }, 400);
+      }
+
+      await upsertJsonEntity("community_images", image.id.trim(), image);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/image/delete`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const id = typeof body?.id === "string" ? body.id.trim() : "";
+      if (!id) return c.json({ error: "id is required" }, 400);
+
+      const supabase = admin();
+      const { error } = await supabase
+        .from("community_images")
+        .delete()
+        .eq("id", id);
+
+      if (error) return c.json({ error: error.message }, 500);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/community/npcs`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+
+      const npcAccounts = await listJsonRows("community_npc_accounts");
+      return c.json({ npcAccounts });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/community/npcs/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      const npcAccounts = Array.isArray(body?.npcAccounts) ? body.npcAccounts : [];
+      await replaceCollectionRows("community_npc_accounts", npcAccounts);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/community/reactions`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      await resolveSessionPlayerId(c);
+
+      const reactions = await listCollectionRows("community_custom_reactions");
+      return c.json({ reactions });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+
   app.get(`${prefix}/dm/players`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
