@@ -2658,6 +2658,34 @@ export function CommunityPage() {
     return fuzzyFindByName(allPlayers.filter(p => p.id !== currentUserId), name, p => nicknames[p.id] || p.name || p.id);
   }, [allPlayers, currentUserId, nicknames]);
 
+  const commandPlayerPrefixMatch = useCallback((input: string) => {
+    const source = String(input || "").trim();
+    if (!source) return null as null | { player: PlayerInfo; rawName: string; remainder: string };
+    const sourceTokens = source.split(/\s+/).filter(Boolean);
+    const players = allPlayers
+      .filter(p => p.id !== currentUserId)
+      .map((player) => ({
+        player,
+        displayName: (nicknames[player.id] || player.name || player.id || "").trim(),
+      }))
+      .filter(entry => !!entry.displayName)
+      .sort((a, b) => b.displayName.trim().split(/\s+/).length - a.displayName.trim().split(/\s+/).length || b.displayName.length - a.displayName.length);
+
+    for (const entry of players) {
+      const candidateTokens = entry.displayName.split(/\s+/).filter(Boolean);
+      if (candidateTokens.length === 0 || candidateTokens.length > sourceTokens.length) continue;
+      const matches = candidateTokens.every((token, idx) => normalizeLooseName(sourceTokens[idx]) === normalizeLooseName(token));
+      if (!matches) continue;
+      return {
+        player: entry.player,
+        rawName: sourceTokens.slice(0, candidateTokens.length).join(" "),
+        remainder: sourceTokens.slice(candidateTokens.length).join(" "),
+      };
+    }
+
+    return null as null | { player: PlayerInfo; rawName: string; remainder: string };
+  }, [allPlayers, currentUserId, nicknames]);
+
   const commandContextSuggestions = useMemo(() => {
     const trimmed = draft.trimStart();
     if (!trimmed.startsWith("/")) return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
@@ -2678,14 +2706,13 @@ export function CommunityPage() {
 
     if (cmd === "/inventory_transfer") {
       const transferText = rest;
-      const parts = transferText.split(/\s+/).filter(Boolean);
-      const maybeTarget = parts.length > 0 ? commandPlayerLookup(parts[0]) : null;
-      const itemQuery = maybeTarget ? transferText.slice(parts[0].length).trimStart().toLowerCase() : transferText.toLowerCase();
-      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: maybeTarget ? parts[0] : "" };
+      const targetMatch = commandPlayerPrefixMatch(transferText);
+      const itemQuery = (targetMatch ? targetMatch.remainder : transferText).trim().toLowerCase();
+      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: targetMatch ? targetMatch.rawName : "" };
     }
 
     return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
-  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerLookup]);
+  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerPrefixMatch]);
 
   const visibleSuggestionCount = commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.length : commandContextSuggestions.values.length;
 
@@ -2768,10 +2795,10 @@ export function CommunityPage() {
     };
     if ((command === "/announce" || command === "/gm_roll") && !isDM) return deny("That command is DM-only.");
     if (command === "/whisper") {
-      const targetName = parts[1] || "";
-      const body = trimmed.split(/\s+/).slice(2).join(" ").trim();
-      const target = commandPlayerLookup(targetName);
-      if (!target || !body) return deny("Usage: /whisper Name message");
+      const parsedTarget = commandPlayerPrefixMatch(rest);
+      const target = parsedTarget?.player || null;
+      const body = parsedTarget?.remainder?.trim() || "";
+      if (!target || !body) return deny("Usage: /whisper (player) (message)");
       const dmId = getDmChannelId(currentUserId, target.id);
       setActiveChannelId(dmId);
       sendStructuredMessage({ text: body }, { channelId: dmId });
@@ -2850,11 +2877,12 @@ export function CommunityPage() {
       return true;
     }
     if (command === "/inventory_transfer") {
-      const transferMatch = rest.match(/^(\S+)\s+(.+)$/);
-      if (!transferMatch) return deny("Usage: /inventory_transfer Player Item Name");
-      const target = commandPlayerLookup(transferMatch[1]);
-      const found = fuzzyFindByName(Array.isArray(commandState.quickItems) ? commandState.quickItems : [], transferMatch[2], (i:any) => extractDisplayName(i));
-      if (!target || !found) return deny("Player or item not found.");
+      const parsedTarget = commandPlayerPrefixMatch(rest);
+      if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
+      const target = parsedTarget.player;
+      const itemName = parsedTarget.remainder.trim();
+      const found = fuzzyFindByName(Array.isArray(commandState.quickItems) ? commandState.quickItems : [], itemName, (i:any) => extractDisplayName(i));
+      if (!itemName || !target || !found) return deny("Player or item not found.");
       sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found } }, { channelId: getDmChannelId(currentUserId, target.id) });
       return true;
     }
@@ -2866,22 +2894,23 @@ export function CommunityPage() {
       return true;
     }
     if (command === "/ping") {
-      const target = commandPlayerLookup(rest);
-      if (!target) return deny("Usage: /ping Player");
+      const parsedTarget = commandPlayerPrefixMatch(rest);
+      const target = parsedTarget?.player || null;
+      if (!target) return deny("Usage: /ping (player)");
       sendStructuredMessage({ kind: "ping", text: `Pinged ${nicknames[target.id] || target.name}`, commandPayload: { toId: target.id, toName: nicknames[target.id] || target.name, fromName: myDisplayName } });
       return true;
     }
     if (command === "/ring") {
-      const match = rest.match(/^(\S+)\s*(\d+)?$/);
-      if (!match) return deny("Usage: /ring Player 3");
-      const target = commandPlayerLookup(match[1]);
-      if (!target) return deny("Player not found.");
-      const seconds = Math.max(1, Math.min(5, Number(match[2] || 1)));
+      const ringTarget = commandPlayerPrefixMatch(rest);
+      const target = ringTarget?.player || null;
+      if (!target) return deny("Usage: /ring (player) (seconds up to 5)");
+      const secondsToken = ringTarget?.remainder?.trim();
+      const seconds = Math.max(1, Math.min(5, Number(secondsToken || 1)));
       sendStructuredMessage({ kind: "ring", text: `Rang ${nicknames[target.id] || target.name}`, commandPayload: { toId: target.id, toName: nicknames[target.id] || target.name, fromName: myDisplayName, seconds } });
       return true;
     }
     return false;
-  }, [draft, isDM, commandPlayerLookup, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames]);
+  }, [draft, isDM, commandPlayerLookup, commandPlayerPrefixMatch, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames]);
 
 
   return (
