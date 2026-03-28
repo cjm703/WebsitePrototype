@@ -155,6 +155,21 @@ export async function loadCommunityProfiles(playerIds: string[]): Promise<Record
   return body.profiles ?? {};
 }
 
+
+export type InventoryTransferResponse = {
+  ok: boolean;
+  senderRemainingQuantity?: number | null;
+  recipientQuantity?: number | null;
+  message?: CommunityMessageRecord;
+};
+
+export async function respondInventoryTransfer(messageId: string, action: "accept" | "decline"): Promise<InventoryTransferResponse> {
+  return await apiFetch<InventoryTransferResponse>("/community/inventory-transfer/respond", {
+    method: "POST",
+    body: JSON.stringify({ messageId, action }),
+  });
+}
+
 function stableMessageMap(messages: CommunityMessageRecord[]) {
   return new Map(messages.map((message) => [message.id, message] as const));
 }

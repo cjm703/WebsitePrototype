@@ -1024,6 +1024,31 @@ function registerRoutes(prefix: string) {
     if (error) throw new Error(error.message);
   }
 
+
+  function normalizeLooseInventoryName(value: unknown): string {
+    return String(value ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  }
+
+  function getInventoryItemName(item: any): string {
+    return String(item?.displayName || item?.name || item?.title || item?.label || item?.id || "").trim();
+  }
+
+  function getInventoryItemQuantity(item: any): number {
+    const raw = item?.quantity ?? item?.count ?? item?.amount;
+    const num = Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : 1;
+  }
+
+  function findInventoryItemIndex(items: any[], candidate: any): number {
+    const candidateId = String(candidate?.id || "").trim();
+    const candidateName = normalizeLooseInventoryName(getInventoryItemName(candidate));
+    return items.findIndex((item) => {
+      const itemId = String(item?.id || "").trim();
+      if (candidateId && itemId && candidateId === itemId) return true;
+      return candidateName && normalizeLooseInventoryName(getInventoryItemName(item)) === candidateName;
+    });
+  }
+
   app.get(`${prefix}/community/players`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
@@ -1372,6 +1397,123 @@ function registerRoutes(prefix: string) {
     }
   });
 
+
+
+  app.post(`${prefix}/community/inventory-transfer/respond`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const messageId = typeof body?.messageId === "string" ? body.messageId.trim() : "";
+      const action = body?.action === "decline" ? "decline" : "accept";
+      if (!messageId) return c.json({ error: "messageId is required" }, 400);
+
+      const supabase = admin();
+      const { data: existing, error: existingError } = await supabase
+        .from("community_messages")
+        .select("data")
+        .eq("id", messageId)
+        .maybeSingle();
+
+      if (existingError) return c.json({ error: existingError.message }, 500);
+      const message = existing?.data ?? null;
+      if (!message) return c.json({ error: "Transfer message not found" }, 404);
+      if (message.kind !== "inventory_transfer_offer") return c.json({ error: "Message is not an inventory transfer offer" }, 400);
+
+      const payload = message.commandPayload ?? {};
+      const status = String(payload.status || "pending").toLowerCase();
+      if (status !== "pending") {
+        return c.json({ error: `Transfer already ${status}` }, 409);
+      }
+
+      const fromId = String(payload.fromId || "").trim();
+      const toId = String(payload.toId || "").trim();
+      if (!fromId || !toId) return c.json({ error: "Transfer payload is missing fromId or toId" }, 400);
+      if (requesterId !== "dm" && requesterId !== toId) {
+        return c.json({ error: "Only the recipient may respond to this transfer" }, 403);
+      }
+
+      if (action === "decline") {
+        const nextMessage = {
+          ...message,
+          commandPayload: {
+            ...payload,
+            status: "declined",
+            respondedAt: Date.now(),
+            respondedBy: requesterId,
+          },
+        };
+        await upsertJsonEntity("community_messages", messageId, nextMessage);
+        return c.json({ ok: true, message: nextMessage });
+      }
+
+      const [senderRow, recipientRow] = await Promise.all([
+        supabase.from("player_quick_items").select("data").eq("player_id", fromId).maybeSingle(),
+        supabase.from("player_quick_items").select("data").eq("player_id", toId).maybeSingle(),
+      ]);
+
+      if (senderRow.error) return c.json({ error: senderRow.error.message }, 500);
+      if (recipientRow.error) return c.json({ error: recipientRow.error.message }, 500);
+
+      const senderItems = Array.isArray(senderRow.data?.data) ? [...senderRow.data.data] : [];
+      const recipientItems = Array.isArray(recipientRow.data?.data) ? [...recipientRow.data.data] : [];
+      const transferItem = payload.item ?? { id: payload.itemId, name: payload.itemName };
+      const senderIndex = findInventoryItemIndex(senderItems, transferItem);
+      if (senderIndex < 0) return c.json({ error: "Sender no longer has that item" }, 409);
+
+      const senderItem = { ...senderItems[senderIndex] };
+      const transferQty = Math.max(1, Number(payload.quantity ?? transferItem?.quantity ?? 1) || 1);
+      const senderQty = getInventoryItemQuantity(senderItem);
+      if (senderQty < transferQty) return c.json({ error: "Sender does not have enough quantity" }, 409);
+
+      const recipientIndex = findInventoryItemIndex(recipientItems, senderItem);
+      if (senderQty === transferQty) {
+        senderItems.splice(senderIndex, 1);
+      } else {
+        senderItem.quantity = senderQty - transferQty;
+        senderItems[senderIndex] = senderItem;
+      }
+
+      if (recipientIndex >= 0) {
+        const recipientItem = { ...recipientItems[recipientIndex] };
+        recipientItem.quantity = getInventoryItemQuantity(recipientItem) + transferQty;
+        recipientItems[recipientIndex] = recipientItem;
+      } else {
+        const cloned = { ...senderItem, quantity: transferQty };
+        if (senderQty !== transferQty) {
+          cloned.quantity = transferQty;
+        }
+        recipientItems.push(cloned);
+      }
+
+      const now = new Date().toISOString();
+      const [senderSave, recipientSave] = await Promise.all([
+        supabase.from("player_quick_items").upsert({ player_id: fromId, data: senderItems, updated_at: now }, { onConflict: "player_id" }),
+        supabase.from("player_quick_items").upsert({ player_id: toId, data: recipientItems, updated_at: now }, { onConflict: "player_id" }),
+      ]);
+      if (senderSave.error) return c.json({ error: senderSave.error.message }, 500);
+      if (recipientSave.error) return c.json({ error: recipientSave.error.message }, 500);
+
+      const updatedMessage = {
+        ...message,
+        commandPayload: {
+          ...payload,
+          status: "accepted",
+          respondedAt: Date.now(),
+          respondedBy: requesterId,
+          quantity: transferQty,
+          senderRemainingQuantity: senderIndex >= 0 && senderItems[senderIndex] ? getInventoryItemQuantity(senderItems[senderIndex]) : 0,
+          recipientQuantity: recipientIndex >= 0 && recipientItems[recipientIndex] ? getInventoryItemQuantity(recipientItems[recipientIndex]) : transferQty,
+        },
+      };
+      await upsertJsonEntity("community_messages", messageId, updatedMessage);
+      return c.json({ ok: true, message: updatedMessage, senderRemainingQuantity: updatedMessage.commandPayload.senderRemainingQuantity, recipientQuantity: updatedMessage.commandPayload.recipientQuantity });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
 
   app.get(`${prefix}/dm/players`, async (c) => {
     try {

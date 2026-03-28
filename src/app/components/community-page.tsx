@@ -25,6 +25,7 @@ import {
   loadCommunityProfiles,
   loadCommunityProfile,
   saveCommunityProfile,
+  respondInventoryTransfer,
 } from "@/lib/community-api";
 import { loadPlayerState, loadDMItems, loadDMCards } from "@/lib/player-state-api";
 
@@ -1999,11 +2000,25 @@ export function CommunityPage() {
 
   // ── Profile pictures (batch fetched from server) ──
   const [profilePics, setProfilePics] = useState<Record<string, string | null>>({});
+  const fetchMissingProfilePics = useCallback(async (ids: string[]) => {
+    const uniqueIds = Array.from(new Set((ids || []).filter(id => !!id && !id.startsWith("npc-"))));
+    const missingIds = uniqueIds.filter((id) => !(id in profilePics));
+    if (missingIds.length === 0) return;
+    try {
+      const pics = await fetchProfilePictures(missingIds);
+      setProfilePics((prev) => ({ ...prev, ...pics }));
+    } catch (error) {
+      console.error("Failed to load profile pictures", error);
+    }
+  }, [profilePics]);
+
   useEffect(() => {
-    const playerIds = allPlayers.map(p => p.id).filter(id => !id.startsWith("npc-"));
-    if (playerIds.length === 0) return;
-    fetchProfilePictures(playerIds).then(pics => setProfilePics(pics));
-  }, [allPlayers]);
+    void fetchMissingProfilePics(allPlayers.map((p) => p.id));
+  }, [allPlayers, fetchMissingProfilePics]);
+
+  useEffect(() => {
+    void fetchMissingProfilePics(messages.map((m) => m.senderId));
+  }, [messages, fetchMissingProfilePics]);
 
   // Nicknames / profile
   const [nicknames, setNicknames] = useState<Nicknames>({});
@@ -2058,6 +2073,7 @@ export function CommunityPage() {
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [commandState, setCommandState] = useState<PlayerCommandState>({});
   const [commandCards, setCommandCards] = useState<{ cards: any[]; items: any[] }>({ cards: [], items: [] });
+  const lastCommandStateRefreshRef = useRef(0);
   const [activeCommandSuggestion, setActiveCommandSuggestion] = useState(0);
   const [lastPingNotice, setLastPingNotice] = useState<string | null>(null);
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
@@ -2109,34 +2125,54 @@ export function CommunityPage() {
         next[index] = { ...next[index], ...incoming };
         return next.sort((a, b) => a.timestamp - b.timestamp);
       });
+      const transferStatus = String((message.commandPayload || {}).status || "").toLowerCase();
+      const transferInvolvesMe = message.kind === "inventory_transfer_offer" && [message.commandPayload?.fromId, message.commandPayload?.toId].includes(currentUserId);
+      if (transferInvolvesMe && eventType !== "DELETE" && transferStatus === "accepted") {
+        void refreshCommandResources(true);
+      }
       if (notifSoundRef.current && message.senderId !== currentUserId && eventType === "INSERT") playNotifBeep();
     });
 
     return () => { cancelled = true; unsubscribe(); };
-  }, [currentUserId]);
+  }, [currentUserId, refreshCommandResources]);
 
   useEffect(() => {
     if (!communityReady || !isDM) return;
     void saveNpcAccounts(npcAccounts).catch((error) => console.error("Failed to save NPC accounts", error));
   }, [npcAccounts, communityReady, isDM]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [playerState, cards, items] = await Promise.all([
-          currentUserId ? loadPlayerState().catch(() => ({})) : Promise.resolve({}),
-          isDM ? loadDMCards<any>().catch(() => []) : Promise.resolve([]),
-          isDM ? loadDMItems<any>().catch(() => []) : Promise.resolve([]),
-        ]);
-        if (cancelled) return;
-        setCommandState(playerState || {});
-        setCommandCards({ cards: Array.isArray(cards) ? cards : [], items: Array.isArray(items) ? items : [] });
-      } catch (error) {
-        console.error("Failed to load slash command state", error);
-      }
-    })();
-    return () => { cancelled = true; };
+  const refreshCommandResources = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastCommandStateRefreshRef.current < 2500) return;
+    lastCommandStateRefreshRef.current = now;
+    try {
+      const [playerState, cards, items] = await Promise.all([
+        currentUserId ? loadPlayerState().catch(() => ({})) : Promise.resolve({}),
+        isDM ? loadDMCards<any>().catch(() => []) : Promise.resolve([]),
+        isDM ? loadDMItems<any>().catch(() => []) : Promise.resolve([]),
+      ]);
+      setCommandState(playerState || {});
+      setCommandCards({ cards: Array.isArray(cards) ? cards : [], items: Array.isArray(items) ? items : [] });
+    } catch (error) {
+      console.error("Failed to load slash command state", error);
+    }
   }, [currentUserId, isDM]);
+
+  useEffect(() => {
+    void refreshCommandResources(true);
+  }, [refreshCommandResources]);
+
+  useEffect(() => {
+    const trimmed = draft.trimStart().toLowerCase();
+    if (trimmed.startsWith('/inventory') || trimmed.startsWith('/inventory_transfer') || trimmed.startsWith('/card') || trimmed.startsWith('/active_cards') || trimmed.startsWith('/status_effects') || trimmed.startsWith('/hp')) {
+      void refreshCommandResources();
+    }
+  }, [draft, refreshCommandResources]);
+
+  useEffect(() => {
+    const onFocus = () => { void refreshCommandResources(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshCommandResources]);
 
 
   // Auto-scroll to bottom
@@ -2219,6 +2255,7 @@ export function CommunityPage() {
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
+  const [respondingTransferId, setRespondingTransferId] = useState<string | null>(null);
 
   useEffect(() => {
     if (editingMsgId && editInputRef.current) editInputRef.current.focus();
@@ -2610,9 +2647,11 @@ export function CommunityPage() {
   }, [commandCards.cards, commandState.nodeUnlocks]);
 
   const ownedItemSuggestions = useMemo(() => {
-    const source = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
+    const quickItemSource = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
+    const dmItemSource = Array.isArray(commandCards.items) ? commandCards.items : [];
+    const source = quickItemSource.length ? quickItemSource : dmItemSource;
     return Array.from(new Set(source.map((i:any) => extractDisplayName(i)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [commandState.quickItems]);
+  }, [commandState.quickItems, commandCards.items]);
 
   const playerCommandSuggestions = useMemo(() => {
     return allPlayers
@@ -2815,6 +2854,43 @@ export function CommunityPage() {
     if (next) setDraft(next.name + " ");
   }, [commandContextSuggestions, filteredCommandSuggestions]);
 
+  const extractTransferStatus = useCallback((msg: ChatMessage) => {
+    const payload = msg.commandPayload || {};
+    return String(payload.status || "pending").toLowerCase();
+  }, []);
+
+  const handleTransferResponse = async (msg: ChatMessage, action: "accept" | "decline") => {
+    const payload = msg.commandPayload || {};
+    if (!msg.id || respondingTransferId) return;
+    setRespondingTransferId(msg.id);
+    try {
+      const result = await respondInventoryTransfer(msg.id, action);
+      const nextPayload = {
+        ...payload,
+        status: action === "accept" ? "accepted" : "declined",
+        respondedAt: Date.now(),
+        respondedBy: currentUserId,
+        responderName: myDisplayName,
+        senderRemainingQuantity: result?.senderRemainingQuantity,
+        recipientQuantity: result?.recipientQuantity,
+      };
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, commandPayload: nextPayload, clientStatus: "sent" } : m));
+      if (action === "accept") {
+        await refreshCommandResources(true);
+        setLastPingNotice(`Accepted transfer of ${payload.itemName || "item"}.`);
+      } else {
+        setLastPingNotice(`Declined transfer of ${payload.itemName || "item"}.`);
+      }
+      window.setTimeout(() => setLastPingNotice(null), 2500);
+    } catch (error) {
+      console.error(`Failed to ${action} inventory transfer`, error);
+      setLastPingNotice(`Failed to ${action} transfer.`);
+      window.setTimeout(() => setLastPingNotice(null), 2500);
+    } finally {
+      setRespondingTransferId(null);
+    }
+  };
+
   const renderSpecialMessage = useCallback((msg: ChatMessage) => {
     const payload = msg.commandPayload || {};
     const boxStyle: React.CSSProperties = { background: "rgba(255,255,255,0.035)", border: `1px solid ${accent}25`, borderLeft: `2px solid ${accent}`, borderRadius: 4, padding: 8, marginTop: 4, maxWidth: 560 };
@@ -2842,7 +2918,9 @@ export function CommunityPage() {
       return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>{msg.kind === "card_preview" ? "Card" : "Item"}</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.name || "Unknown"}</div>{payload.subtitle && <div className="text-[10px] mt-1" style={{ color: "#9DB5E0" }}>{payload.subtitle}</div>}{payload.description && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.description}</div>}</div>;
     }
     if (msg.kind === "inventory_transfer_offer") {
-      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Transfer Offer</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName} offers {payload.itemName} to {payload.toName}</div><div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>This is an offer card only. Final transfer still needs server-side acceptance logic.</div></div>;
+      const status = String(payload.status || "pending").toLowerCase();
+      const canRespond = status === "pending" && (payload.toId === currentUserId || isDM);
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Transfer Offer</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName} offers {payload.itemName} to {payload.toName}</div><div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{status === "accepted" ? `Accepted${payload.responderName ? ` by ${payload.responderName}` : ""}.` : status === "declined" ? `Declined${payload.responderName ? ` by ${payload.responderName}` : ""}.` : "Awaiting response."}</div>{status === "accepted" && (payload.senderRemainingQuantity != null || payload.recipientQuantity != null) && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>Sender now has {payload.senderRemainingQuantity ?? "?"}; recipient now has {payload.recipientQuantity ?? "?"}.</div>}{canRespond && <div className="flex gap-2 mt-2"><button type="button" className="px-2 py-1 text-[10px] rounded" style={{ background: "rgba(64,160,96,0.18)", color: "#D8FFE4", border: "1px solid rgba(64,160,96,0.35)" }} onClick={() => void handleTransferResponse(msg, "accept")} disabled={respondingTransferId === msg.id}>{respondingTransferId === msg.id ? "Working..." : "Accept"}</button><button type="button" className="px-2 py-1 text-[10px] rounded" style={{ background: "rgba(160,64,64,0.18)", color: "#FFDADA", border: "1px solid rgba(160,64,64,0.35)" }} onClick={() => void handleTransferResponse(msg, "decline")} disabled={respondingTransferId === msg.id}>{respondingTransferId === msg.id ? "Working..." : "Decline"}</button></div>}</div>;
     }
     if (msg.kind === "hp") {
       return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>HP / Combat Summary</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.hpLine || "No HP data available."}</div>{payload.extra && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.extra}</div>}</div>;
@@ -2851,7 +2929,7 @@ export function CommunityPage() {
       return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>{msg.kind === "ring" ? "Ring" : "Ping"}</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName || displayNameFor(msg.senderId, msg.senderName)} targeted {payload.toName}</div>{msg.kind === "ring" && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>Duration: {payload.seconds || 1}s</div>}</div>;
     }
     return null;
-  }, [accent, isDM]);
+  }, [accent, currentUserId, isDM, respondingTransferId]);
 
   const displayNameFor = (senderId: string, senderName: string) => nicknames[senderId] || senderName;
 
@@ -2950,13 +3028,18 @@ export function CommunityPage() {
       return true;
     }
     if (command === "/inventory_transfer") {
+      void refreshCommandResources();
       const parsedTarget = commandPlayerPrefixMatch(rest);
       if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
       const target = parsedTarget.player;
       const itemName = parsedTarget.remainder.trim();
-      const found = fuzzyFindByName(Array.isArray(commandState.quickItems) ? commandState.quickItems : [], itemName, (i:any) => extractDisplayName(i));
-      if (!itemName || !target || !found) return deny("Player or item not found.");
-      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found } }, { channelId: getDmChannelId(currentUserId, target.id) });
+      const quickItems = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
+      const normalizedItemName = normalizeLooseName(itemName);
+      const found = fuzzyFindByName(quickItems, itemName, (i:any) => extractDisplayName(i))
+        || quickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
+      if (!itemName || !target || !found) return deny("Player or item not found in your current inventory.");
+      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found, status: "pending", createdAt: Date.now() } }, { channelId: getDmChannelId(currentUserId, target.id) });
+      void refreshCommandResources(true);
       return true;
     }
     if (command === "/hp") {
