@@ -2614,41 +2614,6 @@ export function CommunityPage() {
     return Array.from(new Set(source.map((i:any) => extractDisplayName(i)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [commandState.quickItems]);
 
-  const commandContextSuggestions = useMemo(() => {
-    const trimmed = draft.trimStart();
-    if (!trimmed.startsWith("/")) return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
-    const raw = trimmed.slice(1);
-    const [cmdWord = "", ...restParts] = raw.split(/\s+/);
-    const cmd = `/${cmdWord.toLowerCase()}`;
-    const rest = raw.slice(cmdWord.length).trimStart();
-
-    if (cmd === "/card") {
-      const q = rest.toLowerCase();
-      return { mode: "card" as const, values: ownedCardSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
-    }
-
-    if (cmd === "/inventory") {
-      const q = rest.toLowerCase();
-      return { mode: "inventory" as const, values: ownedItemSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
-    }
-
-    if (cmd === "/inventory_transfer") {
-      const transferText = rest;
-      const parts = transferText.split(/\s+/).filter(Boolean);
-      const maybeTarget = parts.length > 0 ? commandPlayerLookup(parts[0]) : null;
-      const itemQuery = maybeTarget ? transferText.slice(parts[0].length).trimStart().toLowerCase() : transferText.toLowerCase();
-      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: maybeTarget ? parts[0] : "" };
-    }
-
-    return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
-  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerLookup]);
-
-  const visibleSuggestionCount = commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.length : commandContextSuggestions.values.length;
-
-  useEffect(() => {
-    if (activeCommandSuggestion >= visibleSuggestionCount) setActiveCommandSuggestion(0);
-  }, [visibleSuggestionCount, activeCommandSuggestion]);
-
   const sendStructuredMessage = useCallback((partial: Partial<ChatMessage>, overrides?: { channelId?: string }) => {
     const baseChannelId = overrides?.channelId || activeChannelId;
     const msg: ChatMessage = {
@@ -2692,6 +2657,41 @@ export function CommunityPage() {
   const commandPlayerLookup = useCallback((name: string) => {
     return fuzzyFindByName(allPlayers.filter(p => p.id !== currentUserId), name, p => nicknames[p.id] || p.name || p.id);
   }, [allPlayers, currentUserId, nicknames]);
+
+  const commandContextSuggestions = useMemo(() => {
+    const trimmed = draft.trimStart();
+    if (!trimmed.startsWith("/")) return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
+    const raw = trimmed.slice(1);
+    const [cmdWord = ""] = raw.split(/\s+/);
+    const cmd = `/${cmdWord.toLowerCase()}`;
+    const rest = raw.slice(cmdWord.length).trimStart();
+
+    if (cmd === "/card") {
+      const q = rest.toLowerCase();
+      return { mode: "card" as const, values: ownedCardSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
+    }
+
+    if (cmd === "/inventory") {
+      const q = rest.toLowerCase();
+      return { mode: "inventory" as const, values: ownedItemSuggestions.filter(name => !q || name.toLowerCase().includes(q)).slice(0, 50), targetPlayer: "" };
+    }
+
+    if (cmd === "/inventory_transfer") {
+      const transferText = rest;
+      const parts = transferText.split(/\s+/).filter(Boolean);
+      const maybeTarget = parts.length > 0 ? commandPlayerLookup(parts[0]) : null;
+      const itemQuery = maybeTarget ? transferText.slice(parts[0].length).trimStart().toLowerCase() : transferText.toLowerCase();
+      return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: maybeTarget ? parts[0] : "" };
+    }
+
+    return { mode: "commands" as const, values: [] as string[], targetPlayer: "" };
+  }, [draft, ownedCardSuggestions, ownedItemSuggestions, commandPlayerLookup]);
+
+  const visibleSuggestionCount = commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.length : commandContextSuggestions.values.length;
+
+  useEffect(() => {
+    if (activeCommandSuggestion >= visibleSuggestionCount) setActiveCommandSuggestion(0);
+  }, [visibleSuggestionCount, activeCommandSuggestion]);
 
   const accent = firstColor(theme.accentColor);
 
