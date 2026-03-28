@@ -2650,6 +2650,8 @@ export function CommunityPage() {
     return fuzzyFindByName(allPlayers.filter(p => p.id !== currentUserId), name, p => nicknames[p.id] || p.name || p.id);
   }, [allPlayers, currentUserId, nicknames]);
 
+  const accent = firstColor(theme.accentColor);
+
   const renderSpecialMessage = useCallback((msg: ChatMessage) => {
     const payload = msg.commandPayload || {};
     const boxStyle: React.CSSProperties = { background: "rgba(255,255,255,0.035)", border: `1px solid ${accent}25`, borderLeft: `2px solid ${accent}`, borderRadius: 4, padding: 8, marginTop: 4, maxWidth: 560 };
@@ -2818,7 +2820,6 @@ export function CommunityPage() {
     return false;
   }, [draft, isDM, commandPlayerLookup, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames]);
 
-  const accent = firstColor(theme.accentColor);
 
   return (
     <div
