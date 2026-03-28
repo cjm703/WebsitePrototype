@@ -18,7 +18,7 @@ import {
   setOwnedMystery,
   type LeaderboardEntry,
 } from "./game-leaderboard";
-import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { S_MUTED, S_ACCENT, S_TEXT, S_RED } from "./shared-styles";
 
 // ========================
@@ -167,20 +167,25 @@ type ArcadeTab = "credits" | "colors" | "colorpacks" | "stickers" | "mystery" | 
 // ========================
 // Component
 // ========================
-export function DMArcadeManager() {
-  // Load players from DM data
-  const [players] = useState<PlayerInfo[]>(() => {
-    try {
-      const raw = safeGetItem("inet-dm-players");
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
+interface DMArcadeManagerProps {
+  players: PlayerInfo[];
+}
 
+export function DMArcadeManager({ players }: DMArcadeManagerProps) {
   // Selected player
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string>(() => {
-    if (players.length > 0) return players[0].id;
-    return "";
-  });
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string>("");
+
+  useEffect(() => {
+    if (players.length === 0) {
+      setSelectedPlayerId("");
+      return;
+    }
+
+    const stillExists = players.some((p) => p.id === selectedPlayerId);
+    if (!stillExists) {
+      setSelectedPlayerId(players[0].id);
+    }
+  }, [players, selectedPlayerId]);
 
   const selectedPlayer = players.find((p) => p.id === selectedPlayerId);
 

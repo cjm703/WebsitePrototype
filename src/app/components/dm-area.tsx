@@ -3361,7 +3361,14 @@ const handleSaveItem = async () => {
               <div className="text-[11px] mb-4" style={S_MUTED}>
                 Manage the Arcade Shop credits economy, item ownership, shop inventory, mystery items, and leaderboard scores.
               </div>
-              <DMArcadeManager />
+              <DMArcadeManager
+                players={players.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  class: p.class,
+                  level: p.level,
+                }))}
+              />
             </div>
           )}
 
