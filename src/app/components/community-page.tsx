@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import { getPlayerTheme, firstColor } from "./player-theme";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_SUBTLE, S_TEXT, S_RED, S_GREEN_BTN } from "./shared-styles";
 import { usePageVisibility } from "./use-visibility";
-import { Send, Users, MessageSquare, Hash, Lock, Crown, Edit3, X, Check, Trash2, Image, Pencil, SmilePlus, Settings, Search, Link as LinkIcon, ExternalLink, ChevronDown, Palette, RotateCcw, ArrowLeft, EyeOff, Eye, Plus, Bot, ChevronUp, FolderOpen } from "lucide-react";
+import { Send, Users, MessageSquare, Hash, Lock, Crown, Edit3, X, Check, Trash2, Image, Pencil, SmilePlus, Settings, Search, Link as LinkIcon, ExternalLink, ChevronDown, Palette, RotateCcw, ArrowLeft, EyeOff, Eye, Plus, Bot, ChevronUp, FolderOpen, Bell, WandSparkles } from "lucide-react";
 import { fetchProfilePictures } from "./profile-picture";
 import { STICKER_IMAGES } from "./sticker-images";
 import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
@@ -26,6 +26,7 @@ import {
   loadCommunityProfile,
   saveCommunityProfile,
 } from "@/lib/community-api";
+import { loadPlayerState, loadDMItems, loadDMCards } from "@/lib/player-state-api";
 
 /* ── Seeded PRNG ────────────────────────────────────────────����──────── */
 function mkRand(seed: number) {
@@ -1304,6 +1305,28 @@ interface ChatMessage {
   replyToText?: string;
   replyToImageId?: string;
   clientStatus?: "sending" | "sent" | "failed";
+  kind?: "text" | "reply" | "roll" | "gm_roll" | "announce" | "check" | "hp" | "character_sheet" | "status_effects" | "active_cards" | "card_preview" | "item_preview" | "inventory_transfer_offer" | "ping" | "ring" | "emote";
+  commandPayload?: any;
+}
+
+interface SlashCommandDef {
+  name: string;
+  usage: string;
+  description: string;
+  permission?: "all" | "dm";
+}
+
+interface PlayerCommandState {
+  player?: any;
+  quickItems?: any[];
+  sourceUsage?: any[];
+  activityLog?: any[];
+  skillSettings?: Record<string, any>;
+  skillProficiencies?: Record<string, any>;
+  equipmentSlots?: any;
+  statusEffects?: any[];
+  levelCategories?: any[];
+  nodeUnlocks?: Record<string, any>;
 }
 
 interface StoredImage {
@@ -1429,6 +1452,95 @@ function formatDate(ts: number): string {
   const d = new Date(ts);
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
+
+const SLASH_COMMANDS: SlashCommandDef[] = [
+  { name: "/roll", usage: "/roll 2d6+3", description: "Roll dice or a named attribute/skill." },
+  { name: "/check", usage: "/check Stealth", description: "Roll a named check using your proficiencies." },
+  { name: "/gm_roll", usage: "/gm_roll private 1d20+5 17", description: "DM only. Public/private roll, optional fudged visible die." , permission: "dm"},
+  { name: "/announce", usage: "/announce The gates are closing.", description: "DM only. Send a highlighted announcement.", permission: "dm" },
+  { name: "/whisper", usage: "/whisper Alice hello", description: "Switch to the DM with that player and send the message there." },
+  { name: "/character_sheet", usage: "/character_sheet", description: "Show a compact character sheet card." },
+  { name: "/status_effects", usage: "/status_effects", description: "Show your current status effects." },
+  { name: "/active_cards", usage: "/active_cards", description: "Show your current active cards/abilities." },
+  { name: "/card", usage: "/card Fireball", description: "Show a card you own." },
+  { name: "/inventory", usage: "/inventory Iron Sword", description: "Show an item you own." },
+  { name: "/inventory_transfer", usage: "/inventory_transfer Alice Iron Sword", description: "Offer to transfer an item to another player." },
+  { name: "/hp", usage: "/hp", description: "Show a compact HP and combat summary." },
+  { name: "/ping", usage: "/ping Alice", description: "Ping another player in chat." },
+  { name: "/ring", usage: "/ring Alice 3", description: "Play a sound for a player for up to 5 seconds." },
+  { name: "/emote", usage: "/emote nods solemnly", description: "Post an RP emote line." },
+];
+
+const CHECK_ALIASES: Record<string, string[]> = {
+  strength: ["strength", "str"], dexterity: ["dexterity", "dex"], constitution: ["constitution", "con"],
+  intelligence: ["intelligence", "int"], wisdom: ["wisdom", "wis"], charisma: ["charisma", "cha"],
+  athletics: ["athletics"], acrobatics: ["acrobatics"], sleightofhand: ["sleight of hand", "sleight", "soh"], stealth: ["stealth"],
+  arcana: ["arcana"], history: ["history"], investigation: ["investigation"], nature: ["nature"], religion: ["religion"],
+  animalhandling: ["animal handling"], insight: ["insight"], medicine: ["medicine"], perception: ["perception"], survival: ["survival"],
+  deception: ["deception"], intimidation: ["intimidation"], performance: ["performance"], persuasion: ["persuasion"],
+};
+
+function normalizeLooseName(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+}
+
+function extractDisplayName(record: any): string {
+  return record?.displayName || record?.name || record?.title || record?.label || record?.id || "Unknown";
+}
+
+function extractModifier(playerState: PlayerCommandState, key: string): number {
+  const player = playerState.player || {};
+  const skillSettings = playerState.skillSettings || {};
+  const profs = playerState.skillProficiencies || {};
+  const pb = Number(skillSettings.proficiencyBonus ?? player.proficiencyBonus ?? 2) || 2;
+  const norm = normalizeLooseName(key).replace(/\s+/g, "");
+  const matched = Object.entries(CHECK_ALIASES).find(([, aliases]) => aliases.some(a => normalizeLooseName(a).replace(/\s+/g, "") === norm));
+  const canonical = matched?.[0] || norm;
+  const statMap: Record<string, string> = {
+    strength: "strength", dexterity: "dexterity", constitution: "constitution", intelligence: "intelligence", wisdom: "wisdom", charisma: "charisma"
+  };
+  const statKeys = [canonical, canonical + "Mod", canonical + "Modifier"];
+  for (const sk of statKeys) {
+    if (typeof (player as any)[sk] === "number") return Number((player as any)[sk]);
+  }
+  if (canonical in statMap) {
+    const score = Number((player as any)[statMap[canonical]] ?? (player as any)[statMap[canonical] + "Score"] ?? 10);
+    return Math.floor((score - 10) / 2);
+  }
+  const profEntry: any = profs[canonical] ?? profs[Object.keys(profs).find(k => normalizeLooseName(k).replace(/\s+/g, "") === canonical) || ""];
+  if (typeof profEntry === "number") return profEntry;
+  if (typeof profEntry === "string") {
+    const lower = profEntry.toLowerCase();
+    if (lower === "expertise") return pb * 2;
+    if (lower === "proficient" || lower === "true") return pb;
+  }
+  if (profEntry === true) return pb;
+  return 0;
+}
+
+function rollDiceFormula(input: string, forcedVisibleDie?: number): { formula: string; breakdown: number[]; die: number; modifier: number; total: number; error?: string } {
+  const clean = input.replace(/\s+/g, "");
+  const match = clean.match(/^(\d+)d(\d+)(([+-])(\d+))?$/i);
+  if (!match) return { formula: input, breakdown: [], die: 0, modifier: 0, total: 0, error: "Use NdM+K like 2d6+3" };
+  const count = Math.max(1, Math.min(100, Number(match[1])));
+  const sides = Math.max(2, Math.min(1000, Number(match[2])));
+  const sign = match[4] === "-" ? -1 : 1;
+  const mod = match[5] ? sign * Number(match[5]) : 0;
+  const breakdown: number[] = [];
+  for (let i = 0; i < count; i++) breakdown.push(Math.floor(Math.random() * sides) + 1);
+  if (forcedVisibleDie && count >= 1) breakdown[0] = Math.max(1, Math.min(sides, Math.floor(forcedVisibleDie)));
+  const die = breakdown.reduce((a,b)=>a+b,0);
+  return { formula: clean, breakdown, die, modifier: mod, total: die + mod };
+}
+
+function fuzzyFindByName<T>(rows: T[], query: string, getName: (row: T) => string): T | null {
+  const norm = normalizeLooseName(query);
+  if (!norm) return null;
+  return rows.find(r => normalizeLooseName(getName(r)) === norm)
+    || rows.find(r => normalizeLooseName(getName(r)).startsWith(norm))
+    || rows.find(r => normalizeLooseName(getName(r)).includes(norm))
+    || null;
 }
 
 function summarizeReplyText(msg: ChatMessage): string {
@@ -1944,6 +2056,10 @@ export function CommunityPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [commandState, setCommandState] = useState<PlayerCommandState>({});
+  const [commandCards, setCommandCards] = useState<{ cards: any[]; items: any[] }>({ cards: [], items: [] });
+  const [activeCommandSuggestion, setActiveCommandSuggestion] = useState(0);
+  const [lastPingNotice, setLastPingNotice] = useState<string | null>(null);
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -2003,6 +2119,25 @@ export function CommunityPage() {
     if (!communityReady) return;
     void saveNpcAccounts(npcAccounts).catch((error) => console.error("Failed to save NPC accounts", error));
   }, [npcAccounts, communityReady]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [playerState, cards, items] = await Promise.all([
+          currentUserId ? loadPlayerState().catch(() => ({})) : Promise.resolve({}),
+          loadDMCards<any>().catch(() => []),
+          loadDMItems<any>().catch(() => []),
+        ]);
+        if (cancelled) return;
+        setCommandState(playerState || {});
+        setCommandCards({ cards: Array.isArray(cards) ? cards : [], items: Array.isArray(items) ? items : [] });
+      } catch (error) {
+        console.error("Failed to load slash command state", error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -2151,6 +2286,10 @@ export function CommunityPage() {
   const handleSendFull = () => {
     const text = draft.trim();
     if (!text && !pendingImage) return;
+    if (text.startsWith("/") && !pendingImage) {
+      const handled = handleSlashCommand(text);
+      if (handled) return;
+    }
     const sendAsNpc = isDM && activeNpc;
     let sendChannelId = activeChannelId;
     if (sendAsNpc && activeChannel.type === "dm" && !activeChannel.npcId) {
@@ -2359,6 +2498,23 @@ export function CommunityPage() {
   // Ref to track notifSound for use in polling interval (avoids stale closure)
   const notifSoundRef = useRef(notifSound);
   useEffect(() => { notifSoundRef.current = notifSound; }, [notifSound]);
+  useEffect(() => {
+    const latest = messages[messages.length - 1];
+    if (!latest || latest.senderId === currentUserId) return;
+    const payload = latest.commandPayload || {};
+    if ((latest.kind === "ping" || latest.kind === "ring") && payload.toId === currentUserId) {
+      const text = `${payload.fromName || latest.senderName} ${latest.kind === "ring" ? "rang" : "pinged"} you`;
+      setLastPingNotice(text);
+      if (notifSoundRef.current) {
+        playNotifBeep();
+        if (latest.kind === "ring") {
+          const seconds = Math.max(1, Math.min(5, Number(payload.seconds || 1)));
+          for (let i = 1; i < seconds; i++) window.setTimeout(() => playNotifBeep(), i * 700);
+        }
+      }
+      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 3000);
+    }
+  }, [messages, currentUserId, playNotifBeep]);
 
   // Track expanded images in thumbnail mode
   const [expandedImages, setExpandedImages] = useState<Set<string>>(new Set());
@@ -2436,6 +2592,231 @@ export function CommunityPage() {
     }
     return groups;
   }, [visibleMessages]);
+
+  const filteredCommandSuggestions = useMemo(() => {
+    const trimmed = draft.trimStart();
+    if (!trimmed.startsWith("/")) return [] as SlashCommandDef[];
+    const cmd = trimmed.split(/\s+/)[0].toLowerCase();
+    const eligible = SLASH_COMMANDS.filter(c => (c.permission ?? "all") === "all" || isDM);
+    if (cmd === "/") return eligible;
+    return eligible.filter(c => c.name.startsWith(cmd));
+  }, [draft, isDM]);
+
+  useEffect(() => {
+    if (activeCommandSuggestion >= filteredCommandSuggestions.length) setActiveCommandSuggestion(0);
+  }, [filteredCommandSuggestions.length, activeCommandSuggestion]);
+
+  const sendStructuredMessage = useCallback((partial: Partial<ChatMessage>, overrides?: { channelId?: string }) => {
+    const baseChannelId = overrides?.channelId || activeChannelId;
+    const msg: ChatMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      channelId: baseChannelId,
+      senderId: currentUserId,
+      senderName: myDisplayName,
+      text: partial.text || "",
+      timestamp: Date.now(),
+      nameColor: nameColor || undefined,
+      chatColor: chatColor || undefined,
+      replyToId: replyingTo?.id,
+      replyToSenderName: replyingTo ? (nicknames[replyingTo.senderId] || replyingTo.senderName) : undefined,
+      replyToText: replyingTo ? summarizeReplyText(replyingTo) : undefined,
+      replyToImageId: replyingTo?.imageId,
+      clientStatus: "sending",
+      kind: partial.kind,
+      commandPayload: partial.commandPayload,
+      imageId: partial.imageId,
+      deleted: partial.deleted,
+      deletedAt: partial.deletedAt,
+      deletedBy: partial.deletedBy,
+      edited: partial.edited,
+      editedAt: partial.editedAt,
+      reactions: partial.reactions,
+    };
+    setMessages(prev => [...prev, msg]);
+    void sendCommunityMessage({ ...msg, clientStatus: "sent" })
+      .then(() => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, clientStatus: "sent" } : m)))
+      .catch((error) => {
+        console.error("Failed to send message", error);
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, clientStatus: "failed" } : m));
+      });
+    setDraft("");
+    setPendingImage(null);
+    setReplyingTo(null);
+    inputRef.current?.focus();
+    return msg;
+  }, [activeChannelId, currentUserId, myDisplayName, nameColor, chatColor, replyingTo, nicknames, sendCommunityMessage, setMessages, setDraft, setPendingImage]);
+
+  const commandPlayerLookup = useCallback((name: string) => {
+    return fuzzyFindByName(allPlayers.filter(p => p.id !== currentUserId), name, p => nicknames[p.id] || p.name || p.id);
+  }, [allPlayers, currentUserId, nicknames]);
+
+  const renderSpecialMessage = useCallback((msg: ChatMessage) => {
+    const payload = msg.commandPayload || {};
+    const boxStyle: React.CSSProperties = { background: "rgba(255,255,255,0.035)", border: `1px solid ${accent}25`, borderLeft: `2px solid ${accent}`, borderRadius: 4, padding: 8, marginTop: 4, maxWidth: 560 };
+    if (msg.kind === "announce") {
+      return <div style={{ ...boxStyle, background: `${accent}12` }}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Announcement</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.body || msg.text}</div></div>;
+    }
+    if (msg.kind === "emote") {
+      return <div className="italic" style={{ color: msg.chatColor || "#B8C8E8" }}>* {displayNameFor(msg.senderId, msg.senderName)} {payload.body || msg.text} *</div>;
+    }
+    if (msg.kind === "roll" || msg.kind === "gm_roll" || msg.kind === "check") {
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>{msg.kind === "check" ? "Check" : msg.kind === "gm_roll" ? `GM Roll · ${payload.visibility || "private"}` : "Roll"}</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.label || payload.formula || msg.text}</div><div className="text-[11px] mt-1" style={{ color: "#9DB5E0" }}>Rolls: {Array.isArray(payload.breakdown) ? payload.breakdown.join(", ") : "-"}{typeof payload.modifier === "number" ? ` ${payload.modifier >= 0 ? "+" : "-"} ${Math.abs(payload.modifier)}` : ""}</div><div className="text-[13px] font-semibold mt-1" style={{ color: accent }}>Total: {payload.total ?? "?"}</div>{payload.fudged === true && isDM && <div className="text-[9px] mt-1" style={{ color: "#C9A97A" }}>Visible die fudged to {payload.visibleDie}</div>}</div>;
+    }
+    if (msg.kind === "character_sheet") {
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Character Sheet</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.name || displayNameFor(msg.senderId, msg.senderName)}</div><div className="text-[10px] mt-1" style={{ color: "#9DB5E0" }}>Level {payload.level ?? "?"} · {payload.className || "Class Unknown"}</div><div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.summary || "No summary available."}</div></div>;
+    }
+    if (msg.kind === "status_effects") {
+      const effects = Array.isArray(payload.effects) ? payload.effects : [];
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Status Effects</div>{effects.length === 0 ? <div className="text-[11px] mt-1" style={{ color: "#8FA3C8" }}>No active status effects.</div> : <div className="flex flex-wrap gap-1 mt-2">{effects.map((e:any, i:number)=><span key={i} className="text-[10px] px-2 py-1" style={{ color: "#DCE8FF", background: "rgba(255,255,255,0.05)", border: "1px solid #FFFFFF12", borderRadius: 4 }}>{extractDisplayName(e)}</span>)}</div>}</div>;
+    }
+    if (msg.kind === "active_cards") {
+      const cards = Array.isArray(payload.cards) ? payload.cards : [];
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Active Cards</div>{cards.length === 0 ? <div className="text-[11px] mt-1" style={{ color: "#8FA3C8" }}>No active cards found.</div> : <div className="mt-2 space-y-1">{cards.map((c:any, i:number)=><div key={i} className="text-[11px]" style={{ color: "#DCE8FF" }}>{extractDisplayName(c)}</div>)}</div>}</div>;
+    }
+    if (msg.kind === "card_preview" || msg.kind === "item_preview") {
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>{msg.kind === "card_preview" ? "Card" : "Item"}</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.name || "Unknown"}</div>{payload.subtitle && <div className="text-[10px] mt-1" style={{ color: "#9DB5E0" }}>{payload.subtitle}</div>}{payload.description && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.description}</div>}</div>;
+    }
+    if (msg.kind === "inventory_transfer_offer") {
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Transfer Offer</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName} offers {payload.itemName} to {payload.toName}</div><div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>This is an offer card only. Final transfer still needs server-side acceptance logic.</div></div>;
+    }
+    if (msg.kind === "hp") {
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>HP / Combat Summary</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.hpLine || "No HP data available."}</div>{payload.extra && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.extra}</div>}</div>;
+    }
+    if (msg.kind === "ping" || msg.kind === "ring") {
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>{msg.kind === "ring" ? "Ring" : "Ping"}</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName || displayNameFor(msg.senderId, msg.senderName)} targeted {payload.toName}</div>{msg.kind === "ring" && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>Duration: {payload.seconds || 1}s</div>}</div>;
+    }
+    return null;
+  }, [accent, isDM]);
+
+  const displayNameFor = (senderId: string, senderName: string) => nicknames[senderId] || senderName;
+
+  const handleSlashCommand = useCallback((raw: string): boolean => {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith("/")) return false;
+    const parts = trimmed.split(/\s+/);
+    const command = (parts[0] || "").toLowerCase();
+    const rest = trimmed.slice(parts[0].length).trim();
+    const deny = (message: string) => {
+      setLastPingNotice(message);
+      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 2500);
+      return true;
+    };
+    if ((command === "/announce" || command === "/gm_roll") && !isDM) return deny("That command is DM-only.");
+    if (command === "/whisper") {
+      const targetName = parts[1] || "";
+      const body = trimmed.split(/\s+/).slice(2).join(" ").trim();
+      const target = commandPlayerLookup(targetName);
+      if (!target || !body) return deny("Usage: /whisper Name message");
+      const dmId = getDmChannelId(currentUserId, target.id);
+      setActiveChannelId(dmId);
+      sendStructuredMessage({ text: body }, { channelId: dmId });
+      return true;
+    }
+    if (command === "/announce") {
+      if (!rest) return deny("Usage: /announce message");
+      sendStructuredMessage({ kind: "announce", text: rest, commandPayload: { body: rest } }, { channelId: "main" });
+      return true;
+    }
+    if (command === "/emote") {
+      if (!rest) return deny("Usage: /emote action");
+      sendStructuredMessage({ kind: "emote", text: rest, commandPayload: { body: rest } });
+      return true;
+    }
+    if (command === "/roll") {
+      const arg = rest;
+      if (!arg) return deny("Usage: /roll 1d20+3 or /roll Stealth");
+      if (/\d+d\d+/i.test(arg)) {
+        const result = rollDiceFormula(arg);
+        if (result.error) return deny(result.error);
+        sendStructuredMessage({ kind: "roll", text: `${arg} = ${result.total}`, commandPayload: { ...result, label: arg } });
+      } else {
+        const mod = extractModifier(commandState, arg);
+        const result = rollDiceFormula(`1d20${mod >= 0 ? "+" : ""}${mod}`);
+        sendStructuredMessage({ kind: "check", text: `${arg} = ${result.total}`, commandPayload: { ...result, label: arg, check: arg } });
+      }
+      return true;
+    }
+    if (command === "/check") {
+      if (!rest) return deny("Usage: /check Skill");
+      const mod = extractModifier(commandState, rest);
+      const result = rollDiceFormula(`1d20${mod >= 0 ? "+" : ""}${mod}`);
+      sendStructuredMessage({ kind: "check", text: `${rest} = ${result.total}`, commandPayload: { ...result, label: rest, check: rest } });
+      return true;
+    }
+    if (command === "/gm_roll") {
+      const subparts = rest.split(/\s+/).filter(Boolean);
+      const visibility = (subparts[0] || "private").toLowerCase();
+      const formula = subparts[1] || "1d20";
+      const fudgeNum = subparts[2] ? Number(subparts[2]) : undefined;
+      const result = rollDiceFormula(formula, Number.isFinite(fudgeNum) ? fudgeNum : undefined);
+      sendStructuredMessage({ kind: "gm_roll", text: `${formula} = ${result.total}`, commandPayload: { ...result, visibility, fudged: Number.isFinite(fudgeNum), visibleDie: fudgeNum, label: formula } }, { channelId: visibility === "public" ? activeChannelId : getDmChannelId(currentUserId, "dm") });
+      return true;
+    }
+    if (command === "/character_sheet") {
+      const p = commandState.player || {};
+      sendStructuredMessage({ kind: "character_sheet", text: `${p.name || myDisplayName} shared a character sheet.`, commandPayload: { name: p.name || myDisplayName, level: p.level, className: p.class || p.className, summary: p.race ? `${p.race}${p.background ? ` · ${p.background}` : ""}` : undefined } });
+      return true;
+    }
+    if (command === "/status_effects") {
+      sendStructuredMessage({ kind: "status_effects", text: "Shared status effects", commandPayload: { effects: commandState.statusEffects || [] } });
+      return true;
+    }
+    if (command === "/active_cards") {
+      const unlocked = Object.entries(commandState.nodeUnlocks || {}).filter(([,v]) => !!v).map(([k]) => k);
+      const cards = commandCards.cards.filter((c:any) => unlocked.some((u:any) => normalizeLooseName(u) === normalizeLooseName(c.id || c.name || c.title)));
+      sendStructuredMessage({ kind: "active_cards", text: "Shared active cards", commandPayload: { cards: cards.length ? cards.slice(0, 8) : unlocked.slice(0, 8).map(id => ({ id, name: String(id) })) } });
+      return true;
+    }
+    if (command === "/card") {
+      if (!rest) return deny("Usage: /card Name");
+      const unlocked = Object.entries(commandState.nodeUnlocks || {}).filter(([,v]) => !!v).map(([k]) => k);
+      const owned = commandCards.cards.filter((c:any) => unlocked.some((u:any) => normalizeLooseName(u) === normalizeLooseName(c.id || c.name || c.title)));
+      const found = fuzzyFindByName(owned.length ? owned : commandCards.cards, rest, (c:any) => extractDisplayName(c));
+      if (!found) return deny("Card not found.");
+      sendStructuredMessage({ kind: "card_preview", text: `Shared card ${extractDisplayName(found)}`, commandPayload: { name: extractDisplayName(found), subtitle: found.type || found.category || found.level ? [found.type, found.category, found.level && `Lv ${found.level}`].filter(Boolean).join(" · ") : undefined, description: found.description || found.text || found.effect } });
+      return true;
+    }
+    if (command === "/inventory") {
+      if (!rest) return deny("Usage: /inventory Item Name");
+      const items = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
+      const found = fuzzyFindByName(items, rest, (i:any) => extractDisplayName(i));
+      if (!found) return deny("Item not found in your inventory.");
+      sendStructuredMessage({ kind: "item_preview", text: `Shared item ${extractDisplayName(found)}`, commandPayload: { name: extractDisplayName(found), subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity, description: found.description || found.notes || found.effect } });
+      return true;
+    }
+    if (command === "/inventory_transfer") {
+      const transferMatch = rest.match(/^(\S+)\s+(.+)$/);
+      if (!transferMatch) return deny("Usage: /inventory_transfer Player Item Name");
+      const target = commandPlayerLookup(transferMatch[1]);
+      const found = fuzzyFindByName(Array.isArray(commandState.quickItems) ? commandState.quickItems : [], transferMatch[2], (i:any) => extractDisplayName(i));
+      if (!target || !found) return deny("Player or item not found.");
+      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found } }, { channelId: getDmChannelId(currentUserId, target.id) });
+      return true;
+    }
+    if (command === "/hp") {
+      const p = commandState.player || {};
+      const hpLine = p.hp != null ? `${p.hp}${p.maxHp != null ? ` / ${p.maxHp}` : ""} HP` : "No HP data available.";
+      const extra = [p.stamina != null ? `Stamina ${p.stamina}${p.maxStamina != null ? `/${p.maxStamina}` : ""}` : "", (commandState.statusEffects || []).length ? `${(commandState.statusEffects || []).length} status effect(s)` : ""].filter(Boolean).join(" · ");
+      sendStructuredMessage({ kind: "hp", text: hpLine, commandPayload: { hpLine, extra } });
+      return true;
+    }
+    if (command === "/ping") {
+      const target = commandPlayerLookup(rest);
+      if (!target) return deny("Usage: /ping Player");
+      sendStructuredMessage({ kind: "ping", text: `Pinged ${nicknames[target.id] || target.name}`, commandPayload: { toId: target.id, toName: nicknames[target.id] || target.name, fromName: myDisplayName } });
+      return true;
+    }
+    if (command === "/ring") {
+      const match = rest.match(/^(\S+)\s*(\d+)?$/);
+      if (!match) return deny("Usage: /ring Player 3");
+      const target = commandPlayerLookup(match[1]);
+      if (!target) return deny("Player not found.");
+      const seconds = Math.max(1, Math.min(5, Number(match[2] || 1)));
+      sendStructuredMessage({ kind: "ring", text: `Rang ${nicknames[target.id] || target.name}`, commandPayload: { toId: target.id, toName: nicknames[target.id] || target.name, fromName: myDisplayName, seconds } });
+      return true;
+    }
+    return false;
+  }, [draft, isDM, commandPlayerLookup, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames]);
 
   const accent = firstColor(theme.accentColor);
 
@@ -2779,6 +3160,31 @@ export function CommunityPage() {
         <div className="flex-1 flex flex-col min-w-0">
           {/* Chat header */}
           <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ background: "rgba(8,8,32,0.9)", borderBottom: `1px solid ${accent}22` }}>
+            {lastPingNotice && (
+              <div className="mb-2 px-2 py-1.5 flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", borderLeft: `2px solid ${accent}`, borderRadius: 4 }}>
+                <Bell size={11} style={{ color: accent }} />
+                <div className="text-[10px]" style={{ color: "#DCE8FF" }}>{lastPingNotice}</div>
+              </div>
+            )}
+            {filteredCommandSuggestions.length > 0 && (
+              <div className="mb-2 overflow-hidden" style={{ background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
+                {filteredCommandSuggestions.slice(0, 8).map((cmd, idx) => (
+                  <button
+                    key={cmd.name}
+                    type="button"
+                    onClick={() => setDraft(cmd.usage + " ")}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 8) - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
+                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
+                    </div>
+                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button className="md:hidden mr-1" onClick={() => setShowChannelsMobile(true)}>
                 <MessageSquare size={16} style={{ color: accent }} />
@@ -3111,7 +3517,7 @@ export function CommunityPage() {
                       const msgNameColor = msg.nameColor || (isMsgFromDM ? dmNameColor : isMe ? accent : "#C0D0F0");
                       const msgChatColor = msg.chatColor || "#B0C0E0";
                       return (
-                        <div key={msg.id} id={`msg-${msg.id}`} className={`group flex gap-2 ${compactMode ? "py-px" : "py-0.5"} px-2 hover:bg-[#FFFFFF04] transition-colors ${showHeader && !compactMode ? "mt-2" : showHeader ? "mt-0.5" : ""}`} style={isCurrentSearchHit ? { background: `${accent}18`, outline: `1px solid ${accent}44` } : isSearchHit ? { background: `${accent}0A` } : undefined}>
+                        <div key={msg.id} id={`msg-${msg.id}`} className={`group flex gap-2 ${compactMode ? "py-px" : "py-0.5"} px-2 hover:bg-[#FFFFFF04] transition-colors ${showHeader && !compactMode ? "mt-2" : showHeader ? "mt-0.5" : ""}`} style={highlightedMsgId === msg.id ? { background: `${accent}16`, outline: `1px solid ${accent}66` } : isCurrentSearchHit ? { background: `${accent}18`, outline: `1px solid ${accent}44` } : isSearchHit ? { background: `${accent}0A` } : undefined}>
                           {/* Avatar */}
                           {showHeader && !compactMode ? (
                             profilePics[msg.senderId] ? (
@@ -3480,7 +3886,23 @@ export function CommunityPage() {
                 type="text"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendFull(); } }}
+                onKeyDown={(e) => {
+                  if (filteredCommandSuggestions.length > 0 && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                    e.preventDefault();
+                    setActiveCommandSuggestion(prev => {
+                      if (filteredCommandSuggestions.length === 0) return 0;
+                      return e.key === "ArrowDown" ? (prev + 1) % filteredCommandSuggestions.length : (prev - 1 + filteredCommandSuggestions.length) % filteredCommandSuggestions.length;
+                    });
+                    return;
+                  }
+                  if (filteredCommandSuggestions.length > 0 && e.key === "Tab") {
+                    e.preventDefault();
+                    const next = filteredCommandSuggestions[activeCommandSuggestion] || filteredCommandSuggestions[0];
+                    if (next) setDraft(next.usage + " ");
+                    return;
+                  }
+                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendFull(); }
+                }}
                 placeholder={activeNpc ? `Message as ${activeNpc.name}...` : activeChannel.type === "main" ? "Message #general-chat..." : `Message ${activeChannel.label}...`}
                 className="flex-1 bg-[#0A0A28] px-4 py-2.5 text-[13px] outline-none"
                 style={{ color: "#C0D0F0", border: `1px solid ${accent}22`, borderRadius: 2 }}
