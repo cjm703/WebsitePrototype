@@ -20,23 +20,28 @@ const inputStyle = { color: "#C0D0F0" } as const;
 
 interface DMTagsSectionProps {
   itemTags: TagDefinition[];
-  setItemTags: React.Dispatch<React.SetStateAction<TagDefinition[]>>;
   cardTags: TagDefinition[];
-  setCardTags: React.Dispatch<React.SetStateAction<TagDefinition[]>>;
   infoTags: TagDefinition[];
-  setInfoTags: React.Dispatch<React.SetStateAction<TagDefinition[]>>;
   statusTags: TagDefinition[];
-  setStatusTags: React.Dispatch<React.SetStateAction<TagDefinition[]>>;
   wikiTags: TagDefinition[];
-  setWikiTags: React.Dispatch<React.SetStateAction<TagDefinition[]>>;
+  onSaveItemTags: (next: TagDefinition[]) => Promise<void>;
+  onSaveCardTags: (next: TagDefinition[]) => Promise<void>;
+  onSaveInfoTags: (next: TagDefinition[]) => Promise<void>;
+  onSaveStatusTags: (next: TagDefinition[]) => Promise<void>;
+  onSaveWikiTags: (next: TagDefinition[]) => Promise<void>;
 }
 
 export function DMTagsSection({
-  itemTags, setItemTags,
-  cardTags, setCardTags,
-  infoTags, setInfoTags,
-  statusTags, setStatusTags,
-  wikiTags, setWikiTags,
+  itemTags,
+  cardTags,
+  infoTags,
+  statusTags,
+  wikiTags,
+  onSaveItemTags,
+  onSaveCardTags,
+  onSaveInfoTags,
+  onSaveStatusTags,
+  onSaveWikiTags,
 }: DMTagsSectionProps) {
   const [tagSubPage, setTagSubPage] = useState<TagSubPage>("items");
   const [expandedTagId, setExpandedTagId] = useState<string | null>(null);
@@ -44,28 +49,31 @@ export function DMTagsSection({
   const [newTagName, setNewTagName] = useState("");
   const [newTagDesc, setNewTagDesc] = useState("");
 
-  const getActiveTagList = (): [TagDefinition[], React.Dispatch<React.SetStateAction<TagDefinition[]>>] => {
-    if (tagSubPage === "items") return [itemTags, setItemTags];
-    if (tagSubPage === "cards") return [cardTags, setCardTags];
-    if (tagSubPage === "status") return [statusTags, setStatusTags];
-    if (tagSubPage === "wiki") return [wikiTags, setWikiTags];
-    return [infoTags, setInfoTags];
+  const getActiveTagList = (): [TagDefinition[], (next: TagDefinition[]) => Promise<void>] => {
+    if (tagSubPage === "items") return [itemTags, onSaveItemTags];
+    if (tagSubPage === "cards") return [cardTags, onSaveCardTags];
+    if (tagSubPage === "status") return [statusTags, onSaveStatusTags];
+    if (tagSubPage === "wiki") return [wikiTags, onSaveWikiTags];
+    return [infoTags, onSaveInfoTags];
   };
 
-  const handleAddTag = () => {
+  const handleAddTag = async () => {
     if (!newTagName.trim()) return;
-    const [, setTags] = getActiveTagList();
+    const [tags, saveTags] = getActiveTagList();
     const newTag: TagDefinition = {
-      id: `tag-${Date.now()}`, name: newTagName.trim(),
-      description: newTagDesc.trim() || "No description provided.", fields: [],
+      id: `tag-${Date.now()}`,
+      name: newTagName.trim(),
+      description: newTagDesc.trim() || "No description provided.",
+      fields: [],
     };
-    setTags((prev) => [...prev, newTag]);
-    setNewTagName(""); setNewTagDesc("");
+    await saveTags([...tags, newTag]);
+    setNewTagName("");
+    setNewTagDesc("");
   };
 
-  const handleDeleteTag = (id: string) => {
-    const [, setTags] = getActiveTagList();
-    setTags((prev) => prev.filter((t) => t.id !== id));
+  const handleDeleteTag = async (id: string) => {
+    const [tags, saveTags] = getActiveTagList();
+    await saveTags(tags.filter((t) => t.id !== id));
     if (expandedTagId === id) setExpandedTagId(null);
     if (editingTag?.id === id) setEditingTag(null);
   };
@@ -75,10 +83,10 @@ export function DMTagsSection({
     setExpandedTagId(tag.id);
   };
 
-  const handleSaveTag = () => {
+  const handleSaveTag = async () => {
     if (!editingTag) return;
-    const [, setTags] = getActiveTagList();
-    setTags((prev) => prev.map((t) => (t.id === editingTag.id ? editingTag : t)));
+    const [tags, saveTags] = getActiveTagList();
+    await saveTags(tags.map((t) => (t.id === editingTag.id ? editingTag : t)));
     setEditingTag(null);
   };
 
@@ -236,7 +244,7 @@ export function DMTagsSection({
             <input type="text" value={newTagDesc} onChange={(e) => setNewTagDesc(e.target.value)} placeholder="Brief description of this tag..." className={inputClass} style={inputStyle} />
           </div>
         </div>
-        <button onClick={handleAddTag} className={`${retro.button} px-5 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+        <button onClick={() => { void handleAddTag(); }} className={`${retro.button} px-5 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
           <Plus size={14} /> Add Tag
         </button>
       </div>
@@ -284,7 +292,7 @@ export function DMTagsSection({
                         <Edit size={10} className="inline mr-1" />Edit
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleDeleteTag(tag.id); }}
+                        onClick={(e) => { e.stopPropagation(); void handleDeleteTag(tag.id); }}
                         className="text-[10px] px-2 py-0.5 hover:opacity-80"
                         style={{ color: "#FF6A6A", border: "1px solid #2A2A5B" }}
                       >
@@ -382,7 +390,7 @@ export function DMTagsSection({
                       </div>
 
                       <div className="flex gap-2">
-                        <button onClick={handleSaveTag} className={`${retro.button} px-5 py-1.5 text-[11px] flex items-center gap-1`} style={S_GREEN_BTN}>
+                        <button onClick={() => { void handleSaveTag(); }} className={`${retro.button} px-5 py-1.5 text-[11px] flex items-center gap-1`} style={S_GREEN_BTN}>
                           <Save size={12} /> Save Tag
                         </button>
                         <button onClick={handleCancelTagEdit} className={`${retro.button} px-5 py-1.5 text-[11px]`} style={S_TEXT}>Cancel</button>
