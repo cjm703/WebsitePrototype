@@ -3373,7 +3373,6 @@ export function CommunityPage() {
                             )}
                           </div>
                         </div>
-                        </React.Fragment>
                       );
                     })}
                   </div>
