@@ -3,11 +3,29 @@ import { useNavigate } from "react-router";
 import { getPlayerTheme, firstColor } from "./player-theme";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_SUBTLE, S_TEXT, S_RED, S_GREEN_BTN } from "./shared-styles";
 import { usePageVisibility } from "./use-visibility";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { Send, Users, MessageSquare, Hash, Lock, Crown, Edit3, X, Check, Trash2, Image, Pencil, SmilePlus, Settings, Search, Link as LinkIcon, ExternalLink, ChevronDown, Palette, RotateCcw, ArrowLeft, EyeOff, Eye, Plus, Bot, ChevronUp, FolderOpen } from "lucide-react";
 import { fetchProfilePictures } from "./profile-picture";
 import { STICKER_IMAGES } from "./sticker-images";
 import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
+import {
+  listCommunityPlayers,
+  listNpcAccounts,
+  saveNpcAccounts,
+  listAllMessages,
+  sendCommunityMessage,
+  updateCommunityMessage,
+  removeCommunityMessage,
+  subscribeToCommunityMessages,
+  listCommunityImages,
+  saveCommunityImage,
+  deleteCommunityImage,
+  listCustomReactions,
+  loadCommunityReadState,
+  saveCommunityReadState,
+  loadCommunityProfiles,
+  loadCommunityProfile,
+  saveCommunityProfile,
+} from "@/lib/community-api";
 
 /* ── Seeded PRNG ────────────────────────────────────────────����──────── */
 function mkRand(seed: number) {
@@ -1354,14 +1372,6 @@ interface CustomReactionDef {
   label: string;
 }
 
-function loadCustomReactions(): CustomReactionDef[] {
-  return safeGetJson("inet-community-custom-reactions", []);
-}
-
-function getAllReactions(): ReactionDef[] {
-  const custom = loadCustomReactions().map(c => ({ id: `custom:${c.id}`, display: c.emoji, label: c.label, type: "emoji" as const }));
-  return [...BUILTIN_EMOJI, ...custom, ...STICKER_REACTIONS];
-}
 
 interface ChatChannel {
   id: string;
@@ -1816,15 +1826,16 @@ export function CommunityPage() {
   const isDM = currentUserId === "dm" || currentUser === "DM";
 
   // ─�� NPC accounts (DM only) ──
-  const [npcAccounts, setNpcAccounts] = useState<NpcAccount[]>(() => safeGetJson("inet-community-npcs", []));
+  const [npcAccounts, setNpcAccounts] = useState<NpcAccount[]>([]);
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [showNpcPicker, setShowNpcPicker] = useState(false);
   const [showNpcManager, setShowNpcManager] = useState(false);
   const [npcDraftName, setNpcDraftName] = useState("");
   const [npcDraftColor, setNpcDraftColor] = useState("#8A6ABB");
   const NPC_COLORS = ["#8A6ABB", "#6ABB8A", "#BB6A6A", "#6A8ABB", "#BB8A6A", "#6ABBB8", "#BB6ABB", "#9ABB6A", "#6A6ABB", "#BB9A6A", "#6ABB6A", "#BB6A9A"];
-
-  useDebouncedJsonStorage("inet-community-npcs", npcAccounts, 400);
+  const [serverPlayers, setServerPlayers] = useState<PlayerInfo[]>([]);
+  const [customReactions, setCustomReactions] = useState<CustomReactionDef[]>([]);
+  const [profileMap, setProfileMap] = useState<Record<string, { playerId: string; displayName?: string; hiddenDmChannels?: string[] }>>({});
 
   const addNpc = () => {
     const name = npcDraftName.trim();
@@ -1852,16 +1863,12 @@ export function CommunityPage() {
 
   // Load players (including NPC accounts)
   const allPlayers: PlayerInfo[] = useMemo(() => {
-    const raw: Array<{ id: string; name: string }> = safeGetJson("inet-dm-players", []);
-    const players = raw.map(p => ({ id: p.id, name: p.name }));
-    // Add NPC accounts as visible "players"
+    const players = serverPlayers.map(p => ({ id: p.id, name: p.name }));
     for (const npc of npcAccounts) {
-      if (!players.find(p => p.id === npc.id)) {
-        players.push({ id: npc.id, name: npc.name });
-      }
+      if (!players.find(p => p.id === npc.id)) players.push({ id: npc.id, name: npc.name });
     }
     return players;
-  }, [npcAccounts]);
+  }, [serverPlayers, npcAccounts]);
 
   // ── Profile pictures (batch fetched from server) ──
   const [profilePics, setProfilePics] = useState<Record<string, string | null>>({});
@@ -1871,20 +1878,17 @@ export function CommunityPage() {
     fetchProfilePictures(playerIds).then(pics => setProfilePics(pics));
   }, [allPlayers]);
 
-  // Nicknames (community-only)
-  const [nicknames, setNicknames] = useState<Nicknames>(() => safeGetJson("inet-community-nicknames", {}));
+  // Nicknames / profile
+  const [nicknames, setNicknames] = useState<Nicknames>({});
   const [editingNick, setEditingNick] = useState(false);
   const [nickDraft, setNickDraft] = useState("");
-
-  useDebouncedJsonStorage("inet-community-nicknames", nicknames, 400);
 
   const myDisplayName = nicknames[currentUserId] || currentUser || "Unknown";
 
   // Chat channels
   const [activeChannelId, setActiveChannelId] = useState("main");
   const [dmCollapsed, setDmCollapsed] = useState(false);
-  const [hiddenDmChannels, setHiddenDmChannels] = useState<string[]>(() => safeGetJson("inet-community-hidden-dms", []));
-  useDebouncedJsonStorage("inet-community-hidden-dms", hiddenDmChannels, 400);
+  const [hiddenDmChannels, setHiddenDmChannels] = useState<string[]>([]);
 
   // Build available channels
   const channels: ChatChannel[] = useMemo(() => {
@@ -1922,67 +1926,89 @@ export function CommunityPage() {
   const activeChannel = channels.find(c => c.id === activeChannelId) || channels[0];
 
   // Messages
-  const [messages, setMessages] = useState<ChatMessage[]>(() => safeGetJson("inet-community-messages", []));
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [communityReady, setCommunityReady] = useState(false);
 
-  useDebouncedJsonStorage("inet-community-messages", messages, 300);
+  // Initial realtime/community load
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [loadedPlayers, loadedNpcs, loadedMessages, loadedImages, loadedReactions, loadedReadState, myProfile] = await Promise.all([
+          listCommunityPlayers(),
+          listNpcAccounts(),
+          listAllMessages(),
+          listCommunityImages(),
+          listCustomReactions(),
+          currentUserId ? loadCommunityReadState(currentUserId) : Promise.resolve({}),
+          currentUserId ? loadCommunityProfile(currentUserId) : Promise.resolve({ playerId: currentUserId }),
+        ]);
+        if (cancelled) return;
+        setServerPlayers(loadedPlayers);
+        setNpcAccounts(loadedNpcs);
+        setMessages(loadedMessages);
+        setImageStore(Object.fromEntries(loadedImages.map(img => [img.id, { data: img.data, timestamp: img.timestamp }] as const)));
+        setCustomReactions(loadedReactions);
+        setLastRead(loadedReadState);
+        setHiddenDmChannels(myProfile.hiddenDmChannels || []);
+        const profileIds = loadedPlayers.map(p => p.id);
+        const profiles = await loadCommunityProfiles(profileIds);
+        if (cancelled) return;
+        setProfileMap(profiles);
+        setNicknames(Object.fromEntries(Object.entries(profiles).map(([id, profile]) => [id, profile.displayName || ""]).filter(([, name]) => !!name)) as Nicknames);
+      } catch (error) {
+        console.error("Failed to load community data", error);
+      } finally {
+        if (!cancelled) setCommunityReady(true);
+      }
+    })();
+
+    const unsubscribe = subscribeToCommunityMessages((message, eventType) => {
+      setMessages(prev => {
+        if (eventType === "DELETE") return prev.filter(m => m.id !== message.id);
+        const index = prev.findIndex(m => m.id === message.id);
+        if (index === -1) return [...prev, message].sort((a, b) => a.timestamp - b.timestamp);
+        const next = [...prev];
+        next[index] = message;
+        return next.sort((a, b) => a.timestamp - b.timestamp);
+      });
+      if (notifSoundRef.current && message.senderId !== currentUserId && eventType === "INSERT") playNotifBeep();
+    });
+
+    return () => { cancelled = true; unsubscribe(); };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!communityReady) return;
+    void saveNpcAccounts(npcAccounts).catch((error) => console.error("Failed to save NPC accounts", error));
+  }, [npcAccounts, communityReady]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeChannelId]);
 
-  // Poll for new messages from other tabs (pauses when tab hidden)
-  useEffect(() => {
-    if (!isPageVisible) return;
-    const interval = setInterval(() => {
-      const fresh: ChatMessage[] = safeGetJson("inet-community-messages", []);
-      setMessages(prev => {
-        // Lightweight change detection: compare length + last message id
-        if (fresh.length === prev.length && fresh[fresh.length - 1]?.id === prev[prev.length - 1]?.id) {
-          // Quick check for edits/deletes: compare first few ids
-          const sameHead = fresh.length < 5 || (fresh[0]?.id === prev[0]?.id && fresh[Math.min(4, fresh.length - 1)]?.id === prev[Math.min(4, prev.length - 1)]?.id);
-          if (sameHead) return prev;
-        }
-        // Play notification beep if new messages from others arrived
-        if (notifSoundRef.current && fresh.length > prev.length) {
-          const newest = fresh[fresh.length - 1];
-          if (newest && newest.senderId !== currentUserId && !newest.senderId.startsWith("npc-")) {
-            playNotifBeep();
-          }
-        }
-        return fresh;
-      });
-      // Also refresh image store
-      setImageStore(prev => {
-        const freshImgs = cleanExpiredImages(loadImages());
-        const freshKeys = Object.keys(freshImgs);
-        const prevKeys = Object.keys(prev);
-        if (freshKeys.length === prevKeys.length) return prev;
-        return freshImgs;
-      });
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [isPageVisible]);
-
   const channelMessages = useMemo(() => {
     return messages.filter(m => m.channelId === activeChannelId);
   }, [messages, activeChannelId]);
 
   // Unread counts per channel
-  const [lastRead, setLastRead] = useState<Record<string, number>>(() => safeGetJson("inet-community-lastread-" + currentUserId, {}));
-
-  useDebouncedJsonStorage("inet-community-lastread-" + currentUserId, lastRead, 300);
+  const [lastRead, setLastRead] = useState<Record<string, number>>({});
 
   // Mark active channel as read
   useEffect(() => {
     if (channelMessages.length > 0) {
       const latestTs = channelMessages[channelMessages.length - 1].timestamp;
-      setLastRead(prev => ({ ...prev, [activeChannelId]: latestTs }));
+      setLastRead(prev => {
+        const next = { ...prev, [activeChannelId]: latestTs };
+        if (currentUserId) void saveCommunityReadState(currentUserId, next).catch((error) => console.error("Failed to save read state", error));
+        return next;
+      });
     }
-  }, [activeChannelId, channelMessages]);
+  }, [activeChannelId, channelMessages, currentUserId]);
 
   const getUnread = (chId: string): number => {
     const lr = lastRead[chId] || 0;
@@ -1993,39 +2019,23 @@ export function CommunityPage() {
 
   const handleNickSave = () => {
     const trimmed = nickDraft.trim();
-    if (trimmed) {
-      setNicknames(prev => ({ ...prev, [currentUserId]: trimmed }));
-    } else {
-      setNicknames(prev => { const next = { ...prev }; delete next[currentUserId]; return next; });
-    }
+    setNicknames(prev => {
+      const next = { ...prev };
+      if (trimmed) next[currentUserId] = trimmed;
+      else delete next[currentUserId];
+      return next;
+    });
+    const nextProfile = { ...(profileMap[currentUserId] || { playerId: currentUserId }), playerId: currentUserId, displayName: trimmed || undefined, hiddenDmChannels };
+    setProfileMap(prev => ({ ...prev, [currentUserId]: nextProfile }));
+    if (currentUserId) void saveCommunityProfile(currentUserId, nextProfile).catch((error) => console.error("Failed to save nickname", error));
     setEditingNick(false);
   };
 
   // ── Image store ──
-  const [imageStore, setImageStore] = useState<ImageStore>(() => {
-    const raw = loadImages();
-    const cleaned = cleanExpiredImages(raw);
-    if (Object.keys(cleaned).length !== Object.keys(raw).length) saveImages(cleaned);
-    return cleaned;
-  });
+  const [imageStore, setImageStore] = useState<ImageStore>({});
   const [pendingImage, setPendingImage] = useState<{ id: string; data: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Periodic cleanup of expired images (pauses when tab hidden)
-  useEffect(() => {
-    if (!isPageVisible) return;
-    const interval = setInterval(() => {
-      setImageStore(prev => {
-        const cleaned = cleanExpiredImages(prev);
-        if (Object.keys(cleaned).length !== Object.keys(prev).length) {
-          saveImages(cleaned);
-          return cleaned;
-        }
-        return prev;
-      });
-    }, 60000); // check every minute
-    return () => clearInterval(interval);
-  }, [isPageVisible]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2065,6 +2075,10 @@ export function CommunityPage() {
     setMessages(prev => prev.map(m =>
       m.id === editingMsgId ? { ...m, text: text || m.text, edited: true, editedAt: Date.now() } : m
     ));
+    const updated = messages.find(m => m.id === editingMsgId);
+    if (updated) {
+      void updateCommunityMessage({ ...updated, text: text || updated.text, edited: true, editedAt: Date.now() }).catch((error) => console.error("Failed to save edit", error));
+    }
     setEditingMsgId(null);
     setEditDraft("");
   };
@@ -2072,16 +2086,16 @@ export function CommunityPage() {
   const deleteMessage = (msgId: string) => {
     const msg = messages.find(m => m.id === msgId);
     if (!msg) return;
-    // If message had an image, remove it from image store
     if (msg.imageId) {
       setImageStore(prev => {
         const next = { ...prev };
         delete next[msg.imageId!];
-        saveImages(next);
         return next;
       });
+      void deleteCommunityImage(msg.imageId).catch((error) => console.error("Failed to delete image", error));
     }
     setMessages(prev => prev.filter(m => m.id !== msgId));
+    void removeCommunityMessage(msgId).catch((error) => console.error("Failed to delete message", error));
     if (editingMsgId === msgId) cancelEdit();
   };
 
@@ -2089,22 +2103,13 @@ export function CommunityPage() {
   const handleSendFull = () => {
     const text = draft.trim();
     if (!text && !pendingImage) return;
-    // Store image if pending
-    if (pendingImage) {
-      const newStore = { ...imageStore, [pendingImage.id]: { data: pendingImage.data, timestamp: Date.now() } };
-      setImageStore(newStore);
-      saveImages(newStore);
-    }
-    // If DM is sending as an NPC, use NPC identity and redirect DM channel
     const sendAsNpc = isDM && activeNpc;
     let sendChannelId = activeChannelId;
     if (sendAsNpc && activeChannel.type === "dm" && !activeChannel.npcId) {
-      // DM is on their own DM channel but sending as NPC — redirect to NPC's channel with that player
       const otherPId = activeChannel.participants?.find(p => p !== currentUserId) || "";
       if (otherPId) {
         const npcChId = getDmChannelId(activeNpc.id, otherPId);
         sendChannelId = npcChId;
-        // Auto-switch to the NPC channel
         setActiveChannelId(npcChId);
       }
     }
@@ -2119,7 +2124,13 @@ export function CommunityPage() {
       nameColor: sendAsNpc ? activeNpc.color : (nameColor || undefined),
       chatColor: chatColor || undefined,
     };
+    if (pendingImage) {
+      const image = { id: pendingImage.id, data: pendingImage.data, timestamp: Date.now(), uploadedBy: currentUserId };
+      setImageStore(prev => ({ ...prev, [pendingImage.id]: { data: pendingImage.data, timestamp: image.timestamp } }));
+      void saveCommunityImage(image).catch((error) => console.error("Failed to save image", error));
+    }
     setMessages(prev => [...prev, msg]);
+    void sendCommunityMessage(msg).catch((error) => console.error("Failed to send message", error));
     setDraft("");
     setPendingImage(null);
     inputRef.current?.focus();
@@ -2169,20 +2180,10 @@ export function CommunityPage() {
   };
 
   // ── Reactions ──
-  const [reactionVersion, setReactionVersion] = useState(0);
-  // Listen for custom reaction changes from DM area (storage event from other components)
-  useEffect(() => {
-    const handler = (e: StorageEvent) => {
-      if (e.key === "inet-community-custom-reactions" || e.key === "inet-custom-reactions") {
-        setReactionVersion(v => v + 1);
-      }
-    };
-    window.addEventListener("storage", handler);
-    // Also poll periodically for same-tab changes (pauses when tab hidden)
-    const pollInterval = isPageVisible ? setInterval(() => setReactionVersion(v => v + 1), 10000) : null;
-    return () => { window.removeEventListener("storage", handler); if (pollInterval) clearInterval(pollInterval); };
-  }, [isPageVisible]);
-  const allReactions = useMemo(() => getAllReactions(), [reactionVersion]);
+  const allReactions = useMemo(() => {
+    const custom = customReactions.map(c => ({ id: `custom:${c.id}`, display: c.emoji, label: c.label, type: "emoji" as const }));
+    return [...BUILTIN_EMOJI, ...custom, ...STICKER_REACTIONS];
+  }, [customReactions]);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
 
   const toggleReaction = (msgId: string, reactionId: string) => {
@@ -2198,7 +2199,9 @@ export function CommunityPage() {
         users.push(currentUserId);
         reactions[reactionId] = users;
       }
-      return { ...m, reactions: Object.keys(reactions).length > 0 ? reactions : undefined };
+      const updated = { ...m, reactions: Object.keys(reactions).length > 0 ? reactions : undefined };
+      void updateCommunityMessage(updated).catch((error) => console.error("Failed to save reaction", error));
+      return updated;
     }));
     setReactionPickerMsgId(null);
   };
@@ -2255,6 +2258,13 @@ export function CommunityPage() {
   useEffect(() => { saveSetting("inet-community-namecolor", nameColor); }, [nameColor]);
   useEffect(() => { saveSetting("inet-community-chatcolor", chatColor); }, [chatColor]);
   useEffect(() => { saveSetting("inet-community-dmnamecolor", dmNameColor); }, [dmNameColor]);
+
+  useEffect(() => {
+    if (!currentUserId || !communityReady) return;
+    const nextProfile = { ...(profileMap[currentUserId] || { playerId: currentUserId }), playerId: currentUserId, displayName: nicknames[currentUserId] || undefined, hiddenDmChannels };
+    setProfileMap(prev => ({ ...prev, [currentUserId]: nextProfile }));
+    void saveCommunityProfile(currentUserId, nextProfile).catch((error) => console.error("Failed to save community profile", error));
+  }, [hiddenDmChannels]);
 
   // Notification beep via Web Audio API
   const playNotifBeep = useRef(() => {
@@ -3356,7 +3366,7 @@ export function CommunityPage() {
             </div>
             {/* 3-day image notice */}
             <div className="text-[9px] mt-1.5 flex items-center gap-1" style={{ color: "#2A3A5A" }}>
-              <Image size={8} /> Attached images are stored locally and expire after 3 days.
+              <Image size={8} /> Attached images are shared through Supabase-backed community storage.
             </div>
           </div>
         </div>
