@@ -2000,6 +2000,25 @@ export function CommunityPage() {
 
   // ── Profile pictures (batch fetched from server) ──
   const [profilePics, setProfilePics] = useState<Record<string, string | null>>({});
+
+  // Messages / command / image / unread state that are referenced by effects below
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draft, setDraft] = useState("");
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [commandState, setCommandState] = useState<PlayerCommandState>({});
+  const [commandCards, setCommandCards] = useState<{ cards: any[]; items: any[] }>({ cards: [], items: [] });
+  const lastCommandStateRefreshRef = useRef(0);
+  const [activeCommandSuggestion, setActiveCommandSuggestion] = useState(0);
+  const [lastPingNotice, setLastPingNotice] = useState<string | null>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [communityReady, setCommunityReady] = useState(false);
+  const [lastRead, setLastRead] = useState<Record<string, number>>({});
+  const [imageStore, setImageStore] = useState<ImageStore>({});
+  const [pendingImage, setPendingImage] = useState<{ id: string; data: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const fetchMissingProfilePics = useCallback(async (ids: string[]) => {
     const uniqueIds = Array.from(new Set((ids || []).filter(id => !!id && !id.startsWith("npc-"))));
     const missingIds = uniqueIds.filter((id) => !(id in profilePics));
@@ -2067,20 +2086,6 @@ export function CommunityPage() {
 
   const activeChannel = channels.find(c => c.id === activeChannelId) || channels[0];
 
-  // Messages
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [draft, setDraft] = useState("");
-  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
-  const [commandState, setCommandState] = useState<PlayerCommandState>({});
-  const [commandCards, setCommandCards] = useState<{ cards: any[]; items: any[] }>({ cards: [], items: [] });
-  const lastCommandStateRefreshRef = useRef(0);
-  const [activeCommandSuggestion, setActiveCommandSuggestion] = useState(0);
-  const [lastPingNotice, setLastPingNotice] = useState<string | null>(null);
-  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [communityReady, setCommunityReady] = useState(false);
-
   // Initial realtime/community load
   useEffect(() => {
     let cancelled = false;
@@ -2140,23 +2145,6 @@ export function CommunityPage() {
     if (!communityReady || !isDM) return;
     void saveNpcAccounts(npcAccounts).catch((error) => console.error("Failed to save NPC accounts", error));
   }, [npcAccounts, communityReady, isDM]);
-  const refreshCommandResources = useCallback(async (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastCommandStateRefreshRef.current < 2500) return;
-    lastCommandStateRefreshRef.current = now;
-    try {
-      const [playerState, cards, items] = await Promise.all([
-        currentUserId ? loadPlayerState().catch(() => ({})) : Promise.resolve({}),
-        isDM ? loadDMCards<any>().catch(() => []) : Promise.resolve([]),
-        isDM ? loadDMItems<any>().catch(() => []) : Promise.resolve([]),
-      ]);
-      setCommandState(playerState || {});
-      setCommandCards({ cards: Array.isArray(cards) ? cards : [], items: Array.isArray(items) ? items : [] });
-    } catch (error) {
-      console.error("Failed to load slash command state", error);
-    }
-  }, [currentUserId, isDM]);
-
   useEffect(() => {
     void refreshCommandResources(true);
   }, [refreshCommandResources]);
@@ -2193,9 +2181,6 @@ export function CommunityPage() {
     window.setTimeout(() => setHighlightedMsgId((prev) => (prev === msgId ? null : prev)), 1800);
   }, []);
 
-  // Unread counts per channel
-  const [lastRead, setLastRead] = useState<Record<string, number>>({});
-
   // Mark active channel as read
   useEffect(() => {
     if (channelMessages.length > 0) {
@@ -2228,12 +2213,6 @@ export function CommunityPage() {
     if (currentUserId) void saveCommunityProfile(currentUserId, nextProfile).catch((error) => console.error("Failed to save nickname", error));
     setEditingNick(false);
   };
-
-  // ── Image store ──
-  const [imageStore, setImageStore] = useState<ImageStore>({});
-  const [pendingImage, setPendingImage] = useState<{ id: string; data: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
