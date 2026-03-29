@@ -2222,16 +2222,8 @@ export function CommunityPage() {
   }, [messages, activeChannelId]);
 
   const channelMessages = useMemo(() => {
-    const now = Date.now();
-    return messages.filter(m => {
-      if (m.channelId !== activeChannelId) return false;
-      const payload = m.commandPayload || {};
-      if ((m.kind === "ping" || m.kind === "ring") && payload.toId === currentUserId && now - Number(m.timestamp || 0) > 60_000) {
-        return false;
-      }
-      return true;
-    });
-  }, [messages, activeChannelId, currentUserId]);
+    return messages.filter(m => m.channelId === activeChannelId);
+  }, [messages, activeChannelId]);
 
   const scrollToMessage = useCallback((msgId?: string) => {
     if (!msgId) return;
@@ -2360,11 +2352,11 @@ export function CommunityPage() {
   };
 
   // ── Updated send handler (with image support) ──
-  const handleSendFull = () => {
+  const handleSendFull = async () => {
     const text = draft.trim();
     if (!text && !pendingImage) return;
     if (text.startsWith("/") && !pendingImage) {
-      const handled = handleSlashCommand(text);
+      const handled = await handleSlashCommand(text);
       if (handled) return;
     }
     const sendAsNpc = isDM && activeNpc;
@@ -2452,7 +2444,6 @@ export function CommunityPage() {
 
   // ── Delete with confirmation (Shift bypasses) ──
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [deletingChannel, setDeletingChannel] = useState(false);
 
   const handleDeleteClick = (msgId: string, shiftHeld: boolean) => {
     if (shiftHeld) {
@@ -2465,33 +2456,6 @@ export function CommunityPage() {
   const confirmDelete = () => {
     if (deleteConfirmId) deleteMessage(deleteConfirmId);
     setDeleteConfirmId(null);
-  };
-
-  const handleDeleteAllMessagesInChannel = async () => {
-    if (!isDM || deletingChannel) return;
-    const targetMessages = messages.filter((m) => m.channelId === activeChannelId && !m.deleted);
-    if (targetMessages.length === 0) {
-      setLastPingNotice("No messages to delete in this chat.");
-      window.setTimeout(() => setLastPingNotice(null), 60_000);
-      return;
-    }
-    const okay = window.confirm(`Delete all ${targetMessages.length} message(s) in this chat? This cannot be undone.`);
-    if (!okay) return;
-    setDeletingChannel(true);
-    try {
-      const ids = new Set(targetMessages.map((m) => m.id));
-      setMessages((prev) => prev.map((m) => ids.has(m.id) ? { ...m, text: "", imageId: undefined, deleted: true, deletedAt: Date.now(), deletedBy: currentUserId, clientStatus: "sending" } : m));
-      await Promise.all(targetMessages.map((m) => removeCommunityMessage(m.id).catch((error) => { console.error("Failed to delete message", error); throw error; })));
-      setMessages((prev) => prev.map((m) => ids.has(m.id) ? { ...m, clientStatus: "sent" } : m));
-      setLastPingNotice(`Deleted ${targetMessages.length} message(s) from this chat.`);
-      window.setTimeout(() => setLastPingNotice(null), 60_000);
-    } catch (error) {
-      console.error("Failed to delete all messages in channel", error);
-      setLastPingNotice("Failed to delete all messages from this chat.");
-      window.setTimeout(() => setLastPingNotice(null), 60_000);
-    } finally {
-      setDeletingChannel(false);
-    }
   };
 
   // ── Reactions ──
@@ -2547,7 +2511,7 @@ export function CommunityPage() {
   const [bgOpacity, setBgOpacity] = useState<number>(() => loadSetting("inet-community-bg-opacity", 0.45));
   const [use24h, setUse24h] = useState<boolean>(() => loadSetting("inet-community-24h", false));
   const [compactMode, setCompactMode] = useState<boolean>(() => loadSetting("inet-community-compact", false));
-  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 15));
+  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 13));
   const [showTimestamps, setShowTimestamps] = useState<boolean>(() => loadSetting("inet-community-timestamps", true));
   const [notifSound, setNotifSound] = useState<boolean>(() => loadSetting("inet-community-notifsound", true));
   const [groupThreshold, setGroupThreshold] = useState<number>(() => loadSetting("inet-community-groupthreshold", 5));
@@ -2614,10 +2578,10 @@ export function CommunityPage() {
         playNotifBeep();
         if (latest.kind === "ring") {
           const seconds = Math.max(1, Math.min(5, Number(payload.seconds || 1)));
-          for (let i = 1; i < seconds; i++) window.setTimeout(() => playNotifBeep(), i * 1000);
+          for (let i = 1; i < seconds; i++) window.setTimeout(() => playNotifBeep(), i * 700);
         }
       }
-      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 60_000);
+      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 3000);
     }
   }, [messages, currentUserId, playNotifBeep]);
 
@@ -2949,11 +2913,11 @@ export function CommunityPage() {
       } else {
         setLastPingNotice(`Declined transfer of ${payload.itemName || "item"}.`);
       }
-      window.setTimeout(() => setLastPingNotice(null), 60_000);
+      window.setTimeout(() => setLastPingNotice(null), 2500);
     } catch (error) {
       console.error(`Failed to ${action} inventory transfer`, error);
       setLastPingNotice(`Failed to ${action} transfer.`);
-      window.setTimeout(() => setLastPingNotice(null), 60_000);
+      window.setTimeout(() => setLastPingNotice(null), 2500);
     } finally {
       setRespondingTransferId(null);
     }
@@ -3001,7 +2965,7 @@ export function CommunityPage() {
 
   const displayNameFor = (senderId: string, senderName: string) => nicknames[senderId] || senderName;
 
-  const handleSlashCommand = useCallback((raw: string): boolean => {
+  const handleSlashCommand = useCallback(async (raw: string): Promise<boolean> => {
     const trimmed = raw.trim();
     if (!trimmed.startsWith("/")) return false;
     const parts = trimmed.split(/\s+/);
@@ -3009,7 +2973,7 @@ export function CommunityPage() {
     const rest = trimmed.slice(parts[0].length).trim();
     const deny = (message: string) => {
       setLastPingNotice(message);
-      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 60_000);
+      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 2500);
       return true;
     };
     if ((command === "/announce" || command === "/gm_roll") && !isDM) return deny("That command is DM-only.");
@@ -3095,100 +3059,26 @@ export function CommunityPage() {
       sendStructuredMessage({ kind: "item_preview", text: `Shared item ${extractDisplayName(found)}`, commandPayload: { name: extractDisplayName(found), subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity, description: found.description || found.notes || found.effect } });
       return true;
     }
-    if (command === "/inventory") {
-      await refreshCommandResources(true);
-
-      if (!rest) return deny("Usage: /inventory (item name)");
-
-      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems)
-        ? commandStateRef.current.quickItems
-        : [];
-
-      const found =
-        fuzzyFindByName(latestQuickItems, rest, (i: any) => extractDisplayName(i)) ||
-        latestQuickItems.find((i: any) =>
-          normalizeLooseName(extractDisplayName(i)) === normalizeLooseName(rest)
-        );
-
-      if (!found) return deny("Item not found in your inventory.");
-
-      sendStructuredMessage({
-        kind: "item_preview",
-        text: `Shared item ${extractDisplayName(found)}`,
-        commandPayload: {
-          name: extractDisplayName(found),
-          subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity,
-          description: found.description || found.notes || found.effect,
-        },
-      });
-      return true;
-    }
-
     if (command === "/inventory_transfer") {
-      await refreshCommandResources(true);
-
+      void refreshCommandResources();
       const parsedTarget = commandPlayerPrefixMatch(rest);
       if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
-
       const target = parsedTarget.player;
       const itemName = parsedTarget.remainder.trim();
-
-      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems)
-        ? commandStateRef.current.quickItems
-        : [];
-
+      const quickItems = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
       const normalizedItemName = normalizeLooseName(itemName);
-      const found =
-        fuzzyFindByName(latestQuickItems, itemName, (i: any) => extractDisplayName(i)) ||
-        latestQuickItems.find((i: any) =>
-          normalizeLooseName(extractDisplayName(i)) === normalizedItemName
-        );
-
-      if (!itemName || !target || !found) {
-        return deny("Player or item not found in your current inventory.");
-      }
-
-      sendStructuredMessage({
-        kind: "inventory_transfer_offer",
-        text: `Offered ${extractDisplayName(found)} to ${target.name || target.id}`,
-        commandPayload: {
-          toPlayerId: target.id,
-          toName: nicknames[target.id] || target.name || target.id,
-          itemName: extractDisplayName(found),
-          itemData: found,
-          status: "pending",
-        },
-      });
-
-      await refreshCommandResources(true);
+      const found = fuzzyFindByName(quickItems, itemName, (i:any) => extractDisplayName(i))
+        || quickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
+      if (!itemName || !target || !found) return deny("Player or item not found in your current inventory.");
+      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found, status: "pending", createdAt: Date.now() } }, { channelId: getDmChannelId(currentUserId, target.id) });
+      void refreshCommandResources(true);
       return true;
     }
-
     if (command === "/hp") {
-      const p = commandStateRef.current?.player || {};
-      const statusEffects = Array.isArray(commandStateRef.current?.statusEffects)
-        ? commandStateRef.current.statusEffects
-        : [];
-
-      const hpLine =
-        p.hp != null
-          ? `${p.hp}${p.maxHp != null ? ` / ${p.maxHp}` : ""} HP`
-          : "No HP data available.";
-
-      const extra = [
-        p.stamina != null
-          ? `Stamina ${p.stamina}${p.maxStamina != null ? `/${p.maxStamina}` : ""}`
-          : "",
-        statusEffects.length ? `${statusEffects.length} status effect(s)` : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
-
-      sendStructuredMessage({
-        kind: "hp",
-        text: hpLine,
-        commandPayload: { hpLine, extra },
-      });
+      const p = commandState.player || {};
+      const hpLine = p.hp != null ? `${p.hp}${p.maxHp != null ? ` / ${p.maxHp}` : ""} HP` : "No HP data available.";
+      const extra = [p.stamina != null ? `Stamina ${p.stamina}${p.maxStamina != null ? `/${p.maxStamina}` : ""}` : "", (commandState.statusEffects || []).length ? `${(commandState.statusEffects || []).length} status effect(s)` : ""].filter(Boolean).join(" · ");
+      sendStructuredMessage({ kind: "hp", text: hpLine, commandPayload: { hpLine, extra } });
       return true;
     }
     if (command === "/ping") {
@@ -3217,7 +3107,6 @@ export function CommunityPage() {
       style={{
         background: "#010108",
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
-        zoom: 1.1,
       }}
     >
       {/* Background layers */}
@@ -3558,6 +3447,35 @@ export function CommunityPage() {
                 <div className="text-[10px]" style={{ color: "#DCE8FF" }}>{lastPingNotice}</div>
               </div>
             )}
+            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
+              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
+                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
+                  <button
+                    key={`${cmd.name}-${cmd.usage}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
+                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
+                    </div>
+                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
+                  </button>
+                )) : commandContextSuggestions.values.map((value, idx) => (
+                  <button
+                    key={`${commandContextSuggestions.mode}-${value}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button className="md:hidden mr-1" onClick={() => setShowChannelsMobile(true)}>
                 <MessageSquare size={16} style={{ color: accent }} />
@@ -3584,17 +3502,6 @@ export function CommunityPage() {
               <div className="text-[10px]" style={{ color: "#4A5A7A" }}>
                 {activeChannel.type === "main" ? `${allPlayers.length} members` : "Private conversation"}
               </div>
-              {isDM && (
-                <button
-                  onClick={() => void handleDeleteAllMessagesInChannel()}
-                  disabled={deletingChannel}
-                  className="px-2 py-1 hover:bg-[#FFFFFF08] transition-colors rounded text-[10px]"
-                  style={{ color: deletingChannel ? "#6A7A9A" : "#D88A8A", border: `1px solid ${accent}22` }}
-                  title="Delete all messages from this chat"
-                >
-                  {deletingChannel ? "Deleting..." : "Delete Chat"}
-                </button>
-              )}
               <button
                 onClick={() => { setShowSearch(s => !s); if (showSearch) { setSearchQuery(""); } }}
                 className="p-1 hover:bg-[#FFFFFF08] transition-colors rounded"
@@ -3677,7 +3584,7 @@ export function CommunityPage() {
                       setBgOpacity(0.45);
                       setUse24h(false);
                       setCompactMode(false);
-                      setFontSize(15);
+                      setFontSize(13);
                       setShowTimestamps(true);
                       setNotifSound(true);
                       setGroupThreshold(5);
@@ -4252,35 +4159,6 @@ export function CommunityPage() {
                 <button onClick={removePendingImage} className="p-1 hover:bg-[#FFFFFF08] rounded shrink-0" title="Remove image">
                   <X size={12} style={S_RED} />
                 </button>
-              </div>
-            )}
-            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
-              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
-                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
-                  <button
-                    key={`${cmd.name}-${cmd.usage}`}
-                    type="button"
-                    onClick={() => applyCurrentSuggestion(idx)}
-                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
-                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
-                    </div>
-                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
-                  </button>
-                )) : commandContextSuggestions.values.map((value, idx) => (
-                  <button
-                    key={`${commandContextSuggestions.mode}-${value}`}
-                    type="button"
-                    onClick={() => applyCurrentSuggestion(idx)}
-                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
-                  >
-                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
-                  </button>
-                ))}
               </div>
             )}
             <div className="flex items-center gap-2">
