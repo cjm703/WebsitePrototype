@@ -1466,7 +1466,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: "/active_cards", usage: "/active_cards", description: "Show your current active cards/abilities." },
   { name: "/card", usage: "/card (card name)", description: "Show a card you own." },
   { name: "/inventory", usage: "/inventory (item name)", description: "Show an item you own." },
-  { name: "/inventory_transfer", usage: "/inventory_transfer (player) (item name)", description: "Offer to transfer an item to another player." },
+  { name: "/transfer", usage: "/transfer (player) (item name) [x(number)]", description: "Offer to transfer an item you own to another player, optionally with a quantity." },
   { name: "/hp", usage: "/hp", description: "Show a compact HP and combat summary." },
   { name: "/ping", usage: "/ping (player)", description: "Ping another player in chat." },
   { name: "/ring", usage: "/ring (player) (seconds up to 5)", description: "Play a sound for a player for up to 5 seconds." },
@@ -1488,6 +1488,18 @@ function normalizeLooseName(value: unknown): string {
 
 function extractDisplayName(record: any): string {
   return record?.displayName || record?.name || record?.title || record?.label || record?.id || "Unknown";
+}
+
+function parseTrailingQuantitySuffix(value: string): { baseText: string; quantity: number | null } {
+  const source = String(value || "").trim();
+  if (!source) return { baseText: "", quantity: null };
+  const match = source.match(/^(.*?)(?:\s+x(\d+))\s*$/i);
+  if (!match) return { baseText: source, quantity: null };
+  const qty = Number(match[2]);
+  return {
+    baseText: String(match[1] || "").trim(),
+    quantity: Number.isFinite(qty) && qty > 0 ? qty : null,
+  };
 }
 
 function extractModifier(playerState: PlayerCommandState, key: string): number {
@@ -2204,7 +2216,7 @@ export function CommunityPage() {
 
   useEffect(() => {
     const trimmed = draft.trimStart().toLowerCase();
-    if (trimmed.startsWith('/inventory') || trimmed.startsWith('/inventory_transfer') || trimmed.startsWith('/card') || trimmed.startsWith('/active_cards') || trimmed.startsWith('/status_effects') || trimmed.startsWith('/hp')) {
+    if (trimmed.startsWith('/inventory') || trimmed.startsWith('/transfer') || trimmed.startsWith('/inventory_transfer') || trimmed.startsWith('/card') || trimmed.startsWith('/active_cards') || trimmed.startsWith('/status_effects') || trimmed.startsWith('/hp')) {
       void refreshCommandResources();
     }
   }, [draft, refreshCommandResources]);
@@ -2813,13 +2825,14 @@ export function CommunityPage() {
       return { mode: "commands" as const, values: [] as string[], targetPlayer: targetMatch?.rawName || "", commandName: cmd };
     }
 
-    if (cmd === "/inventory_transfer") {
+    if (cmd === "/transfer" || cmd === "/inventory_transfer") {
       const transferText = rest;
       const targetMatch = commandPlayerPrefixMatch(transferText);
       if (!targetMatch) {
         return { mode: "player" as const, values: filterPlayerCommandSuggestions(transferText), targetPlayer: "", commandName: cmd };
       }
-      const itemQuery = targetMatch.remainder.trim().toLowerCase();
+      const parsedQty = parseTrailingQuantitySuffix(targetMatch.remainder.trim());
+      const itemQuery = parsedQty.baseText.toLowerCase();
       return { mode: "inventory_transfer" as const, values: ownedItemSuggestions.filter(name => !itemQuery || name.toLowerCase().includes(itemQuery)).slice(0, 50), targetPlayer: targetMatch.rawName, commandName: cmd };
     }
 
@@ -2860,9 +2873,11 @@ export function CommunityPage() {
     if (cmd === "/character_sheet" || cmd === "/status_effects" || cmd === "/active_cards" || cmd === "/hp") return "";
     if (cmd === "/card") return rest ? "" : "(card name)";
     if (cmd === "/inventory") return rest ? "" : "(item name)";
-    if (cmd === "/inventory_transfer") {
+    if (cmd === "/transfer" || cmd === "/inventory_transfer") {
       const match = commandPlayerPrefixMatch(rest);
-      return !match ? "(player)" : match.remainder.trim() ? "" : "(item name)";
+      if (!match) return "(player)";
+      const parsedQty = parseTrailingQuantitySuffix(match.remainder.trim());
+      return parsedQty.baseText ? "[x(number)]" : "(item name)";
     }
     if (cmd === "/ping") return rest ? "" : "(player)";
     if (cmd === "/ring") {
@@ -2891,7 +2906,7 @@ export function CommunityPage() {
     }
     if (commandContextSuggestions.mode === "inventory_transfer") {
       const value = commandContextSuggestions.values[idx];
-      if (value) setDraft(commandContextSuggestions.targetPlayer ? `/inventory_transfer ${commandContextSuggestions.targetPlayer} ${value}`.trim() : `/inventory_transfer ${value}`);
+      if (value) setDraft(commandContextSuggestions.targetPlayer ? `/transfer ${commandContextSuggestions.targetPlayer} ${value} `.trimEnd() : `/transfer ${value} `.trimEnd());
       return;
     }
     const next = filteredCommandSuggestions[idx] || filteredCommandSuggestions[0];
@@ -2964,7 +2979,8 @@ export function CommunityPage() {
     if (msg.kind === "inventory_transfer_offer") {
       const status = String(payload.status || "pending").toLowerCase();
       const canRespond = status === "pending" && (payload.toId === currentUserId || isDM);
-      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Transfer Offer</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName} offers {payload.itemName} to {payload.toName}</div><div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{status === "accepted" ? `Accepted${payload.responderName ? ` by ${payload.responderName}` : ""}.` : status === "declined" ? `Declined${payload.responderName ? ` by ${payload.responderName}` : ""}.` : "Awaiting response."}</div>{status === "accepted" && (payload.senderRemainingQuantity != null || payload.recipientQuantity != null) && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>Sender now has {payload.senderRemainingQuantity ?? "?"}; recipient now has {payload.recipientQuantity ?? "?"}.</div>}{canRespond && <div className="flex gap-2 mt-2"><button type="button" className="px-2 py-1 text-[10px] rounded" style={{ background: "rgba(64,160,96,0.18)", color: "#D8FFE4", border: "1px solid rgba(64,160,96,0.35)" }} onClick={() => void handleTransferResponse(msg, "accept")} disabled={respondingTransferId === msg.id}>{respondingTransferId === msg.id ? "Working..." : "Accept"}</button><button type="button" className="px-2 py-1 text-[10px] rounded" style={{ background: "rgba(160,64,64,0.18)", color: "#FFDADA", border: "1px solid rgba(160,64,64,0.35)" }} onClick={() => void handleTransferResponse(msg, "decline")} disabled={respondingTransferId === msg.id}>{respondingTransferId === msg.id ? "Working..." : "Decline"}</button></div>}</div>;
+      const offeredQty = Number(payload.quantity ?? payload.item?.quantity ?? 1) || 1;
+      return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>Transfer Offer</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName} offers {payload.itemName}{offeredQty > 1 ? ` x${offeredQty}` : ""} to {payload.toName}</div><div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{status === "accepted" ? `Accepted${payload.responderName ? ` by ${payload.responderName}` : ""}.` : status === "declined" ? `Declined${payload.responderName ? ` by ${payload.responderName}` : ""}.` : "Awaiting response."}</div>{status === "accepted" && (payload.senderRemainingQuantity != null || payload.recipientQuantity != null) && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>Sender now has {payload.senderRemainingQuantity ?? "?"}; recipient now has {payload.recipientQuantity ?? "?"}.</div>}{canRespond && <div className="flex gap-2 mt-2"><button type="button" className="px-2 py-1 text-[10px] rounded" style={{ background: "rgba(64,160,96,0.18)", color: "#D8FFE4", border: "1px solid rgba(64,160,96,0.35)" }} onClick={() => void handleTransferResponse(msg, "accept")} disabled={respondingTransferId === msg.id}>{respondingTransferId === msg.id ? "Working..." : "Accept"}</button><button type="button" className="px-2 py-1 text-[10px] rounded" style={{ background: "rgba(160,64,64,0.18)", color: "#FFDADA", border: "1px solid rgba(160,64,64,0.35)" }} onClick={() => void handleTransferResponse(msg, "decline")} disabled={respondingTransferId === msg.id}>{respondingTransferId === msg.id ? "Working..." : "Decline"}</button></div>}</div>;
     }
     if (msg.kind === "hp") {
       return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>HP / Combat Summary</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.hpLine || "No HP data available."}</div>{payload.extra && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.extra}</div>}</div>;
@@ -2979,6 +2995,33 @@ export function CommunityPage() {
 
   const displayNameFor = (senderId: string, senderName: string) => nicknames[senderId] || senderName;
 
+  const showCommandNotification = useCallback((message: string) => {
+    setLastPingNotice(message);
+    window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 60000);
+  }, []);
+
+  const getLatestOwnedItems = useCallback(() => {
+    const state = commandStateRef.current || {};
+    const quickItems = Array.isArray((state as any).quickItems) ? (state as any).quickItems : [];
+    const equipmentSlotsRaw = (state as any).equipmentSlots;
+    const equipmentItems = equipmentSlotsRaw && typeof equipmentSlotsRaw === "object"
+      ? Object.values(equipmentSlotsRaw).flatMap((entry: any) => {
+          if (!entry) return [];
+          if (Array.isArray(entry)) return entry.filter(Boolean);
+          if (typeof entry === "object") return [entry];
+          return [];
+        })
+      : [];
+    const combined = [...quickItems, ...equipmentItems].filter(Boolean);
+    const seen = new Set();
+    return combined.filter((item: any) => {
+      const key = `${String(item?.id || item?.name || item?.title || extractDisplayName(item))}::${String(item?.slot || "")}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, []);
+
   const handleSlashCommand = useCallback(async (raw: string): Promise<boolean> => {
     const trimmed = raw.trim();
     if (!trimmed.startsWith("/")) return false;
@@ -2986,8 +3029,7 @@ export function CommunityPage() {
     const command = (parts[0] || "").toLowerCase();
     const rest = trimmed.slice(parts[0].length).trim();
     const deny = (message: string) => {
-      setLastPingNotice(message);
-      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 60000);
+      showCommandNotification(message);
       return true;
     };
     if ((command === "/announce" || command === "/gm_roll") && !isDM) return deny("That command is DM-only.");
@@ -3068,23 +3110,29 @@ export function CommunityPage() {
     if (command === "/inventory") {
       await refreshCommandResources(true);
       if (!rest) return deny("Usage: /inventory (item name)");
-      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems) ? commandStateRef.current.quickItems : [];
-      const found = fuzzyFindByName(latestQuickItems, rest, (i:any) => extractDisplayName(i)) || latestQuickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizeLooseName(rest));
+      const latestOwnedItems = getLatestOwnedItems();
+      const found = fuzzyFindByName(latestOwnedItems, rest, (i:any) => extractDisplayName(i)) || latestOwnedItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizeLooseName(rest));
       if (!found) return deny("Item not found in your inventory.");
       sendStructuredMessage({ kind: "item_preview", text: `Shared item ${extractDisplayName(found)}`, commandPayload: { name: extractDisplayName(found), subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity, description: found.description || found.notes || found.effect } });
       return true;
     }
-    if (command === "/inventory_transfer") {
+    if (command === "/transfer" || command === "/inventory_transfer") {
       await refreshCommandResources(true);
       const parsedTarget = commandPlayerPrefixMatch(rest);
-      if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
+      if (!parsedTarget) return deny("Usage: /transfer (player) (item name) [x(number)]");
       const target = parsedTarget.player;
-      const itemName = parsedTarget.remainder.trim();
-      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems) ? commandStateRef.current.quickItems : [];
+      const parsedQty = parseTrailingQuantitySuffix(parsedTarget.remainder.trim());
+      const itemName = parsedQty.baseText.trim();
+      const requestedQuantity = parsedQty.quantity ?? 1;
+      const latestOwnedItems = getLatestOwnedItems();
       const normalizedItemName = normalizeLooseName(itemName);
-      const found = fuzzyFindByName(latestQuickItems, itemName, (i:any) => extractDisplayName(i)) || latestQuickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
-      if (!itemName || !target || !found) return deny("Player or item not found in your current inventory.");
-      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found, status: "pending", createdAt: Date.now() } }, { channelId: getDmChannelId(currentUserId, target.id) });
+      const found = fuzzyFindByName(latestOwnedItems, itemName, (i:any) => extractDisplayName(i)) || latestOwnedItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
+      const availableQuantity = Number((found as any)?.quantity ?? 1);
+      if (!itemName || !target || !found || (Number.isFinite(availableQuantity) && availableQuantity <= 0)) return deny("Player or item not found in your inventory.");
+      if (requestedQuantity <= 0) return deny("Transfer quantity must be at least 1.");
+      if (Number.isFinite(availableQuantity) && requestedQuantity > availableQuantity) return deny(`You only have ${availableQuantity} of ${extractDisplayName(found)}.`);
+      const transferItem = { ...found, quantity: requestedQuantity };
+      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)}${requestedQuantity > 1 ? ` x${requestedQuantity}` : ""} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: transferItem, quantity: requestedQuantity, availableQuantity, status: "pending", createdAt: Date.now() } }, { channelId: getDmChannelId(currentUserId, target.id) });
       await refreshCommandResources(true);
       return true;
     }
@@ -3111,8 +3159,8 @@ export function CommunityPage() {
       sendStructuredMessage({ kind: "ring", text: `Rang ${nicknames[target.id] || target.name}`, commandPayload: { toId: target.id, toName: nicknames[target.id] || target.name, fromName: myDisplayName, seconds } });
       return true;
     }
-    return false;
-  }, [draft, isDM, commandPlayerLookup, commandPlayerPrefixMatch, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames, refreshCommandResources]);
+    return deny(`Unknown command: ${command}`);
+  }, [draft, isDM, commandPlayerLookup, commandPlayerPrefixMatch, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames, refreshCommandResources, showCommandNotification, getLatestOwnedItems]);
 
 
   return (
