@@ -3095,26 +3095,100 @@ export function CommunityPage() {
       sendStructuredMessage({ kind: "item_preview", text: `Shared item ${extractDisplayName(found)}`, commandPayload: { name: extractDisplayName(found), subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity, description: found.description || found.notes || found.effect } });
       return true;
     }
-    if (command === "/inventory_transfer") {
-      void refreshCommandResources();
-      const parsedTarget = commandPlayerPrefixMatch(rest);
-      if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
-      const target = parsedTarget.player;
-      const itemName = parsedTarget.remainder.trim();
-      const quickItems = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
-      const normalizedItemName = normalizeLooseName(itemName);
-      const found = fuzzyFindByName(quickItems, itemName, (i:any) => extractDisplayName(i))
-        || quickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
-      if (!itemName || !target || !found) return deny("Player or item not found in your current inventory.");
-      sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found, status: "pending", createdAt: Date.now() } }, { channelId: getDmChannelId(currentUserId, target.id) });
-      void refreshCommandResources(true);
+    if (command === "/inventory") {
+      await refreshCommandResources(true);
+
+      if (!rest) return deny("Usage: /inventory (item name)");
+
+      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems)
+        ? commandStateRef.current.quickItems
+        : [];
+
+      const found =
+        fuzzyFindByName(latestQuickItems, rest, (i: any) => extractDisplayName(i)) ||
+        latestQuickItems.find((i: any) =>
+          normalizeLooseName(extractDisplayName(i)) === normalizeLooseName(rest)
+        );
+
+      if (!found) return deny("Item not found in your inventory.");
+
+      sendStructuredMessage({
+        kind: "item_preview",
+        text: `Shared item ${extractDisplayName(found)}`,
+        commandPayload: {
+          name: extractDisplayName(found),
+          subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity,
+          description: found.description || found.notes || found.effect,
+        },
+      });
       return true;
     }
+
+    if (command === "/inventory_transfer") {
+      await refreshCommandResources(true);
+
+      const parsedTarget = commandPlayerPrefixMatch(rest);
+      if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
+
+      const target = parsedTarget.player;
+      const itemName = parsedTarget.remainder.trim();
+
+      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems)
+        ? commandStateRef.current.quickItems
+        : [];
+
+      const normalizedItemName = normalizeLooseName(itemName);
+      const found =
+        fuzzyFindByName(latestQuickItems, itemName, (i: any) => extractDisplayName(i)) ||
+        latestQuickItems.find((i: any) =>
+          normalizeLooseName(extractDisplayName(i)) === normalizedItemName
+        );
+
+      if (!itemName || !target || !found) {
+        return deny("Player or item not found in your current inventory.");
+      }
+
+      sendStructuredMessage({
+        kind: "inventory_transfer_offer",
+        text: `Offered ${extractDisplayName(found)} to ${target.name || target.id}`,
+        commandPayload: {
+          toPlayerId: target.id,
+          toName: nicknames[target.id] || target.name || target.id,
+          itemName: extractDisplayName(found),
+          itemData: found,
+          status: "pending",
+        },
+      });
+
+      await refreshCommandResources(true);
+      return true;
+    }
+
     if (command === "/hp") {
-      const p = commandState.player || {};
-      const hpLine = p.hp != null ? `${p.hp}${p.maxHp != null ? ` / ${p.maxHp}` : ""} HP` : "No HP data available.";
-      const extra = [p.stamina != null ? `Stamina ${p.stamina}${p.maxStamina != null ? `/${p.maxStamina}` : ""}` : "", (commandState.statusEffects || []).length ? `${(commandState.statusEffects || []).length} status effect(s)` : ""].filter(Boolean).join(" · ");
-      sendStructuredMessage({ kind: "hp", text: hpLine, commandPayload: { hpLine, extra } });
+      const p = commandStateRef.current?.player || {};
+      const statusEffects = Array.isArray(commandStateRef.current?.statusEffects)
+        ? commandStateRef.current.statusEffects
+        : [];
+
+      const hpLine =
+        p.hp != null
+          ? `${p.hp}${p.maxHp != null ? ` / ${p.maxHp}` : ""} HP`
+          : "No HP data available.";
+
+      const extra = [
+        p.stamina != null
+          ? `Stamina ${p.stamina}${p.maxStamina != null ? `/${p.maxStamina}` : ""}`
+          : "",
+        statusEffects.length ? `${statusEffects.length} status effect(s)` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      sendStructuredMessage({
+        kind: "hp",
+        text: hpLine,
+        commandPayload: { hpLine, extra },
+      });
       return true;
     }
     if (command === "/ping") {
