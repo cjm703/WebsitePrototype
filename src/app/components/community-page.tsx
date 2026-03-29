@@ -2018,6 +2018,7 @@ export function CommunityPage() {
   const [draft, setDraft] = useState("");
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [commandState, setCommandState] = useState<PlayerCommandState>({});
+  const commandStateRef = useRef<PlayerCommandState>({});
   const [commandCards, setCommandCards] = useState<{ cards: any[]; items: any[] }>({ cards: [], items: [] });
   const lastCommandStateRefreshRef = useRef(0);
   const [activeCommandSuggestion, setActiveCommandSuggestion] = useState(0);
@@ -2051,6 +2052,11 @@ export function CommunityPage() {
     void fetchMissingProfilePics(messages.map((m) => m.senderId));
   }, [messages, fetchMissingProfilePics]);
 
+
+
+  useEffect(() => {
+    commandStateRef.current = commandState;
+  }, [commandState]);
 
   const refreshCommandResources = useCallback(async (force = false) => {
     const now = Date.now();
