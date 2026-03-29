@@ -2351,6 +2351,18 @@ export function CommunityPage() {
     if (replyingTo?.id === msgId) setReplyingTo(null);
   };
 
+
+  const handleDeleteActiveChat = async () => {
+    if (!isDM) return;
+    const targetMessages = messages.filter(m => m.channelId === activeChannelId);
+    if (!targetMessages.length) return;
+    const ok = window.confirm(`Delete all ${targetMessages.length} messages in this chat? This cannot be undone.`);
+    if (!ok) return;
+    const ids = targetMessages.map(m => m.id);
+    setMessages(prev => prev.filter(m => !ids.includes(m.id)));
+    await Promise.allSettled(ids.map(id => removeCommunityMessage(id)));
+  };
+
   // ── Updated send handler (with image support) ──
   const handleSendFull = async () => {
     const text = draft.trim();
@@ -2511,7 +2523,7 @@ export function CommunityPage() {
   const [bgOpacity, setBgOpacity] = useState<number>(() => loadSetting("inet-community-bg-opacity", 0.45));
   const [use24h, setUse24h] = useState<boolean>(() => loadSetting("inet-community-24h", false));
   const [compactMode, setCompactMode] = useState<boolean>(() => loadSetting("inet-community-compact", false));
-  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 13));
+  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 15));
   const [showTimestamps, setShowTimestamps] = useState<boolean>(() => loadSetting("inet-community-timestamps", true));
   const [notifSound, setNotifSound] = useState<boolean>(() => loadSetting("inet-community-notifsound", true));
   const [groupThreshold, setGroupThreshold] = useState<number>(() => loadSetting("inet-community-groupthreshold", 5));
@@ -2581,7 +2593,7 @@ export function CommunityPage() {
           for (let i = 1; i < seconds; i++) window.setTimeout(() => playNotifBeep(), i * 700);
         }
       }
-      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 3000);
+      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 60000);
     }
   }, [messages, currentUserId, playNotifBeep]);
 
@@ -2913,11 +2925,11 @@ export function CommunityPage() {
       } else {
         setLastPingNotice(`Declined transfer of ${payload.itemName || "item"}.`);
       }
-      window.setTimeout(() => setLastPingNotice(null), 2500);
+      window.setTimeout(() => setLastPingNotice(null), 60000);
     } catch (error) {
       console.error(`Failed to ${action} inventory transfer`, error);
       setLastPingNotice(`Failed to ${action} transfer.`);
-      window.setTimeout(() => setLastPingNotice(null), 2500);
+      window.setTimeout(() => setLastPingNotice(null), 60000);
     } finally {
       setRespondingTransferId(null);
     }
@@ -2958,6 +2970,8 @@ export function CommunityPage() {
       return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>HP / Combat Summary</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.hpLine || "No HP data available."}</div>{payload.extra && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>{payload.extra}</div>}</div>;
     }
     if (msg.kind === "ping" || msg.kind === "ring") {
+      const targetedToMe = payload.toId === currentUserId;
+      if (targetedToMe && Date.now() - msg.timestamp > 60000) return null;
       return <div style={boxStyle}><div className="text-[10px] uppercase tracking-widest" style={{ color: accent }}>{msg.kind === "ring" ? "Ring" : "Ping"}</div><div className="text-[12px] mt-1" style={{ color: "#DCE8FF" }}>{payload.fromName || displayNameFor(msg.senderId, msg.senderName)} targeted {payload.toName}</div>{msg.kind === "ring" && <div className="text-[10px] mt-1" style={{ color: "#8FA3C8" }}>Duration: {payload.seconds || 1}s</div>}</div>;
     }
     return null;
@@ -2973,7 +2987,7 @@ export function CommunityPage() {
     const rest = trimmed.slice(parts[0].length).trim();
     const deny = (message: string) => {
       setLastPingNotice(message);
-      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 2500);
+      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 60000);
       return true;
     };
     if ((command === "/announce" || command === "/gm_roll") && !isDM) return deny("That command is DM-only.");
@@ -3052,26 +3066,26 @@ export function CommunityPage() {
       return true;
     }
     if (command === "/inventory") {
-      if (!rest) return deny("Usage: /inventory Item Name");
-      const items = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
-      const found = fuzzyFindByName(items, rest, (i:any) => extractDisplayName(i));
+      await refreshCommandResources(true);
+      if (!rest) return deny("Usage: /inventory (item name)");
+      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems) ? commandStateRef.current.quickItems : [];
+      const found = fuzzyFindByName(latestQuickItems, rest, (i:any) => extractDisplayName(i)) || latestQuickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizeLooseName(rest));
       if (!found) return deny("Item not found in your inventory.");
       sendStructuredMessage({ kind: "item_preview", text: `Shared item ${extractDisplayName(found)}`, commandPayload: { name: extractDisplayName(found), subtitle: found.quantity ? `Quantity: ${found.quantity}` : found.slot || found.rarity, description: found.description || found.notes || found.effect } });
       return true;
     }
     if (command === "/inventory_transfer") {
-      void refreshCommandResources();
+      await refreshCommandResources(true);
       const parsedTarget = commandPlayerPrefixMatch(rest);
       if (!parsedTarget) return deny("Usage: /inventory_transfer (player) (item name)");
       const target = parsedTarget.player;
       const itemName = parsedTarget.remainder.trim();
-      const quickItems = Array.isArray(commandState.quickItems) ? commandState.quickItems : [];
+      const latestQuickItems = Array.isArray(commandStateRef.current?.quickItems) ? commandStateRef.current.quickItems : [];
       const normalizedItemName = normalizeLooseName(itemName);
-      const found = fuzzyFindByName(quickItems, itemName, (i:any) => extractDisplayName(i))
-        || quickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
+      const found = fuzzyFindByName(latestQuickItems, itemName, (i:any) => extractDisplayName(i)) || latestQuickItems.find((i:any) => normalizeLooseName(extractDisplayName(i)) === normalizedItemName);
       if (!itemName || !target || !found) return deny("Player or item not found in your current inventory.");
       sendStructuredMessage({ kind: "inventory_transfer_offer", text: `${extractDisplayName(found)} offered to ${nicknames[target.id] || target.name}`, commandPayload: { fromId: currentUserId, fromName: myDisplayName, toId: target.id, toName: nicknames[target.id] || target.name, itemName: extractDisplayName(found), item: found, status: "pending", createdAt: Date.now() } }, { channelId: getDmChannelId(currentUserId, target.id) });
-      void refreshCommandResources(true);
+      await refreshCommandResources(true);
       return true;
     }
     if (command === "/hp") {
@@ -3098,7 +3112,7 @@ export function CommunityPage() {
       return true;
     }
     return false;
-  }, [draft, isDM, commandPlayerLookup, commandPlayerPrefixMatch, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames]);
+  }, [draft, isDM, commandPlayerLookup, commandPlayerPrefixMatch, commandState, commandCards, currentUserId, myDisplayName, sendStructuredMessage, activeChannelId, nicknames, refreshCommandResources]);
 
 
   return (
@@ -3107,6 +3121,7 @@ export function CommunityPage() {
       style={{
         background: "#010108",
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
+        fontSize: 15,
       }}
     >
       {/* Background layers */}
@@ -3447,35 +3462,6 @@ export function CommunityPage() {
                 <div className="text-[10px]" style={{ color: "#DCE8FF" }}>{lastPingNotice}</div>
               </div>
             )}
-            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
-              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
-                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
-                  <button
-                    key={`${cmd.name}-${cmd.usage}`}
-                    type="button"
-                    onClick={() => applyCurrentSuggestion(idx)}
-                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
-                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
-                    </div>
-                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
-                  </button>
-                )) : commandContextSuggestions.values.map((value, idx) => (
-                  <button
-                    key={`${commandContextSuggestions.mode}-${value}`}
-                    type="button"
-                    onClick={() => applyCurrentSuggestion(idx)}
-                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
-                  >
-                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
-                  </button>
-                ))}
-              </div>
-            )}
             <div className="flex items-center gap-2">
               <button className="md:hidden mr-1" onClick={() => setShowChannelsMobile(true)}>
                 <MessageSquare size={16} style={{ color: accent }} />
@@ -3488,6 +3474,16 @@ export function CommunityPage() {
               <span className="text-[14px] font-semibold" style={S_TEXT}>
                 {activeChannel.type === "main" ? "General Chat" : activeChannel.label}
               </span>
+              {isDM && (
+                <button
+                  onClick={handleDeleteActiveChat}
+                  className="ml-2 px-2 py-1 text-[11px] font-semibold hover:bg-[#FFFFFF08] rounded"
+                  style={{ color: "#F0B4B4", border: "1px solid rgba(240,120,120,0.25)" }}
+                  title="Delete all messages in this chat"
+                >
+                  Delete Chat
+                </button>
+              )}
               {activeChannel.npcId && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded-sm" style={{ background: `${npcAccounts.find(n => n.id === activeChannel.npcId)?.color || "#8A6ABB"}22`, color: npcAccounts.find(n => n.id === activeChannel.npcId)?.color || "#8A6ABB", border: `1px solid ${npcAccounts.find(n => n.id === activeChannel.npcId)?.color || "#8A6ABB"}44`, fontWeight: 600 }}>
                   via {activeChannel.npcName}
@@ -4159,6 +4155,35 @@ export function CommunityPage() {
                 <button onClick={removePendingImage} className="p-1 hover:bg-[#FFFFFF08] rounded shrink-0" title="Remove image">
                   <X size={12} style={S_RED} />
                 </button>
+              </div>
+            )}
+            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
+              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
+                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
+                  <button
+                    key={`${cmd.name}-${cmd.usage}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
+                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
+                    </div>
+                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
+                  </button>
+                )) : commandContextSuggestions.values.map((value, idx) => (
+                  <button
+                    key={`${commandContextSuggestions.mode}-${value}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
+                  </button>
+                ))}
               </div>
             )}
             <div className="flex items-center gap-2">
