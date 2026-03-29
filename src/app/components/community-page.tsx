@@ -2039,6 +2039,59 @@ export function CommunityPage() {
     void fetchMissingProfilePics(messages.map((m) => m.senderId));
   }, [messages, fetchMissingProfilePics]);
 
+
+  const refreshCommandResources = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastCommandStateRefreshRef.current < 2500) return;
+    lastCommandStateRefreshRef.current = now;
+
+    if (!currentUserId) {
+      setCommandState({});
+      setCommandCards({ cards: [], items: [] });
+      return;
+    }
+
+    try {
+      const state = await loadPlayerState().catch(() => null);
+      if (state) {
+        setCommandState({
+          player: state?.player ?? state?.profile ?? state?.playerData ?? {},
+          quickItems: Array.isArray(state?.quickItems) ? state.quickItems : [],
+          sourceUsage: Array.isArray(state?.sourceUsage) ? state.sourceUsage : [],
+          activityLog: Array.isArray(state?.activityLog) ? state.activityLog : [],
+          skillSettings: state?.skillSettings ?? {},
+          skillProficiencies: state?.skillProficiencies ?? {},
+          equipmentSlots: state?.equipmentSlots ?? {},
+          statusEffects: Array.isArray(state?.statusEffects) ? state.statusEffects : [],
+          levelCategories: Array.isArray(state?.levelCategories) ? state.levelCategories : [],
+          nodeUnlocks: state?.nodeUnlocks ?? {},
+        });
+      }
+    } catch (error) {
+      console.error("Failed to load player command state", error);
+    }
+
+    if (!isDM) {
+      // Avoid DM-only routes for player Community sessions.
+      setCommandCards(prev => ({ cards: prev.cards ?? [], items: prev.items ?? [] }));
+      return;
+    }
+
+    try {
+      const [cards, items] = await Promise.all([
+        loadDMCards().catch(() => []),
+        loadDMItems().catch(() => []),
+      ]);
+      setCommandCards({
+        cards: Array.isArray(cards) ? cards : [],
+        items: Array.isArray(items) ? items : [],
+      });
+    } catch (error) {
+      console.error("Failed to load command card/item definitions", error);
+    }
+  }, [currentUserId, isDM]);
+
+
   // Nicknames / profile
   const [nicknames, setNicknames] = useState<Nicknames>({});
   const [editingNick, setEditingNick] = useState(false);
