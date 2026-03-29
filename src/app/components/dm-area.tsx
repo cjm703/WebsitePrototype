@@ -390,7 +390,15 @@ export function DMArea() {
   const [followUpText, setFollowUpText] = useState("");
 
   // Info Sub-Tabs (DM-managed)
-  type InfoSubTab = { id: string; name: string; order: number };
+  type InfoSubTab = {
+    id: string;
+    name: string;
+    order: number;
+    description?: string;
+    icon?: string;
+    color?: string;
+    isDefault?: boolean;
+  };
   const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
   const [newInfoSubTabName, setNewInfoSubTabName] = useState("");
   const [editingItem, setEditingItem] = useState<ManagedItem | null>(null);
@@ -477,7 +485,7 @@ useEffect(() => {
       setManagedItems(itemsData.length ? itemsData : migrateAssignedTo(initialItems as ManagedItem[]));
       setManagedCards(cardsData.length ? cardsData : migrateAssignedTo(initialCards as ManagedCard[]));
       setManagedInfos(infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]));
-      setInfoSubTabs(infoSubTabData);
+      setInfoSubTabs(ensureSingleDefaultInfoSubTab(infoSubTabData));
       setDmNotifications(notificationData);
       setNodeTrees(nodeTreeData);
       setReactions(reactionData);
@@ -577,6 +585,67 @@ async function persistInfoSubTabs(next: InfoSubTab[]) {
   }
 }
 
+function normalizeInfoSubTabs(next: InfoSubTab[]) {
+  return [...next]
+    .sort((a, b) => a.order - b.order)
+    .map((tab, index) => ({
+      ...tab,
+      order: index,
+    }));
+}
+
+function ensureSingleDefaultInfoSubTab(next: InfoSubTab[]) {
+  const sorted = normalizeInfoSubTabs(next);
+  let foundDefault = false;
+
+  return sorted.map((tab, index) => {
+    if (tab.isDefault && !foundDefault) {
+      foundDefault = true;
+      return { ...tab, order: index, isDefault: true };
+    }
+
+    return { ...tab, order: index, isDefault: false };
+  });
+}
+
+async function moveInfoSubTab(tabId: string, direction: -1 | 1) {
+  const sorted = [...infoSubTabs].sort((a, b) => a.order - b.order);
+  const index = sorted.findIndex((tab) => tab.id === tabId);
+  if (index === -1) return;
+
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= sorted.length) return;
+
+  const next = [...sorted];
+  const [moved] = next.splice(index, 1);
+  next.splice(targetIndex, 0, moved);
+
+  await persistInfoSubTabs(ensureSingleDefaultInfoSubTab(next));
+}
+
+async function deleteInfoSubTab(tabId: string) {
+  const cleanedInfos = managedInfos.map((info) =>
+    info.infoSubTab === tabId
+      ? { ...info, infoSubTab: "" }
+      : info
+  );
+
+  const remainingTabs = infoSubTabs.filter((tab) => tab.id !== tabId);
+  const nextTabs = ensureSingleDefaultInfoSubTab(remainingTabs);
+
+  await persistInfos(cleanedInfos);
+  await persistInfoSubTabs(nextTabs);
+
+  if (editingInfo?.infoSubTab === tabId) {
+    setEditingInfo({ ...editingInfo, infoSubTab: "" });
+  }
+
+  if (editingInfoSubTabId === tabId) {
+    setEditingInfoSubTabId(null);
+    setEditingInfoSubTabName("");
+  }
+}
+
 async function persistTags(
   kind: "item" | "card" | "info" | "status" | "wiki",
   next: TagDefinition[],
@@ -606,6 +675,16 @@ async function persistCustomReactions(next: CustomReaction[]) {
     throw err;
   }
 }
+
+  useEffect(() => {
+    if (!editingInfo?.infoSubTab) return;
+
+    const exists = infoSubTabs.some((tab) => tab.id === editingInfo.infoSubTab);
+    if (!exists) {
+      setEditingInfo((prev) => (prev ? { ...prev, infoSubTab: "" } : prev));
+    }
+  }, [editingInfo?.infoSubTab, infoSubTabs]);
+
 
   // Auto-select first player when entering Level Abilities
   useEffect(() => {
@@ -2673,54 +2752,161 @@ const handleSaveItem = async () => {
                     Create sub-tabs to organize information. Players will see these as tabs in their Information section.
                   </div>
                   <div className="flex flex-wrap gap-2 mb-3">
-                    {[...infoSubTabs].sort((a, b) => a.order - b.order).map(st => (
-                      <div key={st.id} className="flex items-center gap-1.5 px-2.5 py-1.5" style={DM_PANEL}>
+                    {[...infoSubTabs].sort((a, b) => a.order - b.order).map((st, index, sortedTabs) => (
+                      <div key={st.id} className="px-2.5 py-1.5" style={DM_PANEL}>
                         {editingInfoSubTabId === st.id ? (
-                          <div style={DISPLAY_CONTENTS}>
-                            <input
-                              type="text"
-                              value={editingInfoSubTabName}
-                              onChange={(e) => setEditingInfoSubTabName(e.target.value)}
-                              className={inputClass}
-                              style={{ ...inputStyle, width: 120 }}
-                              onKeyDown={async (e) => {
-                                if (e.key === "Enter" && editingInfoSubTabName.trim()) {
-                                  const next = infoSubTabs.map((s) =>
-                                    s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s
-                                  );
-                                  await persistInfoSubTabs(next);
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={editingInfoSubTabName}
+                                onChange={(e) => setEditingInfoSubTabName(e.target.value)}
+                                className={inputClass}
+                                style={{ ...inputStyle, width: 140 }}
+                                onKeyDown={async (e) => {
+                                  if (e.key === "Enter" && editingInfoSubTabName.trim()) {
+                                    const next = ensureSingleDefaultInfoSubTab(
+                                      infoSubTabs.map((s) =>
+                                        s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s
+                                      )
+                                    );
+                                    await persistInfoSubTabs(next);
+                                    setEditingInfoSubTabId(null);
+                                  }
+                                }}
+                              />
+                              <button
+                                onClick={async () => {
+                                  if (editingInfoSubTabName.trim()) {
+                                    const next = ensureSingleDefaultInfoSubTab(
+                                      infoSubTabs.map((s) =>
+                                        s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s
+                                      )
+                                    );
+                                    await persistInfoSubTabs(next);
+                                  }
                                   setEditingInfoSubTabId(null);
-                                }
-                              }}
-                            />
-                            <button onClick={async () => {
-                              if (editingInfoSubTabName.trim()) {
-                                const next = infoSubTabs.map((s) =>
-                                  s.id === st.id ? { ...s, name: editingInfoSubTabName.trim() } : s
-                                );
-                                await persistInfoSubTabs(next);
-                                setEditingInfoSubTabId(null);
-                              }
-                              setEditingInfoSubTabId(null);
-                            }} className="text-[10px]" style={S_GREEN_BTN}>✓</button>
-                            <button onClick={() => setEditingInfoSubTabId(null)} className="text-[10px]" style={S_RED}>✕</button>
+                                }}
+                                className="text-[10px]"
+                                style={S_GREEN_BTN}
+                              >
+                                ✓
+                              </button>
+                              <button onClick={() => setEditingInfoSubTabId(null)} className="text-[10px]" style={S_RED}>✕</button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                              <input
+                                type="text"
+                                value={st.description || ""}
+                                onChange={(e) => {
+                                  setInfoSubTabs((prev) =>
+                                    prev.map((tab) => tab.id === st.id ? { ...tab, description: e.target.value } : tab)
+                                  );
+                                }}
+                                placeholder="Description..."
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                              <input
+                                type="text"
+                                value={st.icon || ""}
+                                onChange={(e) => {
+                                  setInfoSubTabs((prev) =>
+                                    prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab)
+                                  );
+                                }}
+                                placeholder="Icon / emoji"
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                              <input
+                                type="text"
+                                value={st.color || ""}
+                                onChange={(e) => {
+                                  setInfoSubTabs((prev) =>
+                                    prev.map((tab) => tab.id === st.id ? { ...tab, color: e.target.value } : tab)
+                                  );
+                                }}
+                                placeholder="Accent color (#hex)"
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-3 flex-wrap">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={!!st.isDefault}
+                                  onChange={async (e) => {
+                                    const next = ensureSingleDefaultInfoSubTab(
+                                      infoSubTabs.map((tab) =>
+                                        tab.id === st.id
+                                          ? { ...tab, isDefault: e.target.checked }
+                                          : { ...tab, isDefault: false }
+                                      )
+                                    );
+                                    await persistInfoSubTabs(next);
+                                  }}
+                                  className="accent-[#4A7BFF]"
+                                />
+                                <span className="text-[11px]" style={S_TEXT}>Default tab</span>
+                              </label>
+
+                              <button
+                                onClick={async () => {
+                                  const next = ensureSingleDefaultInfoSubTab(infoSubTabs);
+                                  await persistInfoSubTabs(next);
+                                }}
+                                className={`${retro.button} px-2 py-1 text-[10px]`}
+                                style={S_GREEN_BTN}
+                              >
+                                Save Tab Details
+                              </button>
+                            </div>
                           </div>
                         ) : (
-                          <div style={DISPLAY_CONTENTS}>
-                            <span className="text-[12px]" style={S_TEXT}>{st.name}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[12px]" style={{ ...S_TEXT, color: st.color || S_TEXT.color }}>
+                              {st.icon ? `${st.icon} ` : ""}{st.name}
+                            </span>
+                            {st.isDefault && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded" style={S_ACCENT}>
+                                Default
+                              </span>
+                            )}
                             <span className="text-[9px] ml-1" style={S_DIM}>
                               ({managedInfos.filter(i => i.infoSubTab === st.id).length})
                             </span>
-                            <button onClick={async () => { setEditingInfoSubTabId(st.id); setEditingInfoSubTabName(st.name); }} className="text-[10px] ml-1 hover:opacity-80" style={S_ACCENT}>
+                            <button
+                              onClick={() => moveInfoSubTab(st.id, -1)}
+                              disabled={index === 0}
+                              className="text-[10px] ml-1 hover:opacity-80 disabled:opacity-30"
+                              style={S_ACCENT}
+                              title="Move left"
+                            >
+                              <ChevronUp size={10} />
+                            </button>
+                            <button
+                              onClick={() => moveInfoSubTab(st.id, 1)}
+                              disabled={index === sortedTabs.length - 1}
+                              className="text-[10px] hover:opacity-80 disabled:opacity-30"
+                              style={S_ACCENT}
+                              title="Move right"
+                            >
+                              <ChevronDown size={10} />
+                            </button>
+                            <button onClick={async () => { setEditingInfoSubTabId(st.id); setEditingInfoSubTabName(st.name); }} className="text-[10px] hover:opacity-80" style={S_ACCENT}>
                               <Edit size={10} />
                             </button>
                             <button
                               onClick={async () => {
-                                const next = infoSubTabs.filter((s) => s.id !== st.id);
-                                await persistInfoSubTabs(next);
+                                await deleteInfoSubTab(st.id);
                               }}
                               className="text-[10px] hover:opacity-80"
                               style={S_RED}
+                              title="Delete sub-tab"
                             >
                               <Trash2 size={10} />
                             </button>
@@ -2739,14 +2925,18 @@ const handleSaveItem = async () => {
                       style={{ ...inputStyle, width: 200 }}
                       onKeyDown={async (e) => {
                         if (e.key === "Enter" && newInfoSubTabName.trim()) {
-                          const next = [
+                          const next = ensureSingleDefaultInfoSubTab([
                             ...infoSubTabs,
                             {
                               id: `ist-${Date.now()}`,
                               name: newInfoSubTabName.trim(),
                               order: infoSubTabs.length,
+                              description: "",
+                              icon: "",
+                              color: "",
+                              isDefault: infoSubTabs.length === 0,
                             },
-                          ];
+                          ]);
                           await persistInfoSubTabs(next);
                           setNewInfoSubTabName("");
                         }
@@ -2755,10 +2945,18 @@ const handleSaveItem = async () => {
                     <button
                       onClick={async () => {
                         if (!newInfoSubTabName.trim()) return;
-                        const next = [
+                        const next = ensureSingleDefaultInfoSubTab([
                           ...infoSubTabs,
-                          { id: `ist-${Date.now()}`, name: newInfoSubTabName.trim(), order: infoSubTabs.length },
-                        ];
+                          {
+                            id: `ist-${Date.now()}`,
+                            name: newInfoSubTabName.trim(),
+                            order: infoSubTabs.length,
+                            description: "",
+                            icon: "",
+                            color: "",
+                            isDefault: infoSubTabs.length === 0,
+                          },
+                        ]);
                         await persistInfoSubTabs(next);
                         setNewInfoSubTabName("");
                       }}

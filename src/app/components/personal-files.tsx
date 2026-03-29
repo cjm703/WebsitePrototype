@@ -361,7 +361,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [allInfos, setAllInfos] = useState<ManagedInfo[]>([]);
   const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
   const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
-  const [infoSubTabs, setInfoSubTabs] = useState<{ id: string; name: string; order: number }[]>([]);
+  type InfoSubTab = {
+    id: string;
+    name: string;
+    order: number;
+    description?: string;
+    icon?: string;
+    color?: string;
+    isDefault?: boolean;
+  };
+
+  const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
 
   const hydratePersonalFiles = useCallback(async () => {
     if (!currentUserId) {
@@ -385,7 +395,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         appStore.listInfos<ManagedInfo>(),
         appStore.listTags<TagDefinition>("item"),
         appStore.listTags<TagDefinition>("status"),
-        appStore.listInfoSubTabs<{ id: string; name: string; order: number }>(),
+        appStore.listInfoSubTabs<InfoSubTab>(),
         loadPlayerState(),
       ]);
 
@@ -869,6 +879,34 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [infoSortBy, setInfoSortBy] = useState<"title" | "category" | "newest">("newest");
   const [expandedInfoId, setExpandedInfoId] = useState<string | null>(null);
   const [infoSubTabFilter, setInfoSubTabFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (infoSubTabs.length === 0) {
+      if (infoSubTabFilter !== null) setInfoSubTabFilter(null);
+      return;
+    }
+
+    if (infoSubTabFilter && !infoSubTabs.some((tab) => tab.id === infoSubTabFilter)) {
+      const defaultTab = [...infoSubTabs]
+        .sort((a, b) => a.order - b.order)
+        .find((tab) => tab.isDefault);
+
+      setInfoSubTabFilter(defaultTab?.id ?? null);
+    }
+  }, [infoSubTabs, infoSubTabFilter]);
+
+  useEffect(() => {
+    if (infoSubTabs.length === 0) return;
+    if (infoSubTabFilter !== null) return;
+
+    const defaultTab = [...infoSubTabs]
+      .sort((a, b) => a.order - b.order)
+      .find((tab) => tab.isDefault);
+
+    if (defaultTab) {
+      setInfoSubTabFilter(defaultTab.id);
+    }
+  }, [infoSubTabs, infoSubTabFilter]);
 
   // Skills data — calculated from actual player stats
   const skillCategories = useMemo(() => {
@@ -4287,8 +4325,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           {/* INFORMATION TAB */}
           {player && activeTab === "information" && (() => {
             const sortedSubTabs = [...infoSubTabs].sort((a, b) => a.order - b.order);
+            const validSubTabIds = new Set(infoSubTabs.map((tab) => tab.id));
+            const activeSubTab = infoSubTabFilter ? infoSubTabs.find((tab) => tab.id === infoSubTabFilter) ?? null : null;
             const filteredInfos = playerInfos
-              .filter(i => !infoSubTabFilter || (i.infoSubTab || "") === infoSubTabFilter)
+              .filter((info) => {
+                const normalizedSubTab = info.infoSubTab && validSubTabIds.has(info.infoSubTab)
+                  ? info.infoSubTab
+                  : "";
+
+                return !infoSubTabFilter || normalizedSubTab === infoSubTabFilter;
+              })
               .sort((a, b) => {
                 if (infoSortBy === "title") return a.title.localeCompare(b.title);
                 if (infoSortBy === "category") return (a.category || "").localeCompare(b.category || "");
@@ -4319,9 +4365,24 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       key={st.id}
                       onClick={() => setInfoSubTabFilter(st.id)}
                       className={`${infoSubTabFilter === st.id ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-                      style={{ color: infoSubTabFilter === st.id ? firstColor(theme.accentColor) : theme.labelColor, fontWeight: infoSubTabFilter === st.id ? 600 : 400, background: infoSubTabFilter === st.id ? theme.panelBg : theme.cardBg }}
-                    >{st.name}</button>
+                      style={{
+                        color: infoSubTabFilter === st.id ? (st.color || firstColor(theme.accentColor)) : (st.color || theme.labelColor),
+                        fontWeight: infoSubTabFilter === st.id ? 600 : 400,
+                        background: infoSubTabFilter === st.id ? theme.panelBg : theme.cardBg,
+                      }}
+                    >
+                      <span className="flex items-center gap-1">
+                        {st.icon ? <span>{st.icon}</span> : null}
+                        <span>{st.name}</span>
+                      </span>
+                    </button>
                   ))}
+                </div>
+              )}
+
+              {activeSubTab?.description && (
+                <div className="text-[10px] px-2 py-1" style={{ color: activeSubTab.color || theme.labelColor }}>
+                  {activeSubTab.description}
                 </div>
               )}
 
