@@ -2222,8 +2222,16 @@ export function CommunityPage() {
   }, [messages, activeChannelId]);
 
   const channelMessages = useMemo(() => {
-    return messages.filter(m => m.channelId === activeChannelId);
-  }, [messages, activeChannelId]);
+    const now = Date.now();
+    return messages.filter(m => {
+      if (m.channelId !== activeChannelId) return false;
+      const payload = m.commandPayload || {};
+      if ((m.kind === "ping" || m.kind === "ring") && payload.toId === currentUserId && now - Number(m.timestamp || 0) > 60_000) {
+        return false;
+      }
+      return true;
+    });
+  }, [messages, activeChannelId, currentUserId]);
 
   const scrollToMessage = useCallback((msgId?: string) => {
     if (!msgId) return;
@@ -2444,6 +2452,7 @@ export function CommunityPage() {
 
   // ── Delete with confirmation (Shift bypasses) ──
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deletingChannel, setDeletingChannel] = useState(false);
 
   const handleDeleteClick = (msgId: string, shiftHeld: boolean) => {
     if (shiftHeld) {
@@ -2456,6 +2465,33 @@ export function CommunityPage() {
   const confirmDelete = () => {
     if (deleteConfirmId) deleteMessage(deleteConfirmId);
     setDeleteConfirmId(null);
+  };
+
+  const handleDeleteAllMessagesInChannel = async () => {
+    if (!isDM || deletingChannel) return;
+    const targetMessages = messages.filter((m) => m.channelId === activeChannelId && !m.deleted);
+    if (targetMessages.length === 0) {
+      setLastPingNotice("No messages to delete in this chat.");
+      window.setTimeout(() => setLastPingNotice(null), 60_000);
+      return;
+    }
+    const okay = window.confirm(`Delete all ${targetMessages.length} message(s) in this chat? This cannot be undone.`);
+    if (!okay) return;
+    setDeletingChannel(true);
+    try {
+      const ids = new Set(targetMessages.map((m) => m.id));
+      setMessages((prev) => prev.map((m) => ids.has(m.id) ? { ...m, text: "", imageId: undefined, deleted: true, deletedAt: Date.now(), deletedBy: currentUserId, clientStatus: "sending" } : m));
+      await Promise.all(targetMessages.map((m) => removeCommunityMessage(m.id).catch((error) => { console.error("Failed to delete message", error); throw error; })));
+      setMessages((prev) => prev.map((m) => ids.has(m.id) ? { ...m, clientStatus: "sent" } : m));
+      setLastPingNotice(`Deleted ${targetMessages.length} message(s) from this chat.`);
+      window.setTimeout(() => setLastPingNotice(null), 60_000);
+    } catch (error) {
+      console.error("Failed to delete all messages in channel", error);
+      setLastPingNotice("Failed to delete all messages from this chat.");
+      window.setTimeout(() => setLastPingNotice(null), 60_000);
+    } finally {
+      setDeletingChannel(false);
+    }
   };
 
   // ── Reactions ──
@@ -2511,7 +2547,7 @@ export function CommunityPage() {
   const [bgOpacity, setBgOpacity] = useState<number>(() => loadSetting("inet-community-bg-opacity", 0.45));
   const [use24h, setUse24h] = useState<boolean>(() => loadSetting("inet-community-24h", false));
   const [compactMode, setCompactMode] = useState<boolean>(() => loadSetting("inet-community-compact", false));
-  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 13));
+  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 15));
   const [showTimestamps, setShowTimestamps] = useState<boolean>(() => loadSetting("inet-community-timestamps", true));
   const [notifSound, setNotifSound] = useState<boolean>(() => loadSetting("inet-community-notifsound", true));
   const [groupThreshold, setGroupThreshold] = useState<number>(() => loadSetting("inet-community-groupthreshold", 5));
@@ -2578,10 +2614,10 @@ export function CommunityPage() {
         playNotifBeep();
         if (latest.kind === "ring") {
           const seconds = Math.max(1, Math.min(5, Number(payload.seconds || 1)));
-          for (let i = 1; i < seconds; i++) window.setTimeout(() => playNotifBeep(), i * 700);
+          for (let i = 1; i < seconds; i++) window.setTimeout(() => playNotifBeep(), i * 1000);
         }
       }
-      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 3000);
+      window.setTimeout(() => setLastPingNotice(prev => prev === text ? null : prev), 60_000);
     }
   }, [messages, currentUserId, playNotifBeep]);
 
@@ -2913,11 +2949,11 @@ export function CommunityPage() {
       } else {
         setLastPingNotice(`Declined transfer of ${payload.itemName || "item"}.`);
       }
-      window.setTimeout(() => setLastPingNotice(null), 2500);
+      window.setTimeout(() => setLastPingNotice(null), 60_000);
     } catch (error) {
       console.error(`Failed to ${action} inventory transfer`, error);
       setLastPingNotice(`Failed to ${action} transfer.`);
-      window.setTimeout(() => setLastPingNotice(null), 2500);
+      window.setTimeout(() => setLastPingNotice(null), 60_000);
     } finally {
       setRespondingTransferId(null);
     }
@@ -2973,7 +3009,7 @@ export function CommunityPage() {
     const rest = trimmed.slice(parts[0].length).trim();
     const deny = (message: string) => {
       setLastPingNotice(message);
-      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 2500);
+      window.setTimeout(() => setLastPingNotice(prev => prev === message ? null : prev), 60_000);
       return true;
     };
     if ((command === "/announce" || command === "/gm_roll") && !isDM) return deny("That command is DM-only.");
@@ -3107,6 +3143,7 @@ export function CommunityPage() {
       style={{
         background: "#010108",
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
+        zoom: 1.1,
       }}
     >
       {/* Background layers */}
@@ -3447,35 +3484,6 @@ export function CommunityPage() {
                 <div className="text-[10px]" style={{ color: "#DCE8FF" }}>{lastPingNotice}</div>
               </div>
             )}
-            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
-              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
-                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
-                  <button
-                    key={`${cmd.name}-${cmd.usage}`}
-                    type="button"
-                    onClick={() => applyCurrentSuggestion(idx)}
-                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
-                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
-                    </div>
-                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
-                  </button>
-                )) : commandContextSuggestions.values.map((value, idx) => (
-                  <button
-                    key={`${commandContextSuggestions.mode}-${value}`}
-                    type="button"
-                    onClick={() => applyCurrentSuggestion(idx)}
-                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
-                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
-                  >
-                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
-                  </button>
-                ))}
-              </div>
-            )}
             <div className="flex items-center gap-2">
               <button className="md:hidden mr-1" onClick={() => setShowChannelsMobile(true)}>
                 <MessageSquare size={16} style={{ color: accent }} />
@@ -3502,6 +3510,17 @@ export function CommunityPage() {
               <div className="text-[10px]" style={{ color: "#4A5A7A" }}>
                 {activeChannel.type === "main" ? `${allPlayers.length} members` : "Private conversation"}
               </div>
+              {isDM && (
+                <button
+                  onClick={() => void handleDeleteAllMessagesInChannel()}
+                  disabled={deletingChannel}
+                  className="px-2 py-1 hover:bg-[#FFFFFF08] transition-colors rounded text-[10px]"
+                  style={{ color: deletingChannel ? "#6A7A9A" : "#D88A8A", border: `1px solid ${accent}22` }}
+                  title="Delete all messages from this chat"
+                >
+                  {deletingChannel ? "Deleting..." : "Delete Chat"}
+                </button>
+              )}
               <button
                 onClick={() => { setShowSearch(s => !s); if (showSearch) { setSearchQuery(""); } }}
                 className="p-1 hover:bg-[#FFFFFF08] transition-colors rounded"
@@ -3584,7 +3603,7 @@ export function CommunityPage() {
                       setBgOpacity(0.45);
                       setUse24h(false);
                       setCompactMode(false);
-                      setFontSize(13);
+                      setFontSize(15);
                       setShowTimestamps(true);
                       setNotifSound(true);
                       setGroupThreshold(5);
@@ -4159,6 +4178,35 @@ export function CommunityPage() {
                 <button onClick={removePendingImage} className="p-1 hover:bg-[#FFFFFF08] rounded shrink-0" title="Remove image">
                   <X size={12} style={S_RED} />
                 </button>
+              </div>
+            )}
+            {(filteredCommandSuggestions.length > 0 || commandContextSuggestions.values.length > 0) && (
+              <div className="mb-2 overflow-y-auto" style={{ maxHeight: 220, background: "#0A0A20", border: `1px solid ${accent}22`, borderRadius: 4 }}>
+                {commandContextSuggestions.mode === "commands" ? filteredCommandSuggestions.slice(0, 50).map((cmd, idx) => (
+                  <button
+                    key={`${cmd.name}-${cmd.usage}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < Math.min(filteredCommandSuggestions.length, 50) - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{cmd.usage}</span>
+                      {cmd.permission === "dm" && <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#F0D88A", background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.2)", borderRadius: 3 }}>DM</span>}
+                    </div>
+                    <div className="text-[9px] mt-0.5" style={{ color: "#7F92B8" }}>{cmd.description}</div>
+                  </button>
+                )) : commandContextSuggestions.values.map((value, idx) => (
+                  <button
+                    key={`${commandContextSuggestions.mode}-${value}`}
+                    type="button"
+                    onClick={() => applyCurrentSuggestion(idx)}
+                    className="w-full px-3 py-2 text-left hover:bg-[#FFFFFF08] transition-colors"
+                    style={{ background: idx === activeCommandSuggestion ? `${accent}10` : "transparent", borderBottom: idx < commandContextSuggestions.values.length - 1 ? "1px solid #FFFFFF08" : "none" }}
+                  >
+                    <div className="text-[11px] font-semibold" style={{ color: "#DCE8FF" }}>{value}</div>
+                  </button>
+                ))}
               </div>
             )}
             <div className="flex items-center gap-2">
