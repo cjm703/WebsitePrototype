@@ -887,9 +887,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     }
 
     if (infoSubTabFilter && !infoSubTabs.some((tab) => tab.id === infoSubTabFilter)) {
-      const defaultTab = [...infoSubTabs]
-        .sort((a, b) => a.order - b.order)
-        .find((tab) => tab.isDefault);
+      const sortedTabs = [...infoSubTabs].sort((a, b) => a.order - b.order);
+      const defaultTab = sortedTabs.find((tab) => tab.isDefault) ?? sortedTabs[0] ?? null;
 
       setInfoSubTabFilter(defaultTab?.id ?? null);
     }
@@ -899,9 +898,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     if (infoSubTabs.length === 0) return;
     if (infoSubTabFilter !== null) return;
 
-    const defaultTab = [...infoSubTabs]
-      .sort((a, b) => a.order - b.order)
-      .find((tab) => tab.isDefault);
+    const sortedTabs = [...infoSubTabs].sort((a, b) => a.order - b.order);
+    const defaultTab = sortedTabs.find((tab) => tab.isDefault) ?? sortedTabs[0] ?? null;
 
     if (defaultTab) {
       setInfoSubTabFilter(defaultTab.id);

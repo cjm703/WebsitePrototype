@@ -596,9 +596,10 @@ function normalizeInfoSubTabs(next: InfoSubTab[]) {
 
 function ensureSingleDefaultInfoSubTab(next: InfoSubTab[]) {
   const sorted = normalizeInfoSubTabs(next);
-  let foundDefault = false;
+  if (sorted.length === 0) return sorted;
 
-  return sorted.map((tab, index) => {
+  let foundDefault = false;
+  const normalized = sorted.map((tab, index) => {
     if (tab.isDefault && !foundDefault) {
       foundDefault = true;
       return { ...tab, order: index, isDefault: true };
@@ -606,6 +607,12 @@ function ensureSingleDefaultInfoSubTab(next: InfoSubTab[]) {
 
     return { ...tab, order: index, isDefault: false };
   });
+
+  if (!normalized.some((tab) => tab.isDefault)) {
+    normalized[0] = { ...normalized[0], isDefault: true };
+  }
+
+  return normalized;
 }
 
 async function moveInfoSubTab(tabId: string, direction: -1 | 1) {
