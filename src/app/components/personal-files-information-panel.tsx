@@ -804,13 +804,6 @@ export function PersonalFilesInformationPanel({
                   theme,
                   info: selectedPaper,
                   accentColor: accent,
-                })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
