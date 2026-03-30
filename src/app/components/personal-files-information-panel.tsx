@@ -58,6 +58,7 @@ type TreeNode =
       color?: string;
       description?: string;
       parentId?: string;
+      isRoot?: boolean;
     }
   | {
       id: string;
@@ -69,9 +70,12 @@ type TreeNode =
     };
 
 const SEARCH_INPUT_STYLE: React.CSSProperties = {
-  border: "1px solid rgba(124, 124, 185, 0.35)",
-  background: "rgba(12, 12, 30, 0.92)",
+  border: "1px solid rgba(124, 124, 185, 0.22)",
+  background: "rgba(7, 9, 20, 0.92)",
+  boxShadow: "inset 0 0 0 1px rgba(0, 0, 0, 0.25)",
 };
+
+const READ_STORAGE_KEY = "personal-files-information-read-v1";
 
 function normalizeLabel(value: string | undefined | null) {
   return String(value || "").trim();
@@ -103,6 +107,51 @@ function comparePapers(a: ManagedInfoLike, b: ManagedInfoLike) {
   }
 
   return a.title.localeCompare(b.title);
+}
+
+function highlightMatch(label: string, searchTerm: string, accentColor: string) {
+  if (!searchTerm) return label;
+  const source = label;
+  const lower = source.toLowerCase();
+  const matchIndex = lower.indexOf(searchTerm);
+  if (matchIndex === -1) return label;
+
+  const before = source.slice(0, matchIndex);
+  const match = source.slice(matchIndex, matchIndex + searchTerm.length);
+  const after = source.slice(matchIndex + searchTerm.length);
+
+  return (
+    <>
+      {before}
+      <span
+        style={{
+          color: accentColor,
+          textShadow: `0 0 8px ${accentColor}55`,
+          fontWeight: 700,
+        }}
+      >
+        {match}
+      </span>
+      {after}
+    </>
+  );
+}
+
+function loadReadIds() {
+  try {
+    const raw = window.localStorage.getItem(READ_STORAGE_KEY);
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.map((v) => String(v)) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function saveReadIds(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+  } catch {}
 }
 
 function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): TreeNode[] {
@@ -172,6 +221,7 @@ function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): T
       depth: 0,
       color: tab.color || undefined,
       description: tab.description || undefined,
+      isRoot: true,
     };
 
     const infos = [...(infosByTab.get(tab.id) || [])].sort(comparePapers);
@@ -192,6 +242,7 @@ function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): T
       depth: 0,
       color: "#FFCC66",
       description: "Information that has not been assigned to a main category yet.",
+      isRoot: true,
     };
 
     for (const info of unassignedInfos) {
@@ -312,6 +363,11 @@ function firstVisiblePaper(nodes: TreeNode[]) {
   return null;
 }
 
+function folderPathIds(roots: TreeNode[], paperId: string) {
+  const crumbs = collectBreadcrumbs(roots, paperId);
+  return crumbs.filter((crumb) => crumb.type === "folder").map((crumb) => crumb.id);
+}
+
 export function PersonalFilesInformationPanel({
   theme,
   playerInfos,
@@ -319,10 +375,13 @@ export function PersonalFilesInformationPanel({
   retroOverrides,
 }: Props) {
   const ui = retroOverrides || retro;
+  const accent = firstColor(theme.accentColor);
   const [searchValue, setSearchValue] = useState("");
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [readPaperIds, setReadPaperIds] = useState<Set<string>>(new Set());
+  const [searchFocused, setSearchFocused] = useState(false);
 
   const treeRoots = useMemo(
     () => buildTree(playerInfos, infoSubTabs),
@@ -340,6 +399,21 @@ export function PersonalFilesInformationPanel({
     () => (searchTerm ? collectAllFolderIds(visibleTree) : new Set<string>()),
     [visibleTree, searchTerm],
   );
+
+  useEffect(() => {
+    setReadPaperIds(loadReadIds());
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPaperId) return;
+    setReadPaperIds((prev) => {
+      if (prev.has(selectedPaperId)) return prev;
+      const next = new Set(prev);
+      next.add(selectedPaperId);
+      saveReadIds(next);
+      return next;
+    });
+  }, [selectedPaperId]);
 
   useEffect(() => {
     if (searchTerm) return;
@@ -386,60 +460,121 @@ export function PersonalFilesInformationPanel({
     });
   };
 
+  const handleSelectPaper = (paperId: string) => {
+    setSelectedPaperId(paperId);
+    const folderIds = folderPathIds(treeRoots, paperId);
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      for (const id of folderIds) next.add(id);
+      return next;
+    });
+  };
+
+  const handleBreadcrumbClick = (crumbId: string, crumbType: "folder" | "paper") => {
+    if (crumbType === "paper") {
+      setSelectedPaperId(crumbId.replace(/^paper:/, ""));
+      return;
+    }
+
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      next.add(crumbId);
+      return next;
+    });
+  };
+
   const renderTree = (nodes: TreeNode[]) => {
     return nodes.map((node) => {
       if (node.type === "folder") {
         const isExpanded = searchTerm
           ? autoExpandedIds.has(node.id)
           : expandedFolderIds.has(node.id);
-        const folderColor = node.color || theme.labelColor;
+        const folderColor = node.color || (node.isRoot ? accent : theme.labelColor);
 
         return (
-          <div key={node.id}>
+          <div key={node.id} className="transition-all duration-200 ease-out">
             <button
               type="button"
               onClick={() => toggleFolder(node.id)}
-              className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] rounded transition-colors"
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] rounded transition-all duration-150 ease-out hover:translate-x-[2px]"
               style={{
-                color: folderColor,
-                background: "transparent",
+                color: node.isRoot ? folderColor : isExpanded ? folderColor : `${folderColor}CC`,
+                background: isExpanded
+                  ? "linear-gradient(90deg, rgba(76,120,255,0.09), rgba(76,120,255,0.02))"
+                  : "transparent",
                 paddingLeft: `${8 + node.depth * 14}px`,
+                boxShadow: isExpanded ? `inset 1px 0 0 ${folderColor}` : "none",
               }}
+              title={node.description || node.name}
             >
               {isExpanded ? (
                 <ChevronDown size={12} />
               ) : (
                 <ChevronRight size={12} />
               )}
-              {isExpanded ? <FolderOpen size={12} /> : <Folder size={12} />}
-              <span className="truncate">{node.name}</span>
+              {isExpanded ? (
+                <FolderOpen size={12} style={{ filter: `drop-shadow(0 0 6px ${folderColor}55)` }} />
+              ) : (
+                <Folder size={12} />
+              )}
+              <span
+                className="truncate"
+                style={{
+                  fontWeight: node.isRoot ? 700 : 500,
+                  letterSpacing: node.isRoot ? "0.03em" : undefined,
+                }}
+              >
+                {highlightMatch(node.name, searchTerm, accent)}
+              </span>
             </button>
 
-            {isExpanded && node.children.length > 0 && (
-              <div>{renderTree(node.children)}</div>
-            )}
+            <div
+              className="transition-all duration-200 ease-out overflow-hidden"
+              style={{
+                maxHeight: isExpanded ? "1200px" : "0px",
+                opacity: isExpanded ? 1 : 0.65,
+              }}
+            >
+              {isExpanded && node.children.length > 0 && <div>{renderTree(node.children)}</div>}
+            </div>
           </div>
         );
       }
 
       const isSelected = selectedPaperId === node.paper.id;
+      const isUnread = !readPaperIds.has(node.paper.id);
+
       return (
         <button
           key={node.id}
           type="button"
-          onClick={() => setSelectedPaperId(node.paper.id)}
-          className={`w-full text-left px-2 py-1.5 text-[11px] rounded transition-colors ${
+          onClick={() => handleSelectPaper(node.paper.id)}
+          className={`w-full text-left px-2 py-1.5 text-[11px] rounded transition-all duration-150 ease-out hover:translate-x-[2px] ${
             isSelected ? ui.sunken : ""
           }`}
           style={{
-            color: isSelected ? firstColor(theme.accentColor) : theme.textColor,
-            background: isSelected ? theme.panelBg : "transparent",
+            color: isSelected ? accent : theme.textColor,
+            background: isSelected
+              ? "linear-gradient(90deg, rgba(76,120,255,0.13), rgba(76,120,255,0.03))"
+              : "transparent",
             paddingLeft: `${8 + node.depth * 14}px`,
+            borderLeft: isSelected ? `2px solid ${accent}` : "2px solid transparent",
+            boxShadow: isSelected ? `0 0 14px ${accent}22` : "none",
           }}
         >
           <div className="flex items-center gap-1.5 min-w-0">
             <FileText size={12} />
-            <span className="truncate">{node.name}</span>
+            <span className="truncate">{highlightMatch(node.name, searchTerm, accent)}</span>
+            {isUnread && (
+              <span
+                className="ml-auto h-1.5 w-1.5 rounded-full shrink-0"
+                style={{
+                  background: accent,
+                  boxShadow: `0 0 8px ${accent}`,
+                }}
+                title="Unread"
+              />
+            )}
           </div>
         </button>
       );
@@ -451,25 +586,32 @@ export function PersonalFilesInformationPanel({
       className="rounded border overflow-hidden min-h-[68vh] h-[72vh] flex flex-col"
       style={{
         borderColor: theme.panelBorder,
-        background: theme.cardBg,
+        background:
+          "linear-gradient(180deg, rgba(4,6,15,0.98), rgba(7,9,20,0.98))",
       }}
     >
-      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: isSidebarCollapsed ? "42px minmax(0,1fr)" : "220px minmax(0,1fr)" }}>
+      <div
+        className="flex-1 grid min-h-0 transition-all duration-200 ease-out"
+        style={{
+          gridTemplateColumns: isSidebarCollapsed ? "42px minmax(0,1fr)" : "220px minmax(0,1fr)",
+        }}
+      >
         <aside
           className="border-r min-h-0 flex flex-col"
           style={{
             borderColor: theme.panelBorder,
-            background: theme.panelBg,
+            background:
+              "linear-gradient(180deg, rgba(9,12,28,0.98), rgba(6,8,18,0.98))",
           }}
         >
           <div
-            className="flex items-center gap-2 px-2 py-1.5 border-b"
+            className="flex items-center gap-2 px-2 py-1 border-b"
             style={{ borderColor: theme.panelBorder }}
           >
             <button
               type="button"
               onClick={() => setIsSidebarCollapsed((prev) => !prev)}
-              className={`${ui.raised} h-6 w-6 shrink-0 flex items-center justify-center`}
+              className={`${ui.raised} h-6 w-6 shrink-0 flex items-center justify-center transition-transform duration-150 hover:scale-[1.03]`}
               style={{ color: theme.labelColor }}
               title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
@@ -482,16 +624,22 @@ export function PersonalFilesInformationPanel({
                   <Search
                     size={11}
                     className="absolute left-2 top-1/2 -translate-y-1/2"
-                    style={{ color: theme.labelColor }}
+                    style={{ color: searchFocused ? accent : theme.labelColor }}
                   />
                   <input
                     value={searchValue}
                     onChange={(e) => setSearchValue(e.target.value)}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setSearchFocused(false)}
                     placeholder="Search..."
-                    className="w-full pl-6 pr-2 py-1 text-[10px] outline-none"
+                    className="w-full pl-6 pr-2 py-1 text-[10px] outline-none transition-all duration-150"
                     style={{
                       ...SEARCH_INPUT_STYLE,
                       color: theme.textColor,
+                      borderColor: searchFocused ? `${accent}88` : "rgba(124, 124, 185, 0.22)",
+                      boxShadow: searchFocused
+                        ? `0 0 0 1px ${accent}55, inset 0 0 0 1px rgba(0,0,0,0.22), 0 0 12px ${accent}22`
+                        : "inset 0 0 0 1px rgba(0,0,0,0.25)",
                     }}
                   />
                 </div>
@@ -525,8 +673,8 @@ export function PersonalFilesInformationPanel({
                       key={node.id}
                       type="button"
                       onClick={() => setIsSidebarCollapsed(false)}
-                      className={`${ui.raised} h-7 w-7 flex items-center justify-center`}
-                      style={{ color: node.type === "folder" ? node.color || theme.labelColor : theme.labelColor }}
+                      className={`${ui.raised} h-7 w-7 flex items-center justify-center transition-transform duration-150 hover:scale-[1.04]`}
+                      style={{ color: node.type === "folder" ? node.color || accent : theme.labelColor }}
                       title={node.name}
                     >
                       <Folder size={13} />
@@ -540,10 +688,12 @@ export function PersonalFilesInformationPanel({
         <section className="min-w-0 min-h-0 p-3">
           {selectedPaper ? (
             <div
-              className={`${ui.sunken} h-full flex flex-col overflow-hidden`}
+              className={`${ui.sunken} h-full flex flex-col overflow-hidden transition-all duration-200 ease-out`}
               style={{
-                background: "#07070d",
+                background:
+                  "linear-gradient(180deg, rgba(1,2,6,1), rgba(4,6,14,1))",
                 borderColor: theme.panelBorder,
+                boxShadow: "inset 0 0 24px rgba(0,0,0,0.45)",
               }}
             >
               <div
@@ -551,93 +701,150 @@ export function PersonalFilesInformationPanel({
                 style={{ borderColor: theme.panelBorder }}
               >
                 <div
-                  className="flex flex-wrap gap-1 text-[10px] mb-2"
+                  className="flex flex-wrap items-center gap-1 text-[10px] mb-2"
                   style={{ color: theme.labelColor }}
                 >
                   {breadcrumbs.map((crumb, index) => (
                     <React.Fragment key={crumb.id}>
-                      <span>{crumb.name}</span>
-                      {index < breadcrumbs.length - 1 ? <span>/</span> : null}
+                      <button
+                        type="button"
+                        onClick={() => handleBreadcrumbClick(crumb.id, crumb.type)}
+                        className="transition-colors"
+                        style={{
+                          color: index === breadcrumbs.length - 1 ? theme.textColor : theme.labelColor,
+                        }}
+                      >
+                        {crumb.name}
+                      </button>
+                      {index < breadcrumbs.length - 1 ? <span>›</span> : null}
                     </React.Fragment>
                   ))}
                 </div>
 
                 <h2
-                  className="text-[16px] font-semibold"
-                  style={{ color: theme.textColor }}
+                  className="text-[17px] font-semibold tracking-[0.02em]"
+                  style={{
+                    color: theme.textColor,
+                    textShadow: "0 0 10px rgba(255,255,255,0.05)",
+                  }}
                 >
                   {selectedPaper.title}
                 </h2>
 
-                <div
-                  className="mt-2 flex flex-wrap gap-3 text-[10px]"
-                  style={{ color: theme.labelColor }}
-                >
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
                   {selectedPaper.category ? (
-                    <span>Category: {selectedPaper.category}</span>
+                    <span
+                      className="px-2 py-0.5 rounded"
+                      style={{
+                        color: theme.textColor,
+                        background: "rgba(76,120,255,0.12)",
+                        border: "1px solid rgba(76,120,255,0.24)",
+                      }}
+                    >
+                      {selectedPaper.category}
+                    </span>
                   ) : null}
                   {selectedPaper.inWorldTime ? (
-                    <span>In-World: {selectedPaper.inWorldTime}</span>
+                    <span
+                      className="px-2 py-0.5 rounded"
+                      style={{
+                        color: theme.labelColor,
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      In-World: {selectedPaper.inWorldTime}
+                    </span>
                   ) : null}
                   {selectedPaper.realWorldTime ? (
-                    <span>Real: {selectedPaper.realWorldTime}</span>
+                    <span
+                      className="px-2 py-0.5 rounded"
+                      style={{
+                        color: theme.labelColor,
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      Real: {selectedPaper.realWorldTime}
+                    </span>
                   ) : null}
                 </div>
               </div>
 
-              <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
+              <div className="flex-1 overflow-auto px-4 py-4">
                 <div
-                  className="text-[11px] leading-6"
-                  style={{ color: theme.textColor }}
+                  className="max-w-[900px] mx-auto rounded border px-5 py-5 space-y-4 transition-opacity duration-200 ease-out"
+                  style={{
+                    borderColor: "rgba(124, 124, 185, 0.2)",
+                    background:
+                      "linear-gradient(180deg, rgba(8,10,22,0.96), rgba(5,7,16,0.96))",
+                    boxShadow: "0 8px 30px rgba(0,0,0,0.28), inset 0 0 0 1px rgba(255,255,255,0.02)",
+                  }}
                 >
-                  <RenderFormattedText
-                    text={
-                      selectedPaper.content ||
-                      selectedPaper.description ||
-                      "This paper does not have content yet."
-                    }
-                  />
-                </div>
-
-                {(selectedPaper.followUps?.length ?? 0) > 0 && (
-                  <div className="space-y-2">
-                    <div
-                      className="text-[10px] uppercase tracking-wide font-semibold"
-                      style={{ color: theme.labelColor }}
-                    >
-                      Related Notes
-                    </div>
-
-                    {selectedPaper.followUps!.map((followUp, index) => (
-                      <div
-                        key={followUp.id || `${selectedPaper.id}-followup-${index}`}
-                        className="rounded border px-3 py-2"
-                        style={{
-                          borderColor: theme.panelBorder,
-                          background: theme.panelBg,
-                        }}
-                      >
-                        {followUp.title ? (
-                          <div
-                            className="text-[11px] font-semibold mb-1"
-                            style={{ color: theme.textColor }}
-                          >
-                            {followUp.title}
-                          </div>
-                        ) : null}
-
-                        <div
-                          className="text-[11px]"
-                          style={{ color: theme.textColor }}
-                        >
-                          <RenderFormattedText
-                            text={followUp.content || followUp.description || ""}
-                          />
-                        </div>
-                      </div>
-                    ))}
+                  <div
+                    className="text-[11px] leading-7"
+                    style={{ color: theme.textColor }}
+                  >
+                    <RenderFormattedText
+                      text={
+                        selectedPaper.content ||
+                        selectedPaper.description ||
+                        "This paper does not have content yet."
+                      }
+                    />
                   </div>
-                )}
+
+                  {(selectedPaper.followUps?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <div
+                        className="text-[10px] uppercase tracking-[0.16em] font-semibold"
+                        style={{ color: theme.labelColor }}
+                      >
+                        Related Notes
+                      </div>
+
+                      <div className="grid gap-2">
+                        {selectedPaper.followUps!.map((followUp, index) => (
+                          <div
+                            key={followUp.id || `${selectedPaper.id}-followup-${index}`}
+                            className="rounded border px-3 py-2 transition-transform duration-150 hover:translate-x-[2px]"
+                            style={{
+                              borderColor: "rgba(124, 124, 185, 0.18)",
+                              background:
+                                "linear-gradient(180deg, rgba(10,13,27,0.95), rgba(7,9,20,0.95))",
+                            }}
+                          >
+                            <div className="flex items-start gap-2">
+                              <FileText
+                                size={13}
+                                style={{ color: accent, marginTop: "2px" }}
+                              />
+                              <div className="min-w-0">
+                                {followUp.title ? (
+                                  <div
+                                    className="text-[11px] font-semibold mb-1"
+                                    style={{ color: theme.textColor }}
+                                  >
+                                    {followUp.title}
+                                  </div>
+                                ) : null}
+
+                                <div
+                                  className="text-[11px]"
+                                  style={{ color: theme.textColor }}
+                                >
+                                  <RenderFormattedText
+                                    text={followUp.content || followUp.description || ""}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : (
@@ -647,6 +854,7 @@ export function PersonalFilesInformationPanel({
                 color: theme.labelColor,
                 background: "#000000",
                 borderColor: theme.panelBorder,
+                boxShadow: "inset 0 0 28px rgba(0,0,0,0.6)",
               }}
             >
               Select a paper from the left sidebar to read it.
