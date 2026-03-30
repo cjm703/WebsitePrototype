@@ -28,9 +28,9 @@ const INFO_SUBTAB_SORT_OPTIONS = [
 const INFO_UNASSIGNED_FILTER = "__unassigned__";
 
 const DISPLAY_MODE_OPTIONS = [
-  { value: "digital", label: "Digital Document", help: "Computer-style page with scanline and glow presentation." },
-  { value: "paper", label: "Paper Document", help: "Physical-paper style page with margin and serif presentation." },
-  { value: "item:stone_tablet", label: "Stone Tablet", help: "Item-focused page rendered as an inscribed stone tablet." },
+  { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, and optional typewriter text." },
+  { value: "paper", label: "Paper Document", help: "Brighter paper page with a thicker dark frame and torn edges." },
+  { value: "item:stone_tablet", label: "Stone Tablet", help: "A more realistic stone tablet with carved, engraved text." },
 ] as const;
 
 function stripHtml(value: string) {
@@ -631,6 +631,61 @@ export function DMInfoManagerSection(props: any) {
                       })}
                     </div>
                   </div>
+
+                  {(editingInfo as any).displayMode === "digital" && (
+                    <div className="p-4" style={DM_PANEL}>
+                      <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Digital Screen Options</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Text Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.digitalTextColor || ""}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalTextColor: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#8fd3ff"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Glow Intensity</label>
+                          <select
+                            value={(editingInfo as any).displayData?.digitalGlowIntensity || "medium"}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalGlowIntensity: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                          >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                          </select>
+                        </div>
+                        <div className="flex items-end">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!!(editingInfo as any).displayData?.digitalTypewriter}
+                              onChange={(e) => updateEditingInfo((prev: any) => ({
+                                ...prev,
+                                displayData: { ...(prev.displayData || {}), digitalTypewriter: e.target.checked },
+                              }))}
+                              className="accent-[#4A7BFF]"
+                            />
+                            <span className="text-[11px]" style={S_TEXT}>Typewriter reveal</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="text-[10px] mt-2" style={S_MUTED}>
+                        Moving scanlines are built in. These controls let you tune text color, glow brightness, and letter-by-letter reveal.
+                      </div>
+                    </div>
+                  )}
 
                   {(editingInfo as any).displayMode === "paper" && (
                     <div className="p-4" style={DM_PANEL}>

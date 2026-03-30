@@ -12,6 +12,7 @@ import {
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { firstColor, type PlayerTheme } from "./player-theme";
+import { renderInfoDisplayMode } from "./personal-files-information-renderers";
 import {
   INFO_UNASSIGNED_FILTER,
   type InfoSubTab,
@@ -34,6 +35,15 @@ export type ManagedInfoLike = {
   inWorldTime?: string;
   infoSubTab?: string;
   followUps?: InfoFollowUp[];
+  displayMode?: "digital" | "paper" | "item:stone_tablet";
+  displayData?: {
+    variant?: string;
+    alignment?: "left" | "center";
+    futurePaperOverlayMode?: "none" | "pixel_handwriting";
+    digitalTextColor?: string;
+    digitalGlowIntensity?: "low" | "medium" | "high";
+    digitalTypewriter?: boolean;
+  };
 };
 
 type RetroLike = {
@@ -585,60 +595,11 @@ export function PersonalFilesInformationPanel({
                 </div>
               </div>
 
-              <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
-                <div
-                  className="text-[11px] leading-6"
-                  style={{ color: theme.textColor }}
-                >
-                  <RenderFormattedText
-                    text={
-                      selectedPaper.content ||
-                      selectedPaper.description ||
-                      "This paper does not have content yet."
-                    }
-                  />
-                </div>
-
-                {(selectedPaper.followUps?.length ?? 0) > 0 && (
-                  <div className="space-y-2">
-                    <div
-                      className="text-[10px] uppercase tracking-wide font-semibold"
-                      style={{ color: theme.labelColor }}
-                    >
-                      Related Notes
-                    </div>
-
-                    {selectedPaper.followUps!.map((followUp, index) => (
-                      <div
-                        key={followUp.id || `${selectedPaper.id}-followup-${index}`}
-                        className="rounded border px-3 py-2"
-                        style={{
-                          borderColor: theme.panelBorder,
-                          background: theme.panelBg,
-                        }}
-                      >
-                        {followUp.title ? (
-                          <div
-                            className="text-[11px] font-semibold mb-1"
-                            style={{ color: theme.textColor }}
-                          >
-                            {followUp.title}
-                          </div>
-                        ) : null}
-
-                        <div
-                          className="text-[11px]"
-                          style={{ color: theme.textColor }}
-                        >
-                          <RenderFormattedText
-                            text={followUp.content || followUp.description || ""}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {renderInfoDisplayMode(selectedPaper, {
+                theme,
+                info: selectedPaper,
+                accentColor: firstColor(theme.accentColor),
+              })}
             </div>
           ) : (
             <div
