@@ -69,7 +69,6 @@ export function DMInfoManagerSection(props: any) {
     isAddingNewInfo,
     infoTags,
     infoSubTabs,
-    setInfoSubTabs,
     newInfoSubTabName,
     setNewInfoSubTabName,
     infoManagerSubTabFilter,
@@ -201,9 +200,15 @@ export function DMInfoManagerSection(props: any) {
     }
   };
 
-  const updateEditingInfo = (updater: (prev: any) => any) => {
+  const updateEditingInfo = (nextOrUpdater: any) => {
     if (typeof setEditingInfo !== "function") return;
-    setEditingInfo((prev: any) => (prev ? updater(prev) : prev));
+
+    if (typeof nextOrUpdater === "function") {
+      setEditingInfo((prev: any) => nextOrUpdater(prev));
+      return;
+    }
+
+    setEditingInfo(nextOrUpdater);
   };
 
   return (
@@ -243,7 +248,7 @@ export function DMInfoManagerSection(props: any) {
                         </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Parent Sub-Tab</label>
-                          <select value={st.parentId || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, parentId: e.target.value } : tab))} className={inputClass} style={inputStyle}>
+                          <select value={st.parentId || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, parentId: e.target.value } : tab))} className={inputClass} style={inputStyle}>
                             <option value="">Top Level</option>
                             {sortedSubTabs.filter((tab: any) => tab.id !== st.id).map((tab: any) => (
                               <option key={tab.id} value={tab.id}>{tab.name}</option>
@@ -255,18 +260,18 @@ export function DMInfoManagerSection(props: any) {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Icon</label>
-                          <input type="text" value={st.icon || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                          <input type="text" value={st.icon || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab))} className={inputClass} style={inputStyle} />
                         </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Accent Color</label>
-                          <input type="text" value={st.color || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, color: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                          <input type="text" value={st.color || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, color: e.target.value } : tab))} className={inputClass} style={inputStyle} />
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Sort Mode</label>
-                          <select value={st.sortMode || "custom"} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, sortMode: e.target.value } : tab))} className={inputClass} style={inputStyle}>
+                          <select value={st.sortMode || "custom"} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, sortMode: e.target.value } : tab))} className={inputClass} style={inputStyle}>
                             {INFO_SUBTAB_SORT_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
                             ))}
@@ -274,7 +279,7 @@ export function DMInfoManagerSection(props: any) {
                         </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Assigned To</label>
-                          <select value={Array.isArray(st.assignedTo) && st.assignedTo.includes("all") ? "all" : ((st.assignedTo || [])[0] || "")} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, assignedTo: e.target.value === "all" ? ["all"] : e.target.value ? [e.target.value] : [] } : tab))} className={inputClass} style={inputStyle}>
+                          <select value={Array.isArray(st.assignedTo) && st.assignedTo.includes("all") ? "all" : ((st.assignedTo || [])[0] || "")} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, assignedTo: e.target.value === "all" ? ["all"] : e.target.value ? [e.target.value] : [] } : tab))} className={inputClass} style={inputStyle}>
                             <option value="">No default player assignment</option>
                             <option value="all">All Players</option>
                             {players.filter((p: any) => p.id !== "dm").map((p: any) => (
@@ -286,7 +291,7 @@ export function DMInfoManagerSection(props: any) {
 
                       <div>
                         <label className="text-[10px] block mb-1" style={labelStyle}>Description</label>
-                        <input type="text" value={st.description || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, description: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                        <input type="text" value={st.description || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, description: e.target.value } : tab))} className={inputClass} style={inputStyle} />
                       </div>
 
                       <div className="flex flex-wrap gap-4">
@@ -303,7 +308,7 @@ export function DMInfoManagerSection(props: any) {
                         </label>
 
                         <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={!!st.showEmpty} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, showEmpty: e.target.checked } : tab))} className="accent-[#4A7BFF]" />
+                          <input type="checkbox" checked={!!st.showEmpty} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, showEmpty: e.target.checked } : tab))} className="accent-[#4A7BFF]" />
                           <span className="text-[11px]" style={S_TEXT}>Show when empty</span>
                         </label>
                       </div>
@@ -350,7 +355,7 @@ export function DMInfoManagerSection(props: any) {
                           <div className="text-[12px] font-semibold flex items-center gap-2" style={{ color: st.color || "#D7E2FF" }}>
                             <span>{st.icon || "📁"}</span>
                             <span>{st.name}</span>
-                            {st.isDefault && <span className="px-1.5 py-0.5 text-[9px]" style={DM_TAG_BADGE}>Default</span>}
+                            {st.isDefault && <span className="px-1.5 py-0.5 text-[4px]" style={DM_TAG_BADGE}>Default</span>}
                           </div>
                           {st.description && <div className="text-[10px] mt-1" style={S_MUTED}>{st.description}</div>}
                         </div>
@@ -458,7 +463,7 @@ export function DMInfoManagerSection(props: any) {
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <button onClick={() => updateEditingInfo(() => info)} className="hover:opacity-80"><Edit size={13} style={S_SUBTLE} /></button>
+                            <button onClick={() => updateEditingInfo(info)} className="hover:opacity-80"><Edit size={13} style={S_SUBTLE} /></button>
                             <button onClick={() => handleDeleteInfo(info.id)} className="hover:opacity-80"><Trash2 size={13} style={S_RED} /></button>
                           </div>
                         </div>
@@ -526,7 +531,7 @@ export function DMInfoManagerSection(props: any) {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                     <div className="md:col-span-2">
                       <label className="text-[10px] block mb-1" style={labelStyle}>Title</label>
-                      <input type="text" value={editingInfo.title || ""} onChange={(e) => updateInfoField("title", e.target.value)} className={inputClass} style={inputStyle} />
+                      <input type="text" value={editingInfo.title} onChange={(e) => updateInfoField("title", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Category Path</label>
@@ -583,9 +588,9 @@ export function DMInfoManagerSection(props: any) {
                     </div>
                   </div>
 
-                  {activeInfoCustomFields.filter((field: any) => field?.fieldDef && typeof field.fieldDef.type === "string").length > 0 && (
+                  {activeInfoCustomFields.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {activeInfoCustomFields.filter((field: any) => field?.fieldDef && typeof field.fieldDef.type === "string").map((fieldDef: any) => {
+                      {activeInfoCustomFields.map((fieldDef: any) => {
                         const key = `${fieldDef.tagName}::${fieldDef.name}`;
                         const value = editingInfo.customFields?.[key] || "";
                         return (
