@@ -2990,8 +2990,7 @@ const handleSaveItem = async () => {
           {/* ======================================================= */}
           {/* NOTIFICATIONS                                            */}
           {/* ======================================================= */}
-
- && (
+          {activeSection === "notifs" && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Notifications</h2>
