@@ -17,6 +17,7 @@ import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo, TagDefinition } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
+import PersonalFilesInformationPanel from "./personal-files-information-panel";
 
 
 
@@ -4386,203 +4387,19 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           )}
 
           {/* INFORMATION TAB */}
-          {player && activeTab === "information" && (() => {
-            const sortedSubTabs = [...infoSubTabs].sort((a, b) => a.order - b.order);
-            const validSubTabIds = new Set(infoSubTabs.map((tab) => tab.id));
-            const infoCountsBySubTab = playerInfos.reduce<Record<string, number>>((acc, info) => {
-              const key = info.infoSubTab && validSubTabIds.has(info.infoSubTab)
-                ? info.infoSubTab
-                : INFO_UNASSIGNED_FILTER;
-              acc[key] = (acc[key] || 0) + 1;
-              return acc;
-            }, {});
-            const visibleSubTabs = sortedSubTabs.filter((tab) => !!tab.showEmpty || (infoCountsBySubTab[tab.id] || 0) > 0);
-            const activeSubTab = infoSubTabFilter && infoSubTabFilter !== INFO_UNASSIGNED_FILTER
-              ? infoSubTabs.find((tab) => tab.id === infoSubTabFilter) ?? null
-              : null;
-            const activeSortMode = activeSubTab?.sortMode || infoSortBy;
-            const filteredInfos = playerInfos
-              .filter((info) => {
-                const normalizedSubTab = info.infoSubTab && validSubTabIds.has(info.infoSubTab)
-                  ? info.infoSubTab
-                  : "";
-
-                if (!infoSubTabFilter) return true;
-                if (infoSubTabFilter === INFO_UNASSIGNED_FILTER) return !normalizedSubTab;
-                return normalizedSubTab === infoSubTabFilter;
-              })
-              .sort((a, b) => {
-                if (activeSortMode === "title") return a.title.localeCompare(b.title);
-                if (activeSortMode === "category") return (a.category || "").localeCompare(b.category || "");
-                if (activeSortMode === "oldest") {
-                  return (a.realWorldTime || a.inWorldTime || "").localeCompare(b.realWorldTime || b.inWorldTime || "");
-                }
-                if (activeSortMode === "newest") {
-                  return (b.realWorldTime || b.inWorldTime || "").localeCompare(a.realWorldTime || a.inWorldTime || "");
-                }
-                return 0;
-              });
-            const hasUnassignedInfos = (infoCountsBySubTab[INFO_UNASSIGNED_FILTER] || 0) > 0;
-
-            return (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Info size={18} style={{ color: firstColor(theme.accentColor) }} />
-                <h2 className="text-[16px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                  Information
-                </h2>
-                <span className="text-[10px] px-1.5 py-0.5 ml-1" style={SUNKEN_INPUT_DIM}>
-                  {filteredInfos.length} entr{filteredInfos.length !== 1 ? "ies" : "y"}
-                </span>
-              </div>
-
-              {sortedSubTabs.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => setInfoSubTabFilter(null)}
-                      className={`${!infoSubTabFilter ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-                      style={{ color: !infoSubTabFilter ? firstColor(theme.accentColor) : theme.labelColor, fontWeight: !infoSubTabFilter ? 600 : 400, background: !infoSubTabFilter ? theme.panelBg : theme.cardBg }}
-                    >
-                      All
-                    </button>
-                    {visibleSubTabs.map(st => (
-                      <button
-                        key={st.id}
-                        onClick={() => setInfoSubTabFilter(st.id)}
-                        className={`${infoSubTabFilter === st.id ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-                        style={{
-                          color: infoSubTabFilter === st.id ? (st.color || firstColor(theme.accentColor)) : (st.color || theme.labelColor),
-                          fontWeight: infoSubTabFilter === st.id ? 600 : 400,
-                          background: infoSubTabFilter === st.id ? theme.panelBg : theme.cardBg,
-                          borderColor: st.color || theme.panelBorder,
-                        }}
-                      >
-                        <span className="flex items-center gap-1">
-                          {st.icon ? <span>{st.icon}</span> : null}
-                          <span>{st.name}</span>
-                          <span className="opacity-70">({infoCountsBySubTab[st.id] || 0})</span>
-                        </span>
-                      </button>
-                    ))}
-                    {hasUnassignedInfos && (
-                      <button
-                        onClick={() => setInfoSubTabFilter(INFO_UNASSIGNED_FILTER)}
-                        className={`${infoSubTabFilter === INFO_UNASSIGNED_FILTER ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-                        style={{
-                          color: infoSubTabFilter === INFO_UNASSIGNED_FILTER ? "#FFCC66" : theme.labelColor,
-                          fontWeight: infoSubTabFilter === INFO_UNASSIGNED_FILTER ? 600 : 400,
-                          background: infoSubTabFilter === INFO_UNASSIGNED_FILTER ? theme.panelBg : theme.cardBg,
-                        }}
-                      >
-                        Unassigned ({infoCountsBySubTab[INFO_UNASSIGNED_FILTER] || 0})
-                      </button>
-                    )}
-                  </div>
-
-                  {(activeSubTab?.description || activeSubTab?.sortMode && activeSubTab.sortMode !== "custom" || infoSubTabFilter === INFO_UNASSIGNED_FILTER) && (
-                    <div className={`${retro.sunken} px-2 py-1.5 text-[10px]`} style={{ color: activeSubTab?.color || theme.labelColor, background: theme.panelBg }}>
-                      {infoSubTabFilter === INFO_UNASSIGNED_FILTER ? (
-                        <span>Entries that have not been assigned to an Information sub-tab yet.</span>
-                      ) : (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {activeSubTab?.description && <span>{activeSubTab.description}</span>}
-                          {activeSubTab?.sortMode && activeSubTab.sortMode !== "custom" && (
-                            <span style={{ color: theme.labelColor }}>
-                              Sorted by {activeSubTab.sortMode === "title" ? "title" : activeSubTab.sortMode === "category" ? "category" : activeSubTab.sortMode === "newest" ? "newest first" : "oldest first"}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {filteredInfos.length === 0 ? (
-                <div className="text-[12px] text-center py-6" style={S_MUTED}>
-                  {playerInfos.length === 0
-                    ? "No information has been assigned to your profile yet."
-                    : infoSubTabFilter === INFO_UNASSIGNED_FILTER
-                    ? "You do not have any unassigned information."
-                    : activeSubTab
-                    ? `No information is available in ${activeSubTab.name} right now.`
-                    : "No information matches the selected tab."}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {filteredInfos.map((info) => {
-                    const isExpanded = expandedInfoId === info.id;
-                    return (
-                    <div key={info.id} className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-                      <div className="flex items-start justify-between mb-2 cursor-pointer" onClick={() => setExpandedInfoId(isExpanded ? null : info.id)}>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <div className="text-[14px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                              {info.title}
-                            </div>
-                            {(info.followUps?.length ?? 0) > 0 && (
-                              <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#FFAA4A", border: "1px solid #FFAA4A40", background: "#FFAA4A15" }}>{info.followUps!.length} follow-up{info.followUps!.length !== 1 ? "s" : ""}</span>
-                            )}
-                            {infoSubTabFilter === INFO_UNASSIGNED_FILTER && (
-                              <span className="text-[9px] px-1.5 py-0.5" style={{ color: "#FFCC66", border: "1px solid #FFCC6640", background: "#FFCC6615" }}>Unassigned</span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 mt-1 flex-wrap">
-                            {info.inWorldTime && (
-                              <div className="flex items-center gap-1 text-[10px]" style={S_MUTED}>
-                                <Clock size={9} style={{ color: "#5AE0B0" }} />
-                                <span style={{ color: "#5AE0B0" }}>In-World:</span> {info.inWorldTime}
-                              </div>
-                            )}
-                            {info.realWorldTime && (
-                              <div className="flex items-center gap-1 text-[10px]" style={S_MUTED}>
-                                <History size={9} style={{ color: "#5A9AFF" }} />
-                                <span style={{ color: "#5A9AFF" }}>Real:</span> {info.realWorldTime}
-                              </div>
-                            )}
-                            {!info.realWorldTime && !info.inWorldTime && info.category && (
-                              <div className="text-[10px]" style={S_MUTED}>
-                                Category: {info.category}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <ChevronDown size={14} style={{ color: theme.labelColor, transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }} />
-                      </div>
-
-                      {isExpanded && (
-                        <div className="space-y-3">
-                          {info.category && (
-                            <div className="text-[10px]" style={S_MUTED}>
-                              Category: {info.category}
-                            </div>
-                          )}
-                          <RenderFormattedText text={info.content} color={theme.textColor} baseSize={12} />
-                          {renderCustomFields(info.customFields)}
-                          {(info.followUps?.length ?? 0) > 0 && (
-                            <div className="space-y-2">
-                              <div className="text-[11px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                                Follow-Ups
-                              </div>
-                              {info.followUps!.map((fu) => (
-                                <div key={fu.id} className={`${retro.raised} p-3`} style={{ background: theme.cardBg }}>
-                                  <div className="text-[10px] mb-1" style={S_MUTED}>{fu.createdAt}</div>
-                                  <RenderFormattedText text={fu.content} color={theme.textColor} baseSize={12} />
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-            );
-          })()}
+          {player && activeTab === "information" && (
+            <PersonalFilesInformationPanel
+              theme={theme}
+              playerInfos={playerInfos}
+              infoSubTabs={infoSubTabs}
+              infoSubTabFilter={infoSubTabFilter}
+              setInfoSubTabFilter={setInfoSubTabFilter}
+              expandedInfoId={expandedInfoId}
+              setExpandedInfoId={setExpandedInfoId}
+              infoSortBy={infoSortBy}
+              infoCategoryFilter={infoCategoryFilter}
+            />
+          )}
 
         </div>
       </div>
