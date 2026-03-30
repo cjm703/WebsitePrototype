@@ -28,21 +28,9 @@ const INFO_SUBTAB_SORT_OPTIONS = [
 const INFO_UNASSIGNED_FILTER = "__unassigned__";
 
 const DISPLAY_MODE_OPTIONS = [
-  {
-    value: "digital",
-    label: "Digital Document",
-    help: "Computer-style page with scanline/glow presentation.",
-  },
-  {
-    value: "paper",
-    label: "Paper Document",
-    help: "Physical-paper style page with margin and serif presentation.",
-  },
-  {
-    value: "item:stone_tablet",
-    label: "Stone Tablet",
-    help: "Item-focused page rendered as an inscribed stone tablet.",
-  },
+  { value: "digital", label: "Digital Document", help: "Computer-style page with scanline and glow presentation." },
+  { value: "paper", label: "Paper Document", help: "Physical-paper style page with margin and serif presentation." },
+  { value: "item:stone_tablet", label: "Stone Tablet", help: "Item-focused page rendered as an inscribed stone tablet." },
 ] as const;
 
 function stripHtml(value: string) {
@@ -64,6 +52,12 @@ function modeLabel(value: string | undefined) {
 
 function modeHelp(value: string | undefined) {
   return DISPLAY_MODE_OPTIONS.find((opt) => opt.value === value)?.help || "";
+}
+
+function ownerLabel(ids: string[] | undefined, players: any[]) {
+  if (!ids || ids.length === 0) return "Unassigned";
+  if (ids.includes("all")) return "All Players";
+  return ids.map((id) => players.find((p) => p.id === id)?.name || "Unknown").join(", ");
 }
 
 export function DMInfoManagerSection(props: any) {
@@ -145,26 +139,30 @@ export function DMInfoManagerSection(props: any) {
     return {
       ...editingInfo,
       title: editingInfo.title || "Untitled Information",
-      content:
-        editingInfo.content ||
-        editingInfo.description ||
-        "<p>This preview will show how the page renders for the player.</p>",
+      content: editingInfo.content || editingInfo.description || "<p>This preview will show how the page renders for the player.</p>",
       displayMode: (editingInfo as any).displayMode || "digital",
       displayData: (editingInfo as any).displayData || {},
     };
   }, [editingInfo]);
 
+  const getInheritedAssignedTo = (subTabId: string) => {
+    const subTab = infoSubTabs.find((st: any) => st.id === subTabId);
+    const assignedTo = Array.isArray(subTab?.assignedTo) ? subTab.assignedTo : [];
+    return assignedTo;
+  };
+
   const applyBulkAssign = async () => {
-    const selectedIds = new Set(
-      Object.entries(infoBulkSelection)
-        .filter(([, checked]) => checked)
-        .map(([id]) => id)
-    );
+    const selectedIds = new Set(Object.entries(infoBulkSelection).filter(([, checked]) => checked).map(([id]) => id));
     if (selectedIds.size === 0) return;
 
+    const inherited = getInheritedAssignedTo(infoBulkAssignTarget);
     const next = managedInfos.map((info: any) =>
       selectedIds.has(info.id)
-        ? { ...info, infoSubTab: infoBulkAssignTarget }
+        ? {
+            ...info,
+            infoSubTab: infoBulkAssignTarget,
+            assignedTo: inherited.length ? inherited : info.assignedTo,
+          }
         : info
     );
     await persistInfos(next);
@@ -194,25 +192,34 @@ export function DMInfoManagerSection(props: any) {
     setFollowUpInfoId(null);
   };
 
+  const assignInfoSubTab = (subTabId: string) => {
+    updateInfoField("infoSubTab", subTabId);
+    const inherited = getInheritedAssignedTo(subTabId);
+    if (inherited.length) {
+      updateInfoField("assignedTo", inherited);
+    }
+  };
+
+  const updateEditingInfo = (updater: (prev: any) => any) => {
+    if (typeof setEditingInfo !== "function") return;
+    setEditingInfo((prev: any) => (prev ? updater(prev) : prev));
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Information</h2>
           <div className="text-[10px] mt-1" style={S_MUTED}>
-            Organize folders, create papers, and choose how they render in Personal Files.
+            Organize folders, create papers, choose display styles, and preview player-facing results.
           </div>
         </div>
-        <button
-          onClick={handleAddInfo}
-          className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`}
-          style={S_GREEN_BTN}
-        >
+        <button onClick={handleAddInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
           <Plus size={14} /> Add Info
         </button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)] gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4">
         <div className="space-y-4">
           <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
             <div className="flex items-center gap-2 mb-3">
@@ -220,10 +227,10 @@ export function DMInfoManagerSection(props: any) {
               <div className="text-[12px]" style={S_SECTION_HDR}>INFORMATION SUB-TABS</div>
             </div>
             <div className="text-[10px] mb-3" style={S_MUTED}>
-              These are the top-level folders players browse in the Information explorer.
+              These are the top-level and nested folders players browse in the Information explorer.
             </div>
 
-            <div className="space-y-3 max-h-[520px] overflow-auto pr-1">
+            <div className="space-y-3 max-h-[560px] overflow-auto pr-1">
               {sortedSubTabs.map((st: any, index: number, arr: any[]) => (
                 <div key={st.id} className="p-3" style={DM_PANEL}>
                   {editingInfoSubTabId === st.id ? (
@@ -234,21 +241,43 @@ export function DMInfoManagerSection(props: any) {
                           <input type="text" value={editingInfoSubTabName} onChange={(e) => setEditingInfoSubTabName(e.target.value)} className={inputClass} style={inputStyle} />
                         </div>
                         <div>
-                          <label className="text-[10px] block mb-1" style={labelStyle}>Icon</label>
-                          <input type="text" value={st.icon || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Parent Sub-Tab</label>
+                          <select value={st.parentId || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, parentId: e.target.value } : tab))} className={inputClass} style={inputStyle}>
+                            <option value="">Top Level</option>
+                            {sortedSubTabs.filter((tab: any) => tab.id !== st.id).map((tab: any) => (
+                              <option key={tab.id} value={tab.id}>{tab.name}</option>
+                            ))}
+                          </select>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Icon</label>
+                          <input type="text" value={st.icon || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Accent Color</label>
                           <input type="text" value={st.color || ""} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, color: e.target.value } : tab))} className={inputClass} style={inputStyle} />
                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Sort Mode</label>
                           <select value={st.sortMode || "custom"} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, sortMode: e.target.value } : tab))} className={inputClass} style={inputStyle}>
                             {INFO_SUBTAB_SORT_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Assigned To</label>
+                          <select value={Array.isArray(st.assignedTo) && st.assignedTo.includes("all") ? "all" : ((st.assignedTo || [])[0] || "")} onChange={(e) => props.setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, assignedTo: e.target.value === "all" ? ["all"] : e.target.value ? [e.target.value] : [] } : tab))} className={inputClass} style={inputStyle}>
+                            <option value="">No default player assignment</option>
+                            <option value="all">All Players</option>
+                            {players.filter((p: any) => p.id !== "dm").map((p: any) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
                             ))}
                           </select>
                         </div>
@@ -264,9 +293,7 @@ export function DMInfoManagerSection(props: any) {
                           <input type="checkbox" checked={!!st.isDefault} onChange={async (e) => {
                             const next = ensureSingleDefaultInfoSubTab(
                               infoSubTabs.map((tab: any) =>
-                                tab.id === st.id
-                                  ? { ...tab, isDefault: e.target.checked }
-                                  : { ...tab, isDefault: false }
+                                tab.id === st.id ? { ...tab, isDefault: e.target.checked } : { ...tab, isDefault: false }
                               )
                             );
                             await persistInfoSubTabs(next.map(normalizeInfoSubTabDraft));
@@ -288,7 +315,7 @@ export function DMInfoManagerSection(props: any) {
 
                       <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div className="text-[10px]" style={S_DIM}>
-                          {managedInfos.filter((info: any) => info.infoSubTab === st.id).length} assigned
+                          {managedInfos.filter((info: any) => info.infoSubTab === st.id).length} assigned • {ownerLabel(st.assignedTo, players)}
                         </div>
                         <div className="flex items-center gap-2">
                           <button onClick={async () => {
@@ -300,9 +327,7 @@ export function DMInfoManagerSection(props: any) {
                             }
                             const next = ensureSingleDefaultInfoSubTab(
                               infoSubTabs.map((s: any) =>
-                                s.id === st.id
-                                  ? normalizeInfoSubTabDraft({ ...s, name: editingInfoSubTabName.trim() })
-                                  : normalizeInfoSubTabDraft(s)
+                                s.id === st.id ? normalizeInfoSubTabDraft({ ...s, name: editingInfoSubTabName.trim() }) : normalizeInfoSubTabDraft(s)
                               )
                             );
                             await persistInfoSubTabs(next);
@@ -337,8 +362,8 @@ export function DMInfoManagerSection(props: any) {
                       </div>
                       <div className="text-[10px] flex flex-wrap gap-3" style={S_DIM}>
                         <span>{managedInfos.filter((info: any) => info.infoSubTab === st.id).length} assigned</span>
-                        <span>Sort: {INFO_SUBTAB_SORT_OPTIONS.find((opt) => opt.value === (st.sortMode || "custom"))?.label || "Manual Order"}</span>
-                        <span>{st.showEmpty ? "Visible when empty" : "Hidden when empty"}</span>
+                        <span>Parent: {sortedSubTabs.find((tab: any) => tab.id === st.parentId)?.name || "Top Level"}</span>
+                        <span>Owners: {ownerLabel(st.assignedTo, players)}</span>
                       </div>
                     </div>
                   )}
@@ -365,6 +390,8 @@ export function DMInfoManagerSection(props: any) {
                       description: "",
                       icon: "",
                       color: "",
+                      parentId: "",
+                      assignedTo: [],
                       isDefault: infoSubTabs.length === 0,
                       sortMode: "custom",
                       showEmpty: false,
@@ -415,10 +442,6 @@ export function DMInfoManagerSection(props: any) {
             <div className="space-y-2 max-h-[500px] overflow-auto pr-1">
               {filteredInfos.map((info: any) => {
                 const displayMode = info.displayMode || "digital";
-                const owners = Array.isArray(info.assignedTo) && info.assignedTo.includes("all")
-                  ? "All Players"
-                  : (info.assignedTo || []).map((id: string) => players.find((p: any) => p.id === id)?.name || "Unknown").join(", ") || "Unassigned";
-
                 return (
                   <div key={info.id} className="p-3" style={DM_PANEL}>
                     <div className="flex items-start gap-3">
@@ -426,17 +449,15 @@ export function DMInfoManagerSection(props: any) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-[12px] font-semibold truncate" style={S_TEXT}>
-                              {info.title || "(untitled)"}
-                            </div>
+                            <div className="text-[12px] font-semibold truncate" style={S_TEXT}>{info.title || "(untitled)"}</div>
                             <div className="text-[10px] mt-1 flex flex-wrap gap-3" style={S_DIM}>
                               <span>{modeLabel(displayMode)}</span>
                               <span>{info.category || "No category path"}</span>
-                              <span>{owners}</span>
+                              <span>{ownerLabel(info.assignedTo, players)}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
-                            <button onClick={() => props.setEditingInfo(info)} className="hover:opacity-80"><Edit size={13} style={S_SUBTLE} /></button>
+                            <button onClick={() => updateEditingInfo(() => info)} className="hover:opacity-80"><Edit size={13} style={S_SUBTLE} /></button>
                             <button onClick={() => handleDeleteInfo(info.id)} className="hover:opacity-80"><Trash2 size={13} style={S_RED} /></button>
                           </div>
                         </div>
@@ -491,13 +512,7 @@ export function DMInfoManagerSection(props: any) {
                   const Icon = tab.icon;
                   const active = editorTab === tab.key;
                   return (
-                    <button
-                      key={tab.key}
-                      type="button"
-                      onClick={() => setEditorTab(tab.key as any)}
-                      className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`}
-                      style={active ? DM_TAG_BADGE : { color: "#8FA2D9" }}
-                    >
+                    <button key={tab.key} type="button" onClick={() => setEditorTab(tab.key as any)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={active ? DM_TAG_BADGE : { color: "#8FA2D9" }}>
                       <Icon size={12} />
                       {tab.label}
                     </button>
@@ -518,7 +533,7 @@ export function DMInfoManagerSection(props: any) {
                     </div>
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Info Sub-Tab</label>
-                      <select value={editingInfo.infoSubTab || ""} onChange={(e) => updateInfoField("infoSubTab", e.target.value)} className={inputClass} style={inputStyle}>
+                      <select value={editingInfo.infoSubTab || ""} onChange={(e) => assignInfoSubTab(e.target.value)} className={inputClass} style={inputStyle}>
                         <option value="">None</option>
                         {sortedSubTabs.map((st: any) => (
                           <option key={st.id} value={st.id}>{st.name}</option>
@@ -531,11 +546,15 @@ export function DMInfoManagerSection(props: any) {
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Assigned To</label>
                       <select value={(editingInfo.assignedTo || []).includes("all") ? "all" : ((editingInfo.assignedTo || [])[0] || "")} onChange={(e) => updateInfoField("assignedTo", e.target.value === "all" ? ["all"] : e.target.value ? [e.target.value] : [])} className={inputClass} style={inputStyle}>
+                        <option value="">No player assignment</option>
                         <option value="all">All Players</option>
                         {players.filter((p: any) => p.id !== "dm").map((p: any) => (
                           <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                       </select>
+                      <div className="text-[10px] mt-1" style={S_MUTED}>
+                        Selecting a sub-tab with owners auto-fills this, but you can override it here.
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Real World Time</label>
@@ -556,17 +575,7 @@ export function DMInfoManagerSection(props: any) {
                     <div className="text-[10px] mb-2" style={labelStyle}>Tags</div>
                     <div className="flex flex-wrap gap-2">
                       {infoTags.map((tag: any) => (
-                        <button
-                          key={tag.name}
-                          type="button"
-                          onClick={() => toggleInfoTag(tag.name)}
-                          className={`${retro.button} px-2 py-1 text-[10px]`}
-                          style={
-                            editingInfo.tags?.includes(tag.name)
-                              ? DM_TAG_BADGE
-                              : { color: "#8FA2D9", background: "#0A0A28", border: "1px solid #1A1A3B" }
-                          }
-                        >
+                        <button key={tag.name} type="button" onClick={() => toggleInfoTag(tag.name)} className={`${retro.button} px-2 py-1 text-[10px]`} style={editingInfo.tags?.includes(tag.name) ? DM_TAG_BADGE : { color: "#8FA2D9", background: "#0A0A28", border: "1px solid #1A1A3B" }}>
                           {tag.name}
                         </button>
                       ))}
@@ -580,13 +589,7 @@ export function DMInfoManagerSection(props: any) {
                         const value = editingInfo.customFields?.[key] || "";
                         return (
                           <React.Fragment key={key}>
-                            {renderTypedField(
-                              key,
-                              fieldDef,
-                              value,
-                              updateInfoCustomField,
-                              <label className="text-[10px] block mb-1" style={labelStyle}>{fieldDef.name}</label>
-                            )}
+                            {renderTypedField(key, fieldDef, value, updateInfoCustomField, <label className="text-[10px] block mb-1" style={labelStyle}>{fieldDef.name}</label>)}
                           </React.Fragment>
                         );
                       })}
@@ -606,25 +609,17 @@ export function DMInfoManagerSection(props: any) {
                       {DISPLAY_MODE_OPTIONS.map((option) => {
                         const active = ((editingInfo as any).displayMode || "digital") === option.value;
                         return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => props.setEditingInfo((prev: any) => prev ? {
-                              ...prev,
-                              displayMode: option.value,
-                              displayData: {
-                                ...(prev.displayData || {}),
-                                ...(option.value === "item:stone_tablet" ? { alignment: prev.displayData?.alignment || "left" } : {}),
-                                ...(option.value === "paper" ? { futurePaperOverlayMode: prev.displayData?.futurePaperOverlayMode || "pixel_handwriting" } : {}),
-                              },
-                            } : prev)}
-                            className="text-left p-3 rounded border transition-colors"
-                            style={active ? DM_TAG_BADGE : DM_PANEL_ALT}
-                          >
+                          <button key={option.value} type="button" onClick={() => updateEditingInfo((prev: any) => ({
+                            ...prev,
+                            displayMode: option.value,
+                            displayData: {
+                              ...(prev.displayData || {}),
+                              ...(option.value === "item:stone_tablet" ? { alignment: prev.displayData?.alignment || "left" } : {}),
+                              ...(option.value === "paper" ? { futurePaperOverlayMode: prev.displayData?.futurePaperOverlayMode || "pixel_handwriting" } : {}),
+                            },
+                          }))} className="text-left p-3 rounded border transition-colors" style={active ? DM_TAG_BADGE : DM_PANEL_ALT}>
                             <div className="text-[12px] font-semibold">{option.label}</div>
-                            <div className="text-[10px] mt-1" style={active ? { color: "#D7E2FF" } : S_MUTED}>
-                              {option.help}
-                            </div>
+                            <div className="text-[10px] mt-1" style={active ? { color: "#D7E2FF" } : S_MUTED}>{option.help}</div>
                           </button>
                         );
                       })}
@@ -635,12 +630,12 @@ export function DMInfoManagerSection(props: any) {
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Paper Options</div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Future Overlay Planning Hook</label>
-                      <select value={(editingInfo as any).displayData?.futurePaperOverlayMode || "pixel_handwriting"} onChange={(e) => props.setEditingInfo((prev: any) => prev ? { ...prev, displayData: { ...(prev.displayData || {}), futurePaperOverlayMode: e.target.value } } : prev)} className={inputClass} style={inputStyle}>
+                      <select value={(editingInfo as any).displayData?.futurePaperOverlayMode || "pixel_handwriting"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), futurePaperOverlayMode: e.target.value } }))} className={inputClass} style={inputStyle}>
                         <option value="pixel_handwriting">Future DM Pixel Handwriting Overlay</option>
                         <option value="none">None</option>
                       </select>
                       <div className="text-[10px] mt-2" style={S_MUTED}>
-                        Reserved for the future paper handwriting/pixel-drawing system.
+                        Reserved for the future paper handwriting or pixel-drawing system.
                       </div>
                     </div>
                   )}
@@ -649,7 +644,7 @@ export function DMInfoManagerSection(props: any) {
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Stone Tablet Options</div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Inscription Alignment</label>
-                      <select value={(editingInfo as any).displayData?.alignment || "left"} onChange={(e) => props.setEditingInfo((prev: any) => prev ? { ...prev, displayData: { ...(prev.displayData || {}), alignment: e.target.value } } : prev)} className={inputClass} style={inputStyle}>
+                      <select value={(editingInfo as any).displayData?.alignment || "left"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), alignment: e.target.value } }))} className={inputClass} style={inputStyle}>
                         <option value="left">Left</option>
                         <option value="center">Center</option>
                       </select>
@@ -661,7 +656,7 @@ export function DMInfoManagerSection(props: any) {
                       Current Mode: {modeLabel((editingInfo as any).displayMode || "digital")}
                     </div>
                     <div className="text-[10px]" style={S_MUTED}>
-                      {DISPLAY_MODE_OPTIONS.find((opt) => opt.value === ((editingInfo as any).displayMode || "digital"))?.help}
+                      {modeHelp((editingInfo as any).displayMode || "digital")}
                     </div>
                   </div>
                 </div>
@@ -673,14 +668,11 @@ export function DMInfoManagerSection(props: any) {
                     Live player-side preview using the current content and display settings.
                   </div>
                   <div className="rounded border overflow-hidden" style={{ borderColor: "#232B5B", background: "#090D18" }}>
-                    {renderInfoDisplayMode(
-                      previewInfo,
-                      {
-                        theme: previewTheme,
-                        info: previewInfo,
-                        accentColor: "#4A7BFF",
-                      }
-                    )}
+                    {renderInfoDisplayMode(previewInfo, {
+                      theme: previewTheme,
+                      info: previewInfo,
+                      accentColor: "#4A7BFF",
+                    })}
                   </div>
                 </div>
               )}

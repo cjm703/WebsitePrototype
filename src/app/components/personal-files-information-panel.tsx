@@ -10,8 +10,8 @@ import {
   Search,
 } from "lucide-react";
 import { retro } from "./retro-styles";
-import { RenderFormattedText } from "./render-text";
 import { firstColor, type PlayerTheme } from "./player-theme";
+import { renderInfoDisplayMode } from "./personal-files-information-renderers";
 import {
   INFO_UNASSIGNED_FILTER,
   type InfoSubTab,
@@ -33,7 +33,14 @@ export type ManagedInfoLike = {
   realWorldTime?: string;
   inWorldTime?: string;
   infoSubTab?: string;
+  assignedTo?: string[];
   followUps?: InfoFollowUp[];
+  displayMode?: "digital" | "paper" | "item:stone_tablet";
+  displayData?: {
+    variant?: string;
+    alignment?: "left" | "center";
+    futurePaperOverlayMode?: "none" | "pixel_handwriting";
+  };
 };
 
 type RetroLike = {
@@ -172,7 +179,30 @@ function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): T
     infosByTab.get(tabKey)!.push(info);
   }
 
+  const tabNodeMap = new Map<string, Extract<TreeNode, { type: "folder" }>>();
+  for (const tab of sortedTabs) {
+    tabNodeMap.set(tab.id, {
+      id: `tab:${tab.id}`,
+      type: "folder",
+      name: tab.name,
+      children: [],
+      depth: 0,
+      color: tab.color || undefined,
+      description: tab.description || undefined,
+      parentId: tab.parentId || undefined,
+      isRoot: !tab.parentId,
+    });
+  }
+
   const roots: TreeNode[] = [];
+  for (const tab of sortedTabs) {
+    const node = tabNodeMap.get(tab.id)!;
+    if (tab.parentId && tabNodeMap.has(tab.parentId)) {
+      tabNodeMap.get(tab.parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
 
   const addFolderBranch = (
     folderRoot: Extract<TreeNode, { type: "folder" }>,
@@ -213,23 +243,11 @@ function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): T
   };
 
   for (const tab of sortedTabs) {
-    const rootFolder: Extract<TreeNode, { type: "folder" }> = {
-      id: `tab:${tab.id}`,
-      type: "folder",
-      name: tab.name,
-      children: [],
-      depth: 0,
-      color: tab.color || undefined,
-      description: tab.description || undefined,
-      isRoot: true,
-    };
-
+    const rootFolder = tabNodeMap.get(tab.id)!;
     const infos = [...(infosByTab.get(tab.id) || [])].sort(comparePapers);
     for (const info of infos) {
       addFolderBranch(rootFolder, info);
     }
-
-    roots.push(rootFolder);
   }
 
   const unassignedInfos = [...(infosByTab.get(INFO_UNASSIGNED_FILTER) || [])].sort(comparePapers);
@@ -252,6 +270,15 @@ function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): T
     roots.push(unassignedRoot);
   }
 
+  const applyDepth = (nodes: TreeNode[], depth = 0) => {
+    for (const node of nodes) {
+      node.depth = depth;
+      if (node.type === "folder") {
+        applyDepth(node.children, depth + 1);
+      }
+    }
+  };
+
   const sortFolders = (node: Extract<TreeNode, { type: "folder" }>) => {
     node.children.sort((a, b) => {
       if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
@@ -265,6 +292,7 @@ function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): T
     }
   };
 
+  applyDepth(roots);
   for (const root of roots) {
     if (root.type === "folder") sortFolders(root);
   }
@@ -772,72 +800,11 @@ export function PersonalFilesInformationPanel({
               </div>
 
               <div className="flex-1 overflow-auto px-4 py-4">
-                <div
-                  className="max-w-[900px] mx-auto rounded border px-5 py-5 space-y-4 transition-opacity duration-200 ease-out"
-                  style={{
-                    borderColor: "rgba(124, 124, 185, 0.2)",
-                    background:
-                      "linear-gradient(180deg, rgba(8,10,22,0.96), rgba(5,7,16,0.96))",
-                    boxShadow: "0 8px 30px rgba(0,0,0,0.28), inset 0 0 0 1px rgba(255,255,255,0.02)",
-                  }}
-                >
-                  <div
-                    className="text-[11px] leading-7"
-                    style={{ color: theme.textColor }}
-                  >
-                    <RenderFormattedText
-                      text={
-                        selectedPaper.content ||
-                        selectedPaper.description ||
-                        "This paper does not have content yet."
-                      }
-                    />
-                  </div>
-
-                  {(selectedPaper.followUps?.length ?? 0) > 0 && (
-                    <div className="space-y-2">
-                      <div
-                        className="text-[10px] uppercase tracking-[0.16em] font-semibold"
-                        style={{ color: theme.labelColor }}
-                      >
-                        Related Notes
-                      </div>
-
-                      <div className="grid gap-2">
-                        {selectedPaper.followUps!.map((followUp, index) => (
-                          <div
-                            key={followUp.id || `${selectedPaper.id}-followup-${index}`}
-                            className="rounded border px-3 py-2 transition-transform duration-150 hover:translate-x-[2px]"
-                            style={{
-                              borderColor: "rgba(124, 124, 185, 0.18)",
-                              background:
-                                "linear-gradient(180deg, rgba(10,13,27,0.95), rgba(7,9,20,0.95))",
-                            }}
-                          >
-                            <div className="flex items-start gap-2">
-                              <FileText
-                                size={13}
-                                style={{ color: accent, marginTop: "2px" }}
-                              />
-                              <div className="min-w-0">
-                                {followUp.title ? (
-                                  <div
-                                    className="text-[11px] font-semibold mb-1"
-                                    style={{ color: theme.textColor }}
-                                  >
-                                    {followUp.title}
-                                  </div>
-                                ) : null}
-
-                                <div
-                                  className="text-[11px]"
-                                  style={{ color: theme.textColor }}
-                                >
-                                  <RenderFormattedText
-                                    text={followUp.content || followUp.description || ""}
-                                  />
-                                </div>
-                              </div>
+                {renderInfoDisplayMode(selectedPaper, {
+                  theme,
+                  info: selectedPaper,
+                  accentColor: accent,
+                })}
                             </div>
                           </div>
                         ))}

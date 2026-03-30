@@ -30,6 +30,7 @@ export type ManagedInfoLike = {
   realWorldTime?: string;
   inWorldTime?: string;
   infoSubTab?: string;
+  assignedTo?: string[];
   followUps?: InfoFollowUp[];
   displayMode?: InfoDisplayMode;
   displayData?: InfoDisplayData;
