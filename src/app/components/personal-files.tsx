@@ -875,19 +875,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setLaActiveTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
   };
 
-
-  useEffect(() => {
-    if (infoSubTabs.length === 0) return;
-    if (infoSubTabFilter !== null) return;
-
-    const sortedTabs = [...infoSubTabs].sort((a, b) => a.order - b.order);
-    const defaultTab = sortedTabs.find((tab) => tab.isDefault) ?? sortedTabs[0] ?? null;
-
-    if (defaultTab) {
-      setInfoSubTabFilter(defaultTab.id);
-    }
-  }, [infoSubTabs, infoSubTabFilter]);
-
   // Skills data — calculated from actual player stats
   const skillCategories = useMemo(() => {
     const stats = player?.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 };
