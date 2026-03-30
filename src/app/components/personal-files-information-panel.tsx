@@ -805,7 +805,6 @@ export function PersonalFilesInformationPanel({
                   info: selectedPaper,
                   accentColor: accent,
                 })}
-                </div>
               </div>
             </div>
           ) : (
