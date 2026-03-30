@@ -30,6 +30,7 @@ import { DMCustomizeSection } from "./dm-customize-section";
 import { DMWikiSection } from "./dm-wiki-section";
 import { DMTagsSection } from "./dm-tags-section";
 import { RichTextEditor } from "./rich-text-editor";
+import { DMInfoManagerSection } from "./dm-area-info-panel";
 import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
 import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import type {
@@ -1353,18 +1354,34 @@ const handleSaveItem = async () => {
   // ========================
   const handleAddInfo = () => {
     setEditingInfo({
-      id: `mn-${Date.now()}`, title: "", tags: [], content: "",
-      assignedTo: ["all"], customFields: {}, category: "", followUps: [],
-      inWorldTime: "", realWorldTime: "", infoSubTab: "",
-    });
+      id: `mn-${Date.now()}`,
+      title: "",
+      tags: [],
+      content: "",
+      assignedTo: ["all"],
+      customFields: {},
+      category: "",
+      followUps: [],
+      inWorldTime: "",
+      realWorldTime: "",
+      infoSubTab: "",
+      displayMode: "digital",
+      displayData: { variant: "default" },
+    } as ManagedInfo);
     setIsAddingNewInfo(true);
   };
   const handleSaveInfo = async () => {
     if (!editingInfo) return;
 
+    const normalizedInfo = {
+      ...editingInfo,
+      displayMode: (editingInfo as any).displayMode || "digital",
+      displayData: (editingInfo as any).displayData || {},
+    } as ManagedInfo;
+
     const next = isAddingNewInfo
-      ? [...managedInfos, editingInfo]
-      : managedInfos.map((n) => (n.id === editingInfo.id ? editingInfo : n));
+      ? [...managedInfos, normalizedInfo]
+      : managedInfos.map((n) => (n.id === normalizedInfo.id ? normalizedInfo : n));
 
     await persistInfos(next);
 
@@ -2907,781 +2924,74 @@ const handleSaveItem = async () => {
           {/* ======================================================= */}
           {/* MANAGE INFO                                              */}
           {/* ======================================================= */}
-          {activeSection === "info" && (() => {
-            const activeInfoCustomFields = editingInfo ? getActiveCustomFields(editingInfo, infoTags) : [];
-
-            return (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Information</h2>
-                  <button onClick={handleAddInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-                    <Plus size={14} /> Add Info
-                  </button>
-                </div>
-
-                {/* Info Sub-Tab Management */}
-                <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-                  <div className="text-[12px] mb-3" style={S_SECTION_HDR}>INFORMATION SUB-TABS</div>
-                  <div className="text-[10px] mb-3" style={S_MUTED}>
-                    Create sub-tabs to organize information. Players will see these as tabs in their Information section.
-                  </div>
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {[...infoSubTabs].sort((a, b) => a.order - b.order).map((st, index, sortedTabs) => (
-                      <div key={st.id} className="px-2.5 py-1.5" style={DM_PANEL}>
-                        {editingInfoSubTabId === st.id ? (
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <input
-                                type="text"
-                                value={editingInfoSubTabName}
-                                onChange={(e) => setEditingInfoSubTabName(e.target.value)}
-                                className={inputClass}
-                                style={{ ...inputStyle, width: 160 }}
-                                onKeyDown={async (e) => {
-                                  if (e.key !== "Enter") return;
-                                  const nameError = getInfoSubTabNameError(editingInfoSubTabName, st.id);
-                                  const colorError = getInfoSubTabColorError(st.color);
-                                  if (nameError || colorError) {
-                                    setDmError(nameError || colorError);
-                                    return;
-                                  }
-
-                                  const next = ensureSingleDefaultInfoSubTab(
-                                    infoSubTabs.map((s) =>
-                                      s.id === st.id
-                                        ? normalizeInfoSubTabDraft({ ...s, name: editingInfoSubTabName.trim() })
-                                        : normalizeInfoSubTabDraft(s)
-                                    )
-                                  );
-                                  await persistInfoSubTabs(next);
-                                  setEditingInfoSubTabId(null);
-                                }}
-                              />
-                              <button
-                                onClick={async () => {
-                                  const nameError = getInfoSubTabNameError(editingInfoSubTabName, st.id);
-                                  const colorError = getInfoSubTabColorError(st.color);
-                                  if (nameError || colorError) {
-                                    setDmError(nameError || colorError);
-                                    return;
-                                  }
-
-                                  const next = ensureSingleDefaultInfoSubTab(
-                                    infoSubTabs.map((s) =>
-                                      s.id === st.id
-                                        ? normalizeInfoSubTabDraft({ ...s, name: editingInfoSubTabName.trim() })
-                                        : normalizeInfoSubTabDraft(s)
-                                    )
-                                  );
-                                  await persistInfoSubTabs(next);
-                                  setEditingInfoSubTabId(null);
-                                }}
-                                className="text-[10px]"
-                                style={S_GREEN_BTN}
-                              >
-                                ✓
-                              </button>
-                              <button onClick={() => setEditingInfoSubTabId(null)} className="text-[10px]" style={S_RED}>✕</button>
-                              {getInfoSubTabNameError(editingInfoSubTabName, st.id) && (
-                                <span className="text-[10px]" style={S_WARN}>
-                                  {getInfoSubTabNameError(editingInfoSubTabName, st.id)}
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                              <input
-                                type="text"
-                                value={st.description || ""}
-                                onChange={(e) => {
-                                  setInfoSubTabs((prev) =>
-                                    prev.map((tab) => tab.id === st.id ? { ...tab, description: e.target.value } : tab)
-                                  );
-                                }}
-                                placeholder="Description..."
-                                className={inputClass}
-                                style={inputStyle}
-                              />
-                              <input
-                                type="text"
-                                value={st.icon || ""}
-                                onChange={(e) => {
-                                  setInfoSubTabs((prev) =>
-                                    prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab)
-                                  );
-                                }}
-                                placeholder="Icon / emoji"
-                                className={inputClass}
-                                style={inputStyle}
-                              />
-                              <div className="space-y-1">
-                                <input
-                                  type="text"
-                                  value={st.color || ""}
-                                  onChange={(e) => {
-                                    setInfoSubTabs((prev) =>
-                                      prev.map((tab) => tab.id === st.id ? { ...tab, color: e.target.value } : tab)
-                                    );
-                                  }}
-                                  placeholder="Accent color (#hex)"
-                                  className={inputClass}
-                                  style={inputStyle}
-                                />
-                                {getInfoSubTabColorError(st.color) && (
-                                  <div className="text-[10px]" style={S_WARN}>
-                                    {getInfoSubTabColorError(st.color)}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              <label className="text-[10px] block" style={labelStyle}>
-                                Sort Mode
-                                <select
-                                  value={st.sortMode || "custom"}
-                                  onChange={(e) => {
-                                    const value = e.target.value as InfoSubTab["sortMode"];
-                                    setInfoSubTabs((prev) =>
-                                      prev.map((tab) => tab.id === st.id ? { ...tab, sortMode: value } : tab)
-                                    );
-                                  }}
-                                  className={inputClass}
-                                  style={{ ...inputStyle, marginTop: 4 }}
-                                >
-                                  {INFO_SUBTAB_SORT_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>{option.label}</option>
-                                  ))}
-                                </select>
-                              </label>
-
-                              <div className="flex flex-col gap-2">
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!st.isDefault}
-                                    onChange={async (e) => {
-                                      const next = ensureSingleDefaultInfoSubTab(
-                                        infoSubTabs.map((tab) =>
-                                          tab.id === st.id
-                                            ? { ...tab, isDefault: e.target.checked }
-                                            : { ...tab, isDefault: false }
-                                        )
-                                      );
-                                      await persistInfoSubTabs(next.map(normalizeInfoSubTabDraft));
-                                    }}
-                                    className="accent-[#4A7BFF]"
-                                  />
-                                  <span className="text-[11px]" style={S_TEXT}>Default tab</span>
-                                </label>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!st.showEmpty}
-                                    onChange={(e) => {
-                                      setInfoSubTabs((prev) =>
-                                        prev.map((tab) => tab.id === st.id ? { ...tab, showEmpty: e.target.checked } : tab)
-                                      );
-                                    }}
-                                    className="accent-[#4A7BFF]"
-                                  />
-                                  <span className="text-[11px]" style={S_TEXT}>Show even when empty</span>
-                                </label>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between gap-3 flex-wrap">
-                              <div className="text-[10px]" style={S_DIM}>
-                                {managedInfos.filter((info) => info.infoSubTab === st.id).length} info entr{managedInfos.filter((info) => info.infoSubTab === st.id).length !== 1 ? "ies" : "y"} assigned
-                              </div>
-
-                              <button
-                                onClick={async () => {
-                                  const nameError = getInfoSubTabNameError(editingInfoSubTabName, st.id);
-                                  const colorError = getInfoSubTabColorError(st.color);
-                                  if (nameError || colorError) {
-                                    setDmError(nameError || colorError);
-                                    return;
-                                  }
-
-                                  const next = ensureSingleDefaultInfoSubTab(
-                                    infoSubTabs.map((s) =>
-                                      s.id === st.id
-                                        ? normalizeInfoSubTabDraft({ ...s, name: editingInfoSubTabName.trim() })
-                                        : normalizeInfoSubTabDraft(s)
-                                    )
-                                  );
-                                  await persistInfoSubTabs(next);
-                                }}
-                                className={`${retro.button} px-2 py-1 text-[10px]`}
-                                style={S_GREEN_BTN}
-                              >
-                                Save Tab Details
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[12px]" style={{ ...S_TEXT, color: st.color || S_TEXT.color }}>
-                              {st.icon ? `${st.icon} ` : ""}{st.name}
-                            </span>
-                            {st.isDefault && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded" style={S_ACCENT}>
-                                Default
-                              </span>
-                            )}
-                            <span className="text-[9px] ml-1" style={S_DIM}>
-                              ({managedInfos.filter(i => i.infoSubTab === st.id).length})
-                            </span>
-                            {st.sortMode && st.sortMode !== "custom" && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded" style={S_SUBTLE}>
-                                {INFO_SUBTAB_SORT_OPTIONS.find((option) => option.value === st.sortMode)?.label || "Sorted"}
-                              </span>
-                            )}
-                            <button
-                              onClick={() => moveInfoSubTab(st.id, -1)}
-                              disabled={index === 0}
-                              className="text-[10px] ml-1 hover:opacity-80 disabled:opacity-30"
-                              style={S_ACCENT}
-                              title="Move left"
-                            >
-                              <ChevronUp size={10} />
-                            </button>
-                            <button
-                              onClick={() => moveInfoSubTab(st.id, 1)}
-                              disabled={index === sortedTabs.length - 1}
-                              className="text-[10px] hover:opacity-80 disabled:opacity-30"
-                              style={S_ACCENT}
-                              title="Move right"
-                            >
-                              <ChevronDown size={10} />
-                            </button>
-                            <button onClick={async () => { setEditingInfoSubTabId(st.id); setEditingInfoSubTabName(st.name); }} className="text-[10px] hover:opacity-80" style={S_ACCENT}>
-                              <Edit size={10} />
-                            </button>
-                            <button
-                              onClick={async () => {
-                                const assignedCount = managedInfos.filter((info) => info.infoSubTab === st.id).length;
-                                const shouldDelete = window.confirm(
-                                  assignedCount > 0
-                                    ? `Delete "${st.name}"? ${assignedCount} information entr${assignedCount !== 1 ? "ies" : "y"} will become unassigned.`
-                                    : `Delete "${st.name}"?`
-                                );
-                                if (!shouldDelete) return;
-                                await deleteInfoSubTab(st.id);
-                              }}
-                              className="text-[10px] hover:opacity-80"
-                              style={S_RED}
-                              title="Delete sub-tab"
-                            >
-                              <Trash2 size={10} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <input
-                      type="text"
-                      value={newInfoSubTabName}
-                      onChange={(e) => setNewInfoSubTabName(e.target.value)}
-                      placeholder="New sub-tab name..."
-                      className={inputClass}
-                      style={{ ...inputStyle, width: 200 }}
-                      onKeyDown={async (e) => {
-                        if (e.key === "Enter" && newInfoSubTabName.trim()) {
-                          const nameError = getInfoSubTabNameError(newInfoSubTabName);
-                          if (nameError) {
-                            setDmError(nameError);
-                            return;
-                          }
-
-                          const next = ensureSingleDefaultInfoSubTab([
-                            ...infoSubTabs,
-                            normalizeInfoSubTabDraft({
-                              id: `ist-${Date.now()}`,
-                              name: newInfoSubTabName.trim(),
-                              order: infoSubTabs.length,
-                              description: "",
-                              icon: "",
-                              color: "",
-                              isDefault: infoSubTabs.length === 0,
-                              sortMode: "custom",
-                              showEmpty: false,
-                            }),
-                          ]);
-                          await persistInfoSubTabs(next);
-                          setNewInfoSubTabName("");
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!newInfoSubTabName.trim()) return;
-                        const nameError = getInfoSubTabNameError(newInfoSubTabName);
-                        if (nameError) {
-                          setDmError(nameError);
-                          return;
-                        }
-
-                        const next = ensureSingleDefaultInfoSubTab([
-                          ...infoSubTabs,
-                          normalizeInfoSubTabDraft({
-                            id: `ist-${Date.now()}`,
-                            name: newInfoSubTabName.trim(),
-                            order: infoSubTabs.length,
-                            description: "",
-                            icon: "",
-                            color: "",
-                            isDefault: infoSubTabs.length === 0,
-                            sortMode: "custom",
-                            showEmpty: false,
-                          }),
-                        ]);
-                        await persistInfoSubTabs(next);
-                        setNewInfoSubTabName("");
-                      }}
-                      disabled={!newInfoSubTabName.trim()}
-                      className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`}
-                      style={{ color: newInfoSubTabName.trim() ? "#4A9A5A" : "#3A4A6A" }}
-                    >
-                      <Plus size={11} /> Add Sub-Tab
-                    </button>
-                    {getInfoSubTabNameError(newInfoSubTabName) && newInfoSubTabName.trim() && (
-                      <div className="text-[10px] mt-1 w-full" style={S_WARN}>
-                        {getInfoSubTabNameError(newInfoSubTabName)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Info Edit Form */}
-                {editingInfo && (
-                  <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="text-[12px]" style={S_SECTION_HDR}>
-                        {isAddingNewInfo ? "ADD NEW INFORMATION" : `EDITING: ${editingInfo.title || "(untitled)"}`}
-                      </div>
-                      <button onClick={handleCancelInfoEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
-                    </div>
-
-                    {/* Title + Category + Sub-Tab */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                      <div className="md:col-span-2">
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Information Title:</label>
-                        <input type="text" value={editingInfo.title} onChange={(e) => updateInfoField("title", e.target.value)} placeholder="e.g., Mission Briefing, Intel Report..." className={inputClass} style={inputStyle} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Category:</label>
-                        <input type="text" value={editingInfo.category || ""} onChange={(e) => updateInfoField("category" as keyof ManagedInfo, e.target.value as any)} placeholder="e.g., Missions, Lore..." className={inputClass} style={inputStyle} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Info Sub-Tab:</label>
-                        <select
-                          value={editingInfo.infoSubTab || ""}
-                          onChange={(e) => updateInfoField("infoSubTab" as keyof ManagedInfo, e.target.value as any)}
-                          className={inputClass}
-                          style={inputStyle}
-                        >
-                          <option value="">None</option>
-                          {[...infoSubTabs].sort((a, b) => a.order - b.order).map(st => (
-                            <option key={st.id} value={st.id}>{st.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* In-World Time + Real World Time */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                      <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>In-World Time:</label>
-                        <input type="text" value={editingInfo.inWorldTime || ""} onChange={(e) => updateInfoField("inWorldTime" as keyof ManagedInfo, e.target.value as any)} placeholder="e.g., Day 15, Year 3 of the Eclipse..." className={inputClass} style={inputStyle} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Real World Time:</label>
-                        <input type="text" value={editingInfo.realWorldTime || ""} onChange={(e) => updateInfoField("realWorldTime" as keyof ManagedInfo, e.target.value as any)} placeholder="e.g., Session 12, March 2026..." className={inputClass} style={inputStyle} />
-                      </div>
-                    </div>
-
-                    {/* Player */}
-                    <div className="mb-4">
-                      <label className="text-[10px] block mb-1" style={labelStyle}>Assign to:</label>
-                      <div className={`${retro.sunken} bg-[#0A0A28] p-3 w-full md:w-2/3`}>
-                        <label className="flex items-center gap-2 cursor-pointer mb-2">
-                          <input type="checkbox" checked={editingInfo.assignedTo.includes("all")} onChange={(e) => {
-                            if (e.target.checked) updateInfoField("assignedTo", ["all"]);
-                            else updateInfoField("assignedTo", []);
-                          }} className="accent-[#4A9A5A]" />
-                          <span className="text-[12px]" style={S_GREEN_BTN}>All Players</span>
-                        </label>
-                        <div className="h-[1px] mb-2" style={DM_DIVIDER} />
-                        <div className="flex flex-wrap gap-x-4 gap-y-1">
-                          {players.map((p) => (
-                            <label key={p.id} className="flex items-center gap-2 cursor-pointer">
-                              <input type="checkbox" disabled={editingInfo.assignedTo.includes("all")} checked={editingInfo.assignedTo.includes("all") || editingInfo.assignedTo.includes(p.id)} onChange={(e) => {
-                                const current = editingInfo.assignedTo.filter((id) => id !== "all");
-                                if (e.target.checked) updateInfoField("assignedTo", [...current, p.id]);
-                                else updateInfoField("assignedTo", current.filter((id) => id !== p.id));
-                              }} className="accent-[#4A7BFF]" />
-                              <span className="text-[12px]" style={dmAssignDim(editingInfo.assignedTo.includes("all"))}>{p.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Tags */}
-                    <div className="mb-4">
-                      <label className="text-[10px] block mb-2" style={labelStyle}>Tags (click to toggle):</label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {infoTags.map((tag) => {
-                          const active = editingInfo.tags.includes(tag.name);
-                          return (
-                            <button key={tag.id} onClick={() => toggleInfoTag(tag.name)} className="text-[10px] px-2.5 py-1 transition-colors flex items-center gap-1" style={dmActiveBtn(active)}>
-                              {tag.name}
-                              {tag.fields.length > 0 && <span className="text-[8px] opacity-70">+{tag.fields.length}</span>}
-                            </button>
-                          );
-                        })}
-                        {infoTags.length === 0 && <span className="text-[11px]" style={S_MUTED}>No info tags defined. Create tags in "Manage Tags" first.</span>}
-                      </div>
-                    </div>
-
-                    {/* Custom Fields from Tags */}
-                    {activeInfoCustomFields.length > 0 && (
-                      <div className="mb-4">
-                        <div className="text-[10px] mb-2" style={S_SECTION_HDR}>TAG FIELDS</div>
-                        <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {activeInfoCustomFields.map((cf) => {
-                              const infoLabel = (
-                                <label className="text-[10px] block mb-1" style={S_ACCENT}>
-                                  <span style={S_MUTED}>{cf.tagName} ›</span> {cf.fieldName}:
-                                </label>
-                              );
-                              return renderTypedField(
-                                cf.key,
-                                cf.fieldDef,
-                                editingInfo.customFields[cf.key] || cf.fieldDef.defaultValue || "",
-                                updateInfoCustomField,
-                                infoLabel,
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Content */}
-                    <div className="mb-4">
-                      <label className="text-[10px] block mb-1" style={labelStyle}>Information Content:</label>
-                      <RichTextEditor value={editingInfo.content} onChange={(html) => updateInfoField("content", html)} placeholder="Enter mission details, clues, or other information..." minHeight={120} />
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button onClick={handleSaveInfo} className={`${retro.button} px-6 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-                        <Save size={14} /> {isAddingNewInfo ? "Add Info" : "Save Changes"}
-                      </button>
-                      <button onClick={handleCancelInfoEdit} className={`${retro.button} px-6 py-2 text-[12px]`} style={S_TEXT}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Info List */}
-                <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-                  {(() => {
-                    const infoCountsBySubTab = managedInfos.reduce<Record<string, number>>((acc, info) => {
-                      const key = info.infoSubTab || INFO_UNASSIGNED_FILTER;
-                      acc[key] = (acc[key] || 0) + 1;
-                      return acc;
-                    }, {});
-                    const managerFilteredInfos = managedInfos.filter((info) => {
-                      if (infoManagerSubTabFilter === "all") return true;
-                      if (infoManagerSubTabFilter === INFO_UNASSIGNED_FILTER) return !(info.infoSubTab || "");
-                      return (info.infoSubTab || "") === infoManagerSubTabFilter;
-                    });
-                    const selectedInfoIds = Object.entries(infoBulkSelection).filter(([, checked]) => checked).map(([id]) => id);
-
-                    return (
-                      <>
-                        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                          <div className="text-[12px]" style={S_SECTION_HDR}>ALL INFORMATION ({managedInfos.length})</div>
-                          <div className="text-[10px]" style={S_DIM}>
-                            Showing {managerFilteredInfos.length} entr{managerFilteredInfos.length !== 1 ? "ies" : "y"}
-                          </div>
-                        </div>
-
-                        <div className="space-y-3 mb-4">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              onClick={() => setInfoManagerSubTabFilter("all")}
-                              className={`${retro.button} px-3 py-1 text-[10px]`}
-                              style={infoManagerSubTabFilter === "all" ? S_GREEN_BTN : S_TEXT}
-                            >
-                              All ({managedInfos.length})
-                            </button>
-                            <button
-                              onClick={() => setInfoManagerSubTabFilter(INFO_UNASSIGNED_FILTER)}
-                              className={`${retro.button} px-3 py-1 text-[10px]`}
-                              style={infoManagerSubTabFilter === INFO_UNASSIGNED_FILTER ? S_WARN : S_TEXT}
-                            >
-                              Unassigned ({infoCountsBySubTab[INFO_UNASSIGNED_FILTER] || 0})
-                            </button>
-                            {[...infoSubTabs].sort((a, b) => a.order - b.order).map((tab) => (
-                              <button
-                                key={tab.id}
-                                onClick={() => setInfoManagerSubTabFilter(tab.id)}
-                                className={`${retro.button} px-3 py-1 text-[10px]`}
-                                style={infoManagerSubTabFilter === tab.id ? { ...S_GREEN_BTN, color: tab.color || "#8FD7FF" } : { ...S_TEXT, color: tab.color || S_TEXT.color }}
-                              >
-                                {tab.icon ? `${tab.icon} ` : ""}{tab.name} ({infoCountsBySubTab[tab.id] || 0})
-                              </button>
-                            ))}
-                          </div>
-
-                          <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                            <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-                              <div className="text-[10px]" style={S_SECTION_HDR}>BULK ASSIGN SUB-TAB</div>
-                              <label className="flex items-center gap-2 text-[10px]" style={S_DIM}>
-                                <input
-                                  type="checkbox"
-                                  checked={managerFilteredInfos.length > 0 && managerFilteredInfos.every((info) => !!infoBulkSelection[info.id])}
-                                  onChange={(e) => {
-                                    setInfoBulkSelection((prev) => {
-                                      const next = { ...prev };
-                                      managerFilteredInfos.forEach((info) => {
-                                        if (e.target.checked) next[info.id] = true;
-                                        else delete next[info.id];
-                                      });
-                                      return next;
-                                    });
-                                  }}
-                                  className="accent-[#4A7BFF]"
-                                />
-                                Select visible
-                              </label>
-                            </div>
-
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <select
-                                value={infoBulkAssignTarget}
-                                onChange={(e) => setInfoBulkAssignTarget(e.target.value)}
-                                className={inputClass}
-                                style={{ ...inputStyle, width: 220 }}
-                              >
-                                <option value="">Choose sub-tab...</option>
-                                <option value={INFO_UNASSIGNED_FILTER}>Unassigned</option>
-                                {[...infoSubTabs].sort((a, b) => a.order - b.order).map((tab) => (
-                                  <option key={tab.id} value={tab.id}>{tab.name}</option>
-                                ))}
-                              </select>
-                              <button
-                                onClick={async () => {
-                                  if (!infoBulkAssignTarget || selectedInfoIds.length === 0) return;
-                                  const nextInfos = managedInfos.map((info) =>
-                                    infoBulkSelection[info.id]
-                                      ? { ...info, infoSubTab: infoBulkAssignTarget === INFO_UNASSIGNED_FILTER ? "" : infoBulkAssignTarget }
-                                      : info
-                                  );
-                                  await persistInfos(nextInfos);
-                                  setInfoBulkSelection({});
-                                }}
-                                disabled={!infoBulkAssignTarget || selectedInfoIds.length === 0}
-                                className={`${retro.button} px-3 py-1.5 text-[10px]`}
-                                style={!infoBulkAssignTarget || selectedInfoIds.length === 0 ? S_DIM : S_GREEN_BTN}
-                              >
-                                Assign Selected ({selectedInfoIds.length})
-                              </button>
-                              <button
-                                onClick={() => setInfoBulkSelection({})}
-                                disabled={selectedInfoIds.length === 0}
-                                className={`${retro.button} px-3 py-1.5 text-[10px]`}
-                                style={selectedInfoIds.length === 0 ? S_DIM : S_TEXT}
-                              >
-                                Clear Selection
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {managedInfos.length === 0 ? (
-                          <div className="text-[12px] text-center py-6" style={S_MUTED}>No information entries created yet.</div>
-                        ) : managerFilteredInfos.length === 0 ? (
-                          <div className="text-[12px] text-center py-6" style={S_MUTED}>
-                            {infoManagerSubTabFilter === INFO_UNASSIGNED_FILTER
-                              ? "No unassigned information entries."
-                              : "No information entries match the selected sub-tab."}
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            {managerFilteredInfos.map((info) => {
-                              const ownerStr = formatOwners(info.assignedTo, players);
-                              const infoCustomFields = getActiveCustomFields(info, infoTags).filter((cf) => info.customFields[cf.key]);
-                              const isSelected = !!infoBulkSelection[info.id];
-                              return (
-                          <div key={info.id} className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                            <div className="flex items-start justify-between mb-2 gap-3">
-                              <label className="flex items-center gap-2 pt-0.5 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={(e) => {
-                                    setInfoBulkSelection((prev) => {
-                                      const next = { ...prev };
-                                      if (e.target.checked) next[info.id] = true;
-                                      else delete next[info.id];
-                                      return next;
-                                    });
-                                  }}
-                                  className="accent-[#4A7BFF]"
-                                />
-                                <span className="text-[10px]" style={S_DIM}>Select</span>
-                              </label>
-                              <div>
-                                <div className="flex items-center gap-2 mb-0.5">
-                                  <span className="text-[13px]" style={S_TEXT_BOLD}>{info.title}</span>
-                                  {info.category && (
-                                    <span className="text-[9px] px-1.5 py-0.5" style={DM_CAT_BADGE}>{info.category}</span>
-                                  )}
-                                  {(info.followUps?.length ?? 0) > 0 && (
-                                    <span className="text-[9px] px-1.5 py-0.5" style={DM_ACTION_BADGE}>{info.followUps!.length} follow-up{info.followUps!.length !== 1 ? "s" : ""}</span>
-                                  )}
-                                </div>
-                                <div className="text-[11px]" style={S_MUTED}>
-                                  Assigned to: {ownerStr}
-                                  {info.infoSubTab && (() => { const st = infoSubTabs.find(s => s.id === info.infoSubTab); return st ? <span className="ml-2" style={S_DIM}>· Tab: {st.name}</span> : null; })()}
-                                </div>
-                                {(info.inWorldTime || info.realWorldTime) && (
-                                  <div className="flex items-center gap-3 mt-0.5 text-[10px]">
-                                    {info.inWorldTime && <span style={S_DIM}>In-World: <span style={S_SUBTLE}>{info.inWorldTime}</span></span>}
-                                    {info.realWorldTime && <span style={S_DIM}>Real: <span style={S_SUBTLE}>{info.realWorldTime}</span></span>}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => {
-                                    setFollowUpInfoId(followUpInfoId === info.id ? null : info.id);
-                                    setFollowUpText("");
-                                  }}
-                                  className={`${retro.button} px-3 py-1 text-[11px]`}
-                                  style={S_WARN}
-                                >
-                                  <Send size={12} className="inline mr-1" />
-                                  Follow-up
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    setEditingInfo({ ...info, customFields: { ...info.customFields } });
-                                    setIsAddingNewInfo(false);
-                                  }}
-                                  className={`${retro.button} px-3 py-1 text-[11px]`}
-                                  style={S_ACCENT}
-                                >
-                                  <Edit size={12} className="inline mr-1" />
-                                  Edit
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    handleDeleteInfo(info.id);
-                                  }}
-                                  className={`${retro.button} px-3 py-1 text-[11px]`}
-                                  style={S_RED}
-                                >
-                                  <Trash2 size={12} className="inline mr-1" />
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-                            {info.tags.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mb-1">
-                                {info.tags.map((t) => (
-                                  <span key={t} className="text-[9px] px-1.5 py-0.5" style={DM_TAG_BADGE}>{t}</span>
-                                ))}
-                              </div>
-                            )}
-                            {infoCustomFields.length > 0 && (
-                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1">
-                                {infoCustomFields.map((cf) => (
-                                  <span key={cf.key} className="text-[10px]">
-                                    <span style={S_MUTED}>{cf.fieldName}:</span>{" "}
-                                    <span style={S_TEXT}>{info.customFields[cf.key]}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            {info.content && (
-                              <div className="text-[11px] mt-1" style={S_SUBTLE}>{info.content.replace(/<[^>]*>/g, "").length > 150 ? info.content.replace(/<[^>]*>/g, "").slice(0, 150) + "..." : info.content.replace(/<[^>]*>/g, "")}</div>
-                            )}
-                            {followUpInfoId === info.id && (
-                              <div className="mt-2 p-3" style={DM_PANEL}>
-                                <div className="text-[10px] mb-2" style={S_WARN_HDR}>ADD FOLLOW-UP</div>
-                                <RichTextEditor value={followUpText} onChange={setFollowUpText} placeholder="Enter follow-up details..." minHeight={60} />
-                                <div className="flex gap-2 mt-2">
-                                  <button onClick={async () => {
-                                    if (!followUpText.trim()) return;
-                                    const newFollowUp: InfoFollowUp = {
-                                      id: `fu-${Date.now()}`,
-                                      content: followUpText,
-                                      createdAt: new Date().toLocaleString(),
-                                    };
-                                    const nextInfos = managedInfos.map((i) =>
-                                      i.id === info.id
-                                        ? { ...i, followUps: [...(i.followUps || []), newFollowUp] }
-                                        : i
-                                    );
-                                    await persistInfos(nextInfos);
-                                    setFollowUpText("");
-                                    setFollowUpInfoId(null);
-                                  }} className={`${retro.button} px-4 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                    <Send size={11} /> Add Follow-up
-                                  </button>
-                                  <button onClick={async () => { setFollowUpInfoId(null); setFollowUpText(""); }} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_TEXT}>Cancel</button>
-                                </div>
-                              </div>
-                            )}
-                            {(info.followUps?.length ?? 0) > 0 && followUpInfoId !== info.id && (
-                              <div className="mt-2 space-y-1">
-                                {info.followUps!.map(fu => (
-                                  <div key={fu.id} className="flex items-start gap-2 pl-3" style={DM_FOLLOW_UP_LEFT}>
-                                    <div className="flex-1">
-                                      <div className="text-[9px] mb-0.5" style={S_MUTED}>{fu.createdAt}</div>
-                                      <div className="text-[11px]" style={DM_FOLLOW_UP_TEXT}>{fu.content.replace(/<[^>]*>/g, "").length > 80 ? fu.content.replace(/<[^>]*>/g, "").slice(0, 80) + "..." : fu.content.replace(/<[^>]*>/g, "")}</div>
-                                    </div>
-                                    <button onClick={async () => {
-                                      const nextInfos = managedInfos.map((i) =>
-                                        i.id === info.id
-                                          ? { ...i, followUps: (i.followUps || []).filter((f) => f.id !== fu.id) }
-                                          : i
-                                      );
-                                      await persistInfos(nextInfos);
-                                    }} className="hover:opacity-80 shrink-0 mt-1">
-                                      <X size={10} style={S_RED} />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                            })}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            );
-          })()}
+          {activeSection === "info" && (
+            <DMInfoManagerSection
+              retro={retro}
+              players={players}
+              managedInfos={managedInfos}
+              editingInfo={editingInfo}
+              isAddingNewInfo={isAddingNewInfo}
+              infoTags={infoTags}
+              infoSubTabs={infoSubTabs}
+              newInfoSubTabName={newInfoSubTabName}
+              setNewInfoSubTabName={setNewInfoSubTabName}
+              infoManagerSubTabFilter={infoManagerSubTabFilter}
+              setInfoManagerSubTabFilter={setInfoManagerSubTabFilter}
+              infoBulkAssignTarget={infoBulkAssignTarget}
+              setInfoBulkAssignTarget={setInfoBulkAssignTarget}
+              infoBulkSelection={infoBulkSelection}
+              setInfoBulkSelection={setInfoBulkSelection}
+              editingInfoSubTabId={editingInfoSubTabId}
+              setEditingInfoSubTabId={setEditingInfoSubTabId}
+              editingInfoSubTabName={editingInfoSubTabName}
+              setEditingInfoSubTabName={setEditingInfoSubTabName}
+              followUpInfoId={followUpInfoId}
+              setFollowUpInfoId={setFollowUpInfoId}
+              followUpText={followUpText}
+              setFollowUpText={setFollowUpText}
+              dmError={dmError}
+              setDmError={setDmError}
+              labelStyle={labelStyle}
+              inputClass={inputClass}
+              inputStyle={inputStyle}
+              renderTypedField={renderTypedField}
+              getActiveCustomFields={getActiveCustomFields}
+              getInfoSubTabNameError={getInfoSubTabNameError}
+              getInfoSubTabColorError={getInfoSubTabColorError}
+              normalizeInfoSubTabDraft={normalizeInfoSubTabDraft}
+              ensureSingleDefaultInfoSubTab={ensureSingleDefaultInfoSubTab}
+              persistInfoSubTabs={persistInfoSubTabs}
+              moveInfoSubTab={moveInfoSubTab}
+              deleteInfoSubTab={deleteInfoSubTab}
+              handleAddInfo={handleAddInfo}
+              handleSaveInfo={handleSaveInfo}
+              handleDeleteInfo={handleDeleteInfo}
+              handleCancelInfoEdit={handleCancelInfoEdit}
+              updateInfoField={updateInfoField}
+              toggleInfoTag={toggleInfoTag}
+              updateInfoCustomField={updateInfoCustomField}
+              persistInfos={persistInfos}
+              S_ACCENT_HDR={S_ACCENT_HDR}
+              S_SECTION_HDR={S_SECTION_HDR}
+              S_MUTED={S_MUTED}
+              S_DIM={S_DIM}
+              S_TEXT={S_TEXT}
+              S_WARN={S_WARN}
+              S_GREEN_BTN={S_GREEN_BTN}
+              S_LABEL={S_LABEL}
+              S_SUBTLE={S_SUBTLE}
+              S_RED={S_RED}
+              DM_PANEL={DM_PANEL}
+              DM_PANEL_ALT={DM_PANEL_ALT}
+              DM_TAG_BADGE={DM_TAG_BADGE}
+            />
+          )}
 
           {/* ======================================================= */}
           {/* NOTIFICATIONS                                            */}
           {/* ======================================================= */}
-          {activeSection === "notifs" && (
+
+ && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Notifications</h2>
