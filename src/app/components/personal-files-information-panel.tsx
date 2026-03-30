@@ -1,23 +1,8 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { firstColor, type PlayerTheme } from "./player-theme";
-
-export const INFO_UNASSIGNED_FILTER = "__unassigned__" as const;
-
-export type InfoSortMode = "custom" | "title" | "category" | "newest" | "oldest";
-
-export type InfoSubTab = {
-  id: string;
-  name: string;
-  order: number;
-  description?: string;
-  icon?: string;
-  color?: string;
-  isDefault?: boolean;
-  sortMode?: InfoSortMode;
-  showEmpty?: boolean;
-};
+import { INFO_UNASSIGNED_FILTER, type InfoSubTab } from "./personal-files-information-utils";
 
 export type InfoFollowUp = {
   id?: string;
@@ -47,12 +32,6 @@ type Props = {
   theme: PlayerTheme;
   playerInfos: ManagedInfoLike[];
   infoSubTabs: InfoSubTab[];
-  infoSubTabFilter: string | null;
-  setInfoSubTabFilter: (value: string | null) => void;
-  expandedInfoId: string | null;
-  setExpandedInfoId: (value: string | null) => void;
-  infoSortBy?: "title" | "category" | "newest" | "oldest";
-  infoCategoryFilter?: string | null;
   retroOverrides?: RetroLike;
 };
 
@@ -75,15 +54,13 @@ export function PersonalFilesInformationPanel({
   theme,
   playerInfos,
   infoSubTabs,
-  infoSubTabFilter,
-  setInfoSubTabFilter,
-  expandedInfoId,
-  setExpandedInfoId,
-  infoSortBy = "newest",
-  infoCategoryFilter = null,
   retroOverrides,
 }: Props) {
   const ui = retroOverrides || retro;
+  const [infoCategoryFilter] = useState<string | null>(null);
+  const [infoSortBy] = useState<"title" | "category" | "newest" | "oldest">("newest");
+  const [expandedInfoId, setExpandedInfoId] = useState<string | null>(null);
+  const [infoSubTabFilter, setInfoSubTabFilter] = useState<string | null>(null);
 
   const sortedSubTabs = useMemo(
     () =>
@@ -97,6 +74,31 @@ export function PersonalFilesInformationPanel({
     () => new Set(sortedSubTabs.map((tab) => tab.id)),
     [sortedSubTabs],
   );
+
+  useEffect(() => {
+    if (sortedSubTabs.length === 0) {
+      if (infoSubTabFilter !== null) setInfoSubTabFilter(null);
+      return;
+    }
+
+    if (infoSubTabFilter === INFO_UNASSIGNED_FILTER) return;
+
+    if (infoSubTabFilter && !sortedSubTabs.some((tab) => tab.id === infoSubTabFilter)) {
+      const defaultTab = sortedSubTabs.find((tab) => tab.isDefault) ?? sortedSubTabs[0] ?? null;
+      setInfoSubTabFilter(defaultTab?.id ?? null);
+    }
+  }, [sortedSubTabs, infoSubTabFilter]);
+
+  useEffect(() => {
+    if (sortedSubTabs.length === 0) return;
+    if (infoSubTabFilter !== null) return;
+
+    const defaultTab = sortedSubTabs.find((tab) => tab.isDefault) ?? sortedSubTabs[0] ?? null;
+    if (defaultTab) {
+      setInfoSubTabFilter(defaultTab.id);
+    }
+  }, [sortedSubTabs, infoSubTabFilter]);
+
 
   const infoCountsBySubTab = useMemo(() => {
     return playerInfos.reduce<Record<string, number>>((acc, info) => {
