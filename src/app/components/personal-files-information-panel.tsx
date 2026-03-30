@@ -1,9 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Folder,
+  FolderOpen,
+  Search,
+} from "lucide-react";
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { firstColor, type PlayerTheme } from "./player-theme";
-import { INFO_UNASSIGNED_FILTER, type InfoSubTab } from "./personal-files-information-utils";
-import { INFO_UNASSIGNED_FILTER, type InfoSubTab } from "./personal-files-information-utils";
+import {
+  INFO_UNASSIGNED_FILTER,
+  type InfoSubTab,
+} from "./personal-files-information-utils";
 
 export type InfoFollowUp = {
   id?: string;
@@ -36,19 +46,268 @@ type Props = {
   retroOverrides?: RetroLike;
 };
 
-function getNormalizedTimestamp(info: ManagedInfoLike) {
-  return (info.realWorldTime || info.inWorldTime || "").trim();
+type TreeNode =
+  | {
+      id: string;
+      type: "folder";
+      name: string;
+      children: TreeNode[];
+      depth: number;
+      color?: string;
+      description?: string;
+      parentId?: string;
+    }
+  | {
+      id: string;
+      type: "paper";
+      name: string;
+      paper: ManagedInfoLike;
+      depth: number;
+      parentId?: string;
+    };
+
+const SEARCH_INPUT_STYLE: React.CSSProperties = {
+  border: "1px solid rgba(124, 124, 185, 0.35)",
+  background: "rgba(12, 12, 30, 0.92)",
+};
+
+function normalizeLabel(value: string | undefined | null) {
+  return String(value || "").trim();
 }
 
-function getSortMode(
-  activeSubTab: InfoSubTab | null,
-  fallback: Props["infoSortBy"],
-): "title" | "category" | "newest" | "oldest" {
-  if (activeSubTab?.sortMode === "title") return "title";
-  if (activeSubTab?.sortMode === "category") return "category";
-  if (activeSubTab?.sortMode === "oldest") return "oldest";
-  if (activeSubTab?.sortMode === "newest") return "newest";
-  return fallback || "newest";
+function splitCategoryPath(category?: string) {
+  const raw = normalizeLabel(category);
+  if (!raw) return [];
+  return raw
+    .split(/(?:\/|\\|>|::|\|)/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeSearch(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function paperTimestamp(info: ManagedInfoLike) {
+  return normalizeLabel(info.realWorldTime) || normalizeLabel(info.inWorldTime);
+}
+
+function comparePapers(a: ManagedInfoLike, b: ManagedInfoLike) {
+  const aTime = paperTimestamp(a);
+  const bTime = paperTimestamp(b);
+
+  if (aTime && bTime && aTime !== bTime) {
+    return bTime.localeCompare(aTime);
+  }
+
+  return a.title.localeCompare(b.title);
+}
+
+function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): TreeNode[] {
+  const sortedTabs = [...infoSubTabs]
+    .filter((tab) => tab && typeof tab.id === "string" && typeof tab.name === "string")
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  const validTabIds = new Set(sortedTabs.map((tab) => tab.id));
+  const infosByTab = new Map<string, ManagedInfoLike[]>();
+
+  for (const info of playerInfos) {
+    const tabKey =
+      info.infoSubTab && validTabIds.has(info.infoSubTab)
+        ? info.infoSubTab
+        : INFO_UNASSIGNED_FILTER;
+
+    if (!infosByTab.has(tabKey)) infosByTab.set(tabKey, []);
+    infosByTab.get(tabKey)!.push(info);
+  }
+
+  const roots: TreeNode[] = [];
+
+  const addFolderBranch = (
+    folderRoot: Extract<TreeNode, { type: "folder" }>,
+    info: ManagedInfoLike,
+  ) => {
+    const categoryParts = splitCategoryPath(info.category);
+    let currentFolder = folderRoot;
+
+    for (const part of categoryParts) {
+      let existing = currentFolder.children.find(
+        (child): child is Extract<TreeNode, { type: "folder" }> =>
+          child.type === "folder" && child.name === part,
+      );
+
+      if (!existing) {
+        existing = {
+          id: `${currentFolder.id}/folder/${part.toLowerCase().replace(/\s+/g, "-")}`,
+          type: "folder",
+          name: part,
+          children: [],
+          depth: currentFolder.depth + 1,
+          parentId: currentFolder.id,
+        };
+        currentFolder.children.push(existing);
+      }
+
+      currentFolder = existing;
+    }
+
+    currentFolder.children.push({
+      id: `paper:${info.id}`,
+      type: "paper",
+      name: info.title,
+      paper: info,
+      depth: currentFolder.depth + 1,
+      parentId: currentFolder.id,
+    });
+  };
+
+  for (const tab of sortedTabs) {
+    const rootFolder: Extract<TreeNode, { type: "folder" }> = {
+      id: `tab:${tab.id}`,
+      type: "folder",
+      name: tab.name,
+      children: [],
+      depth: 0,
+      color: tab.color || undefined,
+      description: tab.description || undefined,
+    };
+
+    const infos = [...(infosByTab.get(tab.id) || [])].sort(comparePapers);
+    for (const info of infos) {
+      addFolderBranch(rootFolder, info);
+    }
+
+    roots.push(rootFolder);
+  }
+
+  const unassignedInfos = [...(infosByTab.get(INFO_UNASSIGNED_FILTER) || [])].sort(comparePapers);
+  if (unassignedInfos.length > 0) {
+    const unassignedRoot: Extract<TreeNode, { type: "folder" }> = {
+      id: `tab:${INFO_UNASSIGNED_FILTER}`,
+      type: "folder",
+      name: "Unassigned",
+      children: [],
+      depth: 0,
+      color: "#FFCC66",
+      description: "Information that has not been assigned to a main category yet.",
+    };
+
+    for (const info of unassignedInfos) {
+      addFolderBranch(unassignedRoot, info);
+    }
+
+    roots.push(unassignedRoot);
+  }
+
+  const sortFolders = (node: Extract<TreeNode, { type: "folder" }>) => {
+    node.children.sort((a, b) => {
+      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+      if (a.type === "folder" && b.type === "folder") return a.name.localeCompare(b.name);
+      if (a.type === "paper" && b.type === "paper") return comparePapers(a.paper, b.paper);
+      return 0;
+    });
+
+    for (const child of node.children) {
+      if (child.type === "folder") sortFolders(child);
+    }
+  };
+
+  for (const root of roots) {
+    if (root.type === "folder") sortFolders(root);
+  }
+
+  return roots;
+}
+
+function collectAllFolderIds(nodes: TreeNode[], bucket = new Set<string>()) {
+  for (const node of nodes) {
+    if (node.type === "folder") {
+      bucket.add(node.id);
+      collectAllFolderIds(node.children, bucket);
+    }
+  }
+  return bucket;
+}
+
+function collectAllPapers(nodes: TreeNode[], bucket: ManagedInfoLike[] = []) {
+  for (const node of nodes) {
+    if (node.type === "paper") {
+      bucket.push(node.paper);
+    } else {
+      collectAllPapers(node.children, bucket);
+    }
+  }
+  return bucket;
+}
+
+function filterTree(nodes: TreeNode[], searchTerm: string): TreeNode[] {
+  if (!searchTerm) return nodes;
+
+  const filtered: TreeNode[] = [];
+
+  for (const node of nodes) {
+    const selfMatch = normalizeSearch(node.name).includes(searchTerm);
+
+    if (node.type === "paper") {
+      if (selfMatch) filtered.push(node);
+      continue;
+    }
+
+    const filteredChildren = filterTree(node.children, searchTerm);
+    if (selfMatch || filteredChildren.length > 0) {
+      filtered.push({
+        ...node,
+        children: selfMatch ? node.children : filteredChildren,
+      });
+    }
+  }
+
+  return filtered;
+}
+
+function collectBreadcrumbs(
+  roots: TreeNode[],
+  paperId: string,
+): Array<{ id: string; name: string; type: "folder" | "paper" }> {
+  const walk = (
+    nodes: TreeNode[],
+    trail: Array<{ id: string; name: string; type: "folder" | "paper" }>,
+  ): Array<{ id: string; name: string; type: "folder" | "paper" }> | null => {
+    for (const node of nodes) {
+      const nextTrail = [...trail, { id: node.id, name: node.name, type: node.type }];
+      if (node.type === "paper" && node.paper.id === paperId) return nextTrail;
+      if (node.type === "folder") {
+        const result = walk(node.children, nextTrail);
+        if (result) return result;
+      }
+    }
+    return null;
+  };
+
+  return walk(roots, []) || [];
+}
+
+function findPaperById(nodes: TreeNode[], paperId: string | null): ManagedInfoLike | null {
+  if (!paperId) return null;
+  for (const node of nodes) {
+    if (node.type === "paper" && node.paper.id === paperId) return node.paper;
+    if (node.type === "folder") {
+      const found = findPaperById(node.children, paperId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function firstVisiblePaper(nodes: TreeNode[]) {
+  for (const node of nodes) {
+    if (node.type === "paper") return node.paper;
+    if (node.type === "folder") {
+      const found = firstVisiblePaper(node.children);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 export function PersonalFilesInformationPanel({
@@ -58,375 +317,295 @@ export function PersonalFilesInformationPanel({
   retroOverrides,
 }: Props) {
   const ui = retroOverrides || retro;
-  const [infoCategoryFilter] = useState<string | null>(null);
-  const [infoSortBy] = useState<"title" | "category" | "newest" | "oldest">("newest");
-  const [expandedInfoId, setExpandedInfoId] = useState<string | null>(null);
-  const [infoSubTabFilter, setInfoSubTabFilter] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState("");
+  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
 
-  const sortedSubTabs = useMemo(
-    () =>
-      [...infoSubTabs]
-        .filter((tab) => tab && typeof tab.id === "string" && typeof tab.name === "string")
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
-    [infoSubTabs],
+  const treeRoots = useMemo(
+    () => buildTree(playerInfos, infoSubTabs),
+    [playerInfos, infoSubTabs],
   );
 
-  const validSubTabIds = useMemo(
-    () => new Set(sortedSubTabs.map((tab) => tab.id)),
-    [sortedSubTabs],
+  const searchTerm = normalizeSearch(searchValue);
+
+  const visibleTree = useMemo(
+    () => filterTree(treeRoots, searchTerm),
+    [treeRoots, searchTerm],
+  );
+
+  const autoExpandedIds = useMemo(
+    () => (searchTerm ? collectAllFolderIds(visibleTree) : new Set<string>()),
+    [visibleTree, searchTerm],
   );
 
   useEffect(() => {
-    if (sortedSubTabs.length === 0) {
-      if (infoSubTabFilter !== null) setInfoSubTabFilter(null);
-      return;
-    }
-
-    if (infoSubTabFilter === INFO_UNASSIGNED_FILTER) return;
-
-    if (infoSubTabFilter && !sortedSubTabs.some((tab) => tab.id === infoSubTabFilter)) {
-      const defaultTab = sortedSubTabs.find((tab) => tab.isDefault) ?? sortedSubTabs[0] ?? null;
-      setInfoSubTabFilter(defaultTab?.id ?? null);
-    }
-  }, [sortedSubTabs, infoSubTabFilter]);
+    if (searchTerm) return;
+    setExpandedFolderIds((prev) => {
+      if (prev.size > 0) return prev;
+      const defaults = new Set<string>();
+      for (const node of treeRoots) {
+        if (node.type === "folder") defaults.add(node.id);
+      }
+      return defaults;
+    });
+  }, [treeRoots, searchTerm]);
 
   useEffect(() => {
-    if (sortedSubTabs.length === 0) return;
-    if (infoSubTabFilter !== null) return;
+    const visiblePaper = findPaperById(visibleTree, selectedPaperId);
+    if (visiblePaper) return;
 
-    const defaultTab = sortedSubTabs.find((tab) => tab.isDefault) ?? sortedSubTabs[0] ?? null;
-    if (defaultTab) {
-      setInfoSubTabFilter(defaultTab.id);
-    }
-  }, [sortedSubTabs, infoSubTabFilter]);
+    const fallbackPaper = firstVisiblePaper(visibleTree);
+    setSelectedPaperId(fallbackPaper?.id ?? null);
+  }, [visibleTree, selectedPaperId]);
 
+  const selectedPaper = useMemo(
+    () => findPaperById(treeRoots, selectedPaperId),
+    [treeRoots, selectedPaperId],
+  );
 
-  const infoCountsBySubTab = useMemo(() => {
-    return playerInfos.reduce<Record<string, number>>((acc, info) => {
-      const normalizedSubTab =
-        info.infoSubTab && validSubTabIds.has(info.infoSubTab)
-          ? info.infoSubTab
-          : INFO_UNASSIGNED_FILTER;
+  const breadcrumbs = useMemo(
+    () => collectBreadcrumbs(treeRoots, selectedPaperId || ""),
+    [treeRoots, selectedPaperId],
+  );
 
-      const categoryOk =
-        !infoCategoryFilter || (info.category || "").trim() === infoCategoryFilter;
+  const visiblePaperCount = useMemo(
+    () => collectAllPapers(visibleTree).length,
+    [visibleTree],
+  );
 
-      if (!categoryOk) return acc;
+  const toggleFolder = (folderId: string) => {
+    if (searchTerm) return;
+    setExpandedFolderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  };
 
-      acc[normalizedSubTab] = (acc[normalizedSubTab] || 0) + 1;
-      return acc;
-    }, {});
-  }, [playerInfos, validSubTabIds, infoCategoryFilter]);
+  const renderTree = (nodes: TreeNode[]) => {
+    return nodes.map((node) => {
+      if (node.type === "folder") {
+        const isExpanded = searchTerm
+          ? autoExpandedIds.has(node.id)
+          : expandedFolderIds.has(node.id);
+        const folderColor = node.color || theme.labelColor;
 
-  const visibleSubTabs = useMemo(() => {
-    return sortedSubTabs.filter(
-      (tab) => !!tab.showEmpty || (infoCountsBySubTab[tab.id] || 0) > 0,
-    );
-  }, [sortedSubTabs, infoCountsBySubTab]);
+        return (
+          <div key={node.id}>
+            <button
+              type="button"
+              onClick={() => toggleFolder(node.id)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] rounded transition-colors"
+              style={{
+                color: folderColor,
+                background: "transparent",
+                paddingLeft: `${8 + node.depth * 14}px`,
+              }}
+            >
+              {isExpanded ? (
+                <ChevronDown size={12} />
+              ) : (
+                <ChevronRight size={12} />
+              )}
+              {isExpanded ? <FolderOpen size={12} /> : <Folder size={12} />}
+              <span className="truncate">{node.name}</span>
+            </button>
 
-  const activeSubTab = useMemo(() => {
-    if (!infoSubTabFilter || infoSubTabFilter === INFO_UNASSIGNED_FILTER) return null;
-    return sortedSubTabs.find((tab) => tab.id === infoSubTabFilter) ?? null;
-  }, [infoSubTabFilter, sortedSubTabs]);
+            {isExpanded && node.children.length > 0 && (
+              <div>{renderTree(node.children)}</div>
+            )}
+          </div>
+        );
+      }
 
-  const activeSortMode = getSortMode(activeSubTab, infoSortBy);
-
-  const filteredInfos = useMemo(() => {
-    return [...playerInfos]
-      .filter((info) => {
-        const normalizedSubTab =
-          info.infoSubTab && validSubTabIds.has(info.infoSubTab)
-            ? info.infoSubTab
-            : "";
-
-        const matchesCategory =
-          !infoCategoryFilter || (info.category || "").trim() === infoCategoryFilter;
-        if (!matchesCategory) return false;
-
-        if (!infoSubTabFilter) return true;
-        if (infoSubTabFilter === INFO_UNASSIGNED_FILTER) return !normalizedSubTab;
-        return normalizedSubTab === infoSubTabFilter;
-      })
-      .sort((a, b) => {
-        if (activeSortMode === "title") return a.title.localeCompare(b.title);
-        if (activeSortMode === "category") {
-          return (a.category || "").localeCompare(b.category || "");
-        }
-
-        const aTime = getNormalizedTimestamp(a);
-        const bTime = getNormalizedTimestamp(b);
-
-        if (activeSortMode === "oldest") return aTime.localeCompare(bTime);
-        return bTime.localeCompare(aTime);
-      });
-  }, [
-    activeSortMode,
-    infoCategoryFilter,
-    infoSubTabFilter,
-    playerInfos,
-    validSubTabIds,
-  ]);
-
-  const hasUnassignedInfos = (infoCountsBySubTab[INFO_UNASSIGNED_FILTER] || 0) > 0;
+      const isSelected = selectedPaperId === node.paper.id;
+      return (
+        <button
+          key={node.id}
+          type="button"
+          onClick={() => setSelectedPaperId(node.paper.id)}
+          className={`w-full text-left px-2 py-1.5 text-[11px] rounded transition-colors ${
+            isSelected ? ui.sunken : ""
+          }`}
+          style={{
+            color: isSelected ? firstColor(theme.accentColor) : theme.textColor,
+            background: isSelected ? theme.panelBg : "transparent",
+            paddingLeft: `${8 + node.depth * 14}px`,
+          }}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <FileText size={12} />
+            <span className="truncate">{node.name}</span>
+          </div>
+        </button>
+      );
+    });
+  };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-[12px] font-semibold" style={{ color: theme.textColor }}>
-          Information
-        </h3>
+    <div
+      className="rounded border overflow-hidden"
+      style={{
+        borderColor: theme.panelBorder,
+        background: theme.cardBg,
+      }}
+    >
+      <div
+        className="flex items-center gap-2 px-3 py-2 border-b"
+        style={{ borderColor: theme.panelBorder }}
+      >
+        <div className="relative flex-1">
+          <Search
+            size={12}
+            className="absolute left-2 top-1/2 -translate-y-1/2"
+            style={{ color: theme.labelColor }}
+          />
+          <input
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
+            placeholder="Search categories and papers..."
+            className="w-full pl-7 pr-2 py-1.5 text-[10px] outline-none"
+            style={{
+              ...SEARCH_INPUT_STYLE,
+              color: theme.textColor,
+            }}
+          />
+        </div>
         <div className="text-[10px]" style={{ color: theme.labelColor }}>
-          {filteredInfos.length} entr{filteredInfos.length !== 1 ? "ies" : "y"}
+          {visiblePaperCount} paper{visiblePaperCount !== 1 ? "s" : ""}
         </div>
       </div>
 
-      {(sortedSubTabs.length > 0 || hasUnassignedInfos) && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setInfoSubTabFilter(null)}
-            className={`${!infoSubTabFilter ? ui.sunken : ui.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-            style={{
-              color: !infoSubTabFilter ? firstColor(theme.accentColor) : theme.labelColor,
-              fontWeight: !infoSubTabFilter ? 600 : 400,
-              background: !infoSubTabFilter ? theme.panelBg : theme.cardBg,
-            }}
-          >
-            All
-          </button>
-
-          {visibleSubTabs.map((st) => (
-            <button
-              key={st.id}
-              onClick={() => setInfoSubTabFilter(st.id)}
-              className={`${infoSubTabFilter === st.id ? ui.sunken : ui.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-              style={{
-                color:
-                  infoSubTabFilter === st.id
-                    ? st.color || firstColor(theme.accentColor)
-                    : st.color || theme.labelColor,
-                fontWeight: infoSubTabFilter === st.id ? 600 : 400,
-                background: infoSubTabFilter === st.id ? theme.panelBg : theme.cardBg,
-                borderColor: st.color || theme.panelBorder,
-              }}
-            >
-              {st.icon ? <span className="mr-1">{st.icon}</span> : null}
-              {st.name} ({infoCountsBySubTab[st.id] || 0})
-            </button>
-          ))}
-
-          {hasUnassignedInfos && (
-            <button
-              onClick={() => setInfoSubTabFilter(INFO_UNASSIGNED_FILTER)}
-              className={`${infoSubTabFilter === INFO_UNASSIGNED_FILTER ? ui.sunken : ui.raised + " hover:bg-[#1E1E58]"} px-2.5 py-1 text-[10px] transition-colors`}
-              style={{
-                color:
-                  infoSubTabFilter === INFO_UNASSIGNED_FILTER
-                    ? "#FFCC66"
-                    : theme.labelColor,
-                fontWeight: infoSubTabFilter === INFO_UNASSIGNED_FILTER ? 600 : 400,
-                background:
-                  infoSubTabFilter === INFO_UNASSIGNED_FILTER
-                    ? theme.panelBg
-                    : theme.cardBg,
-              }}
-            >
-              Unassigned ({infoCountsBySubTab[INFO_UNASSIGNED_FILTER] || 0})
-            </button>
-          )}
-        </div>
-      )}
-
-      {(activeSubTab?.description ||
-        (activeSubTab?.sortMode && activeSubTab.sortMode !== "custom") ||
-        infoSubTabFilter === INFO_UNASSIGNED_FILTER) && (
-        <div
-          className="text-[10px] px-2 py-1 rounded border"
-          style={{
-            color:
-              activeSubTab?.color || (infoSubTabFilter === INFO_UNASSIGNED_FILTER
-                ? "#FFCC66"
-                : theme.labelColor),
-            borderColor: theme.panelBorder,
-            background: theme.cardBg,
-          }}
-        >
-          {infoSubTabFilter === INFO_UNASSIGNED_FILTER ? (
-            <span>Entries that have not been assigned to an Information sub-tab yet.</span>
-          ) : (
-            <>
-              {activeSubTab?.description ? <span>{activeSubTab.description}</span> : null}
-              {activeSubTab?.description &&
-              activeSubTab?.sortMode &&
-              activeSubTab.sortMode !== "custom" ? (
-                <span className="mx-2">•</span>
-              ) : null}
-              {activeSubTab?.sortMode && activeSubTab.sortMode !== "custom" ? (
-                <span>
-                  Sorted by{" "}
-                  {activeSubTab.sortMode === "title"
-                    ? "title"
-                    : activeSubTab.sortMode === "category"
-                      ? "category"
-                      : activeSubTab.sortMode === "newest"
-                        ? "newest first"
-                        : "oldest first"}
-                </span>
-              ) : null}
-            </>
-          )}
-        </div>
-      )}
-
-      {filteredInfos.length === 0 ? (
-        <div
-          className="rounded border px-3 py-3 text-[11px]"
+      <div className="grid md:grid-cols-[280px_minmax(0,1fr)] min-h-[520px]">
+        <aside
+          className="border-r overflow-auto"
           style={{
             borderColor: theme.panelBorder,
-            background: theme.cardBg,
-            color: theme.labelColor,
+            background: theme.panelBg,
           }}
         >
-          {playerInfos.length === 0
-            ? "No information has been assigned to your profile yet."
-            : infoSubTabFilter === INFO_UNASSIGNED_FILTER
-              ? "You do not have any unassigned information."
-              : activeSubTab
-                ? `No information is available in ${activeSubTab.name} right now.`
-                : "No information matches the selected tab."}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {filteredInfos.map((info) => {
-            const isExpanded = expandedInfoId === info.id;
-
-            return (
+          <div className="p-2 space-y-1">
+            {visibleTree.length > 0 ? (
+              renderTree(visibleTree)
+            ) : (
               <div
-                key={info.id}
-                className="rounded border overflow-hidden"
-                style={{
-                  borderColor: theme.panelBorder,
-                  background: theme.cardBg,
-                }}
+                className="px-2 py-3 text-[11px]"
+                style={{ color: theme.labelColor }}
               >
-                <button
-                  type="button"
-                  onClick={() => setExpandedInfoId(isExpanded ? null : info.id)}
-                  className="w-full text-left px-3 py-2"
+                No categories or papers match your search.
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <section className="min-w-0">
+          {selectedPaper ? (
+            <div className="h-full flex flex-col">
+              <div
+                className="px-4 py-3 border-b"
+                style={{ borderColor: theme.panelBorder }}
+              >
+                <div
+                  className="flex flex-wrap gap-1 text-[10px] mb-2"
+                  style={{ color: theme.labelColor }}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                  {breadcrumbs.map((crumb, index) => (
+                    <React.Fragment key={crumb.id}>
+                      <span>{crumb.name}</span>
+                      {index < breadcrumbs.length - 1 ? <span>/</span> : null}
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                <h2
+                  className="text-[16px] font-semibold"
+                  style={{ color: theme.textColor }}
+                >
+                  {selectedPaper.title}
+                </h2>
+
+                <div
+                  className="mt-2 flex flex-wrap gap-3 text-[10px]"
+                  style={{ color: theme.labelColor }}
+                >
+                  {selectedPaper.category ? (
+                    <span>Category: {selectedPaper.category}</span>
+                  ) : null}
+                  {selectedPaper.inWorldTime ? (
+                    <span>In-World: {selectedPaper.inWorldTime}</span>
+                  ) : null}
+                  {selectedPaper.realWorldTime ? (
+                    <span>Real: {selectedPaper.realWorldTime}</span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
+                <div
+                  className="text-[11px] leading-6"
+                  style={{ color: theme.textColor }}
+                >
+                  <RenderFormattedText
+                    text={
+                      selectedPaper.content ||
+                      selectedPaper.description ||
+                      "This paper does not have content yet."
+                    }
+                  />
+                </div>
+
+                {(selectedPaper.followUps?.length ?? 0) > 0 && (
+                  <div className="space-y-2">
+                    <div
+                      className="text-[10px] uppercase tracking-wide font-semibold"
+                      style={{ color: theme.labelColor }}
+                    >
+                      Related Notes
+                    </div>
+
+                    {selectedPaper.followUps!.map((followUp, index) => (
                       <div
-                        className="text-[11px] font-semibold truncate"
-                        style={{ color: theme.textColor }}
+                        key={followUp.id || `${selectedPaper.id}-followup-${index}`}
+                        className="rounded border px-3 py-2"
+                        style={{
+                          borderColor: theme.panelBorder,
+                          background: theme.panelBg,
+                        }}
                       >
-                        {info.title}
-                      </div>
-
-                      <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
-                        {(info.followUps?.length ?? 0) > 0 && (
-                          <span style={{ color: theme.labelColor }}>
-                            {info.followUps!.length} follow-up
-                            {info.followUps!.length !== 1 ? "s" : ""}
-                          </span>
-                        )}
-
-                        {infoSubTabFilter === INFO_UNASSIGNED_FILTER && (
-                          <span style={{ color: "#FFCC66" }}>Unassigned</span>
-                        )}
-
-                        {info.inWorldTime ? (
-                          <span style={{ color: theme.labelColor }}>
-                            In-World: {info.inWorldTime}
-                          </span>
-                        ) : null}
-
-                        {info.realWorldTime ? (
-                          <span style={{ color: theme.labelColor }}>
-                            Real: {info.realWorldTime}
-                          </span>
-                        ) : null}
-
-                        {!info.realWorldTime && !info.inWorldTime && info.category ? (
-                          <span style={{ color: theme.labelColor }}>
-                            Category: {info.category}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="shrink-0 text-[10px]" style={{ color: theme.labelColor }}>
-                      {isExpanded ? "Hide" : "Open"}
-                    </div>
-                  </div>
-                </button>
-
-                {isExpanded && (
-                  <div
-                    className="border-t px-3 py-3 space-y-3"
-                    style={{ borderColor: theme.panelBorder }}
-                  >
-                    {info.category ? (
-                      <div className="text-[10px]" style={{ color: theme.labelColor }}>
-                        Category: {info.category}
-                      </div>
-                    ) : null}
-
-                    {(info.description || info.content) && (
-                      <div className="text-[11px]" style={{ color: theme.textColor }}>
-                        <RenderFormattedText
-                          text={info.content || info.description || ""}
-                        />
-                      </div>
-                    )}
-
-                    {(info.followUps?.length ?? 0) > 0 && (
-                      <div className="space-y-2">
-                        <div
-                          className="text-[10px] font-semibold uppercase tracking-wide"
-                          style={{ color: theme.labelColor }}
-                        >
-                          Follow-Ups
-                        </div>
-
-                        {info.followUps!.map((followUp, index) => (
+                        {followUp.title ? (
                           <div
-                            key={followUp.id || `${info.id}-followup-${index}`}
-                            className="rounded border px-2.5 py-2"
-                            style={{
-                              borderColor: theme.panelBorder,
-                              background: theme.panelBg,
-                            }}
+                            className="text-[11px] font-semibold mb-1"
+                            style={{ color: theme.textColor }}
                           >
-                            {followUp.title ? (
-                              <div
-                                className="text-[10px] font-semibold mb-1"
-                                style={{ color: theme.textColor }}
-                              >
-                                {followUp.title}
-                              </div>
-                            ) : null}
-
-                            <div
-                              className="text-[11px]"
-                              style={{ color: theme.textColor }}
-                            >
-                              <RenderFormattedText
-                                text={
-                                  followUp.content || followUp.description || ""
-                                }
-                              />
-                            </div>
+                            {followUp.title}
                           </div>
-                        ))}
+                        ) : null}
+
+                        <div
+                          className="text-[11px]"
+                          style={{ color: theme.textColor }}
+                        >
+                          <RenderFormattedText
+                            text={followUp.content || followUp.description || ""}
+                          />
+                        </div>
                       </div>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          ) : (
+            <div
+              className="h-full flex items-center justify-center px-6 text-center"
+              style={{ color: theme.labelColor }}
+            >
+              Select a paper from the left sidebar to read it.
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
