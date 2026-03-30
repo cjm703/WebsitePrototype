@@ -5,6 +5,8 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
 } from "lucide-react";
 import { retro } from "./retro-styles";
@@ -320,6 +322,7 @@ export function PersonalFilesInformationPanel({
   const [searchValue, setSearchValue] = useState("");
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const treeRoots = useMemo(
     () => buildTree(playerInfos, infoSubTabs),
@@ -445,63 +448,104 @@ export function PersonalFilesInformationPanel({
 
   return (
     <div
-      className="rounded border overflow-hidden"
+      className="rounded border overflow-hidden min-h-[68vh] h-[72vh] flex flex-col"
       style={{
         borderColor: theme.panelBorder,
         background: theme.cardBg,
       }}
     >
-      <div
-        className="flex items-center gap-2 px-3 py-2 border-b"
-        style={{ borderColor: theme.panelBorder }}
-      >
-        <div className="relative flex-1">
-          <Search
-            size={12}
-            className="absolute left-2 top-1/2 -translate-y-1/2"
-            style={{ color: theme.labelColor }}
-          />
-          <input
-            value={searchValue}
-            onChange={(e) => setSearchValue(e.target.value)}
-            placeholder="Search categories and papers..."
-            className="w-full pl-7 pr-2 py-1.5 text-[10px] outline-none"
-            style={{
-              ...SEARCH_INPUT_STYLE,
-              color: theme.textColor,
-            }}
-          />
-        </div>
-        <div className="text-[10px]" style={{ color: theme.labelColor }}>
-          {visiblePaperCount} paper{visiblePaperCount !== 1 ? "s" : ""}
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-[280px_minmax(0,1fr)] min-h-[520px]">
+      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: isSidebarCollapsed ? "42px minmax(0,1fr)" : "220px minmax(0,1fr)" }}>
         <aside
-          className="border-r overflow-auto"
+          className="border-r min-h-0 flex flex-col"
           style={{
             borderColor: theme.panelBorder,
             background: theme.panelBg,
           }}
         >
-          <div className="p-2 space-y-1">
-            {visibleTree.length > 0 ? (
-              renderTree(visibleTree)
+          <div
+            className="flex items-center gap-2 px-2 py-1.5 border-b"
+            style={{ borderColor: theme.panelBorder }}
+          >
+            <button
+              type="button"
+              onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+              className={`${ui.raised} h-6 w-6 shrink-0 flex items-center justify-center`}
+              style={{ color: theme.labelColor }}
+              title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {isSidebarCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
+            </button>
+
+            {!isSidebarCollapsed && (
+              <>
+                <div className="relative flex-1">
+                  <Search
+                    size={11}
+                    className="absolute left-2 top-1/2 -translate-y-1/2"
+                    style={{ color: theme.labelColor }}
+                  />
+                  <input
+                    value={searchValue}
+                    onChange={(e) => setSearchValue(e.target.value)}
+                    placeholder="Search..."
+                    className="w-full pl-6 pr-2 py-1 text-[10px] outline-none"
+                    style={{
+                      ...SEARCH_INPUT_STYLE,
+                      color: theme.textColor,
+                    }}
+                  />
+                </div>
+                <div className="text-[10px] shrink-0" style={{ color: theme.labelColor }}>
+                  {visiblePaperCount}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-auto">
+            {!isSidebarCollapsed ? (
+              <div className="p-2 space-y-1">
+                {visibleTree.length > 0 ? (
+                  renderTree(visibleTree)
+                ) : (
+                  <div
+                    className="px-2 py-3 text-[11px]"
+                    style={{ color: theme.labelColor }}
+                  >
+                    No categories or papers match your search.
+                  </div>
+                )}
+              </div>
             ) : (
-              <div
-                className="px-2 py-3 text-[11px]"
-                style={{ color: theme.labelColor }}
-              >
-                No categories or papers match your search.
+              <div className="py-2 flex flex-col items-center gap-2">
+                {visibleTree
+                  .filter((node) => node.type === "folder")
+                  .map((node) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      onClick={() => setIsSidebarCollapsed(false)}
+                      className={`${ui.raised} h-7 w-7 flex items-center justify-center`}
+                      style={{ color: node.type === "folder" ? node.color || theme.labelColor : theme.labelColor }}
+                      title={node.name}
+                    >
+                      <Folder size={13} />
+                    </button>
+                  ))}
               </div>
             )}
           </div>
         </aside>
 
-        <section className="min-w-0">
+        <section className="min-w-0 min-h-0 p-3">
           {selectedPaper ? (
-            <div className="h-full flex flex-col">
+            <div
+              className={`${ui.sunken} h-full flex flex-col overflow-hidden`}
+              style={{
+                background: "#07070d",
+                borderColor: theme.panelBorder,
+              }}
+            >
               <div
                 className="px-4 py-3 border-b"
                 style={{ borderColor: theme.panelBorder }}
@@ -598,8 +642,12 @@ export function PersonalFilesInformationPanel({
             </div>
           ) : (
             <div
-              className="h-full flex items-center justify-center px-6 text-center"
-              style={{ color: theme.labelColor }}
+              className={`${ui.sunken} h-full flex items-center justify-center px-6 text-center`}
+              style={{
+                color: theme.labelColor,
+                background: "#000000",
+                borderColor: theme.panelBorder,
+              }}
             >
               Select a paper from the left sidebar to read it.
             </div>
