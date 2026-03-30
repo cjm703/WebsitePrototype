@@ -131,6 +131,70 @@ function isValidInfoSubTabColor(value: string) {
   return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value.trim());
 }
 
+type InfoSubTab = {
+  id: string;
+  name: string;
+  order: number;
+  description?: string;
+  icon?: string;
+  color?: string;
+  isDefault?: boolean;
+  sortMode?: "custom" | "title" | "category" | "newest" | "oldest";
+  showEmpty?: boolean;
+};
+
+function sanitizeInfoSubTabRecord(raw: Partial<InfoSubTab> | null | undefined, index: number): InfoSubTab {
+  const sortMode = raw?.sortMode;
+  return {
+    id: typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : `ist-recovered-${index}`,
+    name: typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim() : `Sub-Tab ${index + 1}`,
+    order: Number.isFinite(raw?.order as number) ? Number(raw?.order) : index,
+    description: typeof raw?.description === "string" ? raw.description.trim() : "",
+    icon: typeof raw?.icon === "string" ? raw.icon.trim() : "",
+    color: typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color) ? raw.color.trim() : "",
+    isDefault: !!raw?.isDefault,
+    sortMode: sortMode === "title" || sortMode === "category" || sortMode === "newest" || sortMode === "oldest" ? sortMode : "custom",
+    showEmpty: !!raw?.showEmpty,
+  };
+}
+
+function sanitizeInfoSubTabsForLoad(rawTabs: Partial<InfoSubTab>[] | null | undefined) {
+  const seenIds = new Set<string>();
+  const sanitized = (Array.isArray(rawTabs) ? rawTabs : []).map((tab, index) => sanitizeInfoSubTabRecord(tab, index)).filter((tab) => {
+    if (seenIds.has(tab.id)) return false;
+    seenIds.add(tab.id);
+    return true;
+  });
+
+  const normalized = sanitized
+    .sort((a, b) => a.order - b.order)
+    .map((tab, index) => ({ ...tab, order: index }));
+
+  let foundDefault = false;
+  const withSingleDefault = normalized.map((tab, index) => {
+    if (tab.isDefault && !foundDefault) {
+      foundDefault = true;
+      return { ...tab, order: index, isDefault: true };
+    }
+    return { ...tab, order: index, isDefault: false };
+  });
+
+  if (withSingleDefault.length > 0 && !withSingleDefault.some((tab) => tab.isDefault)) {
+    withSingleDefault[0] = { ...withSingleDefault[0], isDefault: true };
+  }
+
+  return withSingleDefault;
+}
+
+function normalizeInfosForInfoSubTabs<T extends { infoSubTab?: string }>(infos: T[], infoSubTabs: InfoSubTab[]) {
+  const validIds = new Set(infoSubTabs.map((tab) => tab.id));
+  return infos.map((info) => {
+    if (!info.infoSubTab) return info;
+    if (validIds.has(info.infoSubTab)) return info;
+    return { ...info, infoSubTab: "" };
+  });
+}
+
 const BUILTIN_EMOJI_PREVIEW = [
   { emoji: "👍", label: "Thumbs Up" },
   { emoji: "❤️", label: "Heart" },
@@ -405,17 +469,6 @@ export function DMArea() {
   const [followUpText, setFollowUpText] = useState("");
 
   // Info Sub-Tabs (DM-managed)
-  type InfoSubTab = {
-    id: string;
-    name: string;
-    order: number;
-    description?: string;
-    icon?: string;
-    color?: string;
-    isDefault?: boolean;
-    sortMode?: "custom" | "title" | "category" | "newest" | "oldest";
-    showEmpty?: boolean;
-  };
   const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
   const [newInfoSubTabName, setNewInfoSubTabName] = useState("");
   const [infoManagerSubTabFilter, setInfoManagerSubTabFilter] = useState<string>("all");
@@ -502,13 +555,38 @@ useEffect(() => {
       setInfoTags(infoTagData.length ? infoTagData : initialInfoTags);
       setStatusTags(statusTagData.length ? statusTagData : initialStatusTags);
       setWikiTags(wikiTagData.length ? wikiTagData : initialWikiTags);
-      setManagedItems(itemsData.length ? itemsData : migrateAssignedTo(initialItems as ManagedItem[]));
-      setManagedCards(cardsData.length ? cardsData : migrateAssignedTo(initialCards as ManagedCard[]));
-      setManagedInfos(infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]));
-      setInfoSubTabs(ensureSingleDefaultInfoSubTab(infoSubTabData));
+      const nextManagedItems = itemsData.length ? itemsData : migrateAssignedTo(initialItems as ManagedItem[]);
+      const nextManagedCards = cardsData.length ? cardsData : migrateAssignedTo(initialCards as ManagedCard[]);
+      const rawManagedInfos = infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]);
+      const normalizedInfoSubTabs = sanitizeInfoSubTabsForLoad(infoSubTabData);
+      const normalizedManagedInfos = normalizeInfosForInfoSubTabs(rawManagedInfos, normalizedInfoSubTabs);
+
+      setManagedItems(nextManagedItems);
+      setManagedCards(nextManagedCards);
+      setManagedInfos(normalizedManagedInfos);
+      setInfoSubTabs(normalizedInfoSubTabs);
       setDmNotifications(notificationData);
       setNodeTrees(nodeTreeData);
       setReactions(reactionData);
+
+      const subTabsChanged = JSON.stringify(normalizedInfoSubTabs) !== JSON.stringify(infoSubTabData ?? []);
+      const infosChanged = JSON.stringify(normalizedManagedInfos) !== JSON.stringify(rawManagedInfos);
+
+      if (subTabsChanged) {
+        try {
+          await saveDMInfoSubTabs(normalizedInfoSubTabs as unknown as Record<string, unknown>[]);
+        } catch (repairErr) {
+          console.warn("Failed to repair info sub-tabs during DM load", repairErr);
+        }
+      }
+
+      if (infosChanged) {
+        try {
+          await saveDMInfos(normalizedManagedInfos as unknown as Record<string, unknown>[]);
+        } catch (repairErr) {
+          console.warn("Failed to repair info entries during DM load", repairErr);
+        }
+      }
     } catch (err) {
       if (!cancelled) {
         setDmError(err instanceof Error ? err.message : "Failed to load DM data");
