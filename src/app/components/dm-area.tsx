@@ -139,8 +139,6 @@ type InfoSubTab = {
   description?: string;
   icon?: string;
   color?: string;
-  parentId?: string;
-  assignedTo?: string[];
   isDefault?: boolean;
   sortMode?: "custom" | "title" | "category" | "newest" | "oldest";
   showEmpty?: boolean;
@@ -155,8 +153,6 @@ function sanitizeInfoSubTabRecord(raw: Partial<InfoSubTab> | null | undefined, i
     description: typeof raw?.description === "string" ? raw.description.trim() : "",
     icon: typeof raw?.icon === "string" ? raw.icon.trim() : "",
     color: typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color) ? raw.color.trim() : "",
-    parentId: typeof raw?.parentId === "string" ? raw.parentId.trim() : "",
-    assignedTo: Array.isArray(raw?.assignedTo) ? raw.assignedTo.map((value) => String(value)).filter(Boolean) : [],
     isDefault: !!raw?.isDefault,
     sortMode: sortMode === "title" || sortMode === "category" || sortMode === "newest" || sortMode === "oldest" ? sortMode : "custom",
     showEmpty: !!raw?.showEmpty,
@@ -1379,6 +1375,7 @@ const handleSaveItem = async () => {
 
     const normalizedInfo = {
       ...editingInfo,
+      title: String(editingInfo.title || "").trim(),
       displayMode: (editingInfo as any).displayMode || "digital",
       displayData: (editingInfo as any).displayData || {},
     } as ManagedInfo;
@@ -2937,6 +2934,7 @@ const handleSaveItem = async () => {
               isAddingNewInfo={isAddingNewInfo}
               infoTags={infoTags}
               infoSubTabs={infoSubTabs}
+              setInfoSubTabs={setInfoSubTabs}
               newInfoSubTabName={newInfoSubTabName}
               setNewInfoSubTabName={setNewInfoSubTabName}
               infoManagerSubTabFilter={infoManagerSubTabFilter}
