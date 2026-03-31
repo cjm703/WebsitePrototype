@@ -46,6 +46,22 @@ async function saveSingletonCollectionDoc<T extends Identifiable>(
   if (error) throw error;
 }
 
+async function saveSingletonDataDoc<T>(
+  table: string,
+  id: string,
+  data: T,
+): Promise<void> {
+  const payload: CollectionRow<T> = {
+    id,
+    data,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from(table)
+    .upsert(payload, { onConflict: "id" });
+  if (error) throw error;
+}
+
 export const appStore = {
   listNodeTrees: <T extends Identifiable>() => listCollection<T>("app_node_trees"),
   saveNodeTrees: <T extends Identifiable>(rows: T[]) => replaceCollection("app_node_trees", rows),
@@ -116,4 +132,14 @@ export const appStore = {
     loadPlayerDoc<T>("player_customization", playerId, fallback),
   savePlayerCustomization: <T>(playerId: string, data: T) =>
     savePlayerDoc<T>("player_customization", playerId, data),
+
+  loadCampaignTimelineState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_campaign_timeline_state", "default", fallback),
+  saveCampaignTimelineState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_campaign_timeline_state", "default", data),
+
+  loadTimelineCalendarPresets: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_timeline_calendar_presets", "default", fallback),
+  saveTimelineCalendarPresets: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_timeline_calendar_presets", "default", data),
 };

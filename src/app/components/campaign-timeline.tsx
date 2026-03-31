@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from "react-router";
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { getPlayerTheme, buildPageGradient, firstColor, ts, bc } from "./player-theme";
 import {
   ArrowLeft, Plus, Trash2, Save, X, Edit, ChevronDown, ChevronRight,
@@ -14,7 +13,8 @@ import {
   Palette, RectangleHorizontal, Magnet, GripVertical,
   AlignLeft, AlignCenter, AlignRight, Type, MousePointer2,
 } from "lucide-react";
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_DIM, S_LINK, S_MUTED, S_RED, S_SUBTLE, S_TEXT, S_WARN } from "./shared-styles";
 
 // ════════════════════════════════════════════
@@ -128,6 +128,14 @@ interface TimelineData {
   version: 2;
 }
 
+interface TimelineCalendarPreset {
+  name: string;
+  icon: string;
+  description: string;
+  builtin?: false;
+  config: LaneCalendarConfig;
+}
+
 interface SessionEntry {
   id: string;
   sessionNumber: number;
@@ -157,6 +165,9 @@ interface WikiPage {
 
 const STORAGE_KEY = "inet-campaign-timeline-v2";
 const OLD_STORAGE_KEY = "inet-campaign-timeline";
+const CUSTOM_PRESETS_KEY = "inet-timeline-custom-calendar-presets";
+const CAMPAIGN_TIMELINE_STATE_ID = "default";
+const CAMPAIGN_TIMELINE_PRESETS_ID = "default";
 
 function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -695,6 +706,15 @@ function loadData(): TimelineData {
   return migrateOldData();
 }
 
+function loadLocalCustomPresets(): TimelineCalendarPreset[] {
+  try {
+    const raw = safeGetItem(CUSTOM_PRESETS_KEY);
+    return raw ? JSON.parse(raw).map((preset: any) => ({ ...preset, builtin: false })) : [];
+  } catch {
+    return [];
+  }
+}
+
 // ══════════════════════════════════════��═══��═
 // Wiki Link Picker
 // ══════════════════���═════════════════════════
@@ -853,7 +873,10 @@ export function CampaignTimeline() {
   const accent = firstColor(theme.accentColor);
 
   const [data, setData] = useState<TimelineData>(loadData);
-  useDebouncedJsonStorage(STORAGE_KEY, data);
+  const [customCalendarPresets, setCustomCalendarPresets] = useState<TimelineCalendarPreset[]>(loadLocalCustomPresets);
+  const [timelineLoading, setTimelineLoading] = useState(true);
+  const [timelineSaveStatus, setTimelineSaveStatus] = useState<"saving" | "saved" | "error" | null>(null);
+  const [timelineSaveError, setTimelineSaveError] = useState<string | null>(null);
 
   const sessions = useMemo(() => loadSessions(), []);
   const wikiPages = useMemo(() => loadWikiPages(), []);
@@ -880,7 +903,6 @@ export function CampaignTimeline() {
   const [editingCalendar, setEditingCalendar] = useState<LaneCalendarConfig | null>(null);
   const [savingPresetName, setSavingPresetName] = useState("");
   const [showSavePreset, setShowSavePreset] = useState(false);
-  const [customPresetsVersion, setCustomPresetsVersion] = useState(0);
   const [calendarSaveErrors, setCalendarSaveErrors] = useState<string[]>([]);
   const [laneResolutions, setLaneResolutions] = useState<Record<string, TimelineResolution>>({});
   const [moveEventInfo, setMoveEventInfo] = useState<{ eventId: string; bookId: string; laneId: string } | null>(null);
@@ -901,6 +923,84 @@ export function CampaignTimeline() {
 
   const [draggingEvent, setDraggingEvent] = useState<{ eventId: string; laneId: string; startX: number; startY: number; startPos: number } | null>(null);
   const [dragOverLaneId, setDragOverLaneId] = useState<string | null>(null);
+  const hasHydratedTimelineRef = useRef(false);
+  const saveToastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateTimeline() {
+      try {
+        setTimelineLoading(true);
+        setTimelineSaveError(null);
+        const fallbackData = loadData();
+        const fallbackPresets = loadLocalCustomPresets();
+        const [remoteData, remotePresets] = await Promise.all([
+          appStore.loadCampaignTimelineState<TimelineData>(fallbackData),
+          appStore.loadTimelineCalendarPresets<TimelineCalendarPreset[]>(fallbackPresets),
+        ]);
+        if (cancelled) return;
+        setData(remoteData && remoteData.version === 2 ? remoteData : fallbackData);
+        setCustomCalendarPresets(Array.isArray(remotePresets) ? remotePresets.map((preset) => ({ ...preset, builtin: false })) : fallbackPresets);
+      } catch (err) {
+        if (cancelled) return;
+        setTimelineSaveError(err instanceof Error ? err.message : "Failed to load campaign timeline.");
+      } finally {
+        if (!cancelled) setTimelineLoading(false);
+      }
+    }
+
+    void hydrateTimeline();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!timelineLoading) {
+      hasHydratedTimelineRef.current = true;
+    }
+  }, [timelineLoading]);
+
+  useEffect(() => {
+    setActiveBookId((prev) => {
+      if (prev && data.books.some((book) => book.id === prev)) return prev;
+      return data.books[0]?.id || "";
+    });
+  }, [data.books]);
+
+  useEffect(() => {
+    if (!hasHydratedTimelineRef.current) return;
+    const timeout = window.setTimeout(() => {
+      setTimelineSaveStatus("saving");
+      setTimelineSaveError(null);
+      void appStore
+        .saveCampaignTimelineState<TimelineData>(data)
+        .then(() => {
+          setTimelineSaveStatus("saved");
+          if (saveToastTimerRef.current) window.clearTimeout(saveToastTimerRef.current);
+          saveToastTimerRef.current = window.setTimeout(() => setTimelineSaveStatus(null), 1400);
+        })
+        .catch((err) => {
+          setTimelineSaveStatus("error");
+          setTimelineSaveError(err instanceof Error ? err.message : "Failed to save campaign timeline.");
+        });
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [data]);
+
+  useEffect(() => {
+    if (!hasHydratedTimelineRef.current) return;
+    const timeout = window.setTimeout(() => {
+      void appStore
+        .saveTimelineCalendarPresets<TimelineCalendarPreset[]>(customCalendarPresets)
+        .catch((err) => {
+          setTimelineSaveStatus("error");
+          setTimelineSaveError(err instanceof Error ? err.message : "Failed to save timeline presets.");
+        });
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [customCalendarPresets]);
 
   // Jump to Event from URL
   const jumpHandled = useRef(false);
@@ -2126,20 +2226,7 @@ export function CampaignTimeline() {
             },
           ];
 
-          const CUSTOM_PRESETS_KEY = "inet-timeline-custom-calendar-presets";
-          const loadCustomPresets = (): { name: string; icon: string; description: string; builtin: false; config: LaneCalendarConfig }[] => {
-            try {
-              const raw = safeGetItem(CUSTOM_PRESETS_KEY);
-              return raw ? JSON.parse(raw).map((p: any) => ({ ...p, builtin: false })) : [];
-            } catch { return []; }
-          };
-          const saveCustomPresets = (presets: { name: string; icon: string; description: string; config: LaneCalendarConfig }[]) => {
-            safeSetJson(CUSTOM_PRESETS_KEY, presets);
-          };
-
-          void customPresetsVersion;
-          const customPresets = loadCustomPresets();
-          const allPresets = [...BUILTIN_PRESETS, ...customPresets];
+          const allPresets = [...BUILTIN_PRESETS, ...customCalendarPresets];
 
           const applyPreset = (preset: { config: LaneCalendarConfig }) => {
             setEditingCalendar({ ...preset.config });
@@ -2150,23 +2237,23 @@ export function CampaignTimeline() {
           const saveCurrentAsPreset = () => {
             const trimmed = savingPresetName.trim();
             if (!trimmed || !cal) return;
-            const existing = loadCustomPresets().filter(p => p.name !== trimmed);
-            const newPreset = {
+            const newPreset: TimelineCalendarPreset = {
               name: trimmed,
               icon: "\u2605",
               description: `Custom: ${cal.monthsPerYear} months, ${cal.yearLabel} year label`,
               config: { ...cal },
+              builtin: false,
             };
-            saveCustomPresets([...existing, newPreset]);
+            setCustomCalendarPresets((prev) => [
+              ...prev.filter((preset) => preset.name !== trimmed),
+              newPreset,
+            ]);
             setSavingPresetName("");
             setShowSavePreset(false);
-            setCustomPresetsVersion(v => v + 1);
           };
 
           const deleteCustomPreset = (name: string) => {
-            const existing = loadCustomPresets().filter(p => p.name !== name);
-            saveCustomPresets(existing);
-            setCustomPresetsVersion(v => v + 1);
+            setCustomCalendarPresets((prev) => prev.filter((preset) => preset.name !== name));
           };
 
           return (
@@ -3307,6 +3394,17 @@ export function CampaignTimeline() {
   const totalEvents = data.books.reduce((sum, b) => sum + b.lanes.reduce((s, l) => s + l.events.length, 0), 0);
   const totalLanes = data.books.reduce((sum, b) => sum + b.lanes.length, 0);
 
+  if (timelineLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={bc(pageBg)}>
+        <div className="px-4 py-3 rounded" style={{ background: "#0A0A28", border: "1px solid #252560", color: "#C0D0F0" }}>
+          <div className="text-[12px] font-semibold">Loading campaign timeline...</div>
+          <div className="text-[10px] mt-1" style={S_MUTED}>Pulling timeline books and calendar presets from Supabase.</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen" style={{ ...bc(pageBg) }} ref={timelineContainerRef}>
       <div className="max-w-[1600px] mx-auto px-4 py-5">
@@ -3329,6 +3427,15 @@ export function CampaignTimeline() {
 
           {/* View controls */}
           <div className="flex items-center gap-1.5">
+            {timelineSaveStatus && (
+              <div className="text-[10px] px-2.5 py-1 rounded" style={{
+                color: timelineSaveStatus === "error" ? "#FF8A8A" : timelineSaveStatus === "saved" ? "#7AE29A" : "#9AB6FF",
+                border: `1px solid ${timelineSaveStatus === "error" ? "#5A1A1A" : timelineSaveStatus === "saved" ? "#1F4A2D" : "#233A6B"}`,
+                background: timelineSaveStatus === "error" ? "#1A0A0A" : timelineSaveStatus === "saved" ? "#0A1A12" : "#0A1024",
+              }}>
+                {timelineSaveStatus === "saving" ? "Saving..." : timelineSaveStatus === "saved" ? "Saved" : "Save failed"}
+              </div>
+            )}
             {activeBook && activeBook.lanes.length > 1 && (
               <button onClick={() => setConsolidatedView(!consolidatedView)} className={`${retro.button} text-[10px] px-3 py-1 flex items-center gap-1.5`} style={{ color: consolidatedView ? "#4ACA6A" : "#5A6A8A" }} title={consolidatedView ? "Show individual lanes" : "Show consolidated view"}>
                 <Eye size={11} /> {consolidatedView ? "Lanes" : "Combined"}
@@ -3336,6 +3443,13 @@ export function CampaignTimeline() {
             )}
           </div>
         </div>
+
+        {timelineSaveError && (
+          <div className="mb-4 px-4 py-2 rounded" style={{ background: "#1A0A0A", border: "1px solid #4A1A1A", color: "#FF9A9A" }}>
+            <div className="text-[11px] font-semibold">Timeline sync issue</div>
+            <div className="text-[10px] mt-0.5">{timelineSaveError}</div>
+          </div>
+        )}
 
         {/* Book tabs */}
         <div className="flex items-center gap-0 overflow-x-auto mb-5 rounded-lg timeline-scrollbar-sm" style={{ background: "#06061C", border: "1px solid #18184A" }}>
