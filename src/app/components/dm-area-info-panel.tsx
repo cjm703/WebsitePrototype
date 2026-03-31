@@ -30,7 +30,7 @@ const INFO_UNASSIGNED_FILTER = "__unassigned__";
 const DISPLAY_MODE_OPTIONS = [
   { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, background color, and optional typewriter text." },
   { value: "paper", label: "Paper Document", help: "Brighter paper page with adjustable torn edges, extra pages, and edge texture." },
-  { value: "item:stone_tablet", label: "Stone Tablet", help: "A narrower rounded-top tablet with more stone texture and more carved text." },
+  { value: "item:stone_tablet", label: "Stone Tablet", help: "A narrower rounded-top tablet with more stone texture, tintable carved text, and adjustable stone lightness." },
 ] as const;
 
 function stripHtml(value: string) {
@@ -730,14 +730,14 @@ export function DMInfoManagerSection(props: any) {
                             min="0"
                             max="100"
                             step="1"
-                            value={(editingInfo as any).displayData?.paperJaggedness ?? 22}
+                            value={(editingInfo as any).displayData?.paperJaggedness ?? 10}
                             onChange={(e) => updateEditingInfo((prev: any) => ({
                               ...prev,
                               displayData: { ...(prev.displayData || {}), paperJaggedness: Number(e.target.value) },
                             }))}
                             className="w-full accent-[#4A7BFF]"
                           />
-                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperJaggedness ?? 22}</div>
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperJaggedness ?? 10}</div>
                         </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Extra Pages</label>
@@ -788,7 +788,7 @@ export function DMInfoManagerSection(props: any) {
                   {(editingInfo as any).displayMode === "item:stone_tablet" && (
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Stone Tablet Options</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Inscription Alignment</label>
                           <select value={(editingInfo as any).displayData?.alignment || "left"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), alignment: e.target.value } }))} className={inputClass} style={inputStyle}>
@@ -812,6 +812,36 @@ export function DMInfoManagerSection(props: any) {
                           />
                           <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneTextureIntensity ?? 55}</div>
                         </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Text Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.stoneTextColor || ""}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), stoneTextColor: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#c4cbc8"
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-3">
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Stone Lightness</label>
+                        <input
+                          type="range"
+                          min="20"
+                          max="80"
+                          step="1"
+                          value={(editingInfo as any).displayData?.stoneBaseLightness ?? 48}
+                          onChange={(e) => updateEditingInfo((prev: any) => ({
+                            ...prev,
+                            displayData: { ...(prev.displayData || {}), stoneBaseLightness: Number(e.target.value) },
+                          }))}
+                          className="w-full accent-[#4A7BFF]"
+                        />
+                        <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneBaseLightness ?? 48}</div>
                       </div>
                     </div>
                   )}

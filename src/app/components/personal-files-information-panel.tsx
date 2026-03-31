@@ -49,6 +49,8 @@ export type ManagedInfoLike = {
     paperExtraPages?: number;
     paperEdgeTexture?: number;
     stoneTextureIntensity?: number;
+    stoneTextColor?: string;
+    stoneBaseLightness?: number;
   };
 };
 

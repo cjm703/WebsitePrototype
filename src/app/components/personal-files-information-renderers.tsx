@@ -25,6 +25,8 @@ export type InfoDisplayData = {
   paperEdgeTexture?: number;
 
   stoneTextureIntensity?: number;
+  stoneTextColor?: string;
+  stoneBaseLightness?: number;
 };
 
 export type InfoFollowUp = {
@@ -90,6 +92,10 @@ function SharedDisplayAnimations() {
         from { width: 0; }
         to { width: 100%; }
       }
+      @keyframes pfCharReveal {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
     `}</style>
   );
 }
@@ -154,32 +160,39 @@ function DigitalTextBlock({
   typewriter: boolean;
   typeSpeed: number;
 }) {
-  const estimatedChars = Math.max(24, text.replace(/<[^>]*>/g, "").length);
+  const plainText = text.replace(/<[^>]*>/g, "");
+  const estimatedChars = Math.max(24, plainText.length);
   const duration = clamp((estimatedChars / Math.max(typeSpeed, 5)) * 0.9, 1.2, 18);
-  const inner = <RenderFormattedText text={text} />;
 
   if (!typewriter) {
     return (
       <div
-        className="relative text-[11px] leading-7"
+        className="relative text-[11px] leading-7 whitespace-pre-wrap"
         style={{ color, textShadow: getGlowShadow(color, intensity) }}
       >
-        {inner}
+        <RenderFormattedText text={text} />
       </div>
     );
   }
 
   return (
     <div
-      className="overflow-hidden text-[11px] leading-7"
-      style={{
-        color,
-        textShadow: getGlowShadow(color, intensity),
-        maxWidth: "100%",
-        animation: `pfTypeIn ${duration}s steps(${Math.max(estimatedChars, 24)}, end) 1 forwards`,
-      }}
+      className="text-[11px] leading-7 whitespace-pre-wrap"
+      style={{ color, textShadow: getGlowShadow(color, intensity) }}
     >
-      {inner}
+      {plainText.split("").map((char, index) => (
+        <span
+          key={`${index}-${char}`}
+          style={{
+            opacity: 0,
+            display: "inline",
+            animation: `pfCharReveal 0.01s linear forwards`,
+            animationDelay: `${(index / Math.max(typeSpeed, 5)) * 0.9}s`,
+          }}
+        >
+          {char}
+        </span>
+      ))}
     </div>
   );
 }
@@ -240,52 +253,46 @@ export function DigitalDocumentView({ theme, info, accentColor }: RendererProps)
 
 function buildPaperClipPath(jaggedness: number) {
   const j = clamp(jaggedness, 0, 100) / 100;
-  if (j <= 0.08) return "inset(0 round 2px)";
+  if (j <= 0.12) return "inset(0 round 3px)";
 
-  const topA = 1 + 2 * j;
-  const topB = 3 + 5 * j;
-  const sideA = 2 + 4 * j;
-  const sideB = 4 + 6 * j;
+  const topA = 0.6 + 0.9 * j;
+  const topB = 1.2 + 1.7 * j;
+  const sideA = 0.8 + 1.6 * j;
+  const sideB = 1.4 + 2.2 * j;
 
   return `polygon(
     0% ${topA}%,
-    5% 0%,
-    11% ${topB}%,
-    18% 1%,
-    26% ${topA + 1}%,
-    35% 0%,
-    45% ${topB}%,
-    56% 0%,
-    66% ${topA + 1}%,
-    76% 0%,
-    86% ${topB}%,
-    95% 0%,
+    6% 0.2%,
+    13% ${topB}%,
+    21% 0.4%,
+    31% ${topA + 0.5}%,
+    42% 0.2%,
+    54% ${topB}%,
+    66% 0.3%,
+    78% ${topA + 0.6}%,
+    89% 0.2%,
+    96% ${topB}%,
     100% ${sideA}%,
-    98% 14%,
-    100% 24%,
-    97% 34%,
-    100% 45%,
-    98% 58%,
-    100% 70%,
-    97% 82%,
-    100% 94%,
-    94% 100%,
-    84% 98%,
-    73% 100%,
-    61% 97%,
-    50% 100%,
-    39% 97%,
-    27% 100%,
-    16% 98%,
-    6% 100%,
-    0% 95%,
-    ${sideB}% 84%,
-    0% 72%,
-    ${sideA}% 60%,
-    0% 48%,
-    ${sideB}% 36%,
-    0% 24%,
-    ${sideA}% 12%
+    99% 18%,
+    100% 34%,
+    98.8% 49%,
+    100% 64%,
+    99% 80%,
+    100% 96%,
+    95% 100%,
+    82% 99.1%,
+    69% 100%,
+    56% 99%,
+    43% 100%,
+    30% 99.1%,
+    17% 100%,
+    5% 99.3%,
+    0% 96%,
+    ${sideB}% 82%,
+    0% 66%,
+    ${sideA}% 50%,
+    0% 34%,
+    ${sideB}% 18%
   )`;
 }
 
@@ -344,7 +351,7 @@ function PaperPage({
 }
 
 export function PaperDocumentView({ info, accentColor }: RendererProps) {
-  const jaggedness = info.displayData?.paperJaggedness ?? 22;
+  const jaggedness = info.displayData?.paperJaggedness ?? 10;
   const extraPages = info.displayData?.paperExtraPages ?? 0;
   const edgeTexture = info.displayData?.paperEdgeTexture ?? 24;
   const pages = 1 + clamp(extraPages, 0, 5);
@@ -369,6 +376,12 @@ export function PaperDocumentView({ info, accentColor }: RendererProps) {
 export function StoneTabletView({ info }: RendererProps) {
   const align = info.displayData?.alignment === "center" ? "center" : "left";
   const textureIntensity = clamp(info.displayData?.stoneTextureIntensity ?? 55, 0, 100) / 100;
+  const baseLightness = clamp(info.displayData?.stoneBaseLightness ?? 48, 20, 80);
+  const stoneTextColor = info.displayData?.stoneTextColor || "#c4cbc8";
+
+  const topColor = `hsl(210 6% ${Math.min(baseLightness + 12, 92)}%)`;
+  const midColor = `hsl(210 6% ${baseLightness}%)`;
+  const lowColor = `hsl(210 7% ${Math.max(baseLightness - 12, 8)}%)`;
 
   return (
     <div className="flex-1 overflow-auto px-4 py-6">
@@ -379,7 +392,7 @@ export function StoneTabletView({ info }: RendererProps) {
             width: "min(560px, 100%)",
             minHeight: "560px",
             borderRadius: "180px 180px 26px 26px / 150px 150px 26px 26px",
-            background: "linear-gradient(180deg, rgba(111,116,121,0.98), rgba(69,72,78,0.98) 42%, rgba(47,50,55,0.98) 100%)",
+            background: `linear-gradient(180deg, ${topColor}, ${midColor} 42%, ${lowColor} 100%)`,
             border: "1px solid rgba(208,212,218,0.12)",
             boxShadow: "0 34px 70px rgba(0,0,0,0.56), inset 0 3px 14px rgba(255,255,255,0.08), inset 0 -14px 28px rgba(0,0,0,0.36)",
           }}
@@ -412,7 +425,7 @@ export function StoneTabletView({ info }: RendererProps) {
             style={{
               minHeight: "400px",
               marginTop: "72px",
-              background: "linear-gradient(180deg, rgba(83,87,93,0.96), rgba(56,59,65,0.96))",
+              background: `linear-gradient(180deg, hsl(210 6% ${Math.min(baseLightness + 3, 88)}%), hsl(210 6% ${Math.max(baseLightness - 6, 12)}%))`,
               borderRadius: "24px",
               boxShadow: "inset 0 0 22px rgba(0,0,0,0.34), inset 0 1px 5px rgba(255,255,255,0.05)",
             }}
@@ -420,9 +433,9 @@ export function StoneTabletView({ info }: RendererProps) {
             <div
               className="text-[12px] md:text-[13px] leading-8 tracking-[0.08em]"
               style={{
-                color: "#c4cbc8",
+                color: stoneTextColor,
                 textAlign: align,
-                textShadow: "1px 1px 0 rgba(255,255,255,0.06), -1px -1px 0 rgba(0,0,0,0.92), 0 1px 0 rgba(0,0,0,0.85), 0 3px 4px rgba(0,0,0,0.42)",
+                textShadow: "1px 1px 0 rgba(255,255,255,0.05), -1px -1px 0 rgba(0,0,0,0.92), 0 1px 0 rgba(0,0,0,0.85), 0 3px 4px rgba(0,0,0,0.42)",
                 fontFamily: '"Trebuchet MS", "Verdana", sans-serif',
                 filter: `contrast(${1 + 0.12 * textureIntensity})`,
               }}
