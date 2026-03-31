@@ -807,70 +807,7 @@ export function PersonalFilesInformationPanel({
                   info: selectedPaper as any,
                   accentColor: accent,
                 })}
-                  <div
-                    className="text-[11px] leading-7"
-                    style={{ color: theme.textColor }}
-                  >
-                    <RenderFormattedText
-                      text={
-                        selectedPaper.content ||
-                        selectedPaper.description ||
-                        "This paper does not have content yet."
-                      }
-                    />
-                  </div>
-
-                  {(selectedPaper.followUps?.length ?? 0) > 0 && (
-                    <div className="space-y-2">
-                      <div
-                        className="text-[10px] uppercase tracking-[0.16em] font-semibold"
-                        style={{ color: theme.labelColor }}
-                      >
-                        Related Notes
-                      </div>
-
-                      <div className="grid gap-2">
-                        {selectedPaper.followUps!.map((followUp, index) => (
-                          <div
-                            key={followUp.id || `${selectedPaper.id}-followup-${index}`}
-                            className="rounded border px-3 py-2 transition-transform duration-150 hover:translate-x-[2px]"
-                            style={{
-                              borderColor: "rgba(124, 124, 185, 0.18)",
-                              background:
-                                "linear-gradient(180deg, rgba(10,13,27,0.95), rgba(7,9,20,0.95))",
-                            }}
-                          >
-                            <div className="flex items-start gap-2">
-                              <FileText
-                                size={13}
-                                style={{ color: accent, marginTop: "2px" }}
-                              />
-                              <div className="min-w-0">
-                                {followUp.title ? (
-                                  <div
-                                    className="text-[11px] font-semibold mb-1"
-                                    style={{ color: theme.textColor }}
-                                  >
-                                    {followUp.title}
-                                  </div>
-                                ) : null}
-
-                                <div
-                                  className="text-[11px]"
-                                  style={{ color: theme.textColor }}
-                                >
-                                  <RenderFormattedText
-                                    text={followUp.content || followUp.description || ""}
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+              </div>
               </div>
             </div>
           ) : (
