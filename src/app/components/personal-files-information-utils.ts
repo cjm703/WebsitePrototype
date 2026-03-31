@@ -9,8 +9,6 @@ export type InfoSubTab = {
   description?: string;
   icon?: string;
   color?: string;
-  parentId?: string;
-  assignedTo?: string[];
   isDefault?: boolean;
   sortMode?: InfoSortMode;
   showEmpty?: boolean;
@@ -42,10 +40,6 @@ export function sanitizeInfoSubTabRecord(
       typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color)
         ? raw.color.trim()
         : "",
-    parentId: typeof raw?.parentId === "string" ? raw.parentId.trim() : "",
-    assignedTo: Array.isArray(raw?.assignedTo)
-      ? raw.assignedTo.map((value) => String(value)).filter(Boolean)
-      : [],
     isDefault: !!raw?.isDefault,
     sortMode:
       sortMode === "title" ||

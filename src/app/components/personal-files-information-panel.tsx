@@ -33,6 +33,7 @@ export type ManagedInfoLike = {
   content?: string;
   realWorldTime?: string;
   inWorldTime?: string;
+  lastEditedAt?: string;
   infoSubTab?: string;
   followUps?: InfoFollowUp[];
   displayMode?: "digital" | "paper" | "item:stone_tablet";
@@ -330,6 +331,24 @@ function firstVisiblePaper(nodes: TreeNode[]) {
   return null;
 }
 
+function findFirstPaperInFolderId(nodes: TreeNode[], folderId: string): ManagedInfoLike | null {
+  for (const node of nodes) {
+    if (node.type === "folder") {
+      if (node.id === folderId) return firstVisiblePaper(node.children);
+      const found = findFirstPaperInFolderId(node.children, folderId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function formatLastEdited(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
 export function PersonalFilesInformationPanel({
   theme,
   playerInfos,
@@ -341,6 +360,36 @@ export function PersonalFilesInformationPanel({
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [favoritePaperIds, setFavoritePaperIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set<string>();
+    try {
+      const raw = window.localStorage.getItem("pf-info-favorites");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value)) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const [readState, setReadState] = useState<Record<string, string>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const raw = window.localStorage.getItem("pf-info-read-state");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pf-info-favorites", JSON.stringify(Array.from(favoritePaperIds)));
+  }, [favoritePaperIds]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("pf-info-read-state", JSON.stringify(readState));
+  }, [readState]);
 
   const treeRoots = useMemo(
     () => buildTree(playerInfos, infoSubTabs),
@@ -372,17 +421,41 @@ export function PersonalFilesInformationPanel({
   }, [treeRoots, searchTerm]);
 
   useEffect(() => {
+    if (!selectedPaperId) return;
     const visiblePaper = findPaperById(visibleTree, selectedPaperId);
     if (visiblePaper) return;
-
-    const fallbackPaper = firstVisiblePaper(visibleTree);
-    setSelectedPaperId(fallbackPaper?.id ?? null);
+    setSelectedPaperId(null);
   }, [visibleTree, selectedPaperId]);
 
   const selectedPaper = useMemo(
     () => findPaperById(treeRoots, selectedPaperId),
     [treeRoots, selectedPaperId],
   );
+
+  useEffect(() => {
+    if (!selectedPaperId) return;
+    setReadState((prev) => ({ ...prev, [selectedPaperId]: new Date().toISOString() }));
+  }, [selectedPaperId]);
+
+  const paperStatusById = useMemo(() => {
+    const status: Record<string, "new" | "updated" | null> = {};
+    const all = collectAllPapers(treeRoots);
+    for (const paper of all) {
+      const lastRead = readState[paper.id];
+      if (!lastRead) {
+        status[paper.id] = "new";
+        continue;
+      }
+      if (paper.lastEditedAt) {
+        const edited = new Date(paper.lastEditedAt).getTime();
+        const read = new Date(lastRead).getTime();
+        status[paper.id] = Number.isFinite(edited) && Number.isFinite(read) && edited > read ? "updated" : null;
+      } else {
+        status[paper.id] = null;
+      }
+    }
+    return status;
+  }, [treeRoots, readState]);
 
   const breadcrumbs = useMemo(
     () => collectBreadcrumbs(treeRoots, selectedPaperId || ""),
@@ -405,7 +478,17 @@ export function PersonalFilesInformationPanel({
   };
 
   const renderTree = (nodes: TreeNode[]) => {
-    return nodes.map((node) => {
+    const sortedNodes = [...nodes].sort((a, b) => {
+      if (a.type === "paper" && b.type === "paper") {
+        const aFav = favoritePaperIds.has(a.paper.id) ? 1 : 0;
+        const bFav = favoritePaperIds.has(b.paper.id) ? 1 : 0;
+        if (aFav !== bFav) return bFav - aFav;
+      }
+      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return sortedNodes.map((node) => {
       if (node.type === "folder") {
         const isExpanded = searchTerm
           ? autoExpandedIds.has(node.id)
@@ -457,7 +540,20 @@ export function PersonalFilesInformationPanel({
         >
           <div className="flex items-center gap-1.5 min-w-0">
             <FileText size={12} />
+            {favoritePaperIds.has(node.paper.id) ? <span className="text-[9px]">★</span> : null}
             <span className="truncate">{node.name}</span>
+            {paperStatusById[node.paper.id] ? (
+              <span
+                className="ml-auto shrink-0 rounded px-1 py-[1px] text-[8px] uppercase tracking-[0.08em]"
+                style={{
+                  color: paperStatusById[node.paper.id] === "new" ? "#FFD27A" : "#9FDBFF",
+                  border: "1px solid rgba(124,124,185,0.28)",
+                  background: "rgba(10,12,22,0.8)",
+                }}
+              >
+                {paperStatusById[node.paper.id] === "new" ? "New" : "Updated"}
+              </span>
+            ) : null}
           </div>
         </button>
       );
@@ -574,18 +670,51 @@ export function PersonalFilesInformationPanel({
                 >
                   {breadcrumbs.map((crumb, index) => (
                     <React.Fragment key={crumb.id}>
-                      <span>{crumb.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (crumb.type === "paper") {
+                            setSelectedPaperId(crumb.id.replace(/^paper:/, ""));
+                          } else {
+                            const next = findFirstPaperInFolderId(treeRoots, crumb.id);
+                            setExpandedFolderIds((prev) => new Set(prev).add(crumb.id));
+                            setSelectedPaperId(next?.id ?? null);
+                          }
+                        }}
+                        className="hover:underline"
+                        style={{ color: theme.labelColor }}
+                      >
+                        {crumb.name}
+                      </button>
                       {index < breadcrumbs.length - 1 ? <span>/</span> : null}
                     </React.Fragment>
                   ))}
                 </div>
 
-                <h2
-                  className="text-[16px] font-semibold"
-                  style={{ color: theme.textColor }}
-                >
-                  {selectedPaper.title}
-                </h2>
+                <div className="flex items-start justify-between gap-3">
+                  <h2
+                    className="text-[16px] font-semibold"
+                    style={{ color: theme.textColor }}
+                  >
+                    {selectedPaper.title}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFavoritePaperIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(selectedPaper.id)) next.delete(selectedPaper.id);
+                        else next.add(selectedPaper.id);
+                        return next;
+                      })
+                    }
+                    className={`${ui.raised} px-2 py-1 text-[10px] shrink-0`}
+                    style={{ color: favoritePaperIds.has(selectedPaper.id) ? "#FFD27A" : theme.labelColor }}
+                    title={favoritePaperIds.has(selectedPaper.id) ? "Unfavorite" : "Favorite"}
+                  >
+                    {favoritePaperIds.has(selectedPaper.id) ? "★ Favorited" : "☆ Favorite"}
+                  </button>
+                </div>
 
                 <div
                   className="mt-2 flex flex-wrap gap-3 text-[10px]"
@@ -599,6 +728,12 @@ export function PersonalFilesInformationPanel({
                   ) : null}
                   {selectedPaper.realWorldTime ? (
                     <span>Real: {selectedPaper.realWorldTime}</span>
+                  ) : null}
+                  {selectedPaper.lastEditedAt ? (
+                    <span>Last Edited: {formatLastEdited(selectedPaper.lastEditedAt)}</span>
+                  ) : null}
+                  {paperStatusById[selectedPaper.id] ? (
+                    <span>{paperStatusById[selectedPaper.id] === "new" ? "New" : "Updated"}</span>
                   ) : null}
                 </div>
               </div>
@@ -618,7 +753,13 @@ export function PersonalFilesInformationPanel({
                 borderColor: theme.panelBorder,
               }}
             >
-              Select a paper from the left sidebar to read it.
+              <div className="space-y-3">
+                <div className="text-[14px]" style={{ color: theme.textColor }}>Information Archive</div>
+                <div>Select a paper from the left sidebar to read it.</div>
+                <div className="text-[10px]">
+                  {visiblePaperCount} visible paper{visiblePaperCount === 1 ? "" : "s"} • {favoritePaperIds.size} favorite{favoritePaperIds.size === 1 ? "" : "s"}
+                </div>
+              </div>
             </div>
           )}
         </section>

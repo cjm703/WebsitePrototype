@@ -139,6 +139,10 @@ type InfoSubTab = {
   description?: string;
   icon?: string;
   color?: string;
+  parentId?: string;
+  assignedTo?: string[];
+  defaultDisplayMode?: "digital" | "paper" | "item:stone_tablet";
+  autoAssignToOwners?: boolean;
   isDefault?: boolean;
   sortMode?: "custom" | "title" | "category" | "newest" | "oldest";
   showEmpty?: boolean;
@@ -153,6 +157,13 @@ function sanitizeInfoSubTabRecord(raw: Partial<InfoSubTab> | null | undefined, i
     description: typeof raw?.description === "string" ? raw.description.trim() : "",
     icon: typeof raw?.icon === "string" ? raw.icon.trim() : "",
     color: typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color) ? raw.color.trim() : "",
+    parentId: typeof raw?.parentId === "string" ? raw.parentId.trim() : "",
+    assignedTo: Array.isArray(raw?.assignedTo) ? raw.assignedTo.map((value) => String(value)).filter(Boolean) : [],
+    defaultDisplayMode:
+      raw?.defaultDisplayMode === "paper" || raw?.defaultDisplayMode === "item:stone_tablet"
+        ? raw.defaultDisplayMode
+        : "digital",
+    autoAssignToOwners: typeof raw?.autoAssignToOwners === "boolean" ? raw.autoAssignToOwners : true,
     isDefault: !!raw?.isDefault,
     sortMode: sortMode === "title" || sortMode === "category" || sortMode === "newest" || sortMode === "oldest" ? sortMode : "custom",
     showEmpty: !!raw?.showEmpty,
@@ -1373,19 +1384,17 @@ const handleSaveItem = async () => {
   const handleSaveInfo = async () => {
     if (!editingInfo) return;
 
-    const normalizedInfo = {
+    const savedInfo = {
       ...editingInfo,
       title: String(editingInfo.title || "").trim(),
-      displayMode: (editingInfo as any).displayMode || "digital",
-      displayData: (editingInfo as any).displayData || {},
-    } as ManagedInfo;
+      lastEditedAt: new Date().toISOString(),
+    };
 
-    const next = isAddingNewInfo
-      ? [...managedInfos, normalizedInfo]
-      : managedInfos.map((n) => (n.id === normalizedInfo.id ? normalizedInfo : n));
+    const updated = isAddingNewInfo
+      ? [...managedInfos, savedInfo]
+      : managedInfos.map((i) => (i.id === savedInfo.id ? savedInfo : i));
 
-    await persistInfos(next);
-
+    await persistInfos(updated);
     setEditingInfo(null);
     setIsAddingNewInfo(false);
   };

@@ -44,6 +44,7 @@ export type ManagedInfoLike = {
   content?: string;
   realWorldTime?: string;
   inWorldTime?: string;
+  lastEditedAt?: string;
   infoSubTab?: string;
   assignedTo?: string[];
   followUps?: InfoFollowUp[];
