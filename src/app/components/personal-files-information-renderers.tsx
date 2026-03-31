@@ -369,7 +369,7 @@ export function DigitalDocumentView({ theme, info, accentColor, onOpenInfo, info
     return { ...section, content: cutoff.html, _fade: cutoff.fadeActive } as any;
   });
 
-  return (return (
+  return (
     <div className="flex-1 overflow-auto px-2 py-2">
       <SharedDisplayAnimations />
       <div
@@ -498,6 +498,8 @@ function PaperPage({
   const visibleCount = info.displayData?.visibleBlockCount;
   const fadeCount = info.displayData?.fadeBlockCount ?? 2;
   const templateStyle = getPaperTemplateStyle(info.displayData?.paperTemplate);
+  const handwrittenOverlay = String(info.displayData?.paperHandwrittenOverlay || "").trim();
+  const handwrittenOpacity = clamp(Number(info.displayData?.paperHandwrittenOpacity ?? 0), 0, 1);
   const baseSections = pageIndex === 0 ? getDocumentSections(info) : [];
   const sections = baseSections.map((section) => {
     const processed = preprocessMarkup(section.content || "", "paper");
@@ -597,6 +599,7 @@ export function StoneTabletView({ info, onOpenInfo, infoLookup }: RendererProps)
   const textureIntensity = clamp(info.displayData?.stoneTextureIntensity ?? 55, 0, 100) / 100;
   const baseLightness = clamp(info.displayData?.stoneBaseLightness ?? 48, 20, 80);
   const stoneTextColor = info.displayData?.stoneTextColor || "#c4cbc8";
+  const crackIntensity = clamp(Number(info.displayData?.stoneCrackIntensity ?? 20), 0, 100) / 100;
   const visibleCount = info.displayData?.visibleBlockCount;
   const fadeCount = info.displayData?.fadeBlockCount ?? 2;
 
