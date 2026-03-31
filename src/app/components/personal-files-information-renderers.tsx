@@ -3,14 +3,74 @@ import React from "react";
 import { FileText } from "lucide-react";
 import { RenderFormattedText } from "./render-text";
 import type { PlayerTheme } from "./player-theme";
-import type {
-  InfoDisplayMode,
-  InfoSection,
-  InfoDocumentLike as ManagedInfoLike,
-} from "./personal-files-information-utils";
 
-export type { InfoDisplayMode, InfoSection } from "./personal-files-information-utils";
-export type ManagedInfoLike = import("./personal-files-information-utils").InfoDocumentLike;
+export type InfoDisplayMode =
+  | "digital"
+  | "paper"
+  | "item:stone_tablet";
+
+export type InfoSection = {
+  id?: string;
+  title?: string;
+  content?: string;
+};
+
+export type InfoDisplayData = {
+  variant?: string;
+  alignment?: "left" | "center";
+  futurePaperOverlayMode?: "none" | "pixel_handwriting";
+
+  digitalTextColor?: string;
+  digitalGlowIntensity?: "low" | "medium" | "high";
+  digitalTypewriter?: boolean;
+  digitalBackgroundColor?: string;
+  digitalTypewriterSpeed?: number;
+  digitalVariant?: "default" | "terminal";
+
+  paperJaggedness?: number;
+  paperExtraPages?: number;
+  paperEdgeTexture?: number;
+  paperTemplate?: "standard" | "letter" | "report" | "aged";
+  paperHandwrittenOverlay?: string;
+  paperHandwrittenOpacity?: number;
+
+  stoneTextureIntensity?: number;
+  stoneTextColor?: string;
+  stoneBaseLightness?: number;
+  stoneCrackIntensity?: number;
+  stoneRuneGlow?: boolean;
+  stoneRuneGlowColor?: string;
+
+  visibleBlockCount?: number;
+  fadeBlockCount?: number;
+  linkedInfoIds?: string[];
+
+  useSections?: boolean;
+  sections?: InfoSection[];
+};
+
+export type InfoFollowUp = {
+  id?: string;
+  title?: string;
+  content?: string;
+  description?: string;
+};
+
+export type ManagedInfoLike = {
+  id: string;
+  title: string;
+  description?: string;
+  category?: string;
+  content?: string;
+  realWorldTime?: string;
+  inWorldTime?: string;
+  lastEditedAt?: string;
+  infoSubTab?: string;
+  assignedTo?: string[];
+  followUps?: InfoFollowUp[];
+  displayMode?: InfoDisplayMode;
+  displayData?: InfoDisplayData;
+};
 
 type RendererProps = {
   theme: PlayerTheme;
@@ -113,7 +173,7 @@ function blockifyHtml(content: string) {
 
 function getDocumentSections(info: ManagedInfoLike): InfoSection[] {
   const displayData = info.displayData || {};
-  if (displayData.useSections && Array.isArray(displayData.sections) && displayData.sections.length > 0) {
+  if (Array.isArray(displayData.sections) && displayData.sections.length > 0) {
     return displayData.sections.map((section, index) => ({
       id: section.id || `section-${index}`,
       title: section.title || `Section ${index + 1}`,
@@ -207,7 +267,7 @@ function SectionRenderer({
   glowIntensity,
   isTerminal,
 }: {
-  section: InfoSection;
+  section: InfoSection & { _fade?: boolean };
   mode: InfoDisplayMode;
   textColor: string;
   titleColor: string;
@@ -218,21 +278,37 @@ function SectionRenderer({
   glowIntensity?: "low" | "medium" | "high";
   isTerminal?: boolean;
 }) {
-  const processed = preprocessMarkup(section.content || "", mode);
-  const cutoff = applyHiddenCutoff(processed, undefined, undefined);
-  const textHtml = processed;
+  const textHtml = preprocessMarkup(section.content || "", mode);
   const plainText = textHtml.replace(/<[^>]*>/g, "");
 
   return (
-    <div className="space-y-2 relative">
+    <div className="space-y-2 relative min-w-0">
       {section.title ? (
-        <div className="text-[12px] font-semibold" style={{ color: titleColor, fontFamily: isTerminal ? '"Courier New", monospace' : undefined, letterSpacing: isTerminal ? "0.06em" : undefined }}>
+        <div
+          className="text-[12px] font-semibold"
+          style={{
+            color: titleColor,
+            fontFamily: isTerminal ? '"Courier New", monospace' : undefined,
+            letterSpacing: isTerminal ? "0.06em" : undefined,
+          }}
+        >
           {section.title}
         </div>
       ) : null}
-      <div className="relative" onClick={(e) => handleInfoLinkClick(e, onOpenInfo)}>
+      <div className="relative min-w-0" onClick={(e) => handleInfoLinkClick(e, onOpenInfo)}>
         {typewriter ? (
-          <div className="text-[11px] leading-7 whitespace-pre-wrap" style={{ color: textColor, textShadow: getGlowShadow(textColor, glowIntensity || "medium"), fontFamily: isTerminal ? '"Courier New", monospace' : undefined, letterSpacing: isTerminal ? "0.05em" : undefined }}>
+          <div
+            className="text-[11px] leading-7 whitespace-pre-wrap min-w-0"
+            style={{
+              color: textColor,
+              textShadow: getGlowShadow(textColor, glowIntensity || "medium"),
+              fontFamily: isTerminal ? '"Courier New", monospace' : undefined,
+              letterSpacing: isTerminal ? "0.05em" : undefined,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+              maxWidth: "100%",
+            }}
+          >
             {plainText.split("").map((char, index) => (
               <span
                 key={`${index}-${char}`}
@@ -248,11 +324,22 @@ function SectionRenderer({
             ))}
           </div>
         ) : (
-          <div className="text-[11px] leading-7" style={{ color: textColor, fontFamily: isTerminal ? '"Courier New", monospace' : undefined, letterSpacing: isTerminal ? "0.05em" : undefined }}>
+          <div
+            className="text-[11px] leading-7 min-w-0"
+            style={{
+              color: textColor,
+              fontFamily: isTerminal ? '"Courier New", monospace' : undefined,
+              letterSpacing: isTerminal ? "0.05em" : undefined,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+              whiteSpace: "pre-wrap",
+              maxWidth: "100%",
+            }}
+          >
             <RenderFormattedText text={textHtml} />
           </div>
         )}
-        {fade.active ? (
+        {(fade.active || section._fade) ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24" style={{ background: fade.color }} />
         ) : null}
       </div>
@@ -282,11 +369,11 @@ export function DigitalDocumentView({ theme, info, accentColor, onOpenInfo, info
     return { ...section, content: cutoff.html, _fade: cutoff.fadeActive } as any;
   });
 
-  return (
-    <div className="flex-1 overflow-auto px-4 py-4">
+  return (return (
+    <div className="flex-1 overflow-auto px-2 py-2">
       <SharedDisplayAnimations />
       <div
-        className="max-w-[960px] mx-auto rounded border px-5 py-5 space-y-4 relative overflow-hidden"
+        className="max-w-[1180px] mx-auto rounded border px-4 py-4 space-y-4 relative overflow-hidden"
         style={{
           borderColor: `${color}33`,
           background: variant === "terminal" ? `linear-gradient(180deg, ${background}, #010704)` : `linear-gradient(180deg, ${background}, #02050a)`,
@@ -407,12 +494,10 @@ function PaperPage({
   onOpenInfo?: (infoId: string) => void;
   infoLookup?: Record<string, ManagedInfoLike>;
 }) {
-  const textureOpacity = clamp(edgeTexture, 0, 100) / 100 * 0.42;
+  const textureOpacity = clamp(edgeTexture, 0, 100) / 100 * 0.95;
   const visibleCount = info.displayData?.visibleBlockCount;
   const fadeCount = info.displayData?.fadeBlockCount ?? 2;
   const templateStyle = getPaperTemplateStyle(info.displayData?.paperTemplate);
-  const handwrittenOverlay = String(info.displayData?.paperHandwrittenOverlay || "").trim();
-  const handwrittenOpacity = clamp(Number(info.displayData?.paperHandwrittenOpacity ?? 0), 0, 1);
   const baseSections = pageIndex === 0 ? getDocumentSections(info) : [];
   const sections = baseSections.map((section) => {
     const processed = preprocessMarkup(section.content || "", "paper");
@@ -421,7 +506,7 @@ function PaperPage({
   });
 
   return (
-    <div className="relative p-4 md:p-5" style={{ background: "#020202", boxShadow: "0 24px 55px rgba(0,0,0,0.48)" }}>
+    <div className="relative p-2 md:p-3" style={{ background: "#020202", boxShadow: "0 24px 55px rgba(0,0,0,0.48)" }}>
       <div
         className="relative overflow-hidden"
         style={{
@@ -431,7 +516,7 @@ function PaperPage({
           boxShadow: "inset 0 0 22px rgba(129,101,56,0.08), inset 0 0 0 1px rgba(255,255,255,0.4)",
         }}
       >
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ opacity: textureOpacity, background: "radial-gradient(circle at 0% 0%, rgba(92,70,41,0.32), transparent 16%), radial-gradient(circle at 100% 0%, rgba(92,70,41,0.28), transparent 16%), radial-gradient(circle at 0% 100%, rgba(92,70,41,0.28), transparent 18%), radial-gradient(circle at 100% 100%, rgba(92,70,41,0.32), transparent 16%), linear-gradient(90deg, rgba(95,72,42,0.14), transparent 7%, transparent 93%, rgba(95,72,42,0.14))" }} />
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ opacity: textureOpacity, background: "radial-gradient(circle at 0% 0%, rgba(92,70,41,0.68), transparent 18%), radial-gradient(circle at 100% 0%, rgba(92,70,41,0.60), transparent 18%), radial-gradient(circle at 0% 100%, rgba(92,70,41,0.60), transparent 20%), radial-gradient(circle at 100% 100%, rgba(92,70,41,0.68), transparent 18%), linear-gradient(90deg, rgba(95,72,42,0.34), transparent 7%, transparent 93%, rgba(95,72,42,0.34)), repeating-linear-gradient(180deg, rgba(95,72,42,0.10) 0px, rgba(95,72,42,0.10) 1px, transparent 2px, transparent 6px)" }} />
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-32" style={{ background: `${templateStyle.overlay}, linear-gradient(180deg, rgba(255,255,255,0.16), transparent 18%, transparent 84%, rgba(120,90,45,0.04))` }} />
         <div className="relative px-8 py-8 md:px-10 md:py-10 space-y-5" style={{ minHeight: "860px" }}>
           {handwrittenOverlay ? (
@@ -488,7 +573,7 @@ export function PaperDocumentView({ info, accentColor, onOpenInfo, infoLookup }:
   const pages = 1 + clamp(extraPages, 0, 5);
 
   return (
-    <div className="flex-1 overflow-auto px-4 py-6">
+    <div className="flex-1 overflow-auto px-2 py-3">
       <div className="max-w-[940px] mx-auto px-2 space-y-6">
         {Array.from({ length: pages }).map((_, index) => (
           <PaperPage
@@ -512,7 +597,6 @@ export function StoneTabletView({ info, onOpenInfo, infoLookup }: RendererProps)
   const textureIntensity = clamp(info.displayData?.stoneTextureIntensity ?? 55, 0, 100) / 100;
   const baseLightness = clamp(info.displayData?.stoneBaseLightness ?? 48, 20, 80);
   const stoneTextColor = info.displayData?.stoneTextColor || "#c4cbc8";
-  const crackIntensity = clamp(Number(info.displayData?.stoneCrackIntensity ?? 20), 0, 100) / 100;
   const visibleCount = info.displayData?.visibleBlockCount;
   const fadeCount = info.displayData?.fadeBlockCount ?? 2;
 
@@ -530,11 +614,11 @@ export function StoneTabletView({ info, onOpenInfo, infoLookup }: RendererProps)
   return (
     <div className="flex-1 overflow-auto px-4 py-6">
       <SharedDisplayAnimations />
-      <div className="max-w-[760px] mx-auto min-h-full flex items-center justify-center">
+      <div className="max-w-[980px] mx-auto min-h-full flex items-center justify-center">
         <div
           className="relative px-7 py-8 md:px-8 md:py-9 overflow-hidden"
           style={{
-            width: "min(560px, 100%)",
+            width: "min(700px, 100%)",
             minHeight: "560px",
             borderRadius: "180px 180px 26px 26px / 150px 150px 26px 26px",
             background: `linear-gradient(180deg, ${topColor}, ${midColor} 42%, ${lowColor} 100%)`,
@@ -543,7 +627,7 @@ export function StoneTabletView({ info, onOpenInfo, infoLookup }: RendererProps)
           }}
         >
           <div aria-hidden="true" className="pointer-events-none absolute inset-[10px]" style={{ borderRadius: "170px 170px 18px 18px / 142px 142px 18px 18px", border: "1px solid rgba(255,255,255,0.05)", boxShadow: "inset 0 0 32px rgba(0,0,0,0.28)" }} />
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-50" style={{ background: `radial-gradient(circle at 20% 16%, rgba(255,255,255,${0.18 * textureIntensity}), transparent 18%), radial-gradient(circle at 84% 76%, rgba(0,0,0,${0.34 * textureIntensity}), transparent 26%), radial-gradient(circle at 56% 40%, rgba(255,255,255,${0.06 * textureIntensity}), transparent 14%), radial-gradient(circle at 35% 58%, rgba(0,0,0,${0.16 * textureIntensity}), transparent 10%)` }} />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-76" style={{ background: `radial-gradient(circle at 20% 16%, rgba(255,255,255,${0.28 * textureIntensity}), transparent 18%), radial-gradient(circle at 84% 76%, rgba(0,0,0,${0.52 * textureIntensity}), transparent 26%), radial-gradient(circle at 56% 40%, rgba(255,255,255,${0.12 * textureIntensity}), transparent 14%), radial-gradient(circle at 35% 58%, rgba(0,0,0,${0.16 * textureIntensity}), transparent 10%)` }} />
           <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-28" style={{ backgroundImage: `linear-gradient(118deg, transparent 0%, rgba(255,255,255,0.05) 16%, transparent 34%), linear-gradient(76deg, transparent 0%, transparent 70%, rgba(0,0,0,0.24) 86%, transparent 100%), linear-gradient(16deg, transparent 0%, transparent 46%, rgba(0,0,0,${0.22 * crackIntensity}) 47%, rgba(0,0,0,${0.22 * crackIntensity}) 48%, transparent 49%), linear-gradient(102deg, transparent 0%, transparent 62%, rgba(0,0,0,${0.18 * crackIntensity}) 63%, rgba(0,0,0,${0.18 * crackIntensity}) 64%, transparent 65%), linear-gradient(132deg, transparent 0%, transparent 28%, rgba(0,0,0,${0.28 * crackIntensity}) 29%, rgba(0,0,0,${0.28 * crackIntensity}) 29.8%, transparent 30.6%), repeating-radial-gradient(circle at 30% 30%, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 2px, transparent 3px, transparent 10px)` }} />
           <div className="relative px-5 py-8 md:px-7 md:py-10 space-y-5" style={{ minHeight: "400px", marginTop: "72px", background: `linear-gradient(180deg, hsl(210 6% ${Math.min(baseLightness + 3, 88)}%), hsl(210 6% ${Math.max(baseLightness - 6, 12)}%))`, borderRadius: "24px", boxShadow: "inset 0 0 22px rgba(0,0,0,0.34), inset 0 1px 5px rgba(255,255,255,0.05)" }}>
             {sections.map((section: any, index) => (

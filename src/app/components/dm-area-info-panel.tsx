@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { RichTextEditor } from "./rich-text-editor";
 import { renderInfoDisplayMode } from "./personal-files-information-renderers";
-import { getCurrentInWorldDateString } from "./personal-files-information-utils";
 
 const INFO_SUBTAB_SORT_OPTIONS = [
   { value: "custom", label: "Manual Order" },
@@ -138,27 +137,49 @@ export function DMInfoManagerSection(props: any) {
 
   const selectedBulkCount = Object.values(infoBulkSelection).filter(Boolean).length;
 
-  const currentCalendarLabel = getCurrentInWorldDateString();
-
   const previewInfo = useMemo(() => {
     if (!editingInfo) return null;
     return {
       ...editingInfo,
       title: editingInfo.title || "Untitled Information",
-      inWorldTime:
-        (editingInfo as any).displayData?.inWorldTimeMode === "calendar"
-          ? (currentCalendarLabel || editingInfo.inWorldTime || "")
-          : editingInfo.inWorldTime,
       content: editingInfo.content || editingInfo.description || "<p>This preview will show how the page renders for the player.</p>",
       displayMode: (editingInfo as any).displayMode || "digital",
       displayData: (editingInfo as any).displayData || {},
     };
-  }, [editingInfo, currentCalendarLabel]);
+  }, [editingInfo]);
 
   const getInheritedAssignedTo = (subTabId: string) => {
     const subTab = infoSubTabs.find((st: any) => st.id === subTabId);
     const assignedTo = Array.isArray(subTab?.assignedTo) ? subTab.assignedTo : [];
     return assignedTo;
+  };
+
+  const buildSubTabBreadcrumb = (subTabId: string) => {
+    const chain: string[] = [];
+    let current = infoSubTabs.find((st: any) => st.id === subTabId);
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      chain.unshift(String(current.name || "").trim());
+      current = current.parentId ? infoSubTabs.find((st: any) => st.id === current.parentId) : undefined;
+    }
+    return chain.filter(Boolean);
+  };
+
+  const getCategorySuffix = () => {
+    const full = String(editingInfo?.category || "").trim();
+    const prefix = buildSubTabBreadcrumb(editingInfo?.infoSubTab || "").join(" / ");
+    if (!prefix) return full;
+    if (full === prefix) return "";
+    if (full.startsWith(prefix + " / ")) return full.slice(prefix.length + 3);
+    return full;
+  };
+
+  const syncCategoryFromBreadcrumb = (suffix: string) => {
+    const prefix = buildSubTabBreadcrumb(editingInfo?.infoSubTab || "").join(" / ");
+    const cleanSuffix = String(suffix || "").trim();
+    const next = [prefix, cleanSuffix].filter(Boolean).join(" / ");
+    updateInfoField("category", next);
   };
 
   const applyBulkAssign = async () => {
@@ -210,6 +231,9 @@ export function DMInfoManagerSection(props: any) {
     if (subTab?.autoAssignToOwners !== false && inherited.length) {
       updateInfoField("assignedTo", inherited);
     }
+
+    const currentSuffix = getCategorySuffix();
+    syncCategoryFromBreadcrumb(currentSuffix);
 
     if (subTab?.defaultDisplayMode && (!editingInfo?.displayMode || editingInfo.displayMode === "digital")) {
       updateEditingInfo((prev: any) => ({
@@ -290,9 +314,6 @@ export function DMInfoManagerSection(props: any) {
           <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Information</h2>
           <div className="text-[10px] mt-1" style={S_MUTED}>
             Organize folders, create papers, choose display styles, and preview player-facing results.
-          </div>
-          <div className="text-[10px]" style={S_DIM}>
-            Phase 4 preparation: current schema already supports linked docs, sections, visibility cutoff, and richer display metadata.
           </div>
         </div>
         <button onClick={handleAddInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
@@ -633,9 +654,19 @@ export function DMInfoManagerSection(props: any) {
                       <label className="text-[10px] block mb-1" style={labelStyle}>Title</label>
                       <input type="text" value={editingInfo.title} onChange={(e) => updateInfoField("title", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
-                    <div>
-                      <label className="text-[10px] block mb-1" style={labelStyle}>Category Path</label>
-                      <input type="text" value={editingInfo.category || ""} onChange={(e) => updateInfoField("category", e.target.value)} placeholder="Faction / Reports / Ancient" className={inputClass} style={inputStyle} />
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Nested Folder Path</label>
+                      <input
+                        type="text"
+                        value={getCategorySuffix()}
+                        onChange={(e) => syncCategoryFromBreadcrumb(e.target.value)}
+                        placeholder="Reports / Ancient / Case Files"
+                        className={inputClass}
+                        style={inputStyle}
+                      />
+                      <div className="text-[10px] mt-1" style={S_MUTED}>
+                        Full breadcrumb path: {editingInfo.infoSubTab ? [buildSubTabBreadcrumb(editingInfo.infoSubTab).join(" / "), getCategorySuffix()].filter(Boolean).join(" / ") || "None" : (getCategorySuffix() || "None")}
+                      </div>
                     </div>
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Info Sub-Tab</label>
@@ -666,40 +697,9 @@ export function DMInfoManagerSection(props: any) {
                       <label className="text-[10px] block mb-1" style={labelStyle}>Real World Time</label>
                       <input type="text" value={editingInfo.realWorldTime || ""} onChange={(e) => updateInfoField("realWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
-                    <div className="md:col-span-2">
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="text-[10px] block" style={labelStyle}>In-World Time</label>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), inWorldTimeMode: "manual" } }))}
-                            className={`${retro.button} px-2 py-1 text-[10px]`}
-                            style={(editingInfo as any).displayData?.inWorldTimeMode === "calendar" ? { color: "#8FA2D9" } : { color: "#4A9A5A" }}
-                          >
-                            Manual
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), inWorldTimeMode: "calendar" } }))}
-                            className={`${retro.button} px-2 py-1 text-[10px]`}
-                            style={(editingInfo as any).displayData?.inWorldTimeMode === "calendar" ? { color: "#4A9A5A" } : { color: "#8FA2D9" }}
-                          >
-                            Website Calendar
-                          </button>
-                        </div>
-                      </div>
-                      {(editingInfo as any).displayData?.inWorldTimeMode === "calendar" ? (
-                        <div className="space-y-2">
-                          <div className={inputClass} style={{ ...inputStyle, color: "#CFE0FF" }}>
-                            {currentCalendarLabel || "No calendar date found."}
-                          </div>
-                          <div className="text-[10px]" style={S_MUTED}>
-                            This entry will display the website's current calendar date instead of a manually typed in-world date.
-                          </div>
-                        </div>
-                      ) : (
-                        <input type="text" value={editingInfo.inWorldTime || ""} onChange={(e) => updateInfoField("inWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
-                      )}
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>In-World Time</label>
+                      <input type="text" value={editingInfo.inWorldTime || ""} onChange={(e) => updateInfoField("inWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
                   </div>
 
@@ -712,7 +712,7 @@ export function DMInfoManagerSection(props: any) {
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Visible Blocks Before Fade</label>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Visible Paragraphs Before Fade</label>
                         <input
                           type="number"
                           min="0"
@@ -724,7 +724,7 @@ export function DMInfoManagerSection(props: any) {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Fade Block Count</label>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Extra Paragraphs Inside Fade</label>
                         <input
                           type="number"
                           min="0"
@@ -748,6 +748,9 @@ export function DMInfoManagerSection(props: any) {
                       </div>
                     </div>
 
+                    <div className="text-[10px]" style={S_MUTED}>
+                      Each “paragraph” is a visible content block. The first value controls how many paragraphs are fully readable before the fade starts. The second controls how many more paragraphs remain visible inside the fade.
+                    </div>
                     <div className="text-[10px]" style={S_MUTED}>
                       Inline syntax:
                       {" "}[[link:document-id|Label]]
@@ -819,9 +822,9 @@ export function DMInfoManagerSection(props: any) {
                     </div>
                   </div>
 
-                  {activeInfoCustomFields.filter((fieldDef: any) => fieldDef && typeof fieldDef.name === "string" && typeof fieldDef.tagName === "string").length > 0 && (
+                  {activeInfoCustomFields.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {activeInfoCustomFields.filter((fieldDef: any) => fieldDef && typeof fieldDef.name === "string" && typeof fieldDef.tagName === "string").map((fieldDef: any) => {
+                      {activeInfoCustomFields.map((fieldDef: any) => {
                         const key = `${fieldDef.tagName}::${fieldDef.name}`;
                         const value = editingInfo.customFields?.[key] || "";
                         return (
@@ -999,7 +1002,7 @@ export function DMInfoManagerSection(props: any) {
                           />
                         </div>
                         <div>
-                          <label className="text-[10px] block mb-1" style={labelStyle}>Edge Texture</label>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Edge Texture Strength</label>
                           <input
                             type="range"
                             min="0"
@@ -1053,7 +1056,7 @@ export function DMInfoManagerSection(props: any) {
                           </select>
                         </div>
                         <div>
-                          <label className="text-[10px] block mb-1" style={labelStyle}>Stone Texture</label>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Stone Texture Strength</label>
                           <input
                             type="range"
                             min="0"
@@ -1156,6 +1159,7 @@ export function DMInfoManagerSection(props: any) {
                       theme: previewTheme,
                       info: previewInfo,
                       accentColor: "#4A7BFF",
+                      infoLookup: Object.fromEntries(managedInfos.map((entry: any) => [entry.id, entry])),
                     })}
                   </div>
                 </div>
