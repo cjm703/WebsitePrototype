@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { getPlayerTheme, firstColor, ts, bc } from "./player-theme";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
@@ -13,6 +12,8 @@ import {
   Sun, Moon, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { safeGetItem, safeSetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
+import { loadDMItems } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 
 // ════════════════════════════════════════════
@@ -98,10 +99,6 @@ interface LedgerEntry {
 // Constants
 // ════════════════════════════════════════════
 
-const STORAGE_KEY_SHOPS = "inet-commerce-shops";
-const STORAGE_KEY_CART = "inet-commerce-cart";
-const STORAGE_KEY_LEDGER = "inet-commerce-ledger";
-
 const RARITIES: ItemRarity[] = ["Common", "Uncommon", "Rare", "Very Rare", "Legendary"];
 const SHOP_STATUSES: Shop["status"][] = ["Open", "Closed", "Limited", "Invitation Only", "Traveling"];
 const DEFAULT_CATEGORIES = ["Weapons", "Armor", "Potions", "Scrolls", "Tools", "Magical", "Misc"];
@@ -141,114 +138,139 @@ interface InvSubTabCompat {
   groups?: { id: string; name: string; itemIds: string[] }[];
 }
 
-function getCurrencyItems(): { name: string; quantity: number; tabId: string; itemId: string }[] {
-  let tabs: InvSubTabCompat[];
+type DmManagedItemCompat = {
+  id: string;
+  name: string;
+  tags: string[];
+  assignedTo: string[];
+  customFields: Record<string, string>;
+  type?: string;
+  rarity?: string;
+  description?: string;
+  locked?: boolean;
+};
+
+type NexusNomadInventoryState = {
+  id: string;
+  version: number;
+  invTabs: InvSubTabCompat[];
+  [key: string]: unknown;
+};
+
+const NEXUS_NOMAD_STATE_ID = "default";
+const NEXUS_NOMAD_STATE_VERSION = 1;
+
+function cloneInvTabs(tabs: InvSubTabCompat[]): InvSubTabCompat[] {
+  return tabs.map((tab) => ({
+    ...tab,
+    items: (tab.items || []).map((item) => ({ ...item })),
+    groups: (tab.groups || []).map((group) => ({ ...group, itemIds: [...group.itemIds] })),
+  }));
+}
+
+function defaultNexusNomadInventoryState(): NexusNomadInventoryState {
+  return {
+    id: NEXUS_NOMAD_STATE_ID,
+    version: NEXUS_NOMAD_STATE_VERSION,
+    invTabs: [],
+  };
+}
+
+function normalizeNexusNomadInventoryState(raw: unknown): NexusNomadInventoryState {
+  if (!raw || typeof raw !== "object") return defaultNexusNomadInventoryState();
+  const candidate = raw as Partial<NexusNomadInventoryState>;
+  return {
+    ...candidate,
+    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : NEXUS_NOMAD_STATE_ID,
+    version: typeof candidate.version === "number" ? candidate.version : NEXUS_NOMAD_STATE_VERSION,
+    invTabs: Array.isArray(candidate.invTabs) ? cloneInvTabs(candidate.invTabs) : [],
+  } as NexusNomadInventoryState;
+}
+
+function loadLocalDmItemsCache(): DmManagedItemCompat[] {
   try {
-    const raw = safeGetItem(INVENTORY_KEY);
-    tabs = raw ? JSON.parse(raw) : [];
-  } catch { tabs = []; }
+    const raw = safeGetItem("inet-dm-items");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getCurrencyItems(
+  invTabs: InvSubTabCompat[],
+  dmItems: DmManagedItemCompat[],
+  currentUserId: string,
+): { name: string; quantity: number; tabId: string; itemId: string }[] {
   const results: { name: string; quantity: number; tabId: string; itemId: string }[] = [];
-  for (const tab of tabs) {
-    for (const item of tab.items) {
+  for (const tab of invTabs) {
+    for (const item of tab.items || []) {
       if (item.tags?.includes("Currency")) {
         results.push({ name: item.name, quantity: item.quantity, tabId: tab.id, itemId: item.id });
       }
     }
   }
-  // Also check DM-managed player items (inet-dm-items) for Currency-tagged items
-  const currentUserId = safeGetItem("inet-user-id") || "";
   if (currentUserId) {
-    try {
-      const rawItems = safeGetItem("inet-dm-items");
-      const items: { id: string; name: string; tags: string[]; assignedTo: string[]; customFields: Record<string, string> }[] = rawItems ? JSON.parse(rawItems) : [];
-      for (const item of items) {
-        if (item.tags?.includes("Currency") && item.assignedTo?.includes(currentUserId)) {
-          const qty = parseInt(item.customFields?.["Quantity::Amount"] || "0", 10);
-          if (!results.some(r => r.name === item.name)) {
-            results.push({ name: item.name, quantity: qty, tabId: "dm-items", itemId: item.id });
-          }
+    for (const item of dmItems) {
+      if (item.tags?.includes("Currency") && item.assignedTo?.includes(currentUserId)) {
+        const qty = parseInt(item.customFields?.["Quantity::Amount"] || "0", 10);
+        if (!results.some((result) => result.name === item.name)) {
+          results.push({ name: item.name, quantity: qty, tabId: "dm-items", itemId: item.id });
         }
       }
-    } catch { /* ignore */ }
+    }
   }
   return results;
 }
 
-function deductCurrencyFromInventory(currencyName: string, amount: number): boolean {
-  // First try office inventory
-  let tabs: InvSubTabCompat[];
-  try {
-    const raw = safeGetItem(INVENTORY_KEY);
-    tabs = raw ? JSON.parse(raw) : [];
-  } catch { tabs = []; }
-
-  for (const tab of tabs) {
-    for (const item of tab.items) {
+function deductCurrencyFromInventoryState(
+  invTabs: InvSubTabCompat[],
+  currencyName: string,
+  amount: number,
+): InvSubTabCompat[] | null {
+  const nextTabs = cloneInvTabs(invTabs);
+  for (const tab of nextTabs) {
+    for (const item of tab.items || []) {
       if (item.tags?.includes("Currency") && item.name === currencyName) {
-        if (item.quantity < amount && item.quantity !== -1) return false;
+        if (item.quantity < amount && item.quantity !== -1) return null;
         if (item.quantity !== -1) item.quantity -= amount;
-        safeSetJson(INVENTORY_KEY, tabs);
-        return true;
+        return nextTabs;
       }
     }
   }
-
-  // Then try DM-managed player items
-  const currentUserId = safeGetItem("inet-user-id") || "";
-  if (currentUserId) {
-    try {
-      const rawItems = safeGetItem("inet-dm-items");
-      const items: { id: string; name: string; tags: string[]; assignedTo: string[]; customFields: Record<string, string> }[] = rawItems ? JSON.parse(rawItems) : [];
-      for (const item of items) {
-        if (item.tags?.includes("Currency") && item.name === currencyName && item.assignedTo?.includes(currentUserId)) {
-          const qty = parseInt(item.customFields?.["Quantity::Amount"] || "0", 10);
-          if (qty < amount && qty !== -1) return false;
-          if (qty !== -1) item.customFields["Quantity::Amount"] = String(qty - amount);
-          safeSetJson("inet-dm-items", items);
-          return true;
-        }
-      }
-    } catch { /* ignore */ }
-  }
-
-  return false;
+  return null;
 }
 
-function addPurchasesToInventory(purchases: { name: string; description: string; price: number; currency: string; quantity: number; rarity: string }[]) {
-  let tabs: InvSubTabCompat[];
-  try {
-    const raw = safeGetItem(INVENTORY_KEY);
-    tabs = raw ? JSON.parse(raw) : [];
-  } catch { tabs = []; }
-
-  // Find or create the "Purchases" tab
-  let purchTab = tabs.find(t => t.id === "inv-purchases");
+function addPurchasesToInventoryState(
+  invTabs: InvSubTabCompat[],
+  purchases: { name: string; description: string; price: number; currency: string; quantity: number; rarity: string }[],
+): InvSubTabCompat[] {
+  const nextTabs = cloneInvTabs(invTabs);
+  let purchTab = nextTabs.find((tab) => tab.id === "inv-purchases");
   if (!purchTab) {
     purchTab = { id: "inv-purchases", name: "Purchases", icon: "shopping-bag", items: [], groups: [] };
-    tabs.push(purchTab);
+    nextTabs.push(purchTab);
   }
 
-  for (const p of purchases) {
-    // Find existing item with exact same name (duplicate detection)
-    const existing = purchTab.items.find(i => i.name === p.name);
+  for (const purchase of purchases) {
+    const existing = purchTab.items.find((item) => item.name === purchase.name);
     if (existing) {
-      existing.quantity = (existing.quantity || 1) + p.quantity;
+      existing.quantity = (existing.quantity || 1) + purchase.quantity;
     } else {
       purchTab.items.push({
         id: uid(),
-        name: p.name,
-        description: p.description,
-        price: p.price,
-        currency: p.currency,
-        quantity: p.quantity,
-        rarity: p.rarity,
+        name: purchase.name,
+        description: purchase.description,
+        price: purchase.price,
+        currency: purchase.currency,
+        quantity: purchase.quantity,
+        rarity: purchase.rarity,
         notes: "",
         hidden: false,
       });
     }
   }
 
-  safeSetJson(INVENTORY_KEY, tabs);
+  return nextTabs;
 }
 
 function handleImageUpload(maxSizeKB: number, cb: (dataUrl: string) => void, acceptGif = false) {
@@ -646,34 +668,14 @@ export function CommercePage() {
   const accent = theme.accentColor;
 
   // ── State ──
-  const [shops, setShops] = useState<Shop[]>(() => {
-    try {
-      const raw = safeGetItem(STORAGE_KEY_SHOPS);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.length > 0) return parsed;
-      }
-      return [TEST_SHOP];
-    } catch { return [TEST_SHOP]; }
-  });
-
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    try {
-      const raw = safeGetItem(STORAGE_KEY_CART + "-" + currentUserId);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
-
-  const [ledger, setLedger] = useState<LedgerEntry[]>(() => {
-    try {
-      const raw = safeGetItem(STORAGE_KEY_LEDGER);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
-
-  useDebouncedJsonStorage(STORAGE_KEY_SHOPS, shops);
-  useDebouncedJsonStorage(STORAGE_KEY_CART + "-" + currentUserId, cart);
-  useDebouncedJsonStorage(STORAGE_KEY_LEDGER, ledger);
+  const [shops, setShops] = useState<Shop[]>([TEST_SHOP]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
+  const [nexusNomadState, setNexusNomadState] = useState<NexusNomadInventoryState>(defaultNexusNomadInventoryState);
+  const [dmItemsCache, setDmItemsCache] = useState<DmManagedItemCompat[]>(loadLocalDmItemsCache);
+  const [commerceLoading, setCommerceLoading] = useState(true);
+  const [commerceError, setCommerceError] = useState<string | null>(null);
+  const hasLoadedCommerceRef = useRef(false);
 
   // UI state
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -695,25 +697,111 @@ export function CommercePage() {
   const [draftItem, setDraftItem] = useState<Partial<ShopItem>>({});
   const [newCategoryDraft, setNewCategoryDraft] = useState("");
 
-  // Load currency items from inventory for the currency selector
-  const [availableCurrencies, setAvailableCurrencies] = useState<{ name: string; quantity: number }[]>([]);
-  // Load DM player items for the inventory link selector
-  const [dmPlayerItems, setDmPlayerItems] = useState<{ id: string; name: string; tags: string[] }[]>([]);
+  const nexusInvTabs = useMemo(() => nexusNomadState.invTabs || [], [nexusNomadState]);
+
   useEffect(() => {
-    const load = () => {
-      setAvailableCurrencies(getCurrencyItems().map(c => ({ name: c.name, quantity: c.quantity })));
-      if (isDM) {
-        try {
-          const raw = safeGetItem("inet-dm-items");
-          const items: { id: string; name: string; tags: string[] }[] = raw ? JSON.parse(raw) : [];
-          setDmPlayerItems(items.map(i => ({ id: i.id, name: i.name, tags: i.tags || [] })));
-        } catch { setDmPlayerItems([]); }
+    let cancelled = false;
+
+    async function loadCommerceState() {
+      try {
+        setCommerceLoading(true);
+        setCommerceError(null);
+
+        const [shopsData, cartData, ledgerData, nexusStateData] = await Promise.all([
+          appStore.listCommerceShops<Shop>().catch(() => [] as Shop[]),
+          currentUserId ? appStore.loadPlayerCommerceCart<CartItem[]>(currentUserId, []) : Promise.resolve([] as CartItem[]),
+          appStore.listCommerceLedger<LedgerEntry>().catch(() => [] as LedgerEntry[]),
+          appStore.loadNexusNomadState<NexusNomadInventoryState>(NEXUS_NOMAD_STATE_ID, defaultNexusNomadInventoryState()),
+        ]);
+
+        if (cancelled) return;
+
+        setShops(Array.isArray(shopsData) && shopsData.length > 0 ? shopsData : [TEST_SHOP]);
+        setCart(Array.isArray(cartData) ? cartData : []);
+        setLedger(Array.isArray(ledgerData) ? ledgerData : []);
+        setNexusNomadState(normalizeNexusNomadInventoryState(nexusStateData));
+
+        if (isDM) {
+          try {
+            const remoteItems = await loadDMItems<DmManagedItemCompat[]>();
+            if (!cancelled && Array.isArray(remoteItems)) {
+              setDmItemsCache(remoteItems as unknown as DmManagedItemCompat[]);
+            }
+          } catch {
+            if (!cancelled) {
+              setDmItemsCache(loadLocalDmItemsCache());
+            }
+          }
+        }
+
+        hasLoadedCommerceRef.current = true;
+      } catch (err) {
+        if (!cancelled) {
+          setCommerceError(err instanceof Error ? err.message : "Failed to load commerce state");
+          hasLoadedCommerceRef.current = true;
+        }
+      } finally {
+        if (!cancelled) {
+          setCommerceLoading(false);
+        }
       }
+    }
+
+    loadCommerceState();
+    return () => {
+      cancelled = true;
     };
-    load();
-    const interval = setInterval(load, 3000);
-    return () => clearInterval(interval);
-  }, [isDM]);
+  }, [currentUserId, isDM]);
+
+  useEffect(() => {
+    if (!hasLoadedCommerceRef.current) return;
+    const timeout = window.setTimeout(() => {
+      appStore.saveCommerceShops<Shop>(shops).catch((err) => {
+        console.warn("Failed to save commerce shops", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [shops]);
+
+  useEffect(() => {
+    if (!hasLoadedCommerceRef.current || !currentUserId) return;
+    const timeout = window.setTimeout(() => {
+      appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, cart).catch((err) => {
+        console.warn("Failed to save commerce cart", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [cart, currentUserId]);
+
+  useEffect(() => {
+    if (!hasLoadedCommerceRef.current) return;
+    const timeout = window.setTimeout(() => {
+      appStore.saveCommerceLedger<LedgerEntry>(ledger).catch((err) => {
+        console.warn("Failed to save commerce ledger", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [ledger]);
+
+  useEffect(() => {
+    if (!hasLoadedCommerceRef.current) return;
+    const timeout = window.setTimeout(() => {
+      appStore.saveNexusNomadState<NexusNomadInventoryState>(nexusNomadState).catch((err) => {
+        console.warn("Failed to save Nexus Nomad inventory state from commerce", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [nexusNomadState]);
+
+  const availableCurrencies = useMemo(
+    () => getCurrencyItems(nexusInvTabs, dmItemsCache, currentUserId).map((currency) => ({ name: currency.name, quantity: currency.quantity })),
+    [currentUserId, dmItemsCache, nexusInvTabs],
+  );
+
+  const dmPlayerItems = useMemo(
+    () => dmItemsCache.map((item) => ({ id: item.id, name: item.name, tags: item.tags || [] })),
+    [dmItemsCache],
+  );
 
   const selectedShop = useMemo(() => shops.find(s => s.id === selectedShopId) || null, [shops, selectedShopId]);
 
@@ -845,123 +933,161 @@ export function CommercePage() {
     return total;
   }, [cart, shops]);
 
-  const checkout = useCallback(() => {
+  const checkout = useCallback(async () => {
     const entries: LedgerEntry[] = [];
     const shopUpdates = new Map<string, ShopItem[]>();
-    cart.forEach(ci => {
-      const shop = shops.find(s => s.id === ci.shopId);
-      const item = shop?.items.find(i => i.id === ci.itemId);
+    cart.forEach((cartItem) => {
+      const shop = shops.find((shopRow) => shopRow.id === cartItem.shopId);
+      const item = shop?.items.find((shopItem) => shopItem.id === cartItem.itemId);
       if (!shop || !item) return;
-      entries.push({ id: uid(), shopId: shop.id, shopName: shop.name, itemName: item.name, quantity: ci.quantity, unitPrice: item.price, currency: item.currency, buyerName: currentUser, buyerId: currentUserId, timestamp: Date.now() });
+      entries.push({
+        id: uid(),
+        shopId: shop.id,
+        shopName: shop.name,
+        itemName: item.name,
+        quantity: cartItem.quantity,
+        unitPrice: item.price,
+        currency: item.currency,
+        buyerName: currentUser,
+        buyerId: currentUserId,
+        timestamp: Date.now(),
+      });
       if (item.quantity >= 0) {
         const updatedItems = shopUpdates.get(shop.id) || [...shop.items];
-        const idx = updatedItems.findIndex(i => i.id === item.id);
-        if (idx >= 0) updatedItems[idx] = { ...updatedItems[idx], quantity: Math.max(0, updatedItems[idx].quantity - ci.quantity) };
+        const idx = updatedItems.findIndex((shopItem) => shopItem.id === item.id);
+        if (idx >= 0) {
+          updatedItems[idx] = {
+            ...updatedItems[idx],
+            quantity: Math.max(0, updatedItems[idx].quantity - cartItem.quantity),
+          };
+        }
         shopUpdates.set(shop.id, updatedItems);
       }
     });
-    // Collect items that should be added to player inventory
+
     const inventoryPurchases: { name: string; description: string; price: number; currency: string; quantity: number; rarity: string }[] = [];
     const dmItemUpdates: { itemId: string; addQty: number }[] = [];
-    cart.forEach(ci => {
-      const shop = shops.find(s => s.id === ci.shopId);
-      const item = shop?.items.find(i => i.id === ci.itemId);
+    cart.forEach((cartItem) => {
+      const shop = shops.find((shopRow) => shopRow.id === cartItem.shopId);
+      const item = shop?.items.find((shopItem) => shopItem.id === cartItem.itemId);
       if (!shop || !item) return;
       if (item.addsToInventory) {
         if (item.inventoryItemId) {
-          // Link to specific DM player item — add quantity
           const perUnit = item.inventoryQuantity || 1;
-          dmItemUpdates.push({ itemId: item.inventoryItemId, addQty: perUnit * ci.quantity });
+          dmItemUpdates.push({ itemId: item.inventoryItemId, addQty: perUnit * cartItem.quantity });
         } else {
-          // Legacy: add to office inventory Purchases tab
           inventoryPurchases.push({
             name: item.name,
             description: item.description,
             price: item.price,
             currency: item.currency,
-            quantity: ci.quantity,
+            quantity: cartItem.quantity,
             rarity: item.rarity,
           });
         }
       }
     });
 
-    if (entries.length > 0) {
-      // Deduct currency items from player inventory
-      const currencyItems = getCurrencyItems();
-      const currencyTotals = new Map<string, number>();
-      cart.forEach(ci => {
-        const shop = shops.find(s => s.id === ci.shopId);
-        const item = shop?.items.find(i => i.id === ci.itemId);
-        if (!shop || !item) return;
-        // Check if the item's currency matches a Currency-tagged inventory item
-        const isCurrencyItem = currencyItems.some(c => c.name === item.currency);
-        if (isCurrencyItem) {
-          currencyTotals.set(item.currency, (currencyTotals.get(item.currency) || 0) + item.price * ci.quantity);
-        }
-      });
-      // Verify player can afford all currency costs
-      for (const [currName, totalCost] of currencyTotals) {
-        const ci = currencyItems.find(c => c.name === currName);
-        if (!ci || (ci.quantity !== -1 && ci.quantity < totalCost)) {
-          alert(`Not enough ${currName}! You have ${ci?.quantity ?? 0} but need ${totalCost}.`);
-          return;
-        }
-      }
-      // Deduct all currency costs
-      for (const [currName, totalCost] of currencyTotals) {
-        deductCurrencyFromInventory(currName, totalCost);
-      }
+    if (entries.length === 0) return;
 
-      setLedger(prev => [...prev, ...entries]);
-      setShops(prev => prev.map(s => { const updated = shopUpdates.get(s.id); return updated ? { ...s, items: updated } : s; }));
-      setCart([]);
-      setShowCart(false);
-      // Add inventory-linked items to player inventory
-      if (inventoryPurchases.length > 0) {
-        addPurchasesToInventory(inventoryPurchases);
+    const currencyItems = getCurrencyItems(nexusInvTabs, dmItemsCache, currentUserId);
+    const currencyTotals = new Map<string, number>();
+    cart.forEach((cartItem) => {
+      const shop = shops.find((shopRow) => shopRow.id === cartItem.shopId);
+      const item = shop?.items.find((shopItem) => shopItem.id === cartItem.itemId);
+      if (!shop || !item) return;
+      const isCurrencyItem = currencyItems.some((currency) => currency.name === item.currency);
+      if (isCurrencyItem) {
+        currencyTotals.set(item.currency, (currencyTotals.get(item.currency) || 0) + item.price * cartItem.quantity);
       }
-      // Create copies of linked DM player items for the buyer
-      if (dmItemUpdates.length > 0) {
-        try {
-          const rawItems = safeGetItem("inet-dm-items");
-          const allDmItems: { id: string; name: string; type: string; rarity: string; description: string; tags: string[]; assignedTo: string[]; customFields: Record<string, string>; locked?: boolean }[] = rawItems ? JSON.parse(rawItems) : [];
-          for (const upd of dmItemUpdates) {
-            const template = allDmItems.find(i => i.id === upd.itemId);
-            if (template) {
-              // Check if buyer already has a copy of this item
-              const existingCopy = allDmItems.find(i =>
-                i.name === template.name &&
-                i.assignedTo.includes(currentUserId) &&
-                i.id !== template.id
-              );
-              if (existingCopy && existingCopy.tags.includes("Quantity")) {
-                // Increment quantity on existing copy
-                const curQty = parseInt(existingCopy.customFields?.["Quantity::Amount"] || "0", 10);
-                existingCopy.customFields["Quantity::Amount"] = String(curQty + upd.addQty);
-              } else {
-                // Create a new copy assigned to the buyer
-                const newItem = {
-                  ...template,
-                  id: uid(),
-                  assignedTo: [currentUserId],
-                  customFields: { ...template.customFields },
-                };
-                // Set quantity if the template has the Quantity tag
-                if (newItem.tags.includes("Quantity")) {
-                  newItem.customFields["Quantity::Amount"] = String(upd.addQty);
-                }
-                allDmItems.push(newItem);
-              }
-            }
-          }
-          safeSetJson("inet-dm-items", allDmItems);
-        } catch { /* ignore */ }
+    });
+
+    for (const [currencyName, totalCost] of currencyTotals) {
+      const currency = currencyItems.find((item) => item.name === currencyName);
+      if (!currency || (currency.quantity !== -1 && currency.quantity < totalCost)) {
+        alert(`Not enough ${currencyName}! You have ${currency?.quantity ?? 0} but need ${totalCost}.`);
+        return;
       }
-      // Refresh currency balances
-      setAvailableCurrencies(getCurrencyItems().map(c => ({ name: c.name, quantity: c.quantity })));
     }
-  }, [cart, shops, currentUser, currentUserId]);
+
+    let nextInvTabs = cloneInvTabs(nexusInvTabs);
+    for (const [currencyName, totalCost] of currencyTotals) {
+      const updatedTabs = deductCurrencyFromInventoryState(nextInvTabs, currencyName, totalCost);
+      if (!updatedTabs) {
+        alert(`Not enough ${currencyName}!`);
+        return;
+      }
+      nextInvTabs = updatedTabs;
+    }
+
+    if (inventoryPurchases.length > 0) {
+      nextInvTabs = addPurchasesToInventoryState(nextInvTabs, inventoryPurchases);
+    }
+
+    const nextLedger = [...ledger, ...entries];
+    const nextShops = shops.map((shop) => {
+      const updatedItems = shopUpdates.get(shop.id);
+      return updatedItems ? { ...shop, items: updatedItems } : shop;
+    });
+    const nextCart: CartItem[] = [];
+    const nextNexusNomadState: NexusNomadInventoryState = {
+      ...nexusNomadState,
+      id: nexusNomadState.id || NEXUS_NOMAD_STATE_ID,
+      version: nexusNomadState.version || NEXUS_NOMAD_STATE_VERSION,
+      invTabs: nextInvTabs,
+    };
+
+    setLedger(nextLedger);
+    setShops(nextShops);
+    setCart(nextCart);
+    setShowCart(false);
+    setNexusNomadState(nextNexusNomadState);
+
+    if (dmItemUpdates.length > 0) {
+      try {
+        const allDmItems = [...dmItemsCache];
+        for (const update of dmItemUpdates) {
+          const template = allDmItems.find((item) => item.id === update.itemId);
+          if (!template) continue;
+          const existingCopy = allDmItems.find((item) => (
+            item.name === template.name
+            && item.assignedTo.includes(currentUserId)
+            && item.id !== template.id
+          ));
+          if (existingCopy && existingCopy.tags.includes("Quantity")) {
+            const currentQty = parseInt(existingCopy.customFields?.["Quantity::Amount"] || "0", 10);
+            existingCopy.customFields["Quantity::Amount"] = String(currentQty + update.addQty);
+          } else {
+            const newItem: DmManagedItemCompat = {
+              ...template,
+              id: uid(),
+              assignedTo: [currentUserId],
+              customFields: { ...template.customFields },
+            };
+            if (newItem.tags.includes("Quantity")) {
+              newItem.customFields["Quantity::Amount"] = String(update.addQty);
+            }
+            allDmItems.push(newItem);
+          }
+        }
+        setDmItemsCache(allDmItems);
+        safeSetJson("inet-dm-items", allDmItems);
+      } catch {
+        // DM-linked item copy creation still relies on the local DM item cache until a dedicated award endpoint exists.
+      }
+    }
+
+    try {
+      await Promise.all([
+        appStore.saveCommerceShops<Shop>(nextShops),
+        appStore.saveCommerceLedger<LedgerEntry>(nextLedger),
+        currentUserId ? appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, nextCart) : Promise.resolve(),
+        appStore.saveNexusNomadState<NexusNomadInventoryState>(nextNexusNomadState),
+      ]);
+    } catch (err) {
+      console.warn("Failed to persist checkout immediately", err);
+    }
+  }, [cart, currentUser, currentUserId, dmItemsCache, ledger, nexusInvTabs, nexusNomadState, shops]);
 
   // ── Reorder shops within a group ──
   const reorderShop = useCallback((dragIdx: number, hoverIdx: number, groupType: string) => {
@@ -1020,6 +1146,19 @@ export function CommercePage() {
       {rarity}
     </span>
   );
+
+  if (commerceLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6" style={{ background: pageBg }}>
+        <div className="w-full max-w-md p-5" style={cardStyle}>
+          <div className="text-[13px] font-bold mb-2" style={{ color: textColor }}>Loading commerce data...</div>
+          <div className="text-[11px]" style={{ color: labelColor }}>
+            {commerceError || "Pulling shops, ledger, cart, and Nexus Nomad inventory from Supabase."}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const renderStatusBadge = useCallback((status: Shop["status"]) => (
     <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider" style={{ color: STATUS_COLORS[status], background: `${STATUS_COLORS[status]}12`, border: `1px solid ${STATUS_COLORS[status]}25` }}>

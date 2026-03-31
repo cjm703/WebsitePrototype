@@ -20,7 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
@@ -749,27 +749,6 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
     officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo : fallback.officeInfo,
     invTabs: Array.isArray(raw.invTabs) ? raw.invTabs : fallback.invTabs,
   };
-}
-
-function mirrorLegacyNexusNomadState(state: NexusNomadState) {
-  try {
-    safeSetItem(OFFICE_NAME_KEY, state.officeName);
-    safeSetItem("inet-office-reputation", String(state.reputation));
-    safeSetJson(ENTITY_REP_KEY, state.entityReps);
-    safeSetJson(GOV_CONFIG_KEY, state.govConfig);
-    safeSetJson(EMPLOYEES_KEY, state.employees);
-    safeSetJson(EMPLOYEE_CATS_KEY, state.employeeCats);
-    safeSetJson(EMPLOYEE_PRESETS_KEY, state.presets);
-    safeSetJson(EQUIP_LOADOUTS_KEY, state.loadouts);
-    safeSetJson(FACILITIES_KEY, state.facilities);
-    safeSetJson(FACILITY_CATS_KEY, state.facilityCats);
-    safeSetJson(CONTRACTS_KEY, state.contracts);
-    safeSetJson(CONTRACT_CATS_KEY, state.contractCats);
-    safeSetJson(OFFICE_INFO_KEY, state.officeInfo);
-    safeSetJson(INVENTORY_KEY, state.invTabs);
-  } catch {
-    // Best-effort compatibility mirror while remaining pages migrate off local storage.
-  }
 }
 
 const DRAG_TYPE = "REP_ENTITY";
@@ -1568,14 +1547,12 @@ export function NexusNomad() {
         const loaded = normalizeNexusNomadState(await appStore.loadNexusNomadState(fallback));
         if (cancelled) return;
         applyLoadedState(loaded);
-        mirrorLegacyNexusNomadState(loaded);
         lastSavedStateJsonRef.current = JSON.stringify(loaded);
         setStateSaveError(null);
       } catch (error) {
         if (cancelled) return;
         const fallback = buildLocalNexusNomadState();
         applyLoadedState(fallback);
-        mirrorLegacyNexusNomadState(fallback);
         lastSavedStateJsonRef.current = JSON.stringify(fallback);
         setStateSaveError(error instanceof Error ? error.message : "Failed to load Nexus Nomad state.");
       } finally {
@@ -1620,7 +1597,6 @@ export function NexusNomad() {
       void (async () => {
         try {
           await appStore.saveNexusNomadState(persistentState);
-          mirrorLegacyNexusNomadState(persistentState);
           lastSavedStateJsonRef.current = persistentStateJson;
           setStateSaveError(null);
         } catch (error) {
