@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
   NS_DARK, NS_SUBDIM, NS_BRIGHT, NS_SOFT, NS_MID, NS_GOLD, NS_BLUE, NS_RED,
@@ -63,8 +64,8 @@ function loadOfficeName(): string {
   return v || DEFAULT_OFFICE_NAME;
 }
 
-function saveOfficeName(name: string) {
-  safeSetItem(OFFICE_NAME_KEY, name);
+function saveOfficeName(_name: string) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 export { OFFICE_NAME_KEY, DEFAULT_OFFICE_NAME, loadOfficeName };
@@ -208,8 +209,8 @@ function loadInventory(): InvSubTab[] {
   } catch { return DEFAULT_INVENTORY.map(t => ({ ...t, items: t.items.map(i => ({ ...i })) })); }
 }
 
-function saveInventory(tabs: InvSubTab[]) {
-  safeSetJson(INVENTORY_KEY, tabs);
+function saveInventory(_tabs: InvSubTab[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 const OFFICE_INFO_KEY = "office_info";
@@ -257,8 +258,8 @@ function loadOfficeInfo(): OfficeInfoData {
   } catch { return DEFAULT_OFFICE_INFO; }
 }
 
-function saveOfficeInfo(data: OfficeInfoData) {
-  safeSetJson(OFFICE_INFO_KEY, data);
+function saveOfficeInfo(_data: OfficeInfoData) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 const ICON_OPTIONS: { key: string; icon: LucideIcon; label: string }[] = [
@@ -359,8 +360,8 @@ function loadGovConfig(): CityGovConfig {
   } catch { return { ...DEFAULT_GOV_CONFIG, tiers: DEFAULT_GOV_TIERS.map(t => ({ ...t })) }; }
 }
 
-function saveGovConfig(cfg: CityGovConfig) {
-  safeSetJson(GOV_CONFIG_KEY, cfg);
+function saveGovConfig(_cfg: CityGovConfig) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 interface ReputationEntity {
@@ -386,8 +387,8 @@ function loadEntityReps(): ReputationEntity[] {
   } catch { return []; }
 }
 
-function saveEntityReps(entities: ReputationEntity[]) {
-  safeSetJson(ENTITY_REP_KEY, entities);
+function saveEntityReps(_entities: ReputationEntity[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 function uid(): string {
@@ -469,8 +470,8 @@ function loadPresets(): EmployeePreset[] {
   } catch { return []; }
 }
 
-function savePresets(presets: EmployeePreset[]) {
-  safeSetJson(EMPLOYEE_PRESETS_KEY, presets);
+function savePresets(_presets: EmployeePreset[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 interface EquipLoadout {
@@ -489,8 +490,8 @@ function loadLoadouts(): EquipLoadout[] {
   } catch { return []; }
 }
 
-function saveLoadouts(loadouts: EquipLoadout[]) {
-  safeSetJson(EQUIP_LOADOUTS_KEY, loadouts);
+function saveLoadouts(_loadouts: EquipLoadout[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 const STAT_KEYS = ["strength", "agility", "constitution", "knowledge", "wisdom", "willpower"] as const;
@@ -528,8 +529,8 @@ function loadEmployees(): Employee[] {
   } catch { return DEFAULT_EMPLOYEES.map(e => ({ ...e })); }
 }
 
-function saveEmployees(emps: Employee[]) {
-  safeSetJson(EMPLOYEES_KEY, emps);
+function saveEmployees(_emps: Employee[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 function loadEmployeeCats(): EmployeeCategory[] {
@@ -540,8 +541,8 @@ function loadEmployeeCats(): EmployeeCategory[] {
   } catch { return [{ id: "cat-default", name: "General", employeeIds: DEFAULT_EMPLOYEES.map(e => e.id), collapsed: false }]; }
 }
 
-function saveEmployeeCats(cats: EmployeeCategory[]) {
-  safeSetJson(EMPLOYEE_CATS_KEY, cats);
+function saveEmployeeCats(_cats: EmployeeCategory[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 type FacilityType = "Facility" | "Commercial" | "Utility";
@@ -592,8 +593,8 @@ function loadFacilities(): Facility[] {
   } catch { return DEFAULT_FACILITIES.map(f => ({ ...f })); }
 }
 
-function saveFacilities(facs: Facility[]) {
-  safeSetJson(FACILITIES_KEY, facs);
+function saveFacilities(_facs: Facility[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 function loadFacilityCats(): FacilityCategory[] {
@@ -604,8 +605,8 @@ function loadFacilityCats(): FacilityCategory[] {
   } catch { return [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }]; }
 }
 
-function saveFacilityCats(cats: FacilityCategory[]) {
-  safeSetJson(FACILITY_CATS_KEY, cats);
+function saveFacilityCats(_cats: FacilityCategory[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 type ContractPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -658,8 +659,8 @@ function loadContracts(): Contract[] {
   } catch { return DEFAULT_CONTRACTS.map(c => ({ ...c })); }
 }
 
-function saveContracts(cons: Contract[]) {
-  safeSetJson(CONTRACTS_KEY, cons);
+function saveContracts(_cons: Contract[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
 }
 
 function loadContractCats(): ContractCategory[] {
@@ -670,8 +671,105 @@ function loadContractCats(): ContractCategory[] {
   } catch { return [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }]; }
 }
 
-function saveContractCats(cats: ContractCategory[]) {
-  safeSetJson(CONTRACT_CATS_KEY, cats);
+function saveContractCats(_cats: ContractCategory[]) {
+  // Persisted through the Supabase-backed Nexus Nomad state document.
+}
+
+interface NexusNomadState {
+  id: string;
+  version: number;
+  officeName: string;
+  reputation: number;
+  entityReps: ReputationEntity[];
+  govConfig: CityGovConfig;
+  employees: Employee[];
+  employeeCats: EmployeeCategory[];
+  presets: EmployeePreset[];
+  loadouts: EquipLoadout[];
+  facilities: Facility[];
+  facilityCats: FacilityCategory[];
+  contracts: Contract[];
+  contractCats: ContractCategory[];
+  officeInfo: OfficeInfoData;
+  invTabs: InvSubTab[];
+}
+
+const NEXUS_NOMAD_STATE_ID = "default";
+const NEXUS_NOMAD_STATE_VERSION = 1;
+
+function loadLocalOfficeReputation(): number {
+  try {
+    const v = safeGetItem("inet-office-reputation");
+    const parsed = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : 25;
+  } catch {
+    return 25;
+  }
+}
+
+function buildLocalNexusNomadState(): NexusNomadState {
+  return {
+    id: NEXUS_NOMAD_STATE_ID,
+    version: NEXUS_NOMAD_STATE_VERSION,
+    officeName: loadOfficeName(),
+    reputation: loadLocalOfficeReputation(),
+    entityReps: loadEntityReps(),
+    govConfig: loadGovConfig(),
+    employees: loadEmployees(),
+    employeeCats: loadEmployeeCats(),
+    presets: loadPresets(),
+    loadouts: loadLoadouts(),
+    facilities: loadFacilities(),
+    facilityCats: loadFacilityCats(),
+    contracts: loadContracts(),
+    contractCats: loadContractCats(),
+    officeInfo: loadOfficeInfo(),
+    invTabs: loadInventory(),
+  };
+}
+
+function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefined): NexusNomadState {
+  const fallback = buildLocalNexusNomadState();
+  if (!raw || typeof raw !== "object") return fallback;
+  return {
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id : fallback.id,
+    version: typeof raw.version === "number" ? raw.version : fallback.version,
+    officeName: typeof raw.officeName === "string" && raw.officeName.trim() ? raw.officeName : fallback.officeName,
+    reputation: typeof raw.reputation === "number" ? Math.max(-100, Math.min(100, raw.reputation)) : fallback.reputation,
+    entityReps: Array.isArray(raw.entityReps) ? raw.entityReps : fallback.entityReps,
+    govConfig: raw.govConfig && typeof raw.govConfig === "object" ? raw.govConfig : fallback.govConfig,
+    employees: Array.isArray(raw.employees) ? raw.employees : fallback.employees,
+    employeeCats: Array.isArray(raw.employeeCats) ? raw.employeeCats : fallback.employeeCats,
+    presets: Array.isArray(raw.presets) ? raw.presets : fallback.presets,
+    loadouts: Array.isArray(raw.loadouts) ? raw.loadouts : fallback.loadouts,
+    facilities: Array.isArray(raw.facilities) ? raw.facilities : fallback.facilities,
+    facilityCats: Array.isArray(raw.facilityCats) ? raw.facilityCats : fallback.facilityCats,
+    contracts: Array.isArray(raw.contracts) ? raw.contracts : fallback.contracts,
+    contractCats: Array.isArray(raw.contractCats) ? raw.contractCats : fallback.contractCats,
+    officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo : fallback.officeInfo,
+    invTabs: Array.isArray(raw.invTabs) ? raw.invTabs : fallback.invTabs,
+  };
+}
+
+function mirrorLegacyNexusNomadState(state: NexusNomadState) {
+  try {
+    safeSetItem(OFFICE_NAME_KEY, state.officeName);
+    safeSetItem("inet-office-reputation", String(state.reputation));
+    safeSetJson(ENTITY_REP_KEY, state.entityReps);
+    safeSetJson(GOV_CONFIG_KEY, state.govConfig);
+    safeSetJson(EMPLOYEES_KEY, state.employees);
+    safeSetJson(EMPLOYEE_CATS_KEY, state.employeeCats);
+    safeSetJson(EMPLOYEE_PRESETS_KEY, state.presets);
+    safeSetJson(EQUIP_LOADOUTS_KEY, state.loadouts);
+    safeSetJson(FACILITIES_KEY, state.facilities);
+    safeSetJson(FACILITY_CATS_KEY, state.facilityCats);
+    safeSetJson(CONTRACTS_KEY, state.contracts);
+    safeSetJson(CONTRACT_CATS_KEY, state.contractCats);
+    safeSetJson(OFFICE_INFO_KEY, state.officeInfo);
+    safeSetJson(INVENTORY_KEY, state.invTabs);
+  } catch {
+    // Best-effort compatibility mirror while remaining pages migrate off local storage.
+  }
 }
 
 const DRAG_TYPE = "REP_ENTITY";
@@ -1360,7 +1458,7 @@ export function NexusNomad() {
   const [officeName, setOfficeName] = useState(loadOfficeName);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
-  const [reputation, setReputation] = useState(25);
+  const [reputation, setReputation] = useState(loadLocalOfficeReputation);
   const [showRepPanel, setShowRepPanel] = useState(false);
   const [entityReps, setEntityReps] = useState<ReputationEntity[]>(loadEntityReps);
   const [addingEntity, setAddingEntity] = useState(false);
@@ -1436,18 +1534,106 @@ export function NexusNomad() {
   const [editingInvGroupId, setEditingInvGroupId] = useState<string | null>(null);
   const [equipPickerEmpId, setEquipPickerEmpId] = useState<string | null>(null);
   const [draftEffects, setDraftEffects] = useState<InvItemEffect[]>([]);
+  const [isStateHydrated, setIsStateHydrated] = useState(false);
+  const [stateSaveError, setStateSaveError] = useState<string | null>(null);
+  const lastSavedStateJsonRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    try {
-      const v = safeGetItem("inet-office-reputation");
-      if (v) setReputation(parseInt(v) || 25);
-    } catch {}
+  const applyLoadedState = useCallback((state: NexusNomadState) => {
+    setOfficeName(state.officeName);
+    setReputation(Math.max(-100, Math.min(100, state.reputation)));
+    setEntityReps(state.entityReps);
+    setGovConfig(state.govConfig);
+    setEmployees(state.employees);
+    setEmployeeCats(state.employeeCats);
+    setPresets(state.presets);
+    setLoadouts(state.loadouts);
+    setFacilities(state.facilities);
+    setFacilityCats(state.facilityCats);
+    setContracts(state.contracts);
+    setContractCats(state.contractCats);
+    setOfficeInfo(state.officeInfo);
+    setInvTabs(state.invTabs);
+    setActiveInvTab((prev) => {
+      if (prev && state.invTabs.some((tab) => tab.id === prev)) return prev;
+      return state.invTabs[0]?.id ?? null;
+    });
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const fallback = buildLocalNexusNomadState();
+        const loaded = normalizeNexusNomadState(await appStore.loadNexusNomadState(fallback));
+        if (cancelled) return;
+        applyLoadedState(loaded);
+        mirrorLegacyNexusNomadState(loaded);
+        lastSavedStateJsonRef.current = JSON.stringify(loaded);
+        setStateSaveError(null);
+      } catch (error) {
+        if (cancelled) return;
+        const fallback = buildLocalNexusNomadState();
+        applyLoadedState(fallback);
+        mirrorLegacyNexusNomadState(fallback);
+        lastSavedStateJsonRef.current = JSON.stringify(fallback);
+        setStateSaveError(error instanceof Error ? error.message : "Failed to load Nexus Nomad state.");
+      } finally {
+        if (!cancelled) setIsStateHydrated(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyLoadedState]);
+
+  const persistentState = useMemo<NexusNomadState>(() => ({
+    id: NEXUS_NOMAD_STATE_ID,
+    version: NEXUS_NOMAD_STATE_VERSION,
+    officeName,
+    reputation: Math.max(-100, Math.min(100, reputation)),
+    entityReps,
+    govConfig,
+    employees,
+    employeeCats,
+    presets,
+    loadouts,
+    facilities,
+    facilityCats,
+    contracts,
+    contractCats,
+    officeInfo,
+    invTabs,
+  }), [
+    officeName, reputation, entityReps, govConfig, employees, employeeCats,
+    presets, loadouts, facilities, facilityCats, contracts, contractCats, officeInfo, invTabs,
+  ]);
+
+  const persistentStateJson = useMemo(() => JSON.stringify(persistentState), [persistentState]);
+
+  useEffect(() => {
+    if (!isStateHydrated) return;
+    if (lastSavedStateJsonRef.current === persistentStateJson) return;
+
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        try {
+          await appStore.saveNexusNomadState(persistentState);
+          mirrorLegacyNexusNomadState(persistentState);
+          lastSavedStateJsonRef.current = persistentStateJson;
+          setStateSaveError(null);
+        } catch (error) {
+          setStateSaveError(error instanceof Error ? error.message : "Failed to save Nexus Nomad state.");
+        }
+      })();
+    }, 450);
+
+    return () => window.clearTimeout(timeout);
+  }, [isStateHydrated, persistentState, persistentStateJson]);
+
   const saveRep = useCallback((v: number) => {
-    const clamped = Math.max(-100, Math.min(100, v));
-    setReputation(clamped);
-    safeSetItem("inet-office-reputation", String(clamped));
+    setReputation(Math.max(-100, Math.min(100, v)));
   }, []);
 
   const updateGovConfig = useCallback((updates: Partial<CityGovConfig>) => {
