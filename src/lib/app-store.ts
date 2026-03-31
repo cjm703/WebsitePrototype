@@ -111,4 +111,9 @@ export const appStore = {
     loadPlayerDoc<T>("player_commerce_cart", playerId, fallback),
   savePlayerCommerceCart: <T>(playerId: string, data: T) =>
     savePlayerDoc<T>("player_commerce_cart", playerId, data),
+
+  loadPlayerCustomization: <T>(playerId: string, fallback: T) =>
+    loadPlayerDoc<T>("player_customization", playerId, fallback),
+  savePlayerCustomization: <T>(playerId: string, data: T) =>
+    savePlayerDoc<T>("player_customization", playerId, data),
 };

@@ -35,6 +35,7 @@ import {
 import { STICKER_IMAGES } from "./sticker-images";
 import { fetchProfilePicture, uploadProfilePicture, resizeImage, invalidatePfpCache, deleteProfilePicture } from "./profile-picture";
 import { safeGetItem, safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import {
   getSoundConfig,
@@ -167,10 +168,67 @@ function getPackColors(ownedPackIds: string[]): SingleColor[] {
 // ========================
 type CustTab = "theme" | "overview" | "profilepic" | "sounds";
 
+const CUSTOMIZATION_VERSION = 1;
+const SOUND_SLOT_ORDER: SoundSlot[] = ["navClick", "tabClick", "diceRoll", "successChime"];
+
+type CustomSoundConfig = Record<SoundSlot, string>;
+
+interface PlayerCustomizationDoc {
+  playerId: string;
+  version: number;
+  theme: PlayerTheme;
+  soundConfig: CustomSoundConfig;
+  customSounds: CustomSoundParams[];
+}
+
+function cloneTheme(theme: PlayerTheme): PlayerTheme {
+  return { ...theme };
+}
+
+function normalizeSoundConfig(raw: Partial<CustomSoundConfig> | null | undefined): CustomSoundConfig {
+  const fallback = getSoundConfig();
+  return {
+    navClick: raw?.navClick || fallback.navClick,
+    tabClick: raw?.tabClick || fallback.tabClick,
+    diceRoll: raw?.diceRoll || fallback.diceRoll,
+    successChime: raw?.successChime || fallback.successChime,
+  };
+}
+
+function buildLocalCustomizationDoc(playerId: string, theme: PlayerTheme): PlayerCustomizationDoc {
+  return {
+    playerId,
+    version: CUSTOMIZATION_VERSION,
+    theme: cloneTheme(theme),
+    soundConfig: normalizeSoundConfig(getSoundConfig()),
+    customSounds: [...getCustomSounds()],
+  };
+}
+
+function normalizeCustomizationDoc(playerId: string, raw: Partial<PlayerCustomizationDoc> | null | undefined, theme: PlayerTheme): PlayerCustomizationDoc {
+  const fallback = buildLocalCustomizationDoc(playerId, theme);
+  if (!raw || typeof raw !== "object") return fallback;
+  return {
+    playerId,
+    version: typeof raw.version === "number" ? raw.version : fallback.version,
+    theme: raw.theme && typeof raw.theme === "object" ? { ...DEFAULT_THEME, ...raw.theme } : fallback.theme,
+    soundConfig: normalizeSoundConfig(raw.soundConfig),
+    customSounds: Array.isArray(raw.customSounds) ? [...raw.customSounds] : fallback.customSounds,
+  };
+}
+
+function applyCustomizationDocToLocal(doc: PlayerCustomizationDoc) {
+  saveCustomSounds(doc.customSounds);
+  for (const slot of SOUND_SLOT_ORDER) {
+    const soundId = doc.soundConfig[slot];
+    if (soundId) setSlotSound(slot, soundId);
+  }
+}
+
 /* ═══════════════════════���═══════════════════ */
 /* Custom Sound Creator sub-component          */
 /* ═══════════════════════════════════════════ */
-function CustomSoundCreator({ slot, accentColor, labelColor }: { slot: SoundSlot; accentColor: string; labelColor: string }) {
+function CustomSoundCreator({ slot, accentColor, labelColor, onPersist }: { slot: SoundSlot; accentColor: string; labelColor: string; onPersist: () => void }) {
   const defaults = defaultCustomParams(slot);
   const [open, setOpen] = React.useState(false);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
@@ -253,6 +311,7 @@ function CustomSoundCreator({ slot, accentColor, labelColor }: { slot: SoundSlot
     const newSound: CustomSoundParams = { ...buildParams(), id, name: name.trim() };
     saveCustomSounds([...existing, newSound]);
     setSlotSound(slot, id);
+    onPersist();
     setOpen(false);
     setName("");
   };
@@ -591,6 +650,10 @@ export function CustomizationPage() {
 
   const themeStorageKey = `inet-player-theme-${currentUserId || "default"}`;
   useDebouncedJsonStorage(themeStorageKey, theme, 400);
+  const [customizationLoaded, setCustomizationLoaded] = useState(false);
+  const [customizationError, setCustomizationError] = useState<string | null>(null);
+  const [soundSyncNonce, setSoundSyncNonce] = useState(0);
+  const touchCustomizationSync = useCallback(() => setSoundSyncNonce((value) => value + 1), []);
 
   // Gradient mode state
   const [gradientMode, setGradientMode] = useState(false);
@@ -599,6 +662,50 @@ export function CustomizationPage() {
   const [gradEditIdx, setGradEditIdx] = useState(0);
 
   const [tab, setTab] = useState<CustTab>("theme");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCustomization() {
+      if (!currentUserId) {
+        setCustomizationLoaded(true);
+        return;
+      }
+      try {
+        setCustomizationError(null);
+        const remoteDoc = await appStore.loadPlayerCustomization<PlayerCustomizationDoc>(
+          currentUserId,
+          buildLocalCustomizationDoc(currentUserId, theme),
+        );
+        if (cancelled) return;
+        const normalized = normalizeCustomizationDoc(currentUserId, remoteDoc, theme);
+        setTheme(normalized.theme);
+        applyCustomizationDocToLocal(normalized);
+      } catch (err) {
+        if (!cancelled) {
+          setCustomizationError(err instanceof Error ? err.message : "Failed to load customization settings");
+        }
+      } finally {
+        if (!cancelled) setCustomizationLoaded(true);
+      }
+    }
+
+    void loadCustomization();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId || !customizationLoaded) return;
+    const timeout = window.setTimeout(() => {
+      const payload = buildLocalCustomizationDoc(currentUserId, theme);
+      appStore.savePlayerCustomization<PlayerCustomizationDoc>(currentUserId, payload).catch((err) => {
+        console.warn("Failed to save player customization", err);
+      });
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [currentUserId, customizationLoaded, theme, soundSyncNonce]);
 
   // Profile picture state
   const [pfpUrl, setPfpUrl] = useState<string | null>(null);
@@ -1435,7 +1542,7 @@ export function CustomizationPage() {
                           </div>
                           {currentId !== defaultId && (
                             <button
-                              onClick={() => setSlotSound(slot, defaultId)}
+                              onClick={() => { setSlotSound(slot, defaultId); touchCustomizationSync(); }}
                               className="text-[9px] px-2 py-0.5"
                               style={{ color: "#FF6A6A", border: "1px solid #FF6A6A44" }}
                             >
@@ -1491,7 +1598,7 @@ export function CustomizationPage() {
                                 </div>
                                 {isOwned && !isActive && (
                                   <button
-                                    onClick={() => setSlotSound(slot, v.id)}
+                                    onClick={() => { setSlotSound(slot, v.id); touchCustomizationSync(); }}
                                     className="shrink-0 text-[8px] px-2 py-1"
                                     style={{
                                       color: "#4AE04A", border: "1px solid #4AE04A44",
@@ -1509,7 +1616,7 @@ export function CustomizationPage() {
                                 )}
                                 {v.isCustom && (
                                   <button
-                                    onClick={(e) => { e.stopPropagation(); deleteCustomSound(v.id); }}
+                                    onClick={(e) => { e.stopPropagation(); deleteCustomSound(v.id); touchCustomizationSync(); }}
                                     className="shrink-0"
                                     style={S_RED}
                                     title="Delete custom sound"
@@ -1523,7 +1630,7 @@ export function CustomizationPage() {
                         </div>
 
                         {/* Create Custom Sound button */}
-                        <CustomSoundCreator slot={slot} accentColor={firstColor(theme.accentColor)} labelColor={theme.labelColor} />
+                        <CustomSoundCreator slot={slot} accentColor={firstColor(theme.accentColor)} labelColor={theme.labelColor} onPersist={touchCustomizationSync} />
                       </div>
                     );
                   })}
