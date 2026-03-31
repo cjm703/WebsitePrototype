@@ -675,10 +675,7 @@ export function CommercePage() {
   const [dmItemsCache, setDmItemsCache] = useState<DmManagedItemCompat[]>(loadLocalDmItemsCache);
   const [commerceLoading, setCommerceLoading] = useState(true);
   const [commerceError, setCommerceError] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [saveError, setSaveError] = useState<string | null>(null);
   const hasLoadedCommerceRef = useRef(false);
-  const saveStatusResetRef = useRef<number | null>(null);
 
   // UI state
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -702,45 +699,6 @@ export function CommercePage() {
 
   const nexusInvTabs = useMemo(() => nexusNomadState.invTabs || [], [nexusNomadState]);
 
-  const persistCommerceState = useCallback(async (
-    overrides?: Partial<{
-      shops: Shop[];
-      cart: CartItem[];
-      ledger: LedgerEntry[];
-      nexusNomadState: NexusNomadInventoryState;
-    }>,
-  ) => {
-    const shopsToSave = overrides?.shops ?? shops;
-    const cartToSave = overrides?.cart ?? cart;
-    const ledgerToSave = overrides?.ledger ?? ledger;
-    const nexusStateToSave = overrides?.nexusNomadState ?? nexusNomadState;
-
-    try {
-      setSaveState("saving");
-      setSaveError(null);
-
-      await Promise.all([
-        appStore.saveCommerceShops<Shop>(shopsToSave),
-        appStore.saveCommerceLedger<LedgerEntry>(ledgerToSave),
-        currentUserId ? appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, cartToSave) : Promise.resolve(),
-        appStore.saveNexusNomadState<NexusNomadInventoryState>(nexusStateToSave),
-      ]);
-
-      setSaveState("saved");
-      if (saveStatusResetRef.current !== null) {
-        window.clearTimeout(saveStatusResetRef.current);
-      }
-      saveStatusResetRef.current = window.setTimeout(() => {
-        setSaveState("idle");
-      }, 1800);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to persist commerce state";
-      console.warn("Failed to persist commerce state", err);
-      setSaveState("error");
-      setSaveError(message);
-    }
-  }, [cart, currentUserId, ledger, nexusNomadState, shops]);
-
   useEffect(() => {
     let cancelled = false;
 
@@ -750,9 +708,9 @@ export function CommercePage() {
         setCommerceError(null);
 
         const [shopsData, cartData, ledgerData, nexusStateData] = await Promise.all([
-          appStore.listCommerceShops<Shop>(),
+          appStore.listCommerceShops<Shop>().catch(() => [] as Shop[]),
           currentUserId ? appStore.loadPlayerCommerceCart<CartItem[]>(currentUserId, []) : Promise.resolve([] as CartItem[]),
-          appStore.listCommerceLedger<LedgerEntry>(),
+          appStore.listCommerceLedger<LedgerEntry>().catch(() => [] as LedgerEntry[]),
           appStore.loadNexusNomadState<NexusNomadInventoryState>(NEXUS_NOMAD_STATE_ID, defaultNexusNomadInventoryState()),
         ]);
 
@@ -780,7 +738,7 @@ export function CommercePage() {
       } catch (err) {
         if (!cancelled) {
           setCommerceError(err instanceof Error ? err.message : "Failed to load commerce state");
-          hasLoadedCommerceRef.current = false;
+          hasLoadedCommerceRef.current = true;
         }
       } finally {
         if (!cancelled) {
@@ -798,18 +756,42 @@ export function CommercePage() {
   useEffect(() => {
     if (!hasLoadedCommerceRef.current) return;
     const timeout = window.setTimeout(() => {
-      void persistCommerceState();
+      appStore.saveCommerceShops<Shop>(shops).catch((err) => {
+        console.warn("Failed to save commerce shops", err);
+      });
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [shops, cart, ledger, nexusNomadState, persistCommerceState]);
+  }, [shops]);
 
   useEffect(() => {
-    return () => {
-      if (saveStatusResetRef.current !== null) {
-        window.clearTimeout(saveStatusResetRef.current);
-      }
-    };
-  }, []);
+    if (!hasLoadedCommerceRef.current || !currentUserId) return;
+    const timeout = window.setTimeout(() => {
+      appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, cart).catch((err) => {
+        console.warn("Failed to save commerce cart", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [cart, currentUserId]);
+
+  useEffect(() => {
+    if (!hasLoadedCommerceRef.current) return;
+    const timeout = window.setTimeout(() => {
+      appStore.saveCommerceLedger<LedgerEntry>(ledger).catch((err) => {
+        console.warn("Failed to save commerce ledger", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [ledger]);
+
+  useEffect(() => {
+    if (!hasLoadedCommerceRef.current) return;
+    const timeout = window.setTimeout(() => {
+      appStore.saveNexusNomadState<NexusNomadInventoryState>(nexusNomadState).catch((err) => {
+        console.warn("Failed to save Nexus Nomad inventory state from commerce", err);
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [nexusNomadState]);
 
   const availableCurrencies = useMemo(
     () => getCurrencyItems(nexusInvTabs, dmItemsCache, currentUserId).map((currency) => ({ name: currency.name, quantity: currency.quantity })),
@@ -1095,13 +1077,17 @@ export function CommercePage() {
       }
     }
 
-    await persistCommerceState({
-      shops: nextShops,
-      ledger: nextLedger,
-      cart: nextCart,
-      nexusNomadState: nextNexusNomadState,
-    });
-  }, [cart, currentUser, currentUserId, dmItemsCache, ledger, nexusInvTabs, nexusNomadState, persistCommerceState, shops]);
+    try {
+      await Promise.all([
+        appStore.saveCommerceShops<Shop>(nextShops),
+        appStore.saveCommerceLedger<LedgerEntry>(nextLedger),
+        currentUserId ? appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, nextCart) : Promise.resolve(),
+        appStore.saveNexusNomadState<NexusNomadInventoryState>(nextNexusNomadState),
+      ]);
+    } catch (err) {
+      console.warn("Failed to persist checkout immediately", err);
+    }
+  }, [cart, currentUser, currentUserId, dmItemsCache, ledger, nexusInvTabs, nexusNomadState, shops]);
 
   // ── Reorder shops within a group ──
   const reorderShop = useCallback((dragIdx: number, hoverIdx: number, groupType: string) => {
@@ -1161,33 +1147,11 @@ export function CommercePage() {
     </span>
   );
 
-  const renderSaveStatus = () => {
-    if (saveState === "idle" && !saveError) return null;
-
-    const color =
-      saveState === "saving" ? "#FFAA4A" :
-      saveState === "saved" ? "#4ACA6A" :
-      "#FF5A5A";
-
-    const label =
-      saveState === "saving" ? "Saving to Supabase..." :
-      saveState === "saved" ? "Saved to Supabase" :
-      "Supabase save failed";
-
-    return (
-      <div
-        className="px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider"
-        title={saveError || label}
-        style={{
-          color,
-          background: `${color}12`,
-          border: `1px solid ${color}25`,
-        }}
-      >
-        {label}
-      </div>
-    );
-  };
+  const renderStatusBadge = useCallback((status: Shop["status"]) => (
+    <span className="px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider" style={{ color: STATUS_COLORS[status], background: `${STATUS_COLORS[status]}12`, border: `1px solid ${STATUS_COLORS[status]}25` }}>
+      {status}
+    </span>
+  ), []);
 
   if (commerceLoading) {
     return (
@@ -1251,7 +1215,6 @@ export function CommercePage() {
             <ArrowLeft size={14} />
             <span className="text-[11px] font-semibold">Back to Shops</span>
           </button>
-          {renderSaveStatus()}
           <div className="flex-1" />
           {!isDM && (
             <button onClick={() => setShowCart(true)} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold relative ${retro.button}`} style={{ color: "#E0E4F0" }}>
@@ -2052,7 +2015,6 @@ export function CommercePage() {
           </button>
           <Store size={14} style={{ color: STEEL.accent }} />
           <span className="text-[14px] font-bold tracking-wide" style={{ color: STEEL.accentBright }}>Commerce</span>
-          {renderSaveStatus()}
           <div className="flex-1" />
           {!isDM && (
             <button onClick={() => setShowCart(true)} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold relative ${retro.button}`} style={{ color: "#E0E4F0" }}>
@@ -2072,16 +2034,6 @@ export function CommercePage() {
           boxShadow: `inset 0 2px 8px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.3), 0 0 1px ${STEEL.accent}10`,
           background: `linear-gradient(180deg, ${STEEL.bg1}80 0%, transparent 2px), linear-gradient(0deg, ${STEEL.bg1}80 0%, transparent 2px)`,
         }}>
-          {commerceError && (
-            <div className="mb-4 px-3 py-2 text-[10px] font-mono" style={{ color: "#FF8A8A", background: "#220A0A", border: "1px solid #552222" }}>
-              {commerceError}
-            </div>
-          )}
-          {saveError && (
-            <div className="mb-4 px-3 py-2 text-[10px] font-mono" style={{ color: "#FF8A8A", background: "#220A0A", border: "1px solid #552222" }}>
-              {saveError}
-            </div>
-          )}
           {creatingShop && (
             <div className="mb-6 p-4 space-y-3" style={{ backgroundColor: panelBg, border: `2px solid ${panelBorder}` }}>
               <div className="flex items-center gap-2 mb-2">
