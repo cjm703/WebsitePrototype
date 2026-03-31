@@ -1,787 +1,1152 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Plus,
+  X,
+  Edit,
+  Trash2,
+  ChevronUp,
   ChevronDown,
-  ChevronRight,
+  Save,
   FileText,
-  Folder,
-  FolderOpen,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
+  FolderTree,
+  Eye,
+  LayoutTemplate,
+  Settings2,
+  Layers3,
 } from "lucide-react";
-import { retro } from "./retro-styles";
-import { RenderFormattedText } from "./render-text";
-import { firstColor, type PlayerTheme } from "./player-theme";
+import { RichTextEditor } from "./rich-text-editor";
 import { renderInfoDisplayMode } from "./personal-files-information-renderers";
-import {
-  INFO_UNASSIGNED_FILTER,
-  type InfoSubTab,
-} from "./personal-files-information-utils";
+import { sanitizeInfoDocumentRecord } from "./personal-files-information-utils";
 
-export type InfoFollowUp = {
-  id?: string;
-  title?: string;
-  content?: string;
-  description?: string;
+const INFO_SUBTAB_SORT_OPTIONS = [
+  { value: "custom", label: "Manual Order" },
+  { value: "title", label: "Title (A-Z)" },
+  { value: "category", label: "Category" },
+  { value: "newest", label: "Newest First" },
+  { value: "oldest", label: "Oldest First" },
+] as const;
+
+const INFO_UNASSIGNED_FILTER = "__unassigned__";
+
+const DISPLAY_MODE_OPTIONS = [
+  { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, background color, terminal mode, and optional typewriter text." },
+  { value: "paper", label: "Paper Document", help: "Brighter paper page with adjustable torn edges, extra pages, and edge texture." },
+  { value: "item:stone_tablet", label: "Stone Tablet", help: "A narrower rounded-top tablet with more stone texture, tintable carved text, and adjustable stone lightness." },
+] as const;
+
+function stripHtml(value: string) {
+  return String(value || "").replace(/<[^>]*>/g, "");
+}
+
+const previewTheme = {
+  accentColor: "#4A7BFF",
+  textColor: "#D7E4FF",
+  labelColor: "#8FA2D9",
+  panelBorder: "#232B5B",
+  panelBg: "#0A0D1A",
+  cardBg: "#0E1222",
 };
 
-export type ManagedInfoLike = {
-  id: string;
-  title: string;
-  description?: string;
-  category?: string;
-  content?: string;
-  realWorldTime?: string;
-  inWorldTime?: string;
-  lastEditedAt?: string;
-  infoSubTab?: string;
-  followUps?: InfoFollowUp[];
-  displayMode?: "digital" | "paper" | "item:stone_tablet";
-  displayData?: {
-    variant?: string;
-    alignment?: "left" | "center";
-    futurePaperOverlayMode?: "none" | "pixel_handwriting";
-    digitalTextColor?: string;
-    digitalGlowIntensity?: "low" | "medium" | "high";
-    digitalTypewriter?: boolean;
-    digitalBackgroundColor?: string;
-    digitalTypewriterSpeed?: number;
-    paperJaggedness?: number;
-    paperExtraPages?: number;
-    paperEdgeTexture?: number;
-    paperTemplate?: "standard" | "letter" | "report" | "aged";
-    stoneTextureIntensity?: number;
-    stoneTextColor?: string;
-    stoneBaseLightness?: number;
-    visibleBlockCount?: number;
-    fadeBlockCount?: number;
-    linkedInfoIds?: string[];
-    useSections?: boolean;
-    sections?: Array<{ id?: string; title?: string; content?: string }>;
-  };
-};
-
-type RetroLike = {
-  sunken: string;
-  raised: string;
-};
-
-type Props = {
-  theme: PlayerTheme;
-  playerInfos: ManagedInfoLike[];
-  infoSubTabs: InfoSubTab[];
-  retroOverrides?: RetroLike;
-};
-
-type TreeNode =
-  | {
-      id: string;
-      type: "folder";
-      name: string;
-      children: TreeNode[];
-      depth: number;
-      color?: string;
-      description?: string;
-      parentId?: string;
-    }
-  | {
-      id: string;
-      type: "paper";
-      name: string;
-      paper: ManagedInfoLike;
-      depth: number;
-      parentId?: string;
-    };
-
-const SEARCH_INPUT_STYLE: React.CSSProperties = {
-  border: "1px solid rgba(124, 124, 185, 0.35)",
-  background: "rgba(12, 12, 30, 0.92)",
-};
-
-function normalizeLabel(value: string | undefined | null) {
-  return String(value || "").trim();
+function modeLabel(value: string | undefined) {
+  return DISPLAY_MODE_OPTIONS.find((opt) => opt.value === value)?.label || "Digital Document";
 }
 
-function splitCategoryPath(category?: string) {
-  const raw = normalizeLabel(category);
-  if (!raw) return [];
-  return raw
-    .split(/(?:\/|\\|>|::|\|)/g)
-    .map((part) => part.trim())
-    .filter(Boolean);
+function modeHelp(value: string | undefined) {
+  return DISPLAY_MODE_OPTIONS.find((opt) => opt.value === value)?.help || "";
 }
 
-function normalizeSearch(value: string) {
-  return value.trim().toLowerCase();
+function ownerLabel(ids: string[] | undefined, players: any[]) {
+  if (!ids || ids.length === 0) return "Unassigned";
+  if (ids.includes("all")) return "All Players";
+  return ids.map((id) => players.find((p) => p.id === id)?.name || "Unknown").join(", ");
 }
 
-function paperTimestamp(info: ManagedInfoLike) {
-  return normalizeLabel(info.realWorldTime) || normalizeLabel(info.inWorldTime);
-}
+export function DMInfoManagerSection(props: any) {
+  const {
+    retro,
+    players,
+    managedInfos,
+    editingInfo,
+    isAddingNewInfo,
+    infoTags,
+    infoSubTabs,
+    setInfoSubTabs,
+    newInfoSubTabName,
+    setNewInfoSubTabName,
+    infoManagerSubTabFilter,
+    setInfoManagerSubTabFilter,
+    infoBulkAssignTarget,
+    setInfoBulkAssignTarget,
+    infoBulkSelection,
+    setInfoBulkSelection,
+    editingInfoSubTabId,
+    setEditingInfoSubTabId,
+    editingInfoSubTabName,
+    setEditingInfoSubTabName,
+    followUpInfoId,
+    setFollowUpInfoId,
+    followUpText,
+    setFollowUpText,
+    setDmError,
+    labelStyle,
+    inputClass,
+    inputStyle,
+    renderTypedField,
+    getActiveCustomFields,
+    getInfoSubTabNameError,
+    getInfoSubTabColorError,
+    normalizeInfoSubTabDraft,
+    ensureSingleDefaultInfoSubTab,
+    persistInfoSubTabs,
+    moveInfoSubTab,
+    deleteInfoSubTab,
+    handleAddInfo,
+    handleSaveInfo,
+    handleDeleteInfo,
+    handleCancelInfoEdit,
+    updateInfoField,
+    toggleInfoTag,
+    updateInfoCustomField,
+    persistInfos,
+    setEditingInfo,
+    S_ACCENT_HDR,
+    S_SECTION_HDR,
+    S_MUTED,
+    S_DIM,
+    S_TEXT,
+    S_WARN,
+    S_GREEN_BTN,
+    S_SUBTLE,
+    S_RED,
+    DM_PANEL,
+    DM_PANEL_ALT,
+    DM_TAG_BADGE,
+  } = props;
 
-function comparePapers(a: ManagedInfoLike, b: ManagedInfoLike) {
-  const aTime = paperTimestamp(a);
-  const bTime = paperTimestamp(b);
+  const [editorTab, setEditorTab] = useState<"content" | "display" | "preview">("content");
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const draftStorageKey = editingInfo?.id ? `dm-info-draft:${editingInfo.id}` : "dm-info-draft:new";
 
-  if (aTime && bTime && aTime !== bTime) {
-    return bTime.localeCompare(aTime);
-  }
+  const activeInfoCustomFields = editingInfo ? getActiveCustomFields(editingInfo, infoTags).filter((field: any) => field && typeof field.name === "string" && typeof field.tagName === "string") : [];
+  const sortedSubTabs = [...infoSubTabs].sort((a: any, b: any) => a.order - b.order);
 
-  return a.title.localeCompare(b.title);
-}
-
-function buildTree(playerInfos: ManagedInfoLike[], infoSubTabs: InfoSubTab[]): TreeNode[] {
-  const sortedTabs = [...infoSubTabs]
-    .filter((tab) => tab && typeof tab.id === "string" && typeof tab.name === "string")
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-
-  const validTabIds = new Set(sortedTabs.map((tab) => tab.id));
-  const infosByTab = new Map<string, ManagedInfoLike[]>();
-
-  for (const info of playerInfos) {
-    const tabKey =
-      info.infoSubTab && validTabIds.has(info.infoSubTab)
-        ? info.infoSubTab
-        : INFO_UNASSIGNED_FILTER;
-
-    if (!infosByTab.has(tabKey)) infosByTab.set(tabKey, []);
-    infosByTab.get(tabKey)!.push(info);
-  }
-
-  const roots: TreeNode[] = [];
-
-  const addFolderBranch = (
-    folderRoot: Extract<TreeNode, { type: "folder" }>,
-    info: ManagedInfoLike,
-  ) => {
-    const categoryParts = splitCategoryPath(info.category);
-    let currentFolder = folderRoot;
-
-    for (const part of categoryParts) {
-      let existing = currentFolder.children.find(
-        (child): child is Extract<TreeNode, { type: "folder" }> =>
-          child.type === "folder" && child.name === part,
-      );
-
-      if (!existing) {
-        existing = {
-          id: `${currentFolder.id}/folder/${part.toLowerCase().replace(/\s+/g, "-")}`,
-          type: "folder",
-          name: part,
-          children: [],
-          depth: currentFolder.depth + 1,
-          parentId: currentFolder.id,
-        };
-        currentFolder.children.push(existing);
-      }
-
-      currentFolder = existing;
-    }
-
-    currentFolder.children.push({
-      id: `paper:${info.id}`,
-      type: "paper",
-      name: info.title,
-      paper: info,
-      depth: currentFolder.depth + 1,
-      parentId: currentFolder.id,
-    });
-  };
-
-  for (const tab of sortedTabs) {
-    const rootFolder: Extract<TreeNode, { type: "folder" }> = {
-      id: `tab:${tab.id}`,
-      type: "folder",
-      name: tab.name,
-      children: [],
-      depth: 0,
-      color: tab.color || undefined,
-      description: tab.description || undefined,
-    };
-
-    const infos = [...(infosByTab.get(tab.id) || [])].sort(comparePapers);
-    for (const info of infos) {
-      addFolderBranch(rootFolder, info);
-    }
-
-    roots.push(rootFolder);
-  }
-
-  const unassignedInfos = [...(infosByTab.get(INFO_UNASSIGNED_FILTER) || [])].sort(comparePapers);
-  if (unassignedInfos.length > 0) {
-    const unassignedRoot: Extract<TreeNode, { type: "folder" }> = {
-      id: `tab:${INFO_UNASSIGNED_FILTER}`,
-      type: "folder",
-      name: "Unassigned",
-      children: [],
-      depth: 0,
-      color: "#FFCC66",
-      description: "Information that has not been assigned to a main category yet.",
-    };
-
-    for (const info of unassignedInfos) {
-      addFolderBranch(unassignedRoot, info);
-    }
-
-    roots.push(unassignedRoot);
-  }
-
-  const sortFolders = (node: Extract<TreeNode, { type: "folder" }>) => {
-    node.children.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
-      if (a.type === "folder" && b.type === "folder") return a.name.localeCompare(b.name);
-      if (a.type === "paper" && b.type === "paper") return comparePapers(a.paper, b.paper);
-      return 0;
-    });
-
-    for (const child of node.children) {
-      if (child.type === "folder") sortFolders(child);
-    }
-  };
-
-  for (const root of roots) {
-    if (root.type === "folder") sortFolders(root);
-  }
-
-  return roots;
-}
-
-function collectAllFolderIds(nodes: TreeNode[], bucket = new Set<string>()) {
-  for (const node of nodes) {
-    if (node.type === "folder") {
-      bucket.add(node.id);
-      collectAllFolderIds(node.children, bucket);
-    }
-  }
-  return bucket;
-}
-
-function collectAllPapers(nodes: TreeNode[], bucket: ManagedInfoLike[] = []) {
-  for (const node of nodes) {
-    if (node.type === "paper") {
-      bucket.push(node.paper);
-    } else {
-      collectAllPapers(node.children, bucket);
-    }
-  }
-  return bucket;
-}
-
-function filterTree(nodes: TreeNode[], searchTerm: string): TreeNode[] {
-  if (!searchTerm) return nodes;
-
-  const filtered: TreeNode[] = [];
-
-  for (const node of nodes) {
-    const selfMatch = normalizeSearch(node.name).includes(searchTerm);
-
-    if (node.type === "paper") {
-      if (selfMatch) filtered.push(node);
-      continue;
-    }
-
-    const filteredChildren = filterTree(node.children, searchTerm);
-    if (selfMatch || filteredChildren.length > 0) {
-      filtered.push({
-        ...node,
-        children: selfMatch ? node.children : filteredChildren,
-      });
-    }
-  }
-
-  return filtered;
-}
-
-function collectBreadcrumbs(
-  roots: TreeNode[],
-  paperId: string,
-): Array<{ id: string; name: string; type: "folder" | "paper" }> {
-  const walk = (
-    nodes: TreeNode[],
-    trail: Array<{ id: string; name: string; type: "folder" | "paper" }>,
-  ): Array<{ id: string; name: string; type: "folder" | "paper" }> | null => {
-    for (const node of nodes) {
-      const nextTrail = [...trail, { id: node.id, name: node.name, type: node.type }];
-      if (node.type === "paper" && node.paper.id === paperId) return nextTrail;
-      if (node.type === "folder") {
-        const result = walk(node.children, nextTrail);
-        if (result) return result;
-      }
-    }
-    return null;
-  };
-
-  return walk(roots, []) || [];
-}
-
-function findPaperById(nodes: TreeNode[], paperId: string | null): ManagedInfoLike | null {
-  if (!paperId) return null;
-  for (const node of nodes) {
-    if (node.type === "paper" && node.paper.id === paperId) return node.paper;
-    if (node.type === "folder") {
-      const found = findPaperById(node.children, paperId);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-function firstVisiblePaper(nodes: TreeNode[]) {
-  for (const node of nodes) {
-    if (node.type === "paper") return node.paper;
-    if (node.type === "folder") {
-      const found = firstVisiblePaper(node.children);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-function findFirstPaperInFolderId(nodes: TreeNode[], folderId: string): ManagedInfoLike | null {
-  for (const node of nodes) {
-    if (node.type === "folder") {
-      if (node.id === folderId) return firstVisiblePaper(node.children);
-      const found = findFirstPaperInFolderId(node.children, folderId);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-function formatLastEdited(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-export function PersonalFilesInformationPanel({
-  theme,
-  playerInfos,
-  infoSubTabs,
-  retroOverrides,
-}: Props) {
-  const ui = retroOverrides || retro;
-  const [searchValue, setSearchValue] = useState("");
-  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
-  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [favoritePaperIds, setFavoritePaperIds] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set<string>();
-    try {
-      const raw = window.localStorage.getItem("pf-info-favorites");
-      const parsed = raw ? JSON.parse(raw) : [];
-      return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value)) : []);
-    } catch {
-      return new Set<string>();
-    }
-  });
-  const [readState, setReadState] = useState<Record<string, string>>(() => {
-    if (typeof window === "undefined") return {};
-    try {
-      const raw = window.localStorage.getItem("pf-info-read-state");
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
+  const filteredInfos = managedInfos.filter((info: any) => {
+    if (infoManagerSubTabFilter === "all") return true;
+    if (infoManagerSubTabFilter === INFO_UNASSIGNED_FILTER) return !info.infoSubTab;
+    return info.infoSubTab === infoManagerSubTabFilter;
   });
 
+  const selectedBulkCount = Object.values(infoBulkSelection).filter(Boolean).length;
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("pf-info-favorites", JSON.stringify(Array.from(favoritePaperIds)));
-  }, [favoritePaperIds]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("pf-info-read-state", JSON.stringify(readState));
-  }, [readState]);
-
-  const treeRoots = useMemo(
-    () => buildTree(playerInfos, infoSubTabs),
-    [playerInfos, infoSubTabs],
-  );
-
-  const searchTerm = normalizeSearch(searchValue);
-
-  const visibleTree = useMemo(
-    () => filterTree(treeRoots, searchTerm),
-    [treeRoots, searchTerm],
-  );
-
-  const autoExpandedIds = useMemo(
-    () => (searchTerm ? collectAllFolderIds(visibleTree) : new Set<string>()),
-    [visibleTree, searchTerm],
-  );
-
-  useEffect(() => {
-    if (searchTerm) return;
-    setExpandedFolderIds((prev) => {
-      if (prev.size > 0) return prev;
-      const defaults = new Set<string>();
-      for (const node of treeRoots) {
-        if (node.type === "folder") defaults.add(node.id);
-      }
-      return defaults;
+  const previewInfo = useMemo(() => {
+    if (!editingInfo) return null;
+    return sanitizeInfoDocumentRecord({
+      ...editingInfo,
+      title: editingInfo.title || "Untitled Information",
+      content: editingInfo.content || editingInfo.description || "<p>This preview will show how the page renders for the player.</p>",
+      displayMode: (editingInfo as any).displayMode || "digital",
+      displayData: (editingInfo as any).displayData || {},
     });
-  }, [treeRoots, searchTerm]);
+  }, [editingInfo]);
 
-  useEffect(() => {
-    if (!selectedPaperId) return;
-    const visiblePaper = findPaperById(visibleTree, selectedPaperId);
-    if (visiblePaper) return;
-    setSelectedPaperId(null);
-  }, [visibleTree, selectedPaperId]);
-
-  const selectedPaper = useMemo(
-    () => findPaperById(treeRoots, selectedPaperId),
-    [treeRoots, selectedPaperId],
-  );
-  const infoLookup = useMemo(() => {
-    const lookup: Record<string, ManagedInfoLike> = {};
-    for (const paper of collectAllPapers(treeRoots)) {
-      lookup[paper.id] = paper;
-    }
-    return lookup;
-  }, [treeRoots]);
-
-
-  useEffect(() => {
-    if (!selectedPaperId) return;
-    setReadState((prev) => ({ ...prev, [selectedPaperId]: new Date().toISOString() }));
-  }, [selectedPaperId]);
-
-  const paperStatusById = useMemo(() => {
-    const status: Record<string, "new" | "updated" | null> = {};
-    const all = collectAllPapers(treeRoots);
-    for (const paper of all) {
-      const lastRead = readState[paper.id];
-      if (!lastRead) {
-        status[paper.id] = "new";
-        continue;
-      }
-      if (paper.lastEditedAt) {
-        const edited = new Date(paper.lastEditedAt).getTime();
-        const read = new Date(lastRead).getTime();
-        status[paper.id] = Number.isFinite(edited) && Number.isFinite(read) && edited > read ? "updated" : null;
-      } else {
-        status[paper.id] = null;
-      }
-    }
-    return status;
-  }, [treeRoots, readState]);
-
-  const breadcrumbs = useMemo(
-    () => collectBreadcrumbs(treeRoots, selectedPaperId || ""),
-    [treeRoots, selectedPaperId],
-  );
-
-  const visiblePaperCount = useMemo(
-    () => collectAllPapers(visibleTree).length,
-    [visibleTree],
-  );
-
-  const toggleFolder = (folderId: string) => {
-    if (searchTerm) return;
-    setExpandedFolderIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(folderId)) next.delete(folderId);
-      else next.add(folderId);
-      return next;
-    });
+  const getInheritedAssignedTo = (subTabId: string) => {
+    const subTab = infoSubTabs.find((st: any) => st.id === subTabId);
+    const assignedTo = Array.isArray(subTab?.assignedTo) ? subTab.assignedTo : [];
+    return assignedTo;
   };
 
-  const renderTree = (nodes: TreeNode[]) => {
-    const sortedNodes = [...nodes].sort((a, b) => {
-      if (a.type === "paper" && b.type === "paper") {
-        const aFav = favoritePaperIds.has(a.paper.id) ? 1 : 0;
-        const bFav = favoritePaperIds.has(b.paper.id) ? 1 : 0;
-        if (aFav !== bFav) return bFav - aFav;
-      }
-      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+  const applyBulkAssign = async () => {
+    const selectedIds = new Set(Object.entries(infoBulkSelection).filter(([, checked]) => checked).map(([id]) => id));
+    if (selectedIds.size === 0) return;
 
-    return sortedNodes.map((node) => {
-      if (node.type === "folder") {
-        const isExpanded = searchTerm
-          ? autoExpandedIds.has(node.id)
-          : expandedFolderIds.has(node.id);
-        const folderColor = node.color || theme.labelColor;
-
-        return (
-          <div key={node.id}>
-            <button
-              type="button"
-              onClick={() => toggleFolder(node.id)}
-              className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left text-[11px] rounded transition-colors"
-              style={{
-                color: folderColor,
-                background: "transparent",
-                paddingLeft: `${8 + node.depth * 14}px`,
-              }}
-            >
-              {isExpanded ? (
-                <ChevronDown size={12} />
-              ) : (
-                <ChevronRight size={12} />
-              )}
-              {isExpanded ? <FolderOpen size={12} /> : <Folder size={12} />}
-              <span className="truncate">{node.name}</span>
-            </button>
-
-            {isExpanded && node.children.length > 0 && (
-              <div>{renderTree(node.children)}</div>
-            )}
-          </div>
-        );
-      }
-
-      const isSelected = selectedPaperId === node.paper.id;
-      return (
-        <button
-          key={node.id}
-          type="button"
-          onClick={() => setSelectedPaperId(node.paper.id)}
-          className={`w-full text-left px-2 py-1.5 text-[11px] rounded transition-colors ${
-            isSelected ? ui.sunken : ""
-          }`}
-          style={{
-            color: isSelected ? firstColor(theme.accentColor) : theme.textColor,
-            background: isSelected ? theme.panelBg : "transparent",
-            paddingLeft: `${8 + node.depth * 14}px`,
-          }}
-        >
-          <div className="flex items-center gap-1.5 min-w-0">
-            <FileText size={12} />
-            {favoritePaperIds.has(node.paper.id) ? <span className="text-[9px]">★</span> : null}
-            <span className="truncate">{node.name}</span>
-            {paperStatusById[node.paper.id] ? (
-              <span
-                className="ml-auto shrink-0 rounded px-1 py-[1px] text-[8px] uppercase tracking-[0.08em]"
-                style={{
-                  color: paperStatusById[node.paper.id] === "new" ? "#FFD27A" : "#9FDBFF",
-                  border: "1px solid rgba(124,124,185,0.28)",
-                  background: "rgba(10,12,22,0.8)",
-                }}
-              >
-                {paperStatusById[node.paper.id] === "new" ? "New" : "Updated"}
-              </span>
-            ) : null}
-          </div>
-        </button>
-      );
-    });
+    const inherited = getInheritedAssignedTo(infoBulkAssignTarget);
+    const next = managedInfos.map((info: any) =>
+      selectedIds.has(info.id)
+        ? {
+            ...info,
+            infoSubTab: infoBulkAssignTarget,
+            assignedTo: inherited.length ? inherited : info.assignedTo,
+          }
+        : info
+    );
+    await persistInfos(next);
+    setInfoBulkSelection({});
   };
+
+  const addFollowUp = async (infoId: string) => {
+    const text = followUpText.trim();
+    if (!text) return;
+    const next = managedInfos.map((info: any) =>
+      info.id === infoId
+        ? {
+            ...info,
+            followUps: [
+              ...(info.followUps || []),
+              {
+                id: `fu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                title: "",
+                content: text,
+              },
+            ],
+          }
+        : info
+    );
+    await persistInfos(next);
+    setFollowUpText("");
+    setFollowUpInfoId(null);
+  };
+
+  const assignInfoSubTab = (subTabId: string) => {
+    updateInfoField("infoSubTab", subTabId);
+    const subTab = infoSubTabs.find((st: any) => st.id === subTabId);
+    const inherited = getInheritedAssignedTo(subTabId);
+
+    if (subTab?.autoAssignToOwners !== false && inherited.length) {
+      updateInfoField("assignedTo", inherited);
+    }
+
+    if (subTab?.defaultDisplayMode && (!editingInfo?.displayMode || editingInfo.displayMode === "digital")) {
+      updateEditingInfo((prev: any) => ({
+        ...prev,
+        displayMode: subTab.defaultDisplayMode,
+      }));
+    }
+  };
+
+  const updateEditingInfo = (nextOrUpdater: any) => {
+    if (typeof setEditingInfo !== "function") return;
+
+    if (typeof nextOrUpdater === "function") {
+      setEditingInfo((prev: any) => nextOrUpdater(prev));
+      return;
+    }
+
+    setEditingInfo(nextOrUpdater);
+  };
+
+  const updateDisplayData = (patch: Record<string, any>) => {
+    updateEditingInfo((prev: any) => ({
+      ...prev,
+      displayData: {
+        ...(prev?.displayData || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  useEffect(() => {
+    if (!editingInfo || typeof window === "undefined") return;
+    setDraftStatus("saving");
+    const timeout = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(draftStorageKey, JSON.stringify(editingInfo));
+        setDraftStatus("saved");
+      } catch {
+        setDraftStatus("idle");
+      }
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [editingInfo, draftStorageKey]);
+
+  const restoreDraft = () => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      updateEditingInfo(JSON.parse(raw));
+      setDraftStatus("saved");
+    } catch {
+      setDraftStatus("idle");
+    }
+  };
+
+  const clearDraft = () => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(draftStorageKey);
+    } finally {
+      setDraftStatus("idle");
+    }
+  };
+
+  const sectionList = Array.isArray((editingInfo as any)?.displayData?.sections)
+    ? (editingInfo as any).displayData.sections
+    : [];
+
+  const linkedInfoIdsText = Array.isArray((editingInfo as any)?.displayData?.linkedInfoIds)
+    ? (editingInfo as any).displayData.linkedInfoIds.join(", ")
+    : "";
 
   return (
-    <div
-      className="rounded border overflow-hidden min-h-[68vh] h-[72vh] flex flex-col"
-      style={{
-        borderColor: theme.panelBorder,
-        background: theme.cardBg,
-      }}
-    >
-      <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: isSidebarCollapsed ? "42px minmax(0,1fr)" : "220px minmax(0,1fr)" }}>
-        <aside
-          className="border-r min-h-0 flex flex-col"
-          style={{
-            borderColor: theme.panelBorder,
-            background: theme.panelBg,
-          }}
-        >
-          <div
-            className="flex items-center gap-2 px-2 py-1.5 border-b"
-            style={{ borderColor: theme.panelBorder }}
-          >
-            <button
-              type="button"
-              onClick={() => setIsSidebarCollapsed((prev) => !prev)}
-              className={`${ui.raised} h-6 w-6 shrink-0 flex items-center justify-center`}
-              style={{ color: theme.labelColor }}
-              title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {isSidebarCollapsed ? <PanelLeftOpen size={12} /> : <PanelLeftClose size={12} />}
-            </button>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Information</h2>
+          <div className="text-[10px] mt-1" style={S_MUTED}>
+            Organize folders, create papers, choose display styles, and preview player-facing results.
+          </div>
+        </div>
+        <button onClick={handleAddInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+          <Plus size={14} /> Add Info
+        </button>
+      </div>
 
-            {!isSidebarCollapsed && (
-              <>
-                <div className="relative flex-1">
-                  <Search
-                    size={11}
-                    className="absolute left-2 top-1/2 -translate-y-1/2"
-                    style={{ color: theme.labelColor }}
-                  />
-                  <input
-                    value={searchValue}
-                    onChange={(e) => setSearchValue(e.target.value)}
-                    placeholder="Search..."
-                    className="w-full pl-6 pr-2 py-1 text-[10px] outline-none"
-                    style={{
-                      ...SEARCH_INPUT_STYLE,
-                      color: theme.textColor,
-                    }}
-                  />
+      <div className="grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4">
+        <div className="space-y-4">
+          <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+            <div className="flex items-center gap-2 mb-3">
+              <FolderTree size={15} style={S_SUBTLE} />
+              <div className="text-[12px]" style={S_SECTION_HDR}>INFORMATION SUB-TABS</div>
+            </div>
+            <div className="text-[10px] mb-3" style={S_MUTED}>
+              These are the top-level and nested folders players browse in the Information explorer.
+            </div>
+
+            <div className="space-y-3 max-h-[560px] overflow-auto pr-1">
+              {sortedSubTabs.map((st: any, index: number, arr: any[]) => (
+                <div key={st.id} className="p-3" style={DM_PANEL}>
+                  {editingInfoSubTabId === st.id ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Name</label>
+                          <input type="text" value={editingInfoSubTabName} onChange={(e) => setEditingInfoSubTabName(e.target.value)} className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Parent Sub-Tab</label>
+                          <select value={st.parentId || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, parentId: e.target.value } : tab))} className={inputClass} style={inputStyle}>
+                            <option value="">Top Level</option>
+                            {sortedSubTabs.filter((tab: any) => tab.id !== st.id).map((tab: any) => (
+                              <option key={tab.id} value={tab.id}>{tab.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Icon</label>
+                          <input type="text" value={st.icon || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, icon: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Accent Color</label>
+                          <input type="text" value={st.color || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, color: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Sort Mode</label>
+                          <select value={st.sortMode || "custom"} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, sortMode: e.target.value } : tab))} className={inputClass} style={inputStyle}>
+                            {INFO_SUBTAB_SORT_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Assigned To</label>
+                          <select value={Array.isArray(st.assignedTo) && st.assignedTo.includes("all") ? "all" : ((st.assignedTo || [])[0] || "")} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, assignedTo: e.target.value === "all" ? ["all"] : e.target.value ? [e.target.value] : [] } : tab))} className={inputClass} style={inputStyle}>
+                            <option value="">No default player assignment</option>
+                            <option value="all">All Players</option>
+                            {players.filter((p: any) => p.id !== "dm").map((p: any) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Default Display Mode</label>
+                          <select value={st.defaultDisplayMode || "digital"} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, defaultDisplayMode: e.target.value } : tab))} className={inputClass} style={inputStyle}>
+                            <option value="digital">Digital</option>
+                            <option value="paper">Paper</option>
+                            <option value="item:stone_tablet">Stone Tablet</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Description</label>
+                        <input type="text" value={st.description || ""} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, description: e.target.value } : tab))} className={inputClass} style={inputStyle} />
+                      </div>
+
+                      <div className="flex flex-wrap gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={!!st.isDefault} onChange={async (e) => {
+                            const next = ensureSingleDefaultInfoSubTab(
+                              infoSubTabs.map((tab: any) =>
+                                tab.id === st.id ? { ...tab, isDefault: e.target.checked } : { ...tab, isDefault: false }
+                              )
+                            );
+                            await persistInfoSubTabs(next.map(normalizeInfoSubTabDraft));
+                          }} className="accent-[#4A7BFF]" />
+                          <span className="text-[11px]" style={S_TEXT}>Default tab</span>
+                        </label>
+
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={!!st.showEmpty} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, showEmpty: e.target.checked } : tab))} className="accent-[#4A7BFF]" />
+                          <span className="text-[11px]" style={S_TEXT}>Show when empty</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={st.autoAssignToOwners !== false} onChange={(e) => setInfoSubTabs((prev: any[]) => prev.map((tab) => tab.id === st.id ? { ...tab, autoAssignToOwners: e.target.checked } : tab))} className="accent-[#4A7BFF]" />
+                          <span className="text-[11px]" style={S_TEXT}>Auto-assign new docs to owners</span>
+                        </label>
+                      </div>
+
+                      {(getInfoSubTabNameError(editingInfoSubTabName, st.id) || getInfoSubTabColorError(st.color)) && (
+                        <div className="text-[10px]" style={S_WARN}>
+                          {getInfoSubTabNameError(editingInfoSubTabName, st.id) || getInfoSubTabColorError(st.color)}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="text-[10px]" style={S_DIM}>
+                          {managedInfos.filter((info: any) => info.infoSubTab === st.id).length} assigned • {ownerLabel(st.assignedTo, players)}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={async () => {
+                            const nameError = getInfoSubTabNameError(editingInfoSubTabName, st.id);
+                            const colorError = getInfoSubTabColorError(st.color);
+                            if (nameError || colorError) {
+                              setDmError(nameError || colorError);
+                              return;
+                            }
+                            const next = ensureSingleDefaultInfoSubTab(
+                              infoSubTabs.map((s: any) =>
+                                s.id === st.id ? normalizeInfoSubTabDraft({ ...s, name: editingInfoSubTabName.trim() }) : normalizeInfoSubTabDraft(s)
+                              )
+                            );
+                            await persistInfoSubTabs(next);
+                            setEditingInfoSubTabId(null);
+                            setEditingInfoSubTabName("");
+                          }} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`} style={{ color: "#4A9A5A" }}>
+                            <Save size={11} /> Save
+                          </button>
+                          <button onClick={() => { setEditingInfoSubTabId(null); setEditingInfoSubTabName(""); }} className={`${retro.button} px-3 py-1.5 text-[11px]`} style={{ color: "#C77B7B" }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-[12px] font-semibold flex items-center gap-2" style={{ color: st.color || "#D7E2FF" }}>
+                            <span>{st.icon || "📁"}</span>
+                            <span>{st.name}</span>
+                            {st.isDefault && <span className="px-1.5 py-0.5 text-[4px]" style={DM_TAG_BADGE}>Default</span>}
+                          </div>
+                          {st.description && <div className="text-[10px] mt-1" style={S_MUTED}>{st.description}</div>}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => moveInfoSubTab(st.id, -1)} disabled={index === 0} className="hover:opacity-80 disabled:opacity-30"><ChevronUp size={14} style={S_DIM} /></button>
+                          <button onClick={() => moveInfoSubTab(st.id, 1)} disabled={index === arr.length - 1} className="hover:opacity-80 disabled:opacity-30"><ChevronDown size={14} style={S_DIM} /></button>
+                          <button onClick={() => { setEditingInfoSubTabId(st.id); setEditingInfoSubTabName(st.name); }} className="hover:opacity-80"><Edit size={13} style={S_SUBTLE} /></button>
+                          <button onClick={() => deleteInfoSubTab(st.id)} className="hover:opacity-80"><Trash2 size={13} style={S_RED} /></button>
+                        </div>
+                      </div>
+                      <div className="text-[10px] flex flex-wrap gap-3" style={S_DIM}>
+                        <span>{managedInfos.filter((info: any) => info.infoSubTab === st.id).length} assigned</span>
+                        <span>Parent: {sortedSubTabs.find((tab: any) => tab.id === st.parentId)?.name || "Top Level"}</span>
+                        <span>Owners: {ownerLabel(st.assignedTo, players)}</span>
+                        <span>Default View: {st.defaultDisplayMode || "digital"}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="text-[10px] shrink-0" style={{ color: theme.labelColor }}>
-                  {visiblePaperCount}
-                </div>
-              </>
-            )}
+              ))}
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-[#1A1A3B]">
+              <div className="text-[11px] mb-2" style={S_SUBTLE}>Add New Sub-Tab</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="text" value={newInfoSubTabName} onChange={(e) => setNewInfoSubTabName(e.target.value)} placeholder="New Information Sub-Tab..." className={inputClass} style={{ ...inputStyle, width: 220 }} />
+                <button onClick={async () => {
+                  const error = getInfoSubTabNameError(newInfoSubTabName);
+                  if (error) {
+                    setDmError(error);
+                    return;
+                  }
+                  const next = ensureSingleDefaultInfoSubTab([
+                    ...infoSubTabs,
+                    {
+                      id: `ist-${Date.now()}`,
+                      name: newInfoSubTabName.trim(),
+                      order: infoSubTabs.length,
+                      description: "",
+                      icon: "",
+                      color: "",
+                      parentId: "",
+                      assignedTo: [],
+                      defaultDisplayMode: "digital",
+                      autoAssignToOwners: true,
+                      isDefault: infoSubTabs.length === 0,
+                      sortMode: "custom",
+                      showEmpty: false,
+                    },
+                  ]);
+                  await persistInfoSubTabs(next);
+                  setNewInfoSubTabName("");
+                }} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`} style={{ color: newInfoSubTabName.trim() ? "#4A9A5A" : "#3A4A6A" }}>
+                  <Plus size={11} /> Add
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="flex-1 overflow-auto">
-            {!isSidebarCollapsed ? (
-              <div className="p-2 space-y-1">
-                {visibleTree.length > 0 ? (
-                  renderTree(visibleTree)
-                ) : (
-                  <div
-                    className="px-2 py-3 text-[11px]"
-                    style={{ color: theme.labelColor }}
-                  >
-                    No categories or papers match your search.
+          <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+            <div className="flex items-center gap-2 mb-3">
+              <Layers3 size={15} style={S_SUBTLE} />
+              <div className="text-[12px]" style={S_SECTION_HDR}>INFO LIBRARY</div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 mb-3">
+              <select value={infoManagerSubTabFilter} onChange={(e) => setInfoManagerSubTabFilter(e.target.value)} className={inputClass} style={inputStyle}>
+                <option value="all">All Information</option>
+                <option value={INFO_UNASSIGNED_FILTER}>Unassigned Only</option>
+                {sortedSubTabs.map((st: any) => (
+                  <option key={st.id} value={st.id}>{st.name}</option>
+                ))}
+              </select>
+
+              <div className="flex items-center gap-2">
+                <select value={infoBulkAssignTarget} onChange={(e) => setInfoBulkAssignTarget(e.target.value)} className={inputClass} style={inputStyle}>
+                  <option value="">Bulk assign selected to...</option>
+                  <option value="">Clear sub-tab assignment</option>
+                  {sortedSubTabs.map((st: any) => (
+                    <option key={st.id} value={st.id}>{st.name}</option>
+                  ))}
+                </select>
+                <button onClick={applyBulkAssign} disabled={!selectedBulkCount} className={`${retro.button} px-3 py-2 text-[11px] shrink-0`} style={{ color: selectedBulkCount ? "#4A9A5A" : "#3A4A6A" }}>
+                  Apply
+                </button>
+              </div>
+            </div>
+
+            <div className="text-[10px] mb-2" style={S_DIM}>
+              {filteredInfos.length} shown • {selectedBulkCount} selected
+            </div>
+
+            <div className="space-y-2 max-h-[500px] overflow-auto pr-1">
+              {filteredInfos.map((info: any) => {
+                const displayMode = info.displayMode || "digital";
+                return (
+                  <div key={info.id} className="p-3" style={DM_PANEL}>
+                    <div className="flex items-start gap-3">
+                      <input type="checkbox" checked={!!infoBulkSelection[info.id]} onChange={(e) => setInfoBulkSelection((prev: any) => ({ ...prev, [info.id]: e.target.checked }))} className="mt-1 accent-[#4A7BFF]" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[12px] font-semibold truncate" style={S_TEXT}>{info.title || "(untitled)"}</div>
+                            <div className="text-[10px] mt-1 flex flex-wrap gap-3" style={S_DIM}>
+                              <span>{modeLabel(displayMode)}</span>
+                              <span>{info.category || "No category path"}</span>
+                              <span>{ownerLabel(info.assignedTo, players)}</span>
+                              {info.lastEditedAt ? <span>Edited: {new Date(info.lastEditedAt).toLocaleString()}</span> : null}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button onClick={() => updateEditingInfo(info)} className="hover:opacity-80"><Edit size={13} style={S_SUBTLE} /></button>
+                            <button onClick={() => handleDeleteInfo(info.id)} className="hover:opacity-80"><Trash2 size={13} style={S_RED} /></button>
+                          </div>
+                        </div>
+
+                        <div className="text-[10px] mt-2" style={S_MUTED}>
+                          {stripHtml(info.content || info.description || "").slice(0, 180) || "No content yet."}
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-3">
+                          {followUpInfoId === info.id ? (
+                            <div className="flex items-center gap-2 w-full">
+                              <input type="text" value={followUpText} onChange={(e) => setFollowUpText(e.target.value)} placeholder="Quick follow-up note..." className={inputClass} style={inputStyle} />
+                              <button onClick={() => addFollowUp(info.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={{ color: "#4A9A5A" }}>Add</button>
+                              <button onClick={() => { setFollowUpInfoId(null); setFollowUpText(""); }} className={`${retro.button} px-2 py-1 text-[10px]`} style={{ color: "#C77B7B" }}>Cancel</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setFollowUpInfoId(info.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={{ color: "#7BA8FF" }}>
+                              Quick Follow-Up
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="py-2 flex flex-col items-center gap-2">
-                {visibleTree
-                  .filter((node) => node.type === "folder")
-                  .map((node) => (
-                    <button
-                      key={node.id}
-                      type="button"
-                      onClick={() => setIsSidebarCollapsed(false)}
-                      className={`${ui.raised} h-7 w-7 flex items-center justify-center`}
-                      style={{ color: node.type === "folder" ? node.color || theme.labelColor : theme.labelColor }}
-                      title={node.name}
-                    >
-                      <Folder size={13} />
-                    </button>
-                  ))}
-              </div>
-            )}
-          </div>
-        </aside>
-
-        <section className="min-w-0 min-h-0 p-3">
-          {selectedPaper ? (
-            <div
-              className={`${ui.sunken} h-full flex flex-col overflow-hidden`}
-              style={{
-                background: "#07070d",
-                borderColor: theme.panelBorder,
-              }}
-            >
-              <div
-                className="px-4 py-3 border-b"
-                style={{ borderColor: theme.panelBorder }}
-              >
-                <div
-                  className="flex flex-wrap gap-1 text-[10px] mb-2"
-                  style={{ color: theme.labelColor }}
-                >
-                  {breadcrumbs.map((crumb, index) => (
-                    <React.Fragment key={crumb.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (crumb.type === "paper") {
-                            setSelectedPaperId(crumb.id.replace(/^paper:/, ""));
-                          } else {
-                            const next = findFirstPaperInFolderId(treeRoots, crumb.id);
-                            setExpandedFolderIds((prev) => new Set(prev).add(crumb.id));
-                            setSelectedPaperId(next?.id ?? null);
-                          }
-                        }}
-                        className="hover:underline"
-                        style={{ color: theme.labelColor }}
-                      >
-                        {crumb.name}
-                      </button>
-                      {index < breadcrumbs.length - 1 ? <span>/</span> : null}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                <div className="flex items-start justify-between gap-3">
-                  <h2
-                    className="text-[16px] font-semibold"
-                    style={{ color: theme.textColor }}
-                  >
-                    {selectedPaper.title}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFavoritePaperIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(selectedPaper.id)) next.delete(selectedPaper.id);
-                        else next.add(selectedPaper.id);
-                        return next;
-                      })
-                    }
-                    className={`${ui.raised} px-2 py-1 text-[10px] shrink-0`}
-                    style={{ color: favoritePaperIds.has(selectedPaper.id) ? "#FFD27A" : theme.labelColor }}
-                    title={favoritePaperIds.has(selectedPaper.id) ? "Unfavorite" : "Favorite"}
-                  >
-                    {favoritePaperIds.has(selectedPaper.id) ? "★ Favorited" : "☆ Favorite"}
-                  </button>
-                </div>
-
-                <div
-                  className="mt-2 flex flex-wrap gap-3 text-[10px]"
-                  style={{ color: theme.labelColor }}
-                >
-                  {selectedPaper.category ? (
-                    <span>Category: {selectedPaper.category}</span>
-                  ) : null}
-                  {selectedPaper.inWorldTime ? (
-                    <span>In-World: {selectedPaper.inWorldTime}</span>
-                  ) : null}
-                  {selectedPaper.realWorldTime ? (
-                    <span>Real: {selectedPaper.realWorldTime}</span>
-                  ) : null}
-                  {selectedPaper.lastEditedAt ? (
-                    <span>Last Edited: {formatLastEdited(selectedPaper.lastEditedAt)}</span>
-                  ) : null}
-                  {paperStatusById[selectedPaper.id] ? (
-                    <span>{paperStatusById[selectedPaper.id] === "new" ? "New" : "Updated"}</span>
-                  ) : null}
-                </div>
-              </div>
-
-              {renderInfoDisplayMode(selectedPaper, {
-                theme,
-                info: selectedPaper,
-                accentColor: firstColor(theme.accentColor),
-                onOpenInfo: (infoId) => setSelectedPaperId(infoId),
-                infoLookup,
+                );
               })}
             </div>
-          ) : (
-            <div
-              className={`${ui.sunken} h-full flex items-center justify-center px-6 text-center`}
-              style={{
-                color: theme.labelColor,
-                background: "#000000",
-                borderColor: theme.panelBorder,
-              }}
-            >
-              <div className="space-y-3">
-                <div className="text-[14px]" style={{ color: theme.textColor }}>Information Archive</div>
-                <div>Select a paper from the left sidebar to read it.</div>
-                <div className="text-[10px]">
-                  {visiblePaperCount} visible paper{visiblePaperCount === 1 ? "" : "s"} • {favoritePaperIds.size} favorite{favoritePaperIds.size === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {editingInfo ? (
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[12px]" style={S_SECTION_HDR}>
+                    {isAddingNewInfo ? "ADD NEW INFORMATION" : `EDITING: ${editingInfo.title || "(untitled)"}`}
+                  </div>
+                  <div className="text-[10px] mt-1" style={S_MUTED}>
+                    Build the information page, choose how it renders, and preview it for players.
+                  </div>
+                  {editingInfo?.lastEditedAt ? (
+                    <div className="text-[10px]" style={S_DIM}>Last Edited: {new Date(editingInfo.lastEditedAt).toLocaleString()}</div>
+                  ) : null}
+                  <div className="text-[10px]" style={S_DIM}>
+                    Draft: {draftStatus === "saving" ? "Autosaving..." : draftStatus === "saved" ? "Saved locally" : "Idle"}
+                  </div>
+                  {editingInfo?.lastEditedAt ? (
+                    <div className="text-[10px]" style={S_DIM}>Last Edited: {new Date(editingInfo.lastEditedAt).toLocaleString()}</div>
+                  ) : null}
+                </div>
+                <button onClick={handleCancelInfoEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { key: "content", label: "Content", icon: FileText },
+                  { key: "display", label: "Display", icon: LayoutTemplate },
+                  { key: "preview", label: "Preview", icon: Eye },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = editorTab === tab.key;
+                  return (
+                    <button key={tab.key} type="button" onClick={() => setEditorTab(tab.key as any)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={active ? DM_TAG_BADGE : { color: "#8FA2D9" }}>
+                      <Icon size={12} />
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {editorTab === "content" && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Title</label>
+                      <input type="text" value={editingInfo.title} onChange={(e) => updateInfoField("title", e.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Category Path</label>
+                      <input type="text" value={editingInfo.category || ""} onChange={(e) => updateInfoField("category", e.target.value)} placeholder="Faction / Reports / Ancient" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Info Sub-Tab</label>
+                      <select value={editingInfo.infoSubTab || ""} onChange={(e) => assignInfoSubTab(e.target.value)} className={inputClass} style={inputStyle}>
+                        <option value="">None</option>
+                        {sortedSubTabs.map((st: any) => (
+                          <option key={st.id} value={st.id}>{st.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Assigned To</label>
+                      <select value={(editingInfo.assignedTo || []).includes("all") ? "all" : ((editingInfo.assignedTo || [])[0] || "")} onChange={(e) => updateInfoField("assignedTo", e.target.value === "all" ? ["all"] : e.target.value ? [e.target.value] : [])} className={inputClass} style={inputStyle}>
+                        <option value="">No player assignment</option>
+                        <option value="all">All Players</option>
+                        {players.filter((p: any) => p.id !== "dm").map((p: any) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <div className="text-[10px] mt-1" style={S_MUTED}>
+                        Selecting a sub-tab with owners auto-fills this, but you can override it here.
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Real World Time</label>
+                      <input type="text" value={editingInfo.realWorldTime || ""} onChange={(e) => updateInfoField("realWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>In-World Time</label>
+                      <input type="text" value={editingInfo.inWorldTime || ""} onChange={(e) => updateInfoField("inWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] mb-1" style={labelStyle}>Content</div>
+                    <RichTextEditor value={editingInfo.content || ""} onChange={(value) => updateInfoField("content", value)} placeholder="Write the information page here..." />
+                  </div>
+                  <div className="p-4 space-y-4" style={DM_PANEL}>
+                    <div className="text-[12px]" style={S_SECTION_HDR}>Phase 2 Content Tools</div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Visible Blocks Before Fade</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={(editingInfo as any).displayData?.visibleBlockCount ?? 0}
+                          onChange={(e) => updateDisplayData({ visibleBlockCount: Math.max(0, Number(e.target.value) || 0) })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Fade Block Count</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={(editingInfo as any).displayData?.fadeBlockCount ?? 2}
+                          onChange={(e) => updateDisplayData({ fadeBlockCount: Math.max(0, Number(e.target.value) || 0) })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Linked Document IDs</label>
+                        <input
+                          type="text"
+                          value={linkedInfoIdsText}
+                          onChange={(e) => updateDisplayData({ linkedInfoIds: e.target.value.split(",").map((v: string) => v.trim()).filter(Boolean) })}
+                          placeholder="doc-id-1, doc-id-2"
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="text-[10px]" style={S_MUTED}>
+                      Inline syntax:
+                      {" "}[[link:document-id|Label]]
+                      {" "}to create a document link, and [[redact:secret text]] to show a styled redaction block without rendering the secret text.
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!(editingInfo as any).displayData?.useSections}
+                          onChange={(e) => updateDisplayData({ useSections: e.target.checked, sections: e.target.checked ? (sectionList.length ? sectionList : [{ id: `sec-${Date.now()}`, title: "Section 1", content: "" }]) : [] })}
+                          className="accent-[#4A7BFF]"
+                        />
+                        <span className="text-[11px]" style={S_TEXT}>Use section-based document layout</span>
+                      </label>
+
+                      {!!(editingInfo as any).displayData?.useSections && (
+                        <div className="space-y-3">
+                          {sectionList.map((section: any, index: number) => (
+                            <div key={section.id || index} className="p-3 space-y-2" style={DM_PANEL_ALT}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[11px]" style={S_SUBTLE}>Section {index + 1}</div>
+                                <button
+                                  type="button"
+                                  onClick={() => updateDisplayData({ sections: sectionList.filter((_: any, i: number) => i !== index) })}
+                                  className={`${retro.button} px-2 py-1 text-[10px]`}
+                                  style={{ color: "#C77B7B" }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                value={section.title || ""}
+                                onChange={(e) => updateDisplayData({ sections: sectionList.map((entry: any, i: number) => i === index ? { ...entry, title: e.target.value } : entry) })}
+                                placeholder="Section title"
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                              <RichTextEditor
+                                value={section.content || ""}
+                                onChange={(value) => updateDisplayData({ sections: sectionList.map((entry: any, i: number) => i === index ? { ...entry, content: value } : entry) })}
+                                placeholder="Write section content..."
+                              />
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => updateDisplayData({ sections: [...sectionList, { id: `sec-${Date.now()}-${sectionList.length}`, title: `Section ${sectionList.length + 1}`, content: "" }] })}
+                            className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`}
+                            style={{ color: "#4A9A5A" }}
+                          >
+                            <Plus size={11} /> Add Section
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] mb-2" style={labelStyle}>Tags</div>
+                    <div className="flex flex-wrap gap-2">
+                      {infoTags.map((tag: any) => (
+                        <button key={tag.name} type="button" onClick={() => toggleInfoTag(tag.name)} className={`${retro.button} px-2 py-1 text-[10px]`} style={editingInfo.tags?.includes(tag.name) ? DM_TAG_BADGE : { color: "#8FA2D9", background: "#0A0A28", border: "1px solid #1A1A3B" }}>
+                          {tag.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {activeInfoCustomFields.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {activeInfoCustomFields.map((fieldDef: any) => {
+                        const key = `${fieldDef.tagName}::${fieldDef.name}`;
+                        const value = editingInfo.customFields?.[key] || "";
+                        return (
+                          <React.Fragment key={key}>
+                            {renderTypedField(key, fieldDef, value, updateInfoCustomField, <label className="text-[10px] block mb-1" style={labelStyle}>{fieldDef.name}</label>)}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {editorTab === "display" && (
+                <div className="space-y-4">
+                  <div className="p-4" style={DM_PANEL}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Settings2 size={14} style={S_SUBTLE} />
+                      <div className="text-[12px]" style={S_SECTION_HDR}>Display Style</div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {DISPLAY_MODE_OPTIONS.map((option) => {
+                        const active = ((editingInfo as any).displayMode || "digital") === option.value;
+                        return (
+                          <button key={option.value} type="button" onClick={() => updateEditingInfo((prev: any) => ({
+                            ...prev,
+                            displayMode: option.value,
+                            displayData: {
+                              ...(prev.displayData || {}),
+                              ...(option.value === "item:stone_tablet" ? { alignment: prev.displayData?.alignment || "left" } : {}),
+                              ...(option.value === "paper" ? { futurePaperOverlayMode: prev.displayData?.futurePaperOverlayMode || "pixel_handwriting" } : {}),
+                            },
+                          }))} className="text-left p-3 rounded border transition-colors" style={active ? DM_TAG_BADGE : DM_PANEL_ALT}>
+                            <div className="text-[12px] font-semibold">{option.label}</div>
+                            <div className="text-[10px] mt-1" style={active ? { color: "#D7E2FF" } : S_MUTED}>{option.help}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {(editingInfo as any).displayMode === "digital" && (
+                    <div className="p-4" style={DM_PANEL}>
+                      <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Digital Screen Options</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Digital Variant</label>
+                          <select
+                            value={(editingInfo as any).displayData?.digitalVariant || "default"}
+                            onChange={(e) => updateDisplayData({ digitalVariant: e.target.value })}
+                            className={inputClass}
+                            style={inputStyle}
+                          >
+                            <option value="default">Default</option>
+                            <option value="terminal">Terminal</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Text Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.digitalTextColor || ""}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalTextColor: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#8fd3ff"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Background Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.digitalBackgroundColor || ""}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalBackgroundColor: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#06101a"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Glow Intensity</label>
+                          <select
+                            value={(editingInfo as any).displayData?.digitalGlowIntensity || "medium"}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalGlowIntensity: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                          >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Typewriter Speed</label>
+                          <input
+                            type="range"
+                            min="8"
+                            max="90"
+                            step="1"
+                            value={(editingInfo as any).displayData?.digitalTypewriterSpeed ?? 30}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalTypewriterSpeed: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>
+                            {(editingInfo as any).displayData?.digitalTypewriterSpeed ?? 30}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-3">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!(editingInfo as any).displayData?.digitalTypewriter}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalTypewriter: e.target.checked },
+                            }))}
+                            className="accent-[#4A7BFF]"
+                          />
+                          <span className="text-[11px]" style={S_TEXT}>Typewriter reveal</span>
+                        </label>
+                      </div>
+                      <div className="text-[10px] mt-2" style={S_MUTED}>
+                        Moving scanlines are built in. Typewriter reveal now hides the cursor line while it writes.
+                      </div>
+                    </div>
+                  )}
+
+                  {(editingInfo as any).displayMode === "paper" && (
+                    <div className="p-4" style={DM_PANEL}>
+                      <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Paper Options</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Jagged Edges</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.paperJaggedness ?? 10}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), paperJaggedness: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperJaggedness ?? 10}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Extra Pages</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="4"
+                            step="1"
+                            value={(editingInfo as any).displayData?.paperExtraPages ?? 0}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), paperExtraPages: Math.max(0, Math.min(4, Number(e.target.value) || 0)) },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Edge Texture</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.paperEdgeTexture ?? 24}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), paperEdgeTexture: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperEdgeTexture ?? 24}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Future Overlay Planning Hook</label>
+                          <select value={(editingInfo as any).displayData?.futurePaperOverlayMode || "pixel_handwriting"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), futurePaperOverlayMode: e.target.value } }))} className={inputClass} style={inputStyle}>
+                            <option value="pixel_handwriting">Future DM Pixel Handwriting Overlay</option>
+                            <option value="none">None</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Handwritten Overlay</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={Math.round(((editingInfo as any).displayData?.paperHandwrittenOpacity ?? 0) * 100)}
+                            onChange={(e) => updateDisplayData({ paperHandwrittenOpacity: Number(e.target.value) / 100 })}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{Math.round(((editingInfo as any).displayData?.paperHandwrittenOpacity ?? 0) * 100)}%</div>
+                        </div>
+                      </div>
+                      <div className="text-[10px] mt-2" style={S_MUTED}>
+                        Paper pages now stay full size, can add extra sheets below, and have adjustable torn-edge intensity and edge wear.
+                      </div>
+                    </div>
+                  )}
+
+                  {(editingInfo as any).displayMode === "item:stone_tablet" && (
+                    <div className="p-4" style={DM_PANEL}>
+                      <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Stone Tablet Options</div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Inscription Alignment</label>
+                          <select value={(editingInfo as any).displayData?.alignment || "left"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), alignment: e.target.value } }))} className={inputClass} style={inputStyle}>
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Stone Texture</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.stoneTextureIntensity ?? 55}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), stoneTextureIntensity: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneTextureIntensity ?? 55}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Text Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.stoneTextColor || ""}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), stoneTextColor: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#c4cbc8"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Crack Intensity</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.stoneCrackIntensity ?? 20}
+                            onChange={(e) => updateDisplayData({ stoneCrackIntensity: Number(e.target.value) })}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneCrackIntensity ?? 20}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Rune Glow Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.stoneRuneGlowColor || ""}
+                            onChange={(e) => updateDisplayData({ stoneRuneGlowColor: e.target.value })}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#7ef7ff"
+                          />
+                          <label className="flex items-center gap-2 cursor-pointer mt-2">
+                            <input
+                              type="checkbox"
+                              checked={!!(editingInfo as any).displayData?.stoneRuneGlow}
+                              onChange={(e) => updateDisplayData({ stoneRuneGlow: e.target.checked })}
+                              className="accent-[#4A7BFF]"
+                            />
+                            <span className="text-[11px]" style={S_TEXT}>Rune Glow</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="mt-3">
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Stone Lightness</label>
+                        <input
+                          type="range"
+                          min="20"
+                          max="80"
+                          step="1"
+                          value={(editingInfo as any).displayData?.stoneBaseLightness ?? 48}
+                          onChange={(e) => updateEditingInfo((prev: any) => ({
+                            ...prev,
+                            displayData: { ...(prev.displayData || {}), stoneBaseLightness: Number(e.target.value) },
+                          }))}
+                          className="w-full accent-[#4A7BFF]"
+                        />
+                        <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneBaseLightness ?? 48}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-4" style={DM_PANEL_ALT}>
+                    <div className="text-[11px] font-semibold mb-1" style={S_TEXT}>
+                      Current Mode: {modeLabel((editingInfo as any).displayMode || "digital")}
+                    </div>
+                    <div className="text-[10px]" style={S_MUTED}>
+                      {modeHelp((editingInfo as any).displayMode || "digital")}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {editorTab === "preview" && previewInfo && (
+                <div className="space-y-3">
+                  <div className="text-[11px]" style={S_MUTED}>
+                    Live player-side preview using the current content and display settings.
+                  </div>
+                  <div className="rounded border overflow-hidden" style={{ borderColor: "#232B5B", background: "#090D18" }}>
+                    {renderInfoDisplayMode(previewInfo, {
+                      theme: previewTheme,
+                      info: previewInfo,
+                      accentColor: "#4A7BFF",
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#1A1A3B]">
+                <div className="flex items-center gap-2">
+                  <button onClick={restoreDraft} className={`${retro.button} px-3 py-2 text-[11px]`} style={{ color: "#7FA2FF" }}>
+                    Restore Draft
+                  </button>
+                  <button onClick={clearDraft} className={`${retro.button} px-3 py-2 text-[11px]`} style={{ color: "#A7A7A7" }}>
+                    Clear Draft
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleCancelInfoEdit} className={`${retro.button} px-4 py-2 text-[12px]`} style={{ color: "#C77B7B" }}>
+                    Cancel
+                  </button>
+                  <button onClick={handleSaveInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                    <Save size={12} /> Save Information
+                  </button>
                 </div>
               </div>
             </div>
+          ) : (
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-5 min-h-[320px] flex items-center justify-center text-center`} style={S_MUTED}>
+              Select an information entry to edit it, or create a new one.
+            </div>
           )}
-        </section>
+        </div>
       </div>
     </div>
   );
 }
-
-export default PersonalFilesInformationPanel;

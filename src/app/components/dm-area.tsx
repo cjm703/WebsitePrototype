@@ -57,6 +57,11 @@ import {
   S_BORDER_B, S_BORDER_R,
 } from "./dm-styles";
 import { DISPLAY_CONTENTS } from "./shared-styles";
+import {
+  sanitizeInfoDocumentsForLoad,
+  normalizeInfoDocumentsForSave,
+  type InfoSubTab as SharedInfoSubTab,
+} from "./personal-files-information-utils";
 
 
 
@@ -132,7 +137,7 @@ function isValidInfoSubTabColor(value: string) {
   return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value.trim());
 }
 
-type InfoSubTab = {
+type InfoSubTab = SharedInfoSubTab & {
   id: string;
   name: string;
   order: number;
@@ -196,15 +201,6 @@ function sanitizeInfoSubTabsForLoad(rawTabs: Partial<InfoSubTab>[] | null | unde
   }
 
   return withSingleDefault;
-}
-
-function normalizeInfosForInfoSubTabs<T extends { infoSubTab?: string }>(infos: T[], infoSubTabs: InfoSubTab[]) {
-  const validIds = new Set(infoSubTabs.map((tab) => tab.id));
-  return infos.map((info) => {
-    if (!info.infoSubTab) return info;
-    if (validIds.has(info.infoSubTab)) return info;
-    return { ...info, infoSubTab: "" };
-  });
 }
 
 const BUILTIN_EMOJI_PREVIEW = [
@@ -571,7 +567,7 @@ useEffect(() => {
       const nextManagedCards = cardsData.length ? cardsData : migrateAssignedTo(initialCards as ManagedCard[]);
       const rawManagedInfos = infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]);
       const normalizedInfoSubTabs = sanitizeInfoSubTabsForLoad(infoSubTabData);
-      const normalizedManagedInfos = normalizeInfosForInfoSubTabs(rawManagedInfos, normalizedInfoSubTabs);
+      const normalizedManagedInfos = sanitizeInfoDocumentsForLoad(rawManagedInfos, normalizedInfoSubTabs) as ManagedInfo[];
 
       setManagedItems(nextManagedItems);
       setManagedCards(nextManagedCards);
@@ -665,8 +661,12 @@ async function persistCards(next: ManagedCard[]) {
 async function persistInfos(next: ManagedInfo[]) {
   try {
     setDmError(null);
-    await saveDMInfos(next as unknown as Record<string, unknown>[]);
-    setManagedInfos(next);
+    const normalizedNext = normalizeInfoDocumentsForSave(
+      next as unknown as Record<string, unknown>[],
+      infoSubTabs,
+    ) as ManagedInfo[];
+    await saveDMInfos(normalizedNext as unknown as Record<string, unknown>[]);
+    setManagedInfos(normalizedNext);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save info"));
     throw err;
@@ -1384,11 +1384,16 @@ const handleSaveItem = async () => {
   const handleSaveInfo = async () => {
     if (!editingInfo) return;
 
-    const savedInfo = {
-      ...editingInfo,
-      title: String(editingInfo.title || "").trim(),
-      lastEditedAt: new Date().toISOString(),
-    };
+    const savedInfo = normalizeInfoDocumentsForSave(
+      [
+        {
+          ...editingInfo,
+          title: String(editingInfo.title || "").trim(),
+          lastEditedAt: new Date().toISOString(),
+        } as unknown as Record<string, unknown>,
+      ],
+      infoSubTabs,
+    )[0] as ManagedInfo;
 
     const updated = isAddingNewInfo
       ? [...managedInfos, savedInfo]

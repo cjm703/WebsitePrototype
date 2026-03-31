@@ -19,7 +19,7 @@ import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, ManagedInfo, Ta
 import { STICKER_IMAGES } from "./sticker-images";
 import PersonalFilesInformationPanel from "./personal-files-information-panel";
 import {
-  normalizeInfosForInfoSubTabs,
+  sanitizeInfoDocumentsForLoad,
   sanitizeInfoSubTabsForLoad,
   type InfoSubTab,
 } from "./personal-files-information-utils";
@@ -398,7 +398,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       ]);
 
       const normalizedInfoSubTabs = sanitizeInfoSubTabsForLoad(infoSubTabRows);
-      const normalizedInfos = normalizeInfosForInfoSubTabs(infos, normalizedInfoSubTabs);
+      const normalizedInfos = sanitizeInfoDocumentsForLoad(infos, normalizedInfoSubTabs) as ManagedInfo[];
 
       setAllPlayers(playerState.player ? [playerState.player as PlayerData] : []);
       setAllItems(items);

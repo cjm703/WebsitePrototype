@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   X,
@@ -28,7 +28,7 @@ const INFO_SUBTAB_SORT_OPTIONS = [
 const INFO_UNASSIGNED_FILTER = "__unassigned__";
 
 const DISPLAY_MODE_OPTIONS = [
-  { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, background color, and optional typewriter text." },
+  { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, background color, terminal mode, and optional typewriter text." },
   { value: "paper", label: "Paper Document", help: "Brighter paper page with adjustable torn edges, extra pages, and edge texture." },
   { value: "item:stone_tablet", label: "Stone Tablet", help: "A narrower rounded-top tablet with more stone texture, tintable carved text, and adjustable stone lightness." },
 ] as const;
@@ -123,6 +123,8 @@ export function DMInfoManagerSection(props: any) {
   } = props;
 
   const [editorTab, setEditorTab] = useState<"content" | "display" | "preview">("content");
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const draftStorageKey = editingInfo?.id ? `dm-info-draft:${editingInfo.id}` : "dm-info-draft:new";
 
   const activeInfoCustomFields = editingInfo ? getActiveCustomFields(editingInfo, infoTags) : [];
   const sortedSubTabs = [...infoSubTabs].sort((a: any, b: any) => a.order - b.order);
@@ -231,6 +233,41 @@ export function DMInfoManagerSection(props: any) {
     }));
   };
 
+  useEffect(() => {
+    if (!editingInfo || typeof window === "undefined") return;
+    setDraftStatus("saving");
+    const timeout = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(draftStorageKey, JSON.stringify(editingInfo));
+        setDraftStatus("saved");
+      } catch {
+        setDraftStatus("idle");
+      }
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [editingInfo, draftStorageKey]);
+
+  const restoreDraft = () => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      updateEditingInfo(JSON.parse(raw));
+      setDraftStatus("saved");
+    } catch {
+      setDraftStatus("idle");
+    }
+  };
+
+  const clearDraft = () => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(draftStorageKey);
+    } finally {
+      setDraftStatus("idle");
+    }
+  };
+
   const sectionList = Array.isArray((editingInfo as any)?.displayData?.sections)
     ? (editingInfo as any).displayData.sections
     : [];
@@ -246,6 +283,9 @@ export function DMInfoManagerSection(props: any) {
           <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Information</h2>
           <div className="text-[10px] mt-1" style={S_MUTED}>
             Organize folders, create papers, choose display styles, and preview player-facing results.
+          </div>
+          <div className="text-[10px]" style={S_DIM}>
+            Phase 4 preparation: current schema already supports linked docs, sections, visibility cutoff, and richer display metadata.
           </div>
         </div>
         <button onClick={handleAddInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
@@ -552,6 +592,12 @@ export function DMInfoManagerSection(props: any) {
                   {editingInfo?.lastEditedAt ? (
                     <div className="text-[10px]" style={S_DIM}>Last Edited: {new Date(editingInfo.lastEditedAt).toLocaleString()}</div>
                   ) : null}
+                  <div className="text-[10px]" style={S_DIM}>
+                    Draft: {draftStatus === "saving" ? "Autosaving..." : draftStatus === "saved" ? "Saved locally" : "Idle"}
+                  </div>
+                  {editingInfo?.lastEditedAt ? (
+                    <div className="text-[10px]" style={S_DIM}>Last Edited: {new Date(editingInfo.lastEditedAt).toLocaleString()}</div>
+                  ) : null}
                 </div>
                 <button onClick={handleCancelInfoEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
               </div>
@@ -735,9 +781,9 @@ export function DMInfoManagerSection(props: any) {
                     </div>
                   </div>
 
-                  {activeInfoCustomFields.length > 0 && (
+                  {activeInfoCustomFields.filter((fieldDef: any) => fieldDef && typeof fieldDef.name === "string" && typeof fieldDef.tagName === "string").length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {activeInfoCustomFields.map((fieldDef: any) => {
+                      {activeInfoCustomFields.filter((fieldDef: any) => fieldDef && typeof fieldDef.name === "string" && typeof fieldDef.tagName === "string").map((fieldDef: any) => {
                         const key = `${fieldDef.tagName}::${fieldDef.name}`;
                         const value = editingInfo.customFields?.[key] || "";
                         return (
@@ -782,7 +828,19 @@ export function DMInfoManagerSection(props: any) {
                   {(editingInfo as any).displayMode === "digital" && (
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Digital Screen Options</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Digital Variant</label>
+                          <select
+                            value={(editingInfo as any).displayData?.digitalVariant || "default"}
+                            onChange={(e) => updateDisplayData({ digitalVariant: e.target.value })}
+                            className={inputClass}
+                            style={inputStyle}
+                          >
+                            <option value="default">Default</option>
+                            <option value="terminal">Terminal</option>
+                          </select>
+                        </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Text Color</label>
                           <input
@@ -869,7 +927,7 @@ export function DMInfoManagerSection(props: any) {
                   {(editingInfo as any).displayMode === "paper" && (
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Paper Options</div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Jagged Edges</label>
                           <input
@@ -925,6 +983,19 @@ export function DMInfoManagerSection(props: any) {
                             <option value="none">None</option>
                           </select>
                         </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Handwritten Overlay</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={Math.round(((editingInfo as any).displayData?.paperHandwrittenOpacity ?? 0) * 100)}
+                            onChange={(e) => updateDisplayData({ paperHandwrittenOpacity: Number(e.target.value) / 100 })}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{Math.round(((editingInfo as any).displayData?.paperHandwrittenOpacity ?? 0) * 100)}%</div>
+                        </div>
                       </div>
                       <div className="text-[10px] mt-2" style={S_MUTED}>
                         Paper pages now stay full size, can add extra sheets below, and have adjustable torn-edge intensity and edge wear.
@@ -973,6 +1044,39 @@ export function DMInfoManagerSection(props: any) {
                             placeholder="#c4cbc8"
                           />
                         </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Crack Intensity</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.stoneCrackIntensity ?? 20}
+                            onChange={(e) => updateDisplayData({ stoneCrackIntensity: Number(e.target.value) })}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneCrackIntensity ?? 20}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Rune Glow Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.stoneRuneGlowColor || ""}
+                            onChange={(e) => updateDisplayData({ stoneRuneGlowColor: e.target.value })}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#7ef7ff"
+                          />
+                          <label className="flex items-center gap-2 cursor-pointer mt-2">
+                            <input
+                              type="checkbox"
+                              checked={!!(editingInfo as any).displayData?.stoneRuneGlow}
+                              onChange={(e) => updateDisplayData({ stoneRuneGlow: e.target.checked })}
+                              className="accent-[#4A7BFF]"
+                            />
+                            <span className="text-[11px]" style={S_TEXT}>Rune Glow</span>
+                          </label>
+                        </div>
                       </div>
                       <div className="mt-3">
                         <label className="text-[10px] block mb-1" style={labelStyle}>Stone Lightness</label>
@@ -1019,13 +1123,23 @@ export function DMInfoManagerSection(props: any) {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#1A1A3B]">
-                <button onClick={handleCancelInfoEdit} className={`${retro.button} px-4 py-2 text-[12px]`} style={{ color: "#C77B7B" }}>
-                  Cancel
-                </button>
-                <button onClick={handleSaveInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                  <Save size={12} /> Save Information
-                </button>
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#1A1A3B]">
+                <div className="flex items-center gap-2">
+                  <button onClick={restoreDraft} className={`${retro.button} px-3 py-2 text-[11px]`} style={{ color: "#7FA2FF" }}>
+                    Restore Draft
+                  </button>
+                  <button onClick={clearDraft} className={`${retro.button} px-3 py-2 text-[11px]`} style={{ color: "#A7A7A7" }}>
+                    Clear Draft
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleCancelInfoEdit} className={`${retro.button} px-4 py-2 text-[12px]`} style={{ color: "#C77B7B" }}>
+                    Cancel
+                  </button>
+                  <button onClick={handleSaveInfo} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                    <Save size={12} /> Save Information
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
