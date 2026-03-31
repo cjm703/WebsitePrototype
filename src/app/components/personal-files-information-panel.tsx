@@ -49,9 +49,15 @@ export type ManagedInfoLike = {
     paperJaggedness?: number;
     paperExtraPages?: number;
     paperEdgeTexture?: number;
+    paperTemplate?: "standard" | "letter" | "report" | "aged";
     stoneTextureIntensity?: number;
     stoneTextColor?: string;
     stoneBaseLightness?: number;
+    visibleBlockCount?: number;
+    fadeBlockCount?: number;
+    linkedInfoIds?: string[];
+    useSections?: boolean;
+    sections?: Array<{ id?: string; title?: string; content?: string }>;
   };
 };
 
@@ -431,6 +437,14 @@ export function PersonalFilesInformationPanel({
     () => findPaperById(treeRoots, selectedPaperId),
     [treeRoots, selectedPaperId],
   );
+  const infoLookup = useMemo(() => {
+    const lookup: Record<string, ManagedInfoLike> = {};
+    for (const paper of collectAllPapers(treeRoots)) {
+      lookup[paper.id] = paper;
+    }
+    return lookup;
+  }, [treeRoots]);
+
 
   useEffect(() => {
     if (!selectedPaperId) return;
@@ -742,6 +756,8 @@ export function PersonalFilesInformationPanel({
                 theme,
                 info: selectedPaper,
                 accentColor: firstColor(theme.accentColor),
+                onOpenInfo: (infoId) => setSelectedPaperId(infoId),
+                infoLookup,
               })}
             </div>
           ) : (

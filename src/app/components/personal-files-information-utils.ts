@@ -9,6 +9,10 @@ export type InfoSubTab = {
   description?: string;
   icon?: string;
   color?: string;
+  parentId?: string;
+  assignedTo?: string[];
+  defaultDisplayMode?: "digital" | "paper" | "item:stone_tablet";
+  autoAssignToOwners?: boolean;
   isDefault?: boolean;
   sortMode?: InfoSortMode;
   showEmpty?: boolean;
@@ -40,6 +44,16 @@ export function sanitizeInfoSubTabRecord(
       typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color)
         ? raw.color.trim()
         : "",
+    parentId: typeof raw?.parentId === "string" ? raw.parentId.trim() : "",
+    assignedTo: Array.isArray(raw?.assignedTo)
+      ? raw.assignedTo.map((value) => String(value)).filter(Boolean)
+      : [],
+    defaultDisplayMode:
+      raw?.defaultDisplayMode === "paper" || raw?.defaultDisplayMode === "item:stone_tablet"
+        ? raw.defaultDisplayMode
+        : "digital",
+    autoAssignToOwners:
+      typeof raw?.autoAssignToOwners === "boolean" ? raw.autoAssignToOwners : true,
     isDefault: !!raw?.isDefault,
     sortMode:
       sortMode === "title" ||

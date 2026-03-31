@@ -221,6 +221,24 @@ export function DMInfoManagerSection(props: any) {
     setEditingInfo(nextOrUpdater);
   };
 
+  const updateDisplayData = (patch: Record<string, any>) => {
+    updateEditingInfo((prev: any) => ({
+      ...prev,
+      displayData: {
+        ...(prev?.displayData || {}),
+        ...patch,
+      },
+    }));
+  };
+
+  const sectionList = Array.isArray((editingInfo as any)?.displayData?.sections)
+    ? (editingInfo as any).displayData.sections
+    : [];
+
+  const linkedInfoIdsText = Array.isArray((editingInfo as any)?.displayData?.linkedInfoIds)
+    ? (editingInfo as any).displayData.linkedInfoIds.join(", ")
+    : "";
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -604,6 +622,106 @@ export function DMInfoManagerSection(props: any) {
                   <div>
                     <div className="text-[10px] mb-1" style={labelStyle}>Content</div>
                     <RichTextEditor value={editingInfo.content || ""} onChange={(value) => updateInfoField("content", value)} placeholder="Write the information page here..." />
+                  </div>
+                  <div className="p-4 space-y-4" style={DM_PANEL}>
+                    <div className="text-[12px]" style={S_SECTION_HDR}>Phase 2 Content Tools</div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Visible Blocks Before Fade</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={(editingInfo as any).displayData?.visibleBlockCount ?? 0}
+                          onChange={(e) => updateDisplayData({ visibleBlockCount: Math.max(0, Number(e.target.value) || 0) })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Fade Block Count</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={(editingInfo as any).displayData?.fadeBlockCount ?? 2}
+                          onChange={(e) => updateDisplayData({ fadeBlockCount: Math.max(0, Number(e.target.value) || 0) })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Linked Document IDs</label>
+                        <input
+                          type="text"
+                          value={linkedInfoIdsText}
+                          onChange={(e) => updateDisplayData({ linkedInfoIds: e.target.value.split(",").map((v: string) => v.trim()).filter(Boolean) })}
+                          placeholder="doc-id-1, doc-id-2"
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="text-[10px]" style={S_MUTED}>
+                      Inline syntax:
+                      {" "}[[link:document-id|Label]]
+                      {" "}to create a document link, and [[redact:secret text]] to show a styled redaction block without rendering the secret text.
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!(editingInfo as any).displayData?.useSections}
+                          onChange={(e) => updateDisplayData({ useSections: e.target.checked, sections: e.target.checked ? (sectionList.length ? sectionList : [{ id: `sec-${Date.now()}`, title: "Section 1", content: "" }]) : [] })}
+                          className="accent-[#4A7BFF]"
+                        />
+                        <span className="text-[11px]" style={S_TEXT}>Use section-based document layout</span>
+                      </label>
+
+                      {!!(editingInfo as any).displayData?.useSections && (
+                        <div className="space-y-3">
+                          {sectionList.map((section: any, index: number) => (
+                            <div key={section.id || index} className="p-3 space-y-2" style={DM_PANEL_ALT}>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[11px]" style={S_SUBTLE}>Section {index + 1}</div>
+                                <button
+                                  type="button"
+                                  onClick={() => updateDisplayData({ sections: sectionList.filter((_: any, i: number) => i !== index) })}
+                                  className={`${retro.button} px-2 py-1 text-[10px]`}
+                                  style={{ color: "#C77B7B" }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                value={section.title || ""}
+                                onChange={(e) => updateDisplayData({ sections: sectionList.map((entry: any, i: number) => i === index ? { ...entry, title: e.target.value } : entry) })}
+                                placeholder="Section title"
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                              <RichTextEditor
+                                value={section.content || ""}
+                                onChange={(value) => updateDisplayData({ sections: sectionList.map((entry: any, i: number) => i === index ? { ...entry, content: value } : entry) })}
+                                placeholder="Write section content..."
+                              />
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => updateDisplayData({ sections: [...sectionList, { id: `sec-${Date.now()}-${sectionList.length}`, title: `Section ${sectionList.length + 1}`, content: "" }] })}
+                            className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`}
+                            style={{ color: "#4A9A5A" }}
+                          >
+                            <Plus size={11} /> Add Section
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div>
