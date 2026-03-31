@@ -13,7 +13,8 @@ import {
   ZoomIn, ZoomOut, Maximize2, Image, Square, Grid3x3,
 } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-import { safeGetItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 
 /* ==============================================================
    GEOMETRY ENGINE – Hexagonal city with 15 tiled sectors
@@ -686,6 +687,28 @@ function migrateZone(z: any): MapZone {
   return { ...z, fogMode, connections: z.connections ?? [], walls: z.walls ?? [], sectorNumber: z.sectorNumber ?? 0, useMapBg: z.useMapBg ?? false };
 }
 
+const INTELLI_MAPS_STORAGE_KEY = "inet-map-hexcity-v3";
+function loadLocalZones(): MapZone[] {
+  const saved = safeGetJson<any[]>(INTELLI_MAPS_STORAGE_KEY, []);
+  if (saved.length === 0 || saved.length < 15) return buildDefaultZones();
+  const defaults = buildDefaultZones();
+  const migrated = saved.map(migrateZone);
+  const existingIds = new Set(migrated.map((zone) => zone.id));
+  const missing = defaults.filter((zone) => !existingIds.has(zone.id));
+  if (missing.length > 0) return [...migrated, ...missing];
+  return migrated;
+}
+
+function normalizeZones(raw: unknown): MapZone[] {
+  if (!Array.isArray(raw)) return loadLocalZones();
+  const defaults = buildDefaultZones();
+  const migrated = raw.map(migrateZone);
+  const existingIds = new Set(migrated.map((zone) => zone.id));
+  const missing = defaults.filter((zone) => !existingIds.has(zone.id));
+  if (missing.length > 0) return [...migrated, ...missing];
+  return migrated;
+}
+
 /* ==============================================================
    COMPONENT
    ============================================================== */
@@ -693,17 +716,7 @@ function migrateZone(z: any): MapZone {
 export function IntelliMaps() {
   const navigate = useNavigate();
   const [currentUser] = useState<string>(() => safeGetItem("inet-user") || "Agent Phoenix");
-  const [zones, setZones] = useState<MapZone[]>(() => {
-    const saved = safeGetJson<any[]>("inet-map-hexcity-v3", []);
-    if (saved.length === 0 || saved.length < 15) return buildDefaultZones();
-    // Merge in any missing outer subsector zones from defaults
-    const defaults = buildDefaultZones();
-    const migrated = saved.map(migrateZone);
-    const existingIds = new Set(migrated.map(z => z.id));
-    const missing = defaults.filter(d => !existingIds.has(d.id));
-    if (missing.length > 0) return [...migrated, ...missing];
-    return saved.map(migrateZone);
-  });
+  const [zones, setZones] = useState<MapZone[]>(loadLocalZones);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -827,7 +840,51 @@ export function IntelliMaps() {
     }
   });
 
-  useEffect(() => { safeSetJson("inet-map-hexcity-v3", zones); }, [zones]);
+  const [mapsLoading, setMapsLoading] = useState(true);
+  const [mapsError, setMapsError] = useState<string | null>(null);
+  const hasLoadedMapsRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMapsState() {
+      try {
+        setMapsLoading(true);
+        setMapsError(null);
+        const remoteZones = await appStore.loadIntelliMapsState<MapZone[]>(loadLocalZones());
+        if (!cancelled) {
+          setZones(normalizeZones(remoteZones));
+          hasLoadedMapsRef.current = true;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setMapsError(err instanceof Error ? err.message : "Failed to load Intelli Maps state");
+          setZones(loadLocalZones());
+          hasLoadedMapsRef.current = true;
+        }
+      } finally {
+        if (!cancelled) {
+          setMapsLoading(false);
+        }
+      }
+    }
+
+    loadMapsState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedMapsRef.current) return;
+    const timeout = window.setTimeout(() => {
+      appStore.saveIntelliMapsState<MapZone[]>(zones).catch((err) => {
+        console.warn("Failed to save Intelli Maps state", err);
+        setMapsError(err instanceof Error ? err.message : "Failed to save Intelli Maps state");
+      });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [zones]);
 
   const OUTER_BOUNDS = [270, 306, 342, 378, 414, 450, 486, 522, 558, 594];
   const OUTER_COUNT = OUTER_BOUNDS.length;
@@ -1733,6 +1790,21 @@ export function IntelliMaps() {
           )}
         </div>
       </div>
+
+      {(mapsLoading || mapsError) && (
+        <div className="px-3 py-2 text-[10px] flex items-center justify-between gap-3" style={{ background: "#0B0B2E", borderBottom: "1px solid #1A1A4B", color: mapsError ? "#FFAA4A" : "#7AA2FF" }}>
+          <span>{mapsError ? `Map sync error: ${mapsError}` : "Loading Intelli Maps from Supabase..."}</span>
+          {mapsError && (
+            <button
+              onClick={() => window.location.reload()}
+              className="px-2 py-0.5 hover:opacity-80"
+              style={{ border: "1px solid #3A3A6B", background: "#11113A", color: "#C0D0F0" }}
+            >
+              Reload
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Main */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">

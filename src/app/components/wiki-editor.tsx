@@ -18,7 +18,8 @@ import { TemplatePickerModal, TemplateManagerModal } from "./wiki-templates";
 import type { WikiTemplate } from "./wiki-templates";
 import { WikiLinkDialog } from "./wiki-link-dialog";
 import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
-import { safeGetItem, safeSetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import type { TagField, TagDefinition, PlayerData } from "./types";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
 
@@ -178,6 +179,23 @@ const DEFAULT_STYLE = {
   fontFamily: "'Tahoma', 'Verdana', sans-serif",
 };
 
+function createBlankSitePage(): SitePage {
+  return {
+    id: `site-${uid()}` ,
+    title: "", url: "", description: "", category: "Uncategorized",
+    subcategories: [], dateAdded: `${DATE_MONTHS[new Date().getMonth()]} ${new Date().getDate()}, ${new Date().getFullYear()}`,
+    body: "", subtitle: "", marqueeText: "", footerText: "",
+    sections: [], ...DEFAULT_STYLE,
+    headerAlign: "center", pageIcon: "globe", pageIconUrl: "",
+    bodyTitle: "", bodySubtitle: "",
+    underConstruction: false, showHitCounter: false, showDividers: true, hitCount: 1337,
+    infobox: [], articleQuality: "start" as const, tags: [], relatedArticleIds: [],
+    seeAlso: [], disambiguationNote: "", references: [], lastEditSummary: "",
+    panels: [],
+    wikiTags: [], wikiTagFields: {}, playerVisibility: {},
+  };
+}
+
 // ═══════════════════════════════════════════
 // Inline editable text component
 // ════��══════════════════════════════════════
@@ -257,38 +275,22 @@ export function WikiEditor() {
   const { id } = useParams();
   const isNew = !id || id === "new";
 
-  // Load data
-  const allPages: SitePage[] = safeGetJson("inet-dm-sites", []);
-  const players: PlayerData[] = safeGetJson("inet-dm-players", []);
-  const wikiTagDefs: WikiTagDefinition[] = safeGetJson("inet-dm-wikiTags", []);
-  const existingPage = isNew ? null : allPages.find((p) => p.id === id);
+  const [allPages, setAllPages] = useState<SitePage[]>([]);
+  const [players, setPlayers] = useState<PlayerData[]>([]);
+  const [wikiTagDefs, setWikiTagDefs] = useState<WikiTagDefinition[]>([]);
+  const [customPanelStyles, setCustomPanelStyles] = useState<CustomPanelStyle[]>([]);
+  const [wikiLoading, setWikiLoading] = useState(true);
+  const [wikiLoadError, setWikiLoadError] = useState("");
+
+  const existingPage = useMemo(() => (isNew ? null : allPages.find((p) => p.id === id) || null), [allPages, id, isNew]);
 
   // ─── Article State ───
-  const [page, setPage] = useState<SitePage>(() => {
-    if (existingPage) {
-      const migrated = migrateSectionsToPanels(existingPage);
-      return { ...existingPage, panels: migrated, sections: [] };
-    }
-    return {
-      id: `site-${uid()}`,
-      title: "", url: "", description: "", category: "Uncategorized",
-      subcategories: [], dateAdded: `${DATE_MONTHS[new Date().getMonth()]} ${new Date().getDate()}, ${new Date().getFullYear()}`,
-      body: "", subtitle: "", marqueeText: "", footerText: "",
-      sections: [], ...DEFAULT_STYLE,
-      headerAlign: "center", pageIcon: "globe", pageIconUrl: "",
-      bodyTitle: "", bodySubtitle: "",
-      underConstruction: false, showHitCounter: false, showDividers: true, hitCount: 1337,
-      infobox: [], articleQuality: "start" as const, tags: [], relatedArticleIds: [],
-      seeAlso: [], disambiguationNote: "", references: [], lastEditSummary: "",
-      panels: [],
-      wikiTags: [], wikiTagFields: {}, playerVisibility: {},
-    };
-  });
+  const [page, setPage] = useState<SitePage>(() => createBlankSitePage());
 
   // ─── UI State ───
   const [activePanel, setActivePanel] = useState<"preview" | "settings" | "content" | "metadata" | "appearance">("preview");
   const [editingPanelId, setEditingPanelId] = useState<string | null>(null);
-  const [editSummary, setEditSummary] = useState(existingPage?.lastEditSummary || "");
+  const [editSummary, setEditSummary] = useState("");
   const [saveFlash, setSaveFlash] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
   const [showIconPicker, setShowIconPicker] = useState(false);
@@ -299,10 +301,11 @@ export function WikiEditor() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [dragType, setDragType] = useState<"panel" | null>(null);
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
-  const urlManuallyEdited = useRef(!!existingPage?.url);
+  const urlManuallyEdited = useRef(false);
+  const hydratedPageRef = useRef<string | null>(null);
 
   // ─── Template State ───
-  const [showTemplatePicker, setShowTemplatePicker] = useState(isNew && !existingPage);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
 
   // ─── Auto-save Draft State ───
@@ -331,18 +334,85 @@ export function WikiEditor() {
   const [imageWidth, setImageWidth] = useState("100");
 
   // ─── Custom Panel Styles ───
-  const [customPanelStyles, setCustomPanelStyles] = useState<CustomPanelStyle[]>(() => safeGetJson("inet-custom-panel-styles", []));
   const [showNewStyleForm, setShowNewStyleForm] = useState(false);
   const [newStyleLabel, setNewStyleLabel] = useState("");
   const [newStyleAccent, setNewStyleAccent] = useState("#6ABAFF");
   const [newStyleBg, setNewStyleBg] = useState("#0A1A2A");
   const [newStyleBorder, setNewStyleBorder] = useState("#1A3A5B");
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWikiEditorData() {
+      try {
+        setWikiLoading(true);
+        setWikiLoadError("");
+        const [siteRows, playerRows, wikiTagRows, panelStyleRows] = await Promise.all([
+          appStore.listSites<SitePage>().catch(() => safeGetJson<SitePage[]>("inet-dm-sites", [])),
+          appStore.listPlayers<PlayerData>().catch(() => safeGetJson<PlayerData[]>("inet-dm-players", [])),
+          appStore.listTags<WikiTagDefinition>("wiki").catch(() => safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", [])),
+          appStore.listCustomPanelStyles<CustomPanelStyle>().catch(() => safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", [])),
+        ]);
+
+        if (cancelled) return;
+
+        setAllPages(Array.isArray(siteRows) ? siteRows : []);
+        setPlayers(Array.isArray(playerRows) ? playerRows : []);
+        setWikiTagDefs(Array.isArray(wikiTagRows) ? wikiTagRows : []);
+        setCustomPanelStyles(Array.isArray(panelStyleRows) ? panelStyleRows : []);
+      } catch (err) {
+        if (cancelled) return;
+        setWikiLoadError(err instanceof Error ? err.message : "Failed to load wiki editor data");
+        setAllPages(safeGetJson<SitePage[]>("inet-dm-sites", []));
+        setPlayers(safeGetJson<PlayerData[]>("inet-dm-players", []));
+        setWikiTagDefs(safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []));
+        setCustomPanelStyles(safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []));
+      } finally {
+        if (!cancelled) setWikiLoading(false);
+      }
+    }
+
+    loadWikiEditorData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (wikiLoading) return;
+
+    if (isNew) {
+      if (hydratedPageRef.current === "new") return;
+      const blank = createBlankSitePage();
+      setPage(blank);
+      setEditSummary("");
+      setHasUnsaved(true);
+      setShowTemplatePicker(true);
+      urlManuallyEdited.current = false;
+      hydratedPageRef.current = "new";
+      return;
+    }
+
+    if (!existingPage) return;
+    if (hydratedPageRef.current === existingPage.id) return;
+
+    const migrated = migrateSectionsToPanels(existingPage);
+    setPage({ ...existingPage, panels: migrated, sections: [] });
+    setEditSummary(existingPage.lastEditSummary || "");
+    setHasUnsaved(false);
+    setShowTemplatePicker(false);
+    urlManuallyEdited.current = !!existingPage.url;
+    hydratedPageRef.current = existingPage.id;
+  }, [existingPage, isNew, wikiLoading]);
+
   const allPanelStyles = [...BUILTIN_PANEL_STYLES, ...customPanelStyles];
 
   const saveCustomStyles = (styles: CustomPanelStyle[]) => {
     setCustomPanelStyles(styles);
-    safeSetJson("inet-custom-panel-styles", styles);
+    void appStore.saveCustomPanelStyles<CustomPanelStyle>(styles).catch((err) => {
+      console.warn("Failed to persist custom wiki panel styles", err);
+      setError("Failed to save custom panel styles");
+    });
   };
 
   const resetNewStyleForm = () => {
@@ -382,7 +452,7 @@ export function WikiEditor() {
         }
       }
     } catch {}
-  }, []);
+  }, [draftKey, existingPage]);
 
   // ─── Auto-save draft every 30 seconds (only for existing articles) ───
   useEffect(() => {
@@ -429,7 +499,7 @@ export function WikiEditor() {
   }, []);
 
   // ─── Save ───
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!page.title.trim()) { setError("Title is required"); return; }
     if (!page.url.trim()) { setError("URL is required"); return; }
     if (!page.description.trim()) { setError("Description is required"); return; }
@@ -438,7 +508,7 @@ export function WikiEditor() {
     const now = new Date();
     const autoDate = `${DATE_MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
     const data: SitePage = { ...page, lastEditSummary: editSummary.trim(), dateAdded: autoDate };
-    const stored: SitePage[] = safeGetJson("inet-dm-sites", []);
+    const stored: SitePage[] = [...allPages];
     const idx = stored.findIndex((p) => p.id === data.id);
     if (idx >= 0) {
       stored[idx] = data;
@@ -455,19 +525,23 @@ export function WikiEditor() {
         if (!theirRelated.has(data.id)) {
           other.relatedArticleIds = [...(other.relatedArticleIds || []), data.id];
         }
-      } else {
-        if (theirRelated.has(data.id)) {
-          other.relatedArticleIds = (other.relatedArticleIds || []).filter((rid) => rid !== data.id);
-        }
+      } else if (theirRelated.has(data.id)) {
+        other.relatedArticleIds = (other.relatedArticleIds || []).filter((rid) => rid !== data.id);
       }
     }
 
-    safeSetJson("inet-dm-sites", stored);
-    safeRemoveItem(draftKey);
-    setPage(data);
-    setSaveFlash(true);
-    setHasUnsaved(false);
-    setTimeout(() => setSaveFlash(false), 1500);
+    try {
+      await appStore.saveSites<SitePage>(stored);
+      setAllPages(stored);
+      safeRemoveItem(draftKey);
+      setPage(data);
+      setSaveFlash(true);
+      setHasUnsaved(false);
+      setTimeout(() => setSaveFlash(false), 1500);
+    } catch (err) {
+      console.warn("Failed to save wiki article", err);
+      setError(err instanceof Error ? `Failed to save article: ${err.message}` : "Failed to save article");
+    }
   };
 
   // ─── Panel/Section helpers (unified) ───
@@ -729,6 +803,19 @@ export function WikiEditor() {
   const inputClass = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] w-full outline-none`;
   const inputStyle: React.CSSProperties = { color: "#C0D0F0" };
   const labelStyle: React.CSSProperties = { color: "#5A6A8A", fontSize: 11, fontWeight: 600 };
+
+  if (wikiLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6" style={{ background: "#080828" }}>
+        <div className={`${retro.sunken} p-5 max-w-md w-full`} style={{ background: "#0A0A2E", border: "1px solid #1A1A4B" }}>
+          <div className="text-[13px] font-bold mb-2" style={{ color: "#C0D0F0" }}>Loading wiki editor...</div>
+          <div className="text-[11px]" style={{ color: "#6A7A9A" }}>
+            {wikiLoadError || "Loading articles, players, wiki tags, and custom panel styles from Supabase."}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#080828", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
