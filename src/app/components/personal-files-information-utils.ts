@@ -7,6 +7,18 @@ export type InfoDisplayMode =
   | "paper"
   | "item:stone_tablet";
 
+export type CalendarDate = {
+  month: number;
+  day: number;
+  year: number;
+  isStarfall?: boolean;
+};
+
+export const CALENDAR_MONTHS = [
+  "Lunara", "Selene", "Artemina", "Diantha", "Solyndra", "Astraeus", "Eosara",
+  "Umbriel", "Astralia", "Caelion", "Serevain", "Brimara", "Hiemsyl",
+] as const;
+
 export type InfoSection = {
   id?: string;
   title?: string;
@@ -45,6 +57,7 @@ export type InfoDisplayData = {
 
   useSections?: boolean;
   sections?: InfoSection[];
+  inWorldTimeMode?: "manual" | "calendar";
 };
 
 export type InfoFollowUp = {
@@ -125,6 +138,25 @@ function sanitizeInfoSection(section: Partial<InfoSection> | null | undefined, i
   };
 }
 
+export function formatCalendarDate(d: CalendarDate | null | undefined): string {
+  if (!d) return "";
+  if (d.isStarfall) return `Starfall Day${d.day > 1 ? ` ${d.day}` : ""}, Year ${d.year}`;
+  const monthName = CALENDAR_MONTHS[(d.month || 1) - 1] || "Unknown";
+  return `${d.day} ${monthName}, Year ${d.year}`;
+}
+
+export function getCurrentInWorldDateString(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.localStorage.getItem("inet-dm-calendar");
+    if (!raw) return "";
+    const parsed = JSON.parse(raw) as CalendarDate;
+    return formatCalendarDate(parsed);
+  } catch {
+    return "";
+  }
+}
+
 export function sanitizeInfoDisplayData(raw: Partial<InfoDisplayData> | null | undefined): InfoDisplayData {
   const digitalGlowIntensity =
     raw?.digitalGlowIntensity === "low" || raw?.digitalGlowIntensity === "high"
@@ -172,6 +204,7 @@ export function sanitizeInfoDisplayData(raw: Partial<InfoDisplayData> | null | u
     sections: Array.isArray(raw?.sections)
       ? raw.sections.map((section, index) => sanitizeInfoSection(section, index))
       : [],
+    inWorldTimeMode: raw?.inWorldTimeMode === "calendar" ? "calendar" : "manual",
   };
 }
 

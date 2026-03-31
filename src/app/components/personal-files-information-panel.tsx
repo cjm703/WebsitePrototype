@@ -15,6 +15,7 @@ import { firstColor, type PlayerTheme } from "./player-theme";
 import { renderInfoDisplayMode } from "./personal-files-information-renderers";
 import {
   INFO_UNASSIGNED_FILTER,
+  getCurrentInWorldDateString,
   type InfoSubTab,
 } from "./personal-files-information-utils";
 
@@ -475,10 +476,25 @@ export function PersonalFilesInformationPanel({
     [treeRoots, selectedPaperId],
   );
 
+  const displayInWorldTime = useMemo(() => {
+    if (!selectedPaper) return "";
+    return (selectedPaper.displayData as any)?.inWorldTimeMode === "calendar"
+      ? (getCurrentInWorldDateString() || selectedPaper.inWorldTime || "")
+      : (selectedPaper.inWorldTime || "");
+  }, [selectedPaper]);
+
   const visiblePaperCount = useMemo(
     () => collectAllPapers(visibleTree).length,
     [visibleTree],
   );
+
+  const infoLookup = useMemo(() => {
+    const next: Record<string, ManagedInfoLike> = {};
+    for (const paper of collectAllPapers(treeRoots)) {
+      next[paper.id] = paper;
+    }
+    return next;
+  }, [treeRoots]);
 
   const toggleFolder = (folderId: string) => {
     if (searchTerm) return;
@@ -783,7 +799,7 @@ export function PersonalFilesInformationPanel({
                         border: "1px solid rgba(255,255,255,0.08)",
                       }}
                     >
-                      In-World: {selectedPaper.inWorldTime}
+                      In-World: {displayInWorldTime}
                     </span>
                   ) : null}
                   {selectedPaper.realWorldTime ? (

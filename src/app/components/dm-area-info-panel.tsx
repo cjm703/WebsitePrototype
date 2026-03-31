@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { RichTextEditor } from "./rich-text-editor";
 import { renderInfoDisplayMode } from "./personal-files-information-renderers";
+import { getCurrentInWorldDateString } from "./personal-files-information-utils";
 
 const INFO_SUBTAB_SORT_OPTIONS = [
   { value: "custom", label: "Manual Order" },
@@ -137,16 +138,22 @@ export function DMInfoManagerSection(props: any) {
 
   const selectedBulkCount = Object.values(infoBulkSelection).filter(Boolean).length;
 
+  const currentCalendarLabel = getCurrentInWorldDateString();
+
   const previewInfo = useMemo(() => {
     if (!editingInfo) return null;
     return {
       ...editingInfo,
       title: editingInfo.title || "Untitled Information",
+      inWorldTime:
+        (editingInfo as any).displayData?.inWorldTimeMode === "calendar"
+          ? (currentCalendarLabel || editingInfo.inWorldTime || "")
+          : editingInfo.inWorldTime,
       content: editingInfo.content || editingInfo.description || "<p>This preview will show how the page renders for the player.</p>",
       displayMode: (editingInfo as any).displayMode || "digital",
       displayData: (editingInfo as any).displayData || {},
     };
-  }, [editingInfo]);
+  }, [editingInfo, currentCalendarLabel]);
 
   const getInheritedAssignedTo = (subTabId: string) => {
     const subTab = infoSubTabs.find((st: any) => st.id === subTabId);
@@ -659,9 +666,40 @@ export function DMInfoManagerSection(props: any) {
                       <label className="text-[10px] block mb-1" style={labelStyle}>Real World Time</label>
                       <input type="text" value={editingInfo.realWorldTime || ""} onChange={(e) => updateInfoField("realWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
-                    <div>
-                      <label className="text-[10px] block mb-1" style={labelStyle}>In-World Time</label>
-                      <input type="text" value={editingInfo.inWorldTime || ""} onChange={(e) => updateInfoField("inWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
+                    <div className="md:col-span-2">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="text-[10px] block" style={labelStyle}>In-World Time</label>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), inWorldTimeMode: "manual" } }))}
+                            className={`${retro.button} px-2 py-1 text-[10px]`}
+                            style={(editingInfo as any).displayData?.inWorldTimeMode === "calendar" ? { color: "#8FA2D9" } : { color: "#4A9A5A" }}
+                          >
+                            Manual
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), inWorldTimeMode: "calendar" } }))}
+                            className={`${retro.button} px-2 py-1 text-[10px]`}
+                            style={(editingInfo as any).displayData?.inWorldTimeMode === "calendar" ? { color: "#4A9A5A" } : { color: "#8FA2D9" }}
+                          >
+                            Website Calendar
+                          </button>
+                        </div>
+                      </div>
+                      {(editingInfo as any).displayData?.inWorldTimeMode === "calendar" ? (
+                        <div className="space-y-2">
+                          <div className={inputClass} style={{ ...inputStyle, color: "#CFE0FF" }}>
+                            {currentCalendarLabel || "No calendar date found."}
+                          </div>
+                          <div className="text-[10px]" style={S_MUTED}>
+                            This entry will display the website's current calendar date instead of a manually typed in-world date.
+                          </div>
+                        </div>
+                      ) : (
+                        <input type="text" value={editingInfo.inWorldTime || ""} onChange={(e) => updateInfoField("inWorldTime", e.target.value)} className={inputClass} style={inputStyle} />
+                      )}
                     </div>
                   </div>
 
