@@ -28,9 +28,9 @@ const INFO_SUBTAB_SORT_OPTIONS = [
 const INFO_UNASSIGNED_FILTER = "__unassigned__";
 
 const DISPLAY_MODE_OPTIONS = [
-  { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, and optional typewriter text." },
-  { value: "paper", label: "Paper Document", help: "Brighter paper page with a thicker dark frame and torn edges." },
-  { value: "item:stone_tablet", label: "Stone Tablet", help: "A more realistic stone tablet with carved, engraved text." },
+  { value: "digital", label: "Digital Document", help: "Screen-like page with moving scanlines, glow, background color, and optional typewriter text." },
+  { value: "paper", label: "Paper Document", help: "Brighter paper page with adjustable torn edges, extra pages, and edge texture." },
+  { value: "item:stone_tablet", label: "Stone Tablet", help: "A narrower rounded-top tablet with more stone texture and more carved text." },
 ] as const;
 
 function stripHtml(value: string) {
@@ -635,7 +635,7 @@ export function DMInfoManagerSection(props: any) {
                   {(editingInfo as any).displayMode === "digital" && (
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Digital Screen Options</div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Text Color</label>
                           <input
@@ -648,6 +648,20 @@ export function DMInfoManagerSection(props: any) {
                             className={inputClass}
                             style={inputStyle}
                             placeholder="#8fd3ff"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Background Color</label>
+                          <input
+                            type="text"
+                            value={(editingInfo as any).displayData?.digitalBackgroundColor || ""}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalBackgroundColor: e.target.value },
+                            }))}
+                            className={inputClass}
+                            style={inputStyle}
+                            placeholder="#06101a"
                           />
                         </div>
                         <div>
@@ -666,23 +680,41 @@ export function DMInfoManagerSection(props: any) {
                             <option value="high">High</option>
                           </select>
                         </div>
-                        <div className="flex items-end">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={!!(editingInfo as any).displayData?.digitalTypewriter}
-                              onChange={(e) => updateEditingInfo((prev: any) => ({
-                                ...prev,
-                                displayData: { ...(prev.displayData || {}), digitalTypewriter: e.target.checked },
-                              }))}
-                              className="accent-[#4A7BFF]"
-                            />
-                            <span className="text-[11px]" style={S_TEXT}>Typewriter reveal</span>
-                          </label>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Typewriter Speed</label>
+                          <input
+                            type="range"
+                            min="8"
+                            max="90"
+                            step="1"
+                            value={(editingInfo as any).displayData?.digitalTypewriterSpeed ?? 30}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalTypewriterSpeed: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>
+                            {(editingInfo as any).displayData?.digitalTypewriterSpeed ?? 30}
+                          </div>
                         </div>
                       </div>
+                      <div className="mt-3">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!!(editingInfo as any).displayData?.digitalTypewriter}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), digitalTypewriter: e.target.checked },
+                            }))}
+                            className="accent-[#4A7BFF]"
+                          />
+                          <span className="text-[11px]" style={S_TEXT}>Typewriter reveal</span>
+                        </label>
+                      </div>
                       <div className="text-[10px] mt-2" style={S_MUTED}>
-                        Moving scanlines are built in. These controls let you tune text color, glow brightness, and letter-by-letter reveal.
+                        Moving scanlines are built in. Typewriter reveal now hides the cursor line while it writes.
                       </div>
                     </div>
                   )}
@@ -690,13 +722,65 @@ export function DMInfoManagerSection(props: any) {
                   {(editingInfo as any).displayMode === "paper" && (
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Paper Options</div>
-                      <label className="text-[10px] block mb-1" style={labelStyle}>Future Overlay Planning Hook</label>
-                      <select value={(editingInfo as any).displayData?.futurePaperOverlayMode || "pixel_handwriting"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), futurePaperOverlayMode: e.target.value } }))} className={inputClass} style={inputStyle}>
-                        <option value="pixel_handwriting">Future DM Pixel Handwriting Overlay</option>
-                        <option value="none">None</option>
-                      </select>
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Jagged Edges</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.paperJaggedness ?? 22}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), paperJaggedness: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperJaggedness ?? 22}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Extra Pages</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="4"
+                            step="1"
+                            value={(editingInfo as any).displayData?.paperExtraPages ?? 0}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), paperExtraPages: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperExtraPages ?? 0}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Edge Texture</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.paperEdgeTexture ?? 24}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), paperEdgeTexture: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.paperEdgeTexture ?? 24}</div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Future Overlay Planning Hook</label>
+                          <select value={(editingInfo as any).displayData?.futurePaperOverlayMode || "pixel_handwriting"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), futurePaperOverlayMode: e.target.value } }))} className={inputClass} style={inputStyle}>
+                            <option value="pixel_handwriting">Future DM Pixel Handwriting Overlay</option>
+                            <option value="none">None</option>
+                          </select>
+                        </div>
+                      </div>
                       <div className="text-[10px] mt-2" style={S_MUTED}>
-                        Reserved for the future paper handwriting or pixel-drawing system.
+                        Paper pages now stay full size, can add extra sheets below, and have adjustable torn-edge intensity and edge wear.
                       </div>
                     </div>
                   )}
@@ -704,11 +788,31 @@ export function DMInfoManagerSection(props: any) {
                   {(editingInfo as any).displayMode === "item:stone_tablet" && (
                     <div className="p-4" style={DM_PANEL}>
                       <div className="text-[12px] mb-2" style={S_SECTION_HDR}>Stone Tablet Options</div>
-                      <label className="text-[10px] block mb-1" style={labelStyle}>Inscription Alignment</label>
-                      <select value={(editingInfo as any).displayData?.alignment || "left"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), alignment: e.target.value } }))} className={inputClass} style={inputStyle}>
-                        <option value="left">Left</option>
-                        <option value="center">Center</option>
-                      </select>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Inscription Alignment</label>
+                          <select value={(editingInfo as any).displayData?.alignment || "left"} onChange={(e) => updateEditingInfo((prev: any) => ({ ...prev, displayData: { ...(prev.displayData || {}), alignment: e.target.value } }))} className={inputClass} style={inputStyle}>
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Stone Texture</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={(editingInfo as any).displayData?.stoneTextureIntensity ?? 55}
+                            onChange={(e) => updateEditingInfo((prev: any) => ({
+                              ...prev,
+                              displayData: { ...(prev.displayData || {}), stoneTextureIntensity: Number(e.target.value) },
+                            }))}
+                            className="w-full accent-[#4A7BFF]"
+                          />
+                          <div className="text-[10px]" style={S_MUTED}>{(editingInfo as any).displayData?.stoneTextureIntensity ?? 55}</div>
+                        </div>
+                      </div>
                     </div>
                   )}
 

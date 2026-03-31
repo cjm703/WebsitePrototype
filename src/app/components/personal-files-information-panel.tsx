@@ -43,6 +43,12 @@ export type ManagedInfoLike = {
     digitalTextColor?: string;
     digitalGlowIntensity?: "low" | "medium" | "high";
     digitalTypewriter?: boolean;
+    digitalBackgroundColor?: string;
+    digitalTypewriterSpeed?: number;
+    paperJaggedness?: number;
+    paperExtraPages?: number;
+    paperEdgeTexture?: number;
+    stoneTextureIntensity?: number;
   };
 };
 
