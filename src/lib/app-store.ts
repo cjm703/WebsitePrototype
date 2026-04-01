@@ -128,8 +128,33 @@ export const appStore = {
   savePlayerCommerceCart: <T>(playerId: string, data: T) =>
     savePlayerDoc<T>("player_commerce_cart", playerId, data),
 
+  loadPlayerCustomization: <T>(playerId: string, fallback: T) =>
+    loadPlayerDoc<T>("player_customization", playerId, fallback),
+  savePlayerCustomization: <T>(playerId: string, data: T) =>
+    savePlayerDoc<T>("player_customization", playerId, data),
+
+  loadCampaignTimelineState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_campaign_timeline_state", "default", fallback),
+  saveCampaignTimelineState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_campaign_timeline_state", "default", data),
+
+  loadTimelineCalendarPresets: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_timeline_calendar_presets", "default", fallback),
+  saveTimelineCalendarPresets: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_timeline_calendar_presets", "default", data),
+
   loadIntelliMapsState: <T>(fallback: T) =>
     loadSingletonCollectionDoc<T>("app_intelli_maps_state", "default", fallback),
   saveIntelliMapsState: <T>(data: T) =>
     saveSingletonDataDoc<T>("app_intelli_maps_state", "default", data),
+
+  loadSessionLogState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_session_log_state", "default", fallback),
+  saveSessionLogState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_session_log_state", "default", data),
+
+  loadSessionPlayerNotes: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_session_player_notes", "default", fallback),
+  saveSessionPlayerNotes: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_session_player_notes", "default", data),
 };

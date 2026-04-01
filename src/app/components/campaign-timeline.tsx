@@ -878,8 +878,8 @@ export function CampaignTimeline() {
   const [timelineSaveStatus, setTimelineSaveStatus] = useState<"saving" | "saved" | "error" | null>(null);
   const [timelineSaveError, setTimelineSaveError] = useState<string | null>(null);
 
-  const sessions = useMemo(() => loadSessions(), []);
-  const wikiPages = useMemo(() => loadWikiPages(), []);
+  const [sessions, setSessions] = useState<SessionEntry[]>(loadSessions);
+  const [wikiPages, setWikiPages] = useState<WikiPage[]>(loadWikiPages);
 
   const [activeBookId, setActiveBookId] = useState<string>(() =>
     data.books.length > 0 ? data.books[0].id : ""
@@ -935,13 +935,17 @@ export function CampaignTimeline() {
         setTimelineSaveError(null);
         const fallbackData = loadData();
         const fallbackPresets = loadLocalCustomPresets();
-        const [remoteData, remotePresets] = await Promise.all([
+        const [remoteData, remotePresets, remoteSessions, remoteWikiPages] = await Promise.all([
           appStore.loadCampaignTimelineState<TimelineData>(fallbackData),
           appStore.loadTimelineCalendarPresets<TimelineCalendarPreset[]>(fallbackPresets),
+          appStore.loadSessionLogState<SessionEntry[]>(loadSessions()).catch(() => loadSessions()),
+          appStore.listSites<WikiPage>().catch(() => loadWikiPages()),
         ]);
         if (cancelled) return;
         setData(remoteData && remoteData.version === 2 ? remoteData : fallbackData);
         setCustomCalendarPresets(Array.isArray(remotePresets) ? remotePresets.map((preset) => ({ ...preset, builtin: false })) : fallbackPresets);
+        setSessions(Array.isArray(remoteSessions) ? remoteSessions : loadSessions());
+        setWikiPages(Array.isArray(remoteWikiPages) ? remoteWikiPages : loadWikiPages());
       } catch (err) {
         if (cancelled) return;
         setTimelineSaveError(err instanceof Error ? err.message : "Failed to load campaign timeline.");

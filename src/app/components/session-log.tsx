@@ -1,11 +1,11 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { getPlayerTheme, buildPageGradient, firstColor, ts, bc } from "./player-theme";
 import { safeGetItem } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import {
   ArrowLeft, Plus, Trash2, Save, X, Edit, ChevronDown, ChevronRight,
   BookOpen, Calendar, Clock, Scroll, Users, MessageSquare, Pin, PinOff,
@@ -39,6 +39,67 @@ interface PlayerNote {
   createdAt: string;
 }
 
+interface TimelineDataLite {
+  books?: Array<{
+    name: string;
+    lanes: Array<{
+      name: string;
+      color: string;
+      events: Array<{ id: string; title: string; sessionId?: string }>;
+    }>;
+  }>;
+}
+
+interface WikiPageLite {
+  id: string;
+  title: string;
+}
+
+function loadLocalPlayers(): Array<{ id: string; name: string }> {
+  try {
+    const raw = safeGetItem("inet-dm-players");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadLocalSessions(): SessionEntry[] {
+  try {
+    const raw = safeGetItem(STORAGE_KEY_SESSIONS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadLocalPlayerNotes(): PlayerNote[] {
+  try {
+    const raw = safeGetItem(STORAGE_KEY_PLAYER_NOTES);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadLocalTimelineData(): TimelineDataLite {
+  try {
+    const raw = safeGetItem("inet-campaign-timeline-v2");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function loadLocalWikiPages(): WikiPageLite[] {
+  try {
+    const raw = safeGetItem("inet-dm-sites");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 // ════════════════════════════════════════════
 // Constants
 // ════════════════════════════════════════════
@@ -61,32 +122,100 @@ export function SessionLog() {
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUser === "DM";
 
-  // Load players for attendee picker
-  const players: Array<{ id: string; name: string }> = useMemo(() => {
-    try {
-      const raw = safeGetItem("inet-dm-players");
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
+  const [players, setPlayers] = useState<Array<{ id: string; name: string }>>([]);
+  const [sessions, setSessions] = useState<SessionEntry[]>(loadLocalSessions);
+  const [playerNotes, setPlayerNotes] = useState<PlayerNote[]>(loadLocalPlayerNotes);
+  const [timelineData, setTimelineData] = useState<TimelineDataLite>(loadLocalTimelineData);
+  const [wikiPages, setWikiPages] = useState<WikiPageLite[]>(loadLocalWikiPages);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionSaveStatus, setSessionSaveStatus] = useState<"saving" | "saved" | "error" | null>(null);
+  const [sessionSaveError, setSessionSaveError] = useState<string | null>(null);
+  const hasHydratedRef = useRef(false);
+  const saveToastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateSessionLog() {
+      try {
+        setSessionLoading(true);
+        setSessionSaveError(null);
+
+        const [remotePlayers, remoteSessions, remoteNotes, remoteTimeline, remoteSites] = await Promise.all([
+          appStore.listPlayers<any>().catch(() => loadLocalPlayers() as any),
+          appStore.loadSessionLogState<SessionEntry[]>(loadLocalSessions()),
+          appStore.loadSessionPlayerNotes<PlayerNote[]>(loadLocalPlayerNotes()),
+          appStore.loadCampaignTimelineState<TimelineDataLite>(loadLocalTimelineData()).catch(() => loadLocalTimelineData()),
+          appStore.listSites<WikiPageLite>().catch(() => loadLocalWikiPages()),
+        ]);
+
+        if (cancelled) return;
+
+        setPlayers(Array.isArray(remotePlayers)
+          ? remotePlayers.map((player: any) => ({ id: player.id, name: player.name || player.playerName || player.title || player.id }))
+          : loadLocalPlayers());
+        setSessions(Array.isArray(remoteSessions) ? remoteSessions : loadLocalSessions());
+        setPlayerNotes(Array.isArray(remoteNotes) ? remoteNotes : loadLocalPlayerNotes());
+        setTimelineData(remoteTimeline && Array.isArray(remoteTimeline.books) ? remoteTimeline : loadLocalTimelineData());
+        setWikiPages(Array.isArray(remoteSites) ? remoteSites.map((page: any) => ({ id: page.id, title: page.title })) : loadLocalWikiPages());
+      } catch (err) {
+        if (!cancelled) {
+          setSessionSaveError(err instanceof Error ? err.message : "Failed to load session log.");
+        }
+      } finally {
+        if (!cancelled) {
+          hasHydratedRef.current = true;
+          setSessionLoading(false);
+        }
+      }
+    }
+
+    void hydrateSessionLog();
+    return () => {
+      cancelled = true;
+      if (saveToastTimerRef.current) window.clearTimeout(saveToastTimerRef.current);
+    };
   }, []);
 
-  // ── State ──
-  const [sessions, setSessions] = useState<SessionEntry[]>(() => {
-    try {
-      const raw = safeGetItem(STORAGE_KEY_SESSIONS);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+    const timeout = window.setTimeout(() => {
+      setSessionSaveStatus("saving");
+      setSessionSaveError(null);
+      void appStore
+        .saveSessionLogState<SessionEntry[]>(sessions)
+        .then(() => {
+          setSessionSaveStatus("saved");
+          if (saveToastTimerRef.current) window.clearTimeout(saveToastTimerRef.current);
+          saveToastTimerRef.current = window.setTimeout(() => setSessionSaveStatus(null), 1400);
+        })
+        .catch((err) => {
+          setSessionSaveStatus("error");
+          setSessionSaveError(err instanceof Error ? err.message : "Failed to save sessions.");
+        });
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [sessions]);
 
-  const [playerNotes, setPlayerNotes] = useState<PlayerNote[]>(() => {
-    try {
-      const raw = safeGetItem(STORAGE_KEY_PLAYER_NOTES);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
-
-  // Persist
-  useDebouncedJsonStorage(STORAGE_KEY_SESSIONS, sessions);
-  useDebouncedJsonStorage(STORAGE_KEY_PLAYER_NOTES, playerNotes);
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+    const timeout = window.setTimeout(() => {
+      setSessionSaveStatus("saving");
+      setSessionSaveError(null);
+      void appStore
+        .saveSessionPlayerNotes<PlayerNote[]>(playerNotes)
+        .then(() => {
+          setSessionSaveStatus("saved");
+          if (saveToastTimerRef.current) window.clearTimeout(saveToastTimerRef.current);
+          saveToastTimerRef.current = window.setTimeout(() => setSessionSaveStatus(null), 1400);
+        })
+        .catch((err) => {
+          setSessionSaveStatus("error");
+          setSessionSaveError(err instanceof Error ? err.message : "Failed to save player notes.");
+        });
+    }, 400);
+    return () => window.clearTimeout(timeout);
+  }, [playerNotes]);
 
   // UI state
   const [editingSession, setEditingSession] = useState<SessionEntry | null>(null);
@@ -242,6 +371,23 @@ export function SessionLog() {
   // ════════════════════════════════════════════
   // Render: Session Editor
   // ════════════════════════════════════════════
+  if (sessionLoading) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{
+          background: buildPageGradient(theme.pageBg),
+          fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
+        }}
+      >
+        <div className={`${retro.sunken} p-5 text-center`} style={{ background: theme.panelBg, color: theme.textColor }}>
+          <div className="text-[13px] mb-1">Loading session log...</div>
+          {sessionSaveError && <div className="text-[11px]" style={{ color: "#FF8A8A" }}>{sessionSaveError}</div>}
+        </div>
+      </div>
+    );
+  }
+
   if (editingSession) {
     return (
       <div
@@ -267,14 +413,28 @@ export function SessionLog() {
               {isCreating ? "New Session Entry" : "Edit Session Entry"}
             </span>
           </div>
-          <button
-            onClick={saveSession}
-            className={`${retro.button} text-[11px] flex items-center gap-1`}
-            style={{ color: "#4ACA6A" }}
-          >
-            <Save size={12} />
-            Save
-          </button>
+          <div className="flex items-center gap-2">
+            {sessionSaveStatus && (
+              <span
+                className="text-[10px] px-2 py-1"
+                style={{
+                  color: sessionSaveStatus === "error" ? "#FF8A8A" : sessionSaveStatus === "saved" ? "#7AE29A" : "#9AB6FF",
+                  border: `1px solid ${sessionSaveStatus === "error" ? "#5A1A1A" : sessionSaveStatus === "saved" ? "#1F4A2D" : "#233A6B"}`,
+                  background: sessionSaveStatus === "error" ? "#1A0A0A" : sessionSaveStatus === "saved" ? "#0A1A12" : "#0A1024",
+                }}
+              >
+                {sessionSaveStatus === "saving" ? "Saving..." : sessionSaveStatus === "saved" ? "Saved" : "Save failed"}
+              </span>
+            )}
+            <button
+              onClick={saveSession}
+              className={`${retro.button} text-[11px] flex items-center gap-1`}
+              style={{ color: "#4ACA6A" }}
+            >
+              <Save size={12} />
+              Save
+            </button>
+          </div>
         </div>
 
         {/* Editor form */}
@@ -537,6 +697,12 @@ export function SessionLog() {
           )}
         </div>
 
+        {sessionSaveError && (
+          <div className={`${retro.sunken} px-3 py-2 mb-4 text-[11px]`} style={{ background: "#1A0A0A", color: "#FF8A8A", border: "1px solid #5A1A1A" }}>
+            {sessionSaveError}
+          </div>
+        )}
+
         {/* Search & Sort Bar */}
         <div className="flex gap-3 mb-5 items-center">
           <div className={`${retro.sunken} flex-1 flex items-center gap-2 px-3 py-1.5`} style={{ background: theme.inputBg }}>
@@ -593,40 +759,30 @@ export function SessionLog() {
 
               // Find timeline events linked to this session
               const linkedTimelineEvents: { id: string; title: string; bookName: string; laneName: string; laneColor: string }[] = (() => {
-                try {
-                  const raw = safeGetItem("inet-campaign-timeline-v2");
-                  if (!raw) return [];
-                  const tlData = JSON.parse(raw);
-                  if (!tlData?.books) return [];
-                  const results: { id: string; title: string; bookName: string; laneName: string; laneColor: string }[] = [];
-                  for (const book of tlData.books) {
-                    for (const lane of book.lanes) {
-                      for (const ev of lane.events) {
-                        if (ev.sessionId === session.id) {
-                          results.push({ id: ev.id, title: ev.title, bookName: book.name, laneName: lane.name, laneColor: lane.color });
-                        }
+                if (!timelineData?.books) return [];
+                const results: { id: string; title: string; bookName: string; laneName: string; laneColor: string }[] = [];
+                for (const book of timelineData.books || []) {
+                  for (const lane of book.lanes || []) {
+                    for (const ev of lane.events || []) {
+                      if (ev.sessionId === session.id) {
+                        results.push({ id: ev.id, title: ev.title, bookName: book.name, laneName: lane.name, laneColor: lane.color });
                       }
                     }
                   }
-                  return results;
-                } catch { return []; }
+                }
+                return results;
               })();
 
               // Find wiki pages referenced in summary via [[...]] syntax
               const referencedWikiPages: { id: string; title: string }[] = (() => {
-                try {
-                  const raw = safeGetItem("inet-dm-sites");
-                  if (!raw) return [];
-                  const pages: { id: string; title: string }[] = JSON.parse(raw);
-                  const wikiLinkPattern = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
-                  const matches = new Set<string>();
-                  let match;
-                  const text = session.summary + " " + session.dmNotes;
-                  while ((match = wikiLinkPattern.exec(text)) !== null) {
-                    matches.add(match[1].trim().toLowerCase());
-                  }
-                  return pages.filter(p => matches.has(p.title.toLowerCase()));
-                } catch { return []; }
+                const wikiLinkPattern = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+                const matches = new Set<string>();
+                let match: RegExpExecArray | null;
+                const text = session.summary + " " + session.dmNotes;
+                while ((match = wikiLinkPattern.exec(text)) !== null) {
+                  matches.add(match[1].trim().toLowerCase());
+                }
+                return wikiPages.filter((page) => matches.has(page.title.toLowerCase()));
               })();
 
               return (
