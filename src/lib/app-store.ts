@@ -157,4 +157,9 @@ export const appStore = {
     loadSingletonCollectionDoc<T>("app_session_player_notes", "default", fallback),
   saveSessionPlayerNotes: <T>(data: T) =>
     saveSingletonDataDoc<T>("app_session_player_notes", "default", data),
+
+  loadPlayerWikiEditorDrafts: <T>(playerId: string, fallback: T) =>
+    loadPlayerDoc<T>("player_wiki_editor_drafts", playerId, fallback),
+  savePlayerWikiEditorDrafts: <T>(playerId: string, data: T) =>
+    savePlayerDoc<T>("player_wiki_editor_drafts", playerId, data),
 };

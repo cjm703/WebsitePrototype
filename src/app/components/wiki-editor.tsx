@@ -18,7 +18,7 @@ import { TemplatePickerModal, TemplateManagerModal } from "./wiki-templates";
 import type { WikiTemplate } from "./wiki-templates";
 import { WikiLinkDialog } from "./wiki-link-dialog";
 import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
-import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeRemoveItem, safeGetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import type { TagField, TagDefinition, PlayerData } from "./types";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
@@ -274,6 +274,7 @@ export function WikiEditor() {
   const navigate = useNavigate();
   const { id } = useParams();
   const isNew = !id || id === "new";
+  const currentUserId = safeGetItem("inet-user-id") || "";
 
   const [allPages, setAllPages] = useState<SitePage[]>([]);
   const [players, setPlayers] = useState<PlayerData[]>([]);
@@ -310,6 +311,8 @@ export function WikiEditor() {
 
   // ─── Auto-save Draft State ───
   const [showDraftRestore, setShowDraftRestore] = useState(false);
+  const [remoteDrafts, setRemoteDrafts] = useState<Record<string, SitePage>>({});
+  const [draftsLoaded, setDraftsLoaded] = useState(false);
   const draftKey = `inet-wiki-draft-${page.id}`;
 
   // ─── Undo/Redo State ───
@@ -379,6 +382,28 @@ export function WikiEditor() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadRemoteDrafts() {
+      if (!currentUserId) {
+        setDraftsLoaded(true);
+        return;
+      }
+      try {
+        const drafts = await appStore.loadPlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, {});
+        if (!cancelled) setRemoteDrafts(drafts && typeof drafts === "object" ? drafts : {});
+      } catch (err) {
+        console.warn("Failed to load wiki drafts", err);
+      } finally {
+        if (!cancelled) setDraftsLoaded(true);
+      }
+    }
+
+    void loadRemoteDrafts();
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  useEffect(() => {
     if (wikiLoading) return;
 
     if (isNew) {
@@ -443,30 +468,46 @@ export function WikiEditor() {
 
   // ─── Check for draft on mount ───
   useEffect(() => {
+    if (!draftsLoaded || !existingPage) return;
+    const remoteDraft = remoteDrafts[existingPage.id];
+    if (remoteDraft && remoteDraft.title !== undefined) {
+      setShowDraftRestore(true);
+      return;
+    }
     try {
       const draftRaw = safeGetItem(draftKey);
-      if (draftRaw && existingPage) {
+      if (draftRaw) {
         const draft = JSON.parse(draftRaw);
-        if (draft && draft.title !== undefined) {
-          setShowDraftRestore(true);
-        }
+        if (draft && draft.title !== undefined) setShowDraftRestore(true);
       }
     } catch {}
-  }, [draftKey, existingPage]);
+  }, [draftKey, draftsLoaded, existingPage, remoteDrafts]);
 
   // ─── Auto-save draft every 30 seconds (only for existing articles) ───
   useEffect(() => {
-    if (!hasUnsaved || isNew) return;
+    if (!hasUnsaved || isNew || !currentUserId || !draftsLoaded) return;
     const interval = setInterval(() => {
-      try {
-        safeSetJson(draftKey, page);
-      } catch {}
+      setRemoteDrafts((prev) => {
+        const next = { ...prev, [page.id]: page };
+        void appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, next).catch((err) => {
+          console.warn("Failed to save wiki draft", err);
+        });
+        return next;
+      });
     }, 30000);
     return () => clearInterval(interval);
-  }, [hasUnsaved, page, draftKey]);
+  }, [hasUnsaved, isNew, currentUserId, draftsLoaded, page]);
 
   // ─── Restore draft handler ───
   const restoreDraft = useCallback(() => {
+    const remoteDraft = existingPage ? remoteDrafts[existingPage.id] : undefined;
+    if (remoteDraft) {
+      const migrated = migrateSectionsToPanels(remoteDraft);
+      setPage({ ...remoteDraft, panels: migrated, sections: [] });
+      setHasUnsaved(true);
+      setShowDraftRestore(false);
+      return;
+    }
     try {
       const draftRaw = safeGetItem(draftKey);
       if (draftRaw) {
@@ -477,12 +518,24 @@ export function WikiEditor() {
       }
     } catch {}
     setShowDraftRestore(false);
-  }, [draftKey]);
+  }, [draftKey, existingPage, remoteDrafts]);
 
   const discardDraft = useCallback(() => {
     safeRemoveItem(draftKey);
+    if (!currentUserId || !existingPage) {
+      setShowDraftRestore(false);
+      return;
+    }
+    setRemoteDrafts((prev) => {
+      const next = { ...prev };
+      delete next[existingPage.id];
+      void appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, next).catch((err) => {
+        console.warn("Failed to discard wiki draft", err);
+      });
+      return next;
+    });
     setShowDraftRestore(false);
-  }, [draftKey]);
+  }, [currentUserId, draftKey, existingPage]);
 
   // Track changes
   const update = useCallback(<K extends keyof SitePage>(key: K, val: SitePage[K]) => {
@@ -532,6 +585,12 @@ export function WikiEditor() {
 
     try {
       await appStore.saveSites<SitePage>(stored);
+      if (currentUserId) {
+        const nextDrafts = { ...remoteDrafts };
+        delete nextDrafts[data.id];
+        await appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, nextDrafts);
+        setRemoteDrafts(nextDrafts);
+      }
       setAllPages(stored);
       safeRemoveItem(draftKey);
       setPage(data);

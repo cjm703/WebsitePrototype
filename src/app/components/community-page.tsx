@@ -6,7 +6,7 @@ import { usePageVisibility } from "./use-visibility";
 import { Send, Users, MessageSquare, Hash, Lock, Crown, Edit3, X, Check, Trash2, Image, Pencil, SmilePlus, Settings, Search, Link as LinkIcon, ExternalLink, ChevronDown, Palette, RotateCcw, ArrowLeft, EyeOff, Eye, Plus, Bot, ChevronUp, FolderOpen, Bell, WandSparkles } from "lucide-react";
 import { fetchProfilePictures } from "./profile-picture";
 import { STICKER_IMAGES } from "./sticker-images";
-import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
 import {
   listCommunityPlayers,
   listNpcAccounts,
@@ -1340,11 +1340,11 @@ type ImageStore = Record<string, StoredImage>;
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
 function loadImages(): ImageStore {
-  return safeGetJson("inet-community-images", {});
+  return {};
 }
 
-function saveImages(store: ImageStore): void {
-  safeSetJson("inet-community-images", store);
+function saveImages(_store: ImageStore): void {
+  // Images are persisted through the community API.
 }
 
 /** Remove images older than 3 days, return cleaned store */
@@ -1425,6 +1425,49 @@ interface NpcAccount {
   id: string;       // e.g. "npc-abc123"
   name: string;
   color: string;    // display color
+}
+
+interface CommunityUiPrefs {
+  bgOpacity: number;
+  use24h: boolean;
+  compactMode: boolean;
+  fontSize: number;
+  showTimestamps: boolean;
+  notifSound: boolean;
+  groupThreshold: number;
+  imgThumbnails: boolean;
+  maxVisibleMsgs: number;
+  showLinkPreviews: boolean;
+  nameColor: string;
+  chatColor: string;
+  dmNameColor: string;
+}
+
+interface CommunityProfileDoc {
+  playerId: string;
+  displayName?: string;
+  hiddenDmChannels?: string[];
+  communityPrefs?: Partial<CommunityUiPrefs>;
+}
+
+const DEFAULT_COMMUNITY_PREFS: CommunityUiPrefs = {
+  bgOpacity: 0.45,
+  use24h: false,
+  compactMode: false,
+  fontSize: 15,
+  showTimestamps: true,
+  notifSound: true,
+  groupThreshold: 5,
+  imgThumbnails: false,
+  maxVisibleMsgs: 200,
+  showLinkPreviews: true,
+  nameColor: "",
+  chatColor: "",
+  dmNameColor: "#FFD700",
+};
+
+function normalizeCommunityPrefs(raw: Partial<CommunityUiPrefs> | null | undefined): CommunityUiPrefs {
+  return { ...DEFAULT_COMMUNITY_PREFS, ...(raw || {}) };
 }
 
 interface Nicknames { [playerId: string]: string; }
@@ -1975,7 +2018,7 @@ export function CommunityPage() {
   const NPC_COLORS = ["#8A6ABB", "#6ABB8A", "#BB6A6A", "#6A8ABB", "#BB8A6A", "#6ABBB8", "#BB6ABB", "#9ABB6A", "#6A6ABB", "#BB9A6A", "#6ABB6A", "#BB6A9A"];
   const [serverPlayers, setServerPlayers] = useState<PlayerInfo[]>([]);
   const [customReactions, setCustomReactions] = useState<CustomReactionDef[]>([]);
-  const [profileMap, setProfileMap] = useState<Record<string, { playerId: string; displayName?: string; hiddenDmChannels?: string[] }>>({});
+  const [profileMap, setProfileMap] = useState<Record<string, CommunityProfileDoc>>({});
 
   const addNpc = () => {
     const name = npcDraftName.trim();
@@ -2179,6 +2222,20 @@ export function CommunityPage() {
         setCustomReactions(loadedReactions);
         setLastRead(loadedReadState);
         setHiddenDmChannels(myProfile.hiddenDmChannels || []);
+        const loadedPrefs = normalizeCommunityPrefs((myProfile as CommunityProfileDoc).communityPrefs);
+        setBgOpacity(loadedPrefs.bgOpacity);
+        setUse24h(loadedPrefs.use24h);
+        setCompactMode(loadedPrefs.compactMode);
+        setFontSize(loadedPrefs.fontSize);
+        setShowTimestamps(loadedPrefs.showTimestamps);
+        setNotifSound(loadedPrefs.notifSound);
+        setGroupThreshold(loadedPrefs.groupThreshold);
+        setImgThumbnails(loadedPrefs.imgThumbnails);
+        setMaxVisibleMsgs(loadedPrefs.maxVisibleMsgs);
+        setShowLinkPreviews(loadedPrefs.showLinkPreviews);
+        setNameColor(loadedPrefs.nameColor);
+        setChatColor(loadedPrefs.chatColor);
+        setDmNameColor(loadedPrefs.dmNameColor);
         const profileIds = loadedPlayers.map(p => p.id);
         const profiles = await loadCommunityProfiles(profileIds);
         if (cancelled) return;
@@ -2279,7 +2336,27 @@ export function CommunityPage() {
       else delete next[currentUserId];
       return next;
     });
-    const nextProfile = { ...(profileMap[currentUserId] || { playerId: currentUserId }), playerId: currentUserId, displayName: trimmed || undefined, hiddenDmChannels };
+    const nextProfile: CommunityProfileDoc = {
+      ...(profileMap[currentUserId] || { playerId: currentUserId }),
+      playerId: currentUserId,
+      displayName: trimmed || undefined,
+      hiddenDmChannels,
+      communityPrefs: {
+        bgOpacity,
+        use24h,
+        compactMode,
+        fontSize,
+        showTimestamps,
+        notifSound,
+        groupThreshold,
+        imgThumbnails,
+        maxVisibleMsgs,
+        showLinkPreviews,
+        nameColor,
+        chatColor,
+        dmNameColor,
+      },
+    };
     setProfileMap(prev => ({ ...prev, [currentUserId]: nextProfile }));
     if (currentUserId) void saveCommunityProfile(currentUserId, nextProfile).catch((error) => console.error("Failed to save nickname", error));
     setEditingNick(false);
@@ -2536,44 +2613,46 @@ export function CommunityPage() {
   // ── Settings ──
   const [showSettings, setShowSettings] = useState(false);
 
-  const loadSetting = <T,>(key: string, fallback: T): T => safeGetJson(key, fallback);
-
-  const [bgOpacity, setBgOpacity] = useState<number>(() => loadSetting("inet-community-bg-opacity", 0.45));
-  const [use24h, setUse24h] = useState<boolean>(() => loadSetting("inet-community-24h", false));
-  const [compactMode, setCompactMode] = useState<boolean>(() => loadSetting("inet-community-compact", false));
-  const [fontSize, setFontSize] = useState<number>(() => loadSetting("inet-community-fontsize", 15));
-  const [showTimestamps, setShowTimestamps] = useState<boolean>(() => loadSetting("inet-community-timestamps", true));
-  const [notifSound, setNotifSound] = useState<boolean>(() => loadSetting("inet-community-notifsound", true));
-  const [groupThreshold, setGroupThreshold] = useState<number>(() => loadSetting("inet-community-groupthreshold", 5));
-  const [imgThumbnails, setImgThumbnails] = useState<boolean>(() => loadSetting("inet-community-imgthumbs", false));
-  const [maxVisibleMsgs, setMaxVisibleMsgs] = useState<number>(() => loadSetting("inet-community-maxmsgs", 200));
-  const [showLinkPreviews, setShowLinkPreviews] = useState<boolean>(() => loadSetting("inet-community-linkpreviews", true));
-  const [nameColor, setNameColor] = useState<string>(() => loadSetting("inet-community-namecolor", ""));
-  const [chatColor, setChatColor] = useState<string>(() => loadSetting("inet-community-chatcolor", ""));
-  const [dmNameColor, setDmNameColor] = useState<string>(() => loadSetting("inet-community-dmnamecolor", "#FFD700"));
-
-  const saveSetting = (key: string, value: unknown) => { safeSetJson(key, value); };
-
-  useEffect(() => { saveSetting("inet-community-bg-opacity", bgOpacity); }, [bgOpacity]);
-  useEffect(() => { saveSetting("inet-community-24h", use24h); }, [use24h]);
-  useEffect(() => { saveSetting("inet-community-compact", compactMode); }, [compactMode]);
-  useEffect(() => { saveSetting("inet-community-fontsize", fontSize); }, [fontSize]);
-  useEffect(() => { saveSetting("inet-community-timestamps", showTimestamps); }, [showTimestamps]);
-  useEffect(() => { saveSetting("inet-community-notifsound", notifSound); }, [notifSound]);
-  useEffect(() => { saveSetting("inet-community-groupthreshold", groupThreshold); }, [groupThreshold]);
-  useEffect(() => { saveSetting("inet-community-imgthumbs", imgThumbnails); }, [imgThumbnails]);
-  useEffect(() => { saveSetting("inet-community-maxmsgs", maxVisibleMsgs); }, [maxVisibleMsgs]);
-  useEffect(() => { saveSetting("inet-community-linkpreviews", showLinkPreviews); }, [showLinkPreviews]);
-  useEffect(() => { saveSetting("inet-community-namecolor", nameColor); }, [nameColor]);
-  useEffect(() => { saveSetting("inet-community-chatcolor", chatColor); }, [chatColor]);
-  useEffect(() => { saveSetting("inet-community-dmnamecolor", dmNameColor); }, [dmNameColor]);
+  const [bgOpacity, setBgOpacity] = useState<number>(DEFAULT_COMMUNITY_PREFS.bgOpacity);
+  const [use24h, setUse24h] = useState<boolean>(DEFAULT_COMMUNITY_PREFS.use24h);
+  const [compactMode, setCompactMode] = useState<boolean>(DEFAULT_COMMUNITY_PREFS.compactMode);
+  const [fontSize, setFontSize] = useState<number>(DEFAULT_COMMUNITY_PREFS.fontSize);
+  const [showTimestamps, setShowTimestamps] = useState<boolean>(DEFAULT_COMMUNITY_PREFS.showTimestamps);
+  const [notifSound, setNotifSound] = useState<boolean>(DEFAULT_COMMUNITY_PREFS.notifSound);
+  const [groupThreshold, setGroupThreshold] = useState<number>(DEFAULT_COMMUNITY_PREFS.groupThreshold);
+  const [imgThumbnails, setImgThumbnails] = useState<boolean>(DEFAULT_COMMUNITY_PREFS.imgThumbnails);
+  const [maxVisibleMsgs, setMaxVisibleMsgs] = useState<number>(DEFAULT_COMMUNITY_PREFS.maxVisibleMsgs);
+  const [showLinkPreviews, setShowLinkPreviews] = useState<boolean>(DEFAULT_COMMUNITY_PREFS.showLinkPreviews);
+  const [nameColor, setNameColor] = useState<string>(DEFAULT_COMMUNITY_PREFS.nameColor);
+  const [chatColor, setChatColor] = useState<string>(DEFAULT_COMMUNITY_PREFS.chatColor);
+  const [dmNameColor, setDmNameColor] = useState<string>(DEFAULT_COMMUNITY_PREFS.dmNameColor);
 
   useEffect(() => {
     if (!currentUserId || !communityReady) return;
-    const nextProfile = { ...(profileMap[currentUserId] || { playerId: currentUserId }), playerId: currentUserId, displayName: nicknames[currentUserId] || undefined, hiddenDmChannels };
+    const nextProfile: CommunityProfileDoc = {
+      ...(profileMap[currentUserId] || { playerId: currentUserId }),
+      playerId: currentUserId,
+      displayName: nicknames[currentUserId] || undefined,
+      hiddenDmChannels,
+      communityPrefs: {
+        bgOpacity,
+        use24h,
+        compactMode,
+        fontSize,
+        showTimestamps,
+        notifSound,
+        groupThreshold,
+        imgThumbnails,
+        maxVisibleMsgs,
+        showLinkPreviews,
+        nameColor,
+        chatColor,
+        dmNameColor,
+      },
+    };
     setProfileMap(prev => ({ ...prev, [currentUserId]: nextProfile }));
     void saveCommunityProfile(currentUserId, nextProfile).catch((error) => console.error("Failed to save community profile", error));
-  }, [hiddenDmChannels]);
+  }, [communityReady, currentUserId, hiddenDmChannels, nicknames, bgOpacity, use24h, compactMode, fontSize, showTimestamps, notifSound, groupThreshold, imgThumbnails, maxVisibleMsgs, showLinkPreviews, nameColor, chatColor, dmNameColor]);
 
   // Notification beep via Web Audio API
   const playNotifBeep = useRef(() => {

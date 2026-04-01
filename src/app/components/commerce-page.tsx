@@ -11,9 +11,9 @@ import {
   Upload, Building2, Sparkles, RotateCcw, GripVertical,
   Sun, Moon, ChevronLeft, ChevronRight,
 } from "lucide-react";
-import { safeGetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
-import { loadDMItems } from "@/lib/player-state-api";
+import { loadDMItems, saveDMItems } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 
 // ════════════════════════════════════════════
@@ -1071,9 +1071,9 @@ export function CommercePage() {
           }
         }
         setDmItemsCache(allDmItems);
-        safeSetJson("inet-dm-items", allDmItems);
-      } catch {
-        // DM-linked item copy creation still relies on the local DM item cache until a dedicated award endpoint exists.
+        await saveDMItems(allDmItems as unknown as any);
+      } catch (err) {
+        console.warn("Failed to persist DM-linked purchased items", err);
       }
     }
 
