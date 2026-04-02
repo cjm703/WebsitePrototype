@@ -4,15 +4,32 @@
  * All hashing happens on the Supabase edge function server. The frontend
  * never sees, stores, or computes password hashes. Plain-text codes are
  * sent over HTTPS and hashed server-side before storage.
- * Cache-bust v3
+ * Cache-bust v4
  */
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
+const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
+const PUBLIC_KEY = String(
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  ""
+).trim();
+
+if (!SUPABASE_URL) {
+  throw new Error("Missing VITE_SUPABASE_URL in frontend environment");
+}
+
+if (!PUBLIC_KEY) {
+  throw new Error(
+    "Missing VITE_SUPABASE_ANON_KEY or VITE_SUPABASE_PUBLISHABLE_KEY in frontend environment"
+  );
+}
+
+const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
 
 const headers = () => ({
   "Content-Type": "application/json",
-  Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-  apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${PUBLIC_KEY}`,
+  apikey: PUBLIC_KEY,
 });
 
 /** Resilient fetch wrapper with timeout and retry */
@@ -33,7 +50,6 @@ async function resilientFetch(
       const isLast = attempt === retries;
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isLast) throw err;
-      // Brief backoff before retry (200ms, 600ms)
       await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
       console.log(
         `Auth fetch retry ${attempt + 1}/${retries} for ${url}${isAbort ? " (timeout)" : ""}`
@@ -63,12 +79,6 @@ export async function setAuthCode(
   }
 }
 
-/**
- * Verify a plain-text code against the server-stored hash.
- * Returns { valid, hasCode } and, on success, may also include playerId/sessionToken.
- * - If `hasCode` is false the profile has no code — always valid.
- */
-
 export type VerifyAuthCodeResult = {
   valid: boolean;
   hasCode: boolean;
@@ -96,10 +106,6 @@ export async function verifyAuthCode(
   return res.json();
 }
 
-/**
- * Check which profiles have auth codes set (without exposing hashes).
- * Returns a map of profileId → boolean.
- */
 export async function getAuthStatuses(
   profileIds: string[]
 ): Promise<Record<string, boolean>> {
@@ -114,7 +120,6 @@ export async function getAuthStatuses(
       console.warn(
         `Auth statuses non-OK response: ${body.error || res.statusText}`
       );
-      // Graceful fallback: assume no codes set
       const fallback: Record<string, boolean> = {};
       profileIds.forEach((id) => (fallback[id] = false));
       return fallback;
@@ -122,7 +127,6 @@ export async function getAuthStatuses(
     const data = await res.json();
     return data.statuses;
   } catch (err) {
-    // Network failure: return safe fallback so the app still works
     console.warn("Auth statuses unavailable (server unreachable), using fallback:", err);
     const fallback: Record<string, boolean> = {};
     profileIds.forEach((id) => (fallback[id] = false));
@@ -130,9 +134,6 @@ export async function getAuthStatuses(
   }
 }
 
-/**
- * Remove the auth code for a profile.
- */
 export async function removeAuthCode(profileId: string): Promise<void> {
   const res = await resilientFetch(
     `${API_BASE}/${encodeURIComponent(profileId)}`,
@@ -149,10 +150,6 @@ export async function removeAuthCode(profileId: string): Promise<void> {
   }
 }
 
-/**
- * Migrate plain-text auth codes from localStorage to the server.
- * Called once on first load; the server skips profiles that already have codes.
- */
 export async function migrateAuthCodes(
   codes: Array<{ profileId: string; plainCode: string }>
 ): Promise<number> {
