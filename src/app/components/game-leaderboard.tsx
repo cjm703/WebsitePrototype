@@ -1,4 +1,4 @@
-import { safeGetItem } from "./safe-storage";
+import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 
 export interface LeaderboardEntry {
@@ -39,9 +39,12 @@ const CREDIT_RATES: Record<string, number> = {
 };
 
 const profileCache = new Map<string, ArcadeProfile>();
-let leaderboardCache: LeaderboardEntry[] | null = null;
 const profileHydrating = new Set<string>();
+const profileHydrated = new Set<string>();
+
+let leaderboardCache: LeaderboardEntry[] = [];
 let leaderboardHydrating = false;
+let leaderboardHydrated = false;
 
 const PROFILE_EVENT = "inet-arcade-profile-updated";
 const LEADERBOARD_EVENT = "inet-arcade-leaderboard-updated";
@@ -77,6 +80,17 @@ function defaultProfile(): ArcadeProfile {
   };
 }
 
+function cloneProfile(profile: ArcadeProfile): ArcadeProfile {
+  return {
+    credits: profile.credits,
+    ownedColors: [...profile.ownedColors],
+    ownedPacks: [...profile.ownedPacks],
+    ownedStickers: [...profile.ownedStickers],
+    ownedMystery: [...profile.ownedMystery],
+    ownedSounds: [...profile.ownedSounds],
+  };
+}
+
 function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((entry) => String(entry)).filter(Boolean) : [];
 }
@@ -104,6 +118,50 @@ function hasProfileData(profile: ArcadeProfile): boolean {
   );
 }
 
+function normalizeLeaderboardEntry(raw: unknown): LeaderboardEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const entry = raw as Partial<LeaderboardEntry>;
+  if (!entry.id || !entry.gameId || !entry.gameName || !entry.player || typeof entry.score !== "number" || !entry.date) {
+    return null;
+  }
+  return {
+    id: String(entry.id),
+    gameId: String(entry.gameId),
+    gameName: String(entry.gameName),
+    player: String(entry.player),
+    score: entry.score,
+    date: String(entry.date),
+  };
+}
+
+function normalizeLeaderboardEntries(value: unknown): LeaderboardEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => normalizeLeaderboardEntry(entry))
+    .filter((entry): entry is LeaderboardEntry => entry !== null);
+}
+
+function persistLegacyProfile(playerId: string, profile: ArcadeProfile): void {
+  try {
+    safeSetItem(playerKey(LEGACY_CREDITS_KEY, playerId), String(profile.credits));
+    safeSetJson(playerKey(LEGACY_OWNED_COLORS_KEY, playerId), profile.ownedColors);
+    safeSetJson(playerKey(LEGACY_OWNED_PACKS_KEY, playerId), profile.ownedPacks);
+    safeSetJson(playerKey(LEGACY_OWNED_STICKERS_KEY, playerId), profile.ownedStickers);
+    safeSetJson(playerKey(LEGACY_OWNED_MYSTERY_KEY, playerId), profile.ownedMystery);
+    safeSetJson(playerKey(LEGACY_OWNED_SOUNDS_KEY, playerId), profile.ownedSounds);
+  } catch {
+    // Ignore legacy mirror persistence failures.
+  }
+}
+
+function persistLegacyLeaderboard(entries: LeaderboardEntry[]): void {
+  try {
+    safeSetJson(LEGACY_STORAGE_KEY, entries);
+  } catch {
+    // Ignore legacy mirror persistence failures.
+  }
+}
+
 function readLegacyList(base: string, playerId: string): string[] {
   try {
     const raw = safeGetItem(playerKey(base, playerId));
@@ -113,16 +171,17 @@ function readLegacyList(base: string, playerId: string): string[] {
   }
 }
 
-function seedProfileFromLegacy(playerId: string): ArcadeProfile {
-  if (profileCache.has(playerId)) {
-    return normalizeProfile(profileCache.get(playerId));
-  }
+function readLegacyProfile(playerId: string): { profile: ArcadeProfile; hasAny: boolean } {
+  let creditsRawExists = false;
   let legacyCredits = 0;
   try {
-    legacyCredits = parseInt(safeGetItem(playerKey(LEGACY_CREDITS_KEY, playerId)) || "0", 10) || 0;
+    const raw = safeGetItem(playerKey(LEGACY_CREDITS_KEY, playerId));
+    creditsRawExists = raw !== null && raw !== undefined && raw !== "";
+    legacyCredits = parseInt(raw || "0", 10) || 0;
   } catch {
     legacyCredits = 0;
   }
+
   const profile = normalizeProfile({
     credits: legacyCredits,
     ownedColors: readLegacyList(LEGACY_OWNED_COLORS_KEY, playerId),
@@ -131,15 +190,22 @@ function seedProfileFromLegacy(playerId: string): ArcadeProfile {
     ownedMystery: readLegacyList(LEGACY_OWNED_MYSTERY_KEY, playerId),
     ownedSounds: readLegacyList(LEGACY_OWNED_SOUNDS_KEY, playerId),
   });
-  profileCache.set(playerId, profile);
-  return profile;
+
+  return { profile, hasAny: creditsRawExists || hasProfileData(profile) };
+}
+
+function ensureProfileCache(playerId: string): ArcadeProfile {
+  if (!profileCache.has(playerId)) {
+    profileCache.set(playerId, defaultProfile());
+  }
+  return cloneProfile(profileCache.get(playerId)!);
 }
 
 function setProfileCache(playerId: string, profile: Partial<ArcadeProfile> | null | undefined): ArcadeProfile {
   const normalized = normalizeProfile(profile);
   profileCache.set(playerId, normalized);
   emitProfileUpdate(playerId);
-  return normalized;
+  return cloneProfile(normalized);
 }
 
 async function hydrateProfile(playerId: string): Promise<void> {
@@ -148,45 +214,50 @@ async function hydrateProfile(playerId: string): Promise<void> {
   try {
     const remote = await appStore.loadPlayerArcadeProfile<ArcadeProfile | null>(playerId, null);
     if (remote) {
-      setProfileCache(playerId, remote);
+      const normalized = setProfileCache(playerId, remote);
+      persistLegacyProfile(playerId, normalized);
       return;
     }
-    const legacy = seedProfileFromLegacy(playerId);
-    if (hasProfileData(legacy)) {
-      await appStore.savePlayerArcadeProfile(playerId, legacy).catch(() => {});
+
+    const legacy = readLegacyProfile(playerId);
+    const normalized = setProfileCache(playerId, legacy.profile);
+    if (legacy.hasAny) {
+      await appStore.savePlayerArcadeProfile(playerId, normalized).catch(() => {});
+      persistLegacyProfile(playerId, normalized);
     }
   } catch {
-    seedProfileFromLegacy(playerId);
+    const legacy = readLegacyProfile(playerId);
+    setProfileCache(playerId, legacy.profile);
   } finally {
+    profileHydrated.add(playerId);
     profileHydrating.delete(playerId);
   }
 }
 
 function saveProfileRemote(playerId: string): void {
-  const profile = seedProfileFromLegacy(playerId);
+  const profile = ensureProfileCache(playerId);
+  persistLegacyProfile(playerId, profile);
   void appStore.savePlayerArcadeProfile(playerId, profile).catch(() => {});
 }
 
-function readLegacyLeaderboard(): LeaderboardEntry[] {
+function readLegacyLeaderboard(): { entries: LeaderboardEntry[]; hasAny: boolean } {
   try {
     const raw = safeGetItem(LEGACY_STORAGE_KEY);
-    const entries = raw ? JSON.parse(raw) : [];
-    return Array.isArray(entries) ? entries : [];
+    const entries = raw ? normalizeLeaderboardEntries(JSON.parse(raw)) : [];
+    return { entries, hasAny: Array.isArray(entries) && entries.length > 0 };
   } catch {
-    return [];
+    return { entries: [], hasAny: false };
   }
 }
 
 function getLeaderboardSnapshot(): LeaderboardEntry[] {
-  if (!leaderboardCache) {
-    leaderboardCache = readLegacyLeaderboard();
-  }
   return [...leaderboardCache];
 }
 
-function setLeaderboardCache(entries: LeaderboardEntry[]): void {
-  leaderboardCache = Array.isArray(entries) ? [...entries] : [];
+function setLeaderboardCache(entries: LeaderboardEntry[]): LeaderboardEntry[] {
+  leaderboardCache = normalizeLeaderboardEntries(entries);
   emitLeaderboardUpdate();
+  return [...leaderboardCache];
 }
 
 async function hydrateLeaderboard(): Promise<void> {
@@ -194,25 +265,32 @@ async function hydrateLeaderboard(): Promise<void> {
   leaderboardHydrating = true;
   try {
     const remote = await appStore.loadArcadeLeaderboardState<LeaderboardDoc>({ entries: [] });
-    const remoteEntries = Array.isArray(remote?.entries) ? remote.entries : [];
+    const remoteEntries = normalizeLeaderboardEntries(remote?.entries);
     if (remoteEntries.length > 0) {
-      setLeaderboardCache(remoteEntries);
+      const normalized = setLeaderboardCache(remoteEntries);
+      persistLegacyLeaderboard(normalized);
       return;
     }
-    const legacy = getLeaderboardSnapshot();
-    if (legacy.length > 0) {
-      await appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries: legacy }).catch(() => {});
+
+    const legacy = readLegacyLeaderboard();
+    const normalized = setLeaderboardCache(legacy.entries);
+    if (legacy.hasAny) {
+      await appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries: normalized }).catch(() => {});
+      persistLegacyLeaderboard(normalized);
     }
   } catch {
-    getLeaderboardSnapshot();
+    const legacy = readLegacyLeaderboard();
+    setLeaderboardCache(legacy.entries);
   } finally {
+    leaderboardHydrated = true;
     leaderboardHydrating = false;
   }
 }
 
 function saveLeaderboardRemote(entries: LeaderboardEntry[]): void {
-  setLeaderboardCache(entries);
-  void appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries }).catch(() => {});
+  const normalized = setLeaderboardCache(entries);
+  persistLegacyLeaderboard(normalized);
+  void appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries: normalized }).catch(() => {});
 }
 
 export function subscribeArcadeProfile(listener: () => void, playerId?: string): () => void {
@@ -245,7 +323,9 @@ export function subscribeArcadeLeaderboard(listener: () => void): () => void {
 }
 
 export function getLeaderboard(): LeaderboardEntry[] {
-  void hydrateLeaderboard();
+  if (!leaderboardHydrated && !leaderboardHydrating) {
+    void hydrateLeaderboard();
+  }
   return getLeaderboardSnapshot();
 }
 
@@ -265,7 +345,9 @@ export function saveScore(gameId: string, gameName: string, player: string, scor
 }
 
 export function getLeaderboardByGame(gameId: string): LeaderboardEntry[] {
-  return getLeaderboard().filter((entry) => entry.gameId === gameId).sort((a, b) => b.score - a.score);
+  return getLeaderboard()
+    .filter((entry) => entry.gameId === gameId)
+    .sort((a, b) => b.score - a.score);
 }
 
 export function getTopScores(gameId: string, limit = 10): LeaderboardEntry[] {
@@ -286,8 +368,10 @@ export function clearLeaderboard(gameId?: string): void {
 
 function getProfileSnapshot(playerId?: string): ArcadeProfile {
   const pid = playerId || getCurrentPlayerId();
-  void hydrateProfile(pid);
-  return seedProfileFromLegacy(pid);
+  if (!profileHydrated.has(pid) && !profileHydrating.has(pid)) {
+    void hydrateProfile(pid);
+  }
+  return ensureProfileCache(pid);
 }
 
 export function getCredits(playerId?: string): number {
