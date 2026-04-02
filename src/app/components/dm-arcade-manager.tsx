@@ -22,16 +22,8 @@ import { appStore } from "@/lib/app-store";
 import { S_MUTED, S_ACCENT, S_TEXT, S_RED } from "./shared-styles";
 
 // ========================
-// localStorage keys for DM-managed catalog data (global, not per-player)
+// Supabase-backed arcade catalog + leaderboard state
 // ========================
-const CUSTOM_COLORS_KEY = "inet-dm-arcade-custom-colors";
-const HIDDEN_COLORS_KEY = "inet-dm-arcade-hidden-colors";
-const CUSTOM_PACKS_KEY = "inet-dm-arcade-custom-packs";
-const HIDDEN_PACKS_KEY = "inet-dm-arcade-hidden-packs";
-const CUSTOM_STICKERS_KEY = "inet-dm-arcade-custom-stickers";
-const HIDDEN_STICKERS_KEY = "inet-dm-arcade-hidden-stickers";
-const MYSTERY_ITEMS_KEY = "inet-dm-arcade-mystery-items";
-const LEADERBOARD_KEY = "inet-arcade-leaderboard";
 
 // ========================
 // Types
@@ -283,7 +275,9 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
-      void appStore.saveArcadeCatalogState({ customColors, customPacks, customStickers, mysteryItems, hiddenColors, hiddenPacks, hiddenStickers }).catch(() => {});
+      void appStore.saveArcadeCatalogState({ customColors, customPacks, customStickers, mysteryItems, hiddenColors, hiddenPacks, hiddenStickers }).then(() => {
+        window.dispatchEvent(new CustomEvent("inet-arcade-catalog-updated"));
+      }).catch(() => {});
     }, 350);
     return () => clearTimeout(handle);
   }, [customColors, customPacks, customStickers, mysteryItems, hiddenColors, hiddenPacks, hiddenStickers]);
@@ -291,7 +285,9 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
-      void appStore.saveArcadeLeaderboardState({ entries: leaderboard }).catch(() => {});
+      void appStore.saveArcadeLeaderboardState({ entries: leaderboard }).then(() => {
+        window.dispatchEvent(new CustomEvent("inet-arcade-leaderboard-updated"));
+      }).catch(() => {});
     }, 350);
     return () => clearTimeout(handle);
   }, [leaderboard]);

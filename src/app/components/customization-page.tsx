@@ -14,6 +14,7 @@ import {
   getOwnedStickers,
   getOwnedMystery,
   getOwnedSounds,
+  subscribeArcadeProfile,
 } from "./game-leaderboard";
 import {
   getPlayerTheme,
@@ -34,7 +35,7 @@ import {
 
 import { STICKER_IMAGES } from "./sticker-images";
 import { fetchProfilePicture, uploadProfilePicture, resizeImage, invalidatePfpCache, deleteProfilePicture } from "./profile-picture";
-import { safeGetItem, safeGetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import {
@@ -118,7 +119,7 @@ const BUILTIN_COLORS: SingleColor[] = [
   { id: "diamond", name: "Diamond", hex: "#B9F2FF", price: 50 },
 ];
 
-function getPackColors(ownedPackIds: string[]): SingleColor[] {
+function getPackColors(ownedPackIds: string[], customPacks: { id: string; name: string; colors: string[] }[] = []): SingleColor[] {
   const BUILTIN_PACKS = [
     { id: "cga", name: "CGA", colors: ["#000000", "#55FFFF", "#FF55FF", "#FFFFFF"] },
     { id: "gameboy", name: "Game Boy", colors: ["#0F380F", "#306230", "#8BAC0F", "#9BBC0F"] },
@@ -143,7 +144,6 @@ function getPackColors(ownedPackIds: string[]): SingleColor[] {
     { id: "steampunk", name: "Steampunk", colors: ["#B87333", "#D4A017", "#3E2723", "#8B7355", "#C9B037", "#4E342E"] },
     { id: "glitch", name: "Glitch", colors: ["#39FF14", "#FF00FF", "#00FFFF", "#0A0A0A", "#8B00FF", "#FF003F"] },
   ];
-  const customPacks: { id: string; name: string; colors: string[] }[] = safeGetJson("inet-dm-arcade-custom-packs", []);
   const allPacks = [...BUILTIN_PACKS, ...customPacks];
   const result: SingleColor[] = [];
   const seenHex = new Set<string>();
@@ -181,6 +181,38 @@ interface PlayerCustomizationDoc {
   customSounds: CustomSoundParams[];
 }
 
+interface ArcadeCatalogState {
+  customColors: SingleColor[];
+  customPacks: { id: string; name: string; colors: string[] }[];
+  customStickers: { id: string; name: string; price: number }[];
+  mysteryItems: { id: string; name: string; description: string; price: number }[];
+  hiddenColors: string[];
+  hiddenPacks: string[];
+  hiddenStickers: string[];
+}
+
+const DEFAULT_ARCADE_CATALOG: ArcadeCatalogState = {
+  customColors: [],
+  customPacks: [],
+  customStickers: [],
+  mysteryItems: [],
+  hiddenColors: [],
+  hiddenPacks: [],
+  hiddenStickers: [],
+};
+
+function normalizeArcadeCatalogState(raw: Partial<ArcadeCatalogState> | null | undefined): ArcadeCatalogState {
+  return {
+    customColors: Array.isArray(raw?.customColors) ? raw.customColors : [],
+    customPacks: Array.isArray(raw?.customPacks) ? raw.customPacks : [],
+    customStickers: Array.isArray(raw?.customStickers) ? raw.customStickers : [],
+    mysteryItems: Array.isArray(raw?.mysteryItems) ? raw.mysteryItems : [],
+    hiddenColors: Array.isArray(raw?.hiddenColors) ? raw.hiddenColors.map((value) => String(value)) : [],
+    hiddenPacks: Array.isArray(raw?.hiddenPacks) ? raw.hiddenPacks.map((value) => String(value)) : [],
+    hiddenStickers: Array.isArray(raw?.hiddenStickers) ? raw.hiddenStickers.map((value) => String(value)) : [],
+  };
+}
+
 function cloneTheme(theme: PlayerTheme): PlayerTheme {
   return { ...theme };
 }
@@ -210,25 +242,25 @@ function normalizeCustomizationDoc(playerId: string, raw: Partial<PlayerCustomiz
   if (!raw || typeof raw !== "object") return fallback;
   return {
     playerId,
-    version: typeof raw.version === "number" ? raw.version : fallback.version,
-    theme: raw.theme && typeof raw.theme === "object" ? { ...DEFAULT_THEME, ...raw.theme } : fallback.theme,
+    version: typeof raw.version === "number" ? raw.version : CUSTOMIZATION_VERSION,
+    theme: raw.theme ? { ...DEFAULT_THEME, ...raw.theme } : fallback.theme,
     soundConfig: normalizeSoundConfig(raw.soundConfig),
-    customSounds: Array.isArray(raw.customSounds) ? [...raw.customSounds] : fallback.customSounds,
+    customSounds: Array.isArray(raw.customSounds) ? raw.customSounds : fallback.customSounds,
   };
 }
 
 function applyCustomizationDocToLocal(doc: PlayerCustomizationDoc) {
-  saveCustomSounds(doc.customSounds);
+  saveCustomSounds([...(doc.customSounds || [])]);
+  const soundConfig = normalizeSoundConfig(doc.soundConfig);
   for (const slot of SOUND_SLOT_ORDER) {
-    const soundId = doc.soundConfig[slot];
-    if (soundId) setSlotSound(slot, soundId);
+    setSlotSound(slot, soundConfig[slot]);
   }
 }
 
 /* ═══════════════════════���═══════════════════ */
 /* Custom Sound Creator sub-component          */
 /* ═══════════════════════════════════════════ */
-function CustomSoundCreator({ slot, accentColor, labelColor, onPersist }: { slot: SoundSlot; accentColor: string; labelColor: string; onPersist: () => void }) {
+function CustomSoundCreator({ slot, accentColor, labelColor, onSync }: { slot: SoundSlot; accentColor: string; labelColor: string; onSync: () => void }) {
   const defaults = defaultCustomParams(slot);
   const [open, setOpen] = React.useState(false);
   const [showAdvanced, setShowAdvanced] = React.useState(false);
@@ -311,7 +343,7 @@ function CustomSoundCreator({ slot, accentColor, labelColor, onPersist }: { slot
     const newSound: CustomSoundParams = { ...buildParams(), id, name: name.trim() };
     saveCustomSounds([...existing, newSound]);
     setSlotSound(slot, id);
-    onPersist();
+    onSync();
     setOpen(false);
     setName("");
   };
@@ -653,20 +685,52 @@ export function CustomizationPage() {
   const [customizationLoaded, setCustomizationLoaded] = useState(false);
   const [customizationError, setCustomizationError] = useState<string | null>(null);
   const [soundSyncNonce, setSoundSyncNonce] = useState(0);
+  const [catalogState, setCatalogState] = useState<ArcadeCatalogState>(DEFAULT_ARCADE_CATALOG);
+  const [credits, setCreditsState] = useState(0);
+  const [playerOwnedColorIds, setPlayerOwnedColorIds] = useState<string[]>([]);
+  const [playerOwnedPackIds, setPlayerOwnedPackIds] = useState<string[]>([]);
+  const [playerOwnedStickerIds, setPlayerOwnedStickerIds] = useState<string[]>([]);
+  const [ownedMysteryState, setOwnedMysteryState] = useState<string[]>([]);
+  const [playerOwnedSounds, setPlayerOwnedSounds] = useState<string[]>([]);
   const touchCustomizationSync = useCallback(() => setSoundSyncNonce((value) => value + 1), []);
 
-  // Gradient mode state
-  const [gradientMode, setGradientMode] = useState(false);
-  const [gradColors, setGradColors] = useState<string[]>(["#4A7BFF", "#DA70D6"]);
-  const [gradDirection, setGradDirection] = useState("90deg");
-  const [gradEditIdx, setGradEditIdx] = useState(0);
+  const refreshArcadeOwnership = useCallback(() => {
+    setCreditsState(getCredits(currentUserId));
+    setPlayerOwnedColorIds(getOwnedColors(currentUserId));
+    setPlayerOwnedPackIds(getOwnedPacks(currentUserId));
+    setPlayerOwnedStickerIds(getOwnedStickers(currentUserId));
+    setOwnedMysteryState(getOwnedMystery(currentUserId));
+    setPlayerOwnedSounds(getOwnedSounds(currentUserId));
+  }, [currentUserId]);
 
-  const [tab, setTab] = useState<CustTab>("theme");
+  useEffect(() => {
+    refreshArcadeOwnership();
+    const unsubscribe = subscribeArcadeProfile(refreshArcadeOwnership, currentUserId);
+    return unsubscribe;
+  }, [currentUserId, refreshArcadeOwnership]);
 
   useEffect(() => {
     let cancelled = false;
+    const loadCatalog = async () => {
+      try {
+        const remote = await appStore.loadArcadeCatalogState<ArcadeCatalogState>(DEFAULT_ARCADE_CATALOG);
+        if (!cancelled) setCatalogState(normalizeArcadeCatalogState(remote));
+      } catch {
+        if (!cancelled) setCatalogState(DEFAULT_ARCADE_CATALOG);
+      }
+    };
+    void loadCatalog();
+    const onCatalogUpdate = () => { void loadCatalog(); };
+    window.addEventListener("inet-arcade-catalog-updated", onCatalogUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("inet-arcade-catalog-updated", onCatalogUpdate);
+    };
+  }, []);
 
-    async function loadCustomization() {
+  useEffect(() => {
+    let cancelled = false;
+    const loadCustomization = async () => {
       if (!currentUserId) {
         setCustomizationLoaded(true);
         return;
@@ -681,6 +745,7 @@ export function CustomizationPage() {
         const normalized = normalizeCustomizationDoc(currentUserId, remoteDoc, theme);
         setTheme(normalized.theme);
         applyCustomizationDocToLocal(normalized);
+        refreshArcadeOwnership();
       } catch (err) {
         if (!cancelled) {
           setCustomizationError(err instanceof Error ? err.message : "Failed to load customization settings");
@@ -688,13 +753,12 @@ export function CustomizationPage() {
       } finally {
         if (!cancelled) setCustomizationLoaded(true);
       }
-    }
-
+    };
     void loadCustomization();
     return () => {
       cancelled = true;
     };
-  }, [currentUserId]);
+  }, [currentUserId, refreshArcadeOwnership]);
 
   useEffect(() => {
     if (!currentUserId || !customizationLoaded) return;
@@ -706,6 +770,14 @@ export function CustomizationPage() {
     }, 400);
     return () => window.clearTimeout(timeout);
   }, [currentUserId, customizationLoaded, theme, soundSyncNonce]);
+
+  // Gradient mode state
+  const [gradientMode, setGradientMode] = useState(false);
+  const [gradColors, setGradColors] = useState<string[]>(["#4A7BFF", "#DA70D6"]);
+  const [gradDirection, setGradDirection] = useState("90deg");
+  const [gradEditIdx, setGradEditIdx] = useState(0);
+
+  const [tab, setTab] = useState<CustTab>("theme");
 
   // Profile picture state
   const [pfpUrl, setPfpUrl] = useState<string | null>(null);
@@ -754,34 +826,28 @@ export function CustomizationPage() {
 
   const isDM = currentUserId === "dm" || currentUser === "DM";
 
-  const credits = getCredits();
-  const _ownedColorIds = getOwnedColors();
-  const _ownedPackIds = getOwnedPacks();
-  const _ownedStickerIds = getOwnedStickers();
-  const ownedMystery = getOwnedMystery();
-  const _ownedSounds = getOwnedSounds();
-
   const ALL_BUILTIN_PACK_IDS = [
     "cga", "gameboy", "nes", "c64", "pico8", "pastel", "mono", "sepia",
     "dark", "ocean", "earth", "spring", "summer", "fall", "winter",
     "horror", "halloween", "christmas", "cat", "celestial", "steampunk", "glitch",
   ];
-  const customPacks: { id: string; name: string; colors: string[] }[] = safeGetJson("inet-dm-arcade-custom-packs", []);
-  const customColors: SingleColor[] = safeGetJson("inet-dm-arcade-custom-colors", []);
-  const customStickers: { id: string; name: string; price: number }[] = safeGetJson("inet-dm-arcade-custom-stickers", []);
+  const customPacks = catalogState.customPacks;
+  const customColors = catalogState.customColors;
+  const customStickers = catalogState.customStickers;
 
-  const ownedColorIds = isDM ? [...BUILTIN_COLORS.map(c => c.id), ...customColors.map(c => c.id)] : _ownedColorIds;
-  const ownedPackIds = isDM ? [...ALL_BUILTIN_PACK_IDS, ...customPacks.map(p => p.id)] : _ownedPackIds;
+  const ownedColorIds = isDM ? [...BUILTIN_COLORS.map(c => c.id), ...customColors.map(c => c.id)] : playerOwnedColorIds;
+  const ownedPackIds = isDM ? [...ALL_BUILTIN_PACK_IDS, ...customPacks.map(p => p.id)] : playerOwnedPackIds;
   const ownedStickerIds = isDM
     ? ["fancy-stand", "fancy-jump", "gnarpy-paw", "gnarpy", "gnarpy-miku", ...customStickers.map(s => s.id)]
-    : _ownedStickerIds;
-  const ownedSounds = isDM ? STORE_INDIVIDUAL_SOUNDS.map(s => s.id) : _ownedSounds;
+    : playerOwnedStickerIds;
+  const ownedMystery = ownedMysteryState;
+  const ownedSounds = isDM ? STORE_INDIVIDUAL_SOUNDS.map(s => s.id) : playerOwnedSounds;
 
   const allOwnedColors = useMemo<SingleColor[]>(() => [
     ...BUILTIN_COLORS.filter((c) => ownedColorIds.includes(c.id)),
     ...customColors.filter((c) => ownedColorIds.includes(c.id)),
-    ...getPackColors(ownedPackIds),
-  ], [ownedColorIds, customColors, ownedPackIds]);
+    ...getPackColors(ownedPackIds, customPacks),
+  ], [ownedColorIds, customColors, ownedPackIds, customPacks]);
 
   // Sync gradient state when switching elements
   const syncGradientState = (el: keyof PlayerTheme) => {
@@ -1630,7 +1696,7 @@ export function CustomizationPage() {
                         </div>
 
                         {/* Create Custom Sound button */}
-                        <CustomSoundCreator slot={slot} accentColor={firstColor(theme.accentColor)} labelColor={theme.labelColor} onPersist={touchCustomizationSync} />
+                        <CustomSoundCreator slot={slot} accentColor={firstColor(theme.accentColor)} labelColor={theme.labelColor} onSync={touchCustomizationSync} />
                       </div>
                     );
                   })}

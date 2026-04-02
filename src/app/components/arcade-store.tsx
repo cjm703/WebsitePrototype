@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { retro } from "./retro-styles";
-import { getCredits, spendCredits, getOwnedColors, addOwnedColor, getOwnedPacks, addOwnedPack, getOwnedStickers, addOwnedSticker, getOwnedMystery, addOwnedMystery, getOwnedSounds, addOwnedSound } from "./game-leaderboard";
+import { getCredits, spendCredits, getOwnedColors, addOwnedColor, getOwnedPacks, addOwnedPack, getOwnedStickers, addOwnedSticker, getOwnedMystery, addOwnedMystery, getOwnedSounds, addOwnedSound, subscribeArcadeProfile } from "./game-leaderboard";
 import shopkeeperImg from "@/assets/figma/Gnarpy_Boss1.png";
 import stickerFancyStand from "@/assets/figma/Fancy_Man_Stand.png";
 import stickerFancyJump from "@/assets/figma/Fancy_Man_Jump.png";
 import stickerGnarpyPaw from "@/assets/figma/Paw.png";
 import stickerGnarpy from "@/assets/figma/Gnarpy_Boss1.png";
-import { safeGetItem, safeGetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import stickerGnarpyMiku from "@/assets/figma/Gnarpy_Miku_Boss2.png";
 
 import { STORE_SOUND_PACKS, STORE_INDIVIDUAL_SOUNDS, ALL_SOUND_VARIANTS, previewSound, type SoundSlot } from "./sound-effects";
@@ -130,15 +131,46 @@ const STORE_STICKERS: Sticker[] = [
 ];
 
 // ========================
-// DM-managed custom/hidden items
+// DM-managed catalog state (Supabase-backed)
 // ========================
-function getHiddenColors(): string[] { return safeGetJson("inet-dm-arcade-hidden-colors", []); }
-function getHiddenPacks(): string[] { return safeGetJson("inet-dm-arcade-hidden-packs", []); }
-function getHiddenStickers(): string[] { return safeGetJson("inet-dm-arcade-hidden-stickers", []); }
-function getCustomColors(): SingleColor[] { return safeGetJson("inet-dm-arcade-custom-colors", []); }
-function getCustomPacks(): ColorPack[] { return safeGetJson("inet-dm-arcade-custom-packs", []); }
-function getCustomStickers(): { id: string; name: string; price: number }[] { return safeGetJson("inet-dm-arcade-custom-stickers", []); }
-function getMysteryItems(): { id: string; name: string; description: string; price: number }[] { return safeGetJson("inet-dm-arcade-mystery-items", []); }
+interface MysteryItem {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+}
+
+interface ArcadeCatalogState {
+  customColors: SingleColor[];
+  customPacks: ColorPack[];
+  customStickers: { id: string; name: string; price: number }[];
+  mysteryItems: MysteryItem[];
+  hiddenColors: string[];
+  hiddenPacks: string[];
+  hiddenStickers: string[];
+}
+
+const DEFAULT_ARCADE_CATALOG: ArcadeCatalogState = {
+  customColors: [],
+  customPacks: [],
+  customStickers: [],
+  mysteryItems: [],
+  hiddenColors: [],
+  hiddenPacks: [],
+  hiddenStickers: [],
+};
+
+function normalizeArcadeCatalogState(raw: Partial<ArcadeCatalogState> | null | undefined): ArcadeCatalogState {
+  return {
+    customColors: Array.isArray(raw?.customColors) ? raw.customColors : [],
+    customPacks: Array.isArray(raw?.customPacks) ? raw.customPacks : [],
+    customStickers: Array.isArray(raw?.customStickers) ? raw.customStickers : [],
+    mysteryItems: Array.isArray(raw?.mysteryItems) ? raw.mysteryItems : [],
+    hiddenColors: Array.isArray(raw?.hiddenColors) ? raw.hiddenColors.map((value) => String(value)) : [],
+    hiddenPacks: Array.isArray(raw?.hiddenPacks) ? raw.hiddenPacks.map((value) => String(value)) : [],
+    hiddenStickers: Array.isArray(raw?.hiddenStickers) ? raw.hiddenStickers.map((value) => String(value)) : [],
+  };
+}
 
 const COLOR_PACKS: ColorPack[] = [
   { id: "cga",       name: "CGA",       price: 100,  colors: ["#000000", "#55FFFF", "#FF55FF", "#FFFFFF"] },
@@ -192,24 +224,42 @@ export function ArcadeStore() {
   const [speechVisible, setSpeechVisible] = useState(true);
   const [activeCategory, setActiveCategory] = useState("colors");
   const [bobFrame, setBobFrame] = useState(0);
-  const [ownedPacks, setOwnedPacks] = useState<string[]>(getOwnedPacks());
-  const [ownedColors, setOwnedColors] = useState<string[]>(getOwnedColors());
-  const [ownedStickers, setOwnedStickers] = useState<string[]>(getOwnedStickers());
-  const [credits, setCredits] = useState(getCredits());
+  const [ownedPacks, setOwnedPacks] = useState<string[]>([]);
+  const [ownedColors, setOwnedColors] = useState<string[]>([]);
+  const [ownedStickers, setOwnedStickers] = useState<string[]>([]);
+  const [credits, setCredits] = useState(0);
+  const [ownedMystery, setOwnedMystery] = useState<string[]>([]);
+  const [ownedSounds, setOwnedSounds] = useState<string[]>([]);
+  const [catalogState, setCatalogState] = useState<ArcadeCatalogState>(DEFAULT_ARCADE_CATALOG);
   const speechTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Build dynamic item lists from built-ins + DM custom/hidden
-  const hiddenColorIds = getHiddenColors();
-  const hiddenPackIds = getHiddenPacks();
-  const hiddenStickerIds = getHiddenStickers();
-  const visibleColors = [...STORE_COLORS.filter((c) => !hiddenColorIds.includes(c.id)), ...getCustomColors()];
-  const visiblePacks = [...COLOR_PACKS.filter((p) => !hiddenPackIds.includes(p.id)), ...getCustomPacks()];
-  const builtinStickersVisible = STORE_STICKERS.filter((s) => !hiddenStickerIds.includes(s.id));
-  const customStickerData = getCustomStickers();
-  const mysteryItemsData = getMysteryItems();
-  const [ownedMystery, setOwnedMystery] = useState<string[]>(() => getOwnedMystery());
+  const refreshPlayerArcadeState = useCallback(() => {
+    setOwnedPacks(getOwnedPacks());
+    setOwnedColors(getOwnedColors());
+    setOwnedStickers(getOwnedStickers());
+    setOwnedMystery(getOwnedMystery());
+    setOwnedSounds(getOwnedSounds());
+    setCredits(getCredits());
+  }, []);
 
-  const [ownedSounds, setOwnedSounds] = useState<string[]>(() => getOwnedSounds());
+  const loadCatalogState = useCallback(async () => {
+    try {
+      const remote = await appStore.loadArcadeCatalogState<ArcadeCatalogState>(DEFAULT_ARCADE_CATALOG);
+      setCatalogState(normalizeArcadeCatalogState(remote));
+    } catch {
+      setCatalogState(DEFAULT_ARCADE_CATALOG);
+    }
+  }, []);
+
+  // Build dynamic item lists from built-ins + DM custom/hidden
+  const hiddenColorIds = catalogState.hiddenColors;
+  const hiddenPackIds = catalogState.hiddenPacks;
+  const hiddenStickerIds = catalogState.hiddenStickers;
+  const visibleColors = [...STORE_COLORS.filter((c) => !hiddenColorIds.includes(c.id)), ...catalogState.customColors];
+  const visiblePacks = [...COLOR_PACKS.filter((p) => !hiddenPackIds.includes(p.id)), ...catalogState.customPacks];
+  const builtinStickersVisible = STORE_STICKERS.filter((s) => !hiddenStickerIds.includes(s.id));
+  const customStickerData = catalogState.customStickers;
+  const mysteryItemsData = catalogState.mysteryItems;
 
   // Mascot idle bob animation
   useEffect(() => {
@@ -219,11 +269,23 @@ export function ArcadeStore() {
     return () => clearInterval(interval);
   }, []);
 
-  // Refresh credits periodically
   useEffect(() => {
-    const interval = setInterval(() => setCredits(getCredits()), 1000);
-    return () => clearInterval(interval);
-  }, []);
+    refreshPlayerArcadeState();
+    const unsubscribe = subscribeArcadeProfile(refreshPlayerArcadeState, currentUserId);
+    const onFocus = () => refreshPlayerArcadeState();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [currentUserId, refreshPlayerArcadeState]);
+
+  useEffect(() => {
+    void loadCatalogState();
+    const onCatalogUpdate = () => { void loadCatalogState(); };
+    window.addEventListener("inet-arcade-catalog-updated", onCatalogUpdate);
+    return () => window.removeEventListener("inet-arcade-catalog-updated", onCatalogUpdate);
+  }, [loadCatalogState]);
 
   // Entrance speech
   useEffect(() => {
