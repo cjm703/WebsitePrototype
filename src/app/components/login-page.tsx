@@ -22,15 +22,38 @@ const DM_PROFILE: LoginProfile = {
   description: "System Administrator · Full Access",
 };
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim();
+const PUBLIC_KEY = (
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  ""
+).trim();
+
+if (!SUPABASE_URL) {
+  throw new Error("Missing VITE_SUPABASE_URL in frontend environment");
+}
+
+if (!PUBLIC_KEY) {
+  throw new Error(
+    "Missing VITE_SUPABASE_ANON_KEY or VITE_SUPABASE_PUBLISHABLE_KEY in frontend environment"
+  );
+}
+
+const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
+
+function authHeaders(includeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${PUBLIC_KEY}`,
+    apikey: PUBLIC_KEY,
+  };
+  if (includeJson) headers["Content-Type"] = "application/json";
+  return headers;
+}
 
 async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
   const res = await fetch(`${API_BASE}/profiles`, {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    },
+    headers: authHeaders(false),
   });
 
   if (!res.ok) {
