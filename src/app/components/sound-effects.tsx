@@ -4,7 +4,7 @@
 // Now supports multiple sound variants per action
 // ════════════════════════════════════════════════════════
 
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeSetJson } from "./safe-storage";
 
 let audioCtx: AudioContext | null = null;
 
@@ -48,23 +48,136 @@ export interface SoundPack {
 }
 
 const SOUND_CONFIG_KEY = "inet-sound-config";
+const CUSTOM_SOUNDS_KEY = "inet-custom-sounds";
+const DEFAULT_SOUND_CONFIG: Record<SoundSlot, string> = {
+  navClick: "default",
+  tabClick: "default",
+  diceRoll: "default",
+  successChime: "default",
+};
+const SOUND_SETTINGS_EVENT = "inet-sound-settings-updated";
+
+let soundConfigState: Record<SoundSlot, string> = { ...DEFAULT_SOUND_CONFIG };
+let customSoundsState: CustomSoundParams[] = [];
+let soundStateInitialized = false;
+
+function dispatchSoundStateUpdate() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(SOUND_SETTINGS_EVENT));
+  }
+}
+
+function normalizeSoundConfigState(
+  raw: Partial<Record<SoundSlot, string>> | null | undefined,
+): Record<SoundSlot, string> {
+  return {
+    navClick: typeof raw?.navClick === "string" && raw.navClick.trim() ? raw.navClick : DEFAULT_SOUND_CONFIG.navClick,
+    tabClick: typeof raw?.tabClick === "string" && raw.tabClick.trim() ? raw.tabClick : DEFAULT_SOUND_CONFIG.tabClick,
+    diceRoll: typeof raw?.diceRoll === "string" && raw.diceRoll.trim() ? raw.diceRoll : DEFAULT_SOUND_CONFIG.diceRoll,
+    successChime: typeof raw?.successChime === "string" && raw.successChime.trim() ? raw.successChime : DEFAULT_SOUND_CONFIG.successChime,
+  };
+}
+
+function normalizeCustomSoundsState(raw: unknown): CustomSoundParams[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((entry): entry is CustomSoundParams => {
+    return !!entry && typeof entry === "object" && typeof (entry as CustomSoundParams).id === "string" && typeof (entry as CustomSoundParams).slot === "string";
+  });
+}
+
+function persistLegacySoundState() {
+  try {
+    safeSetJson(SOUND_CONFIG_KEY, soundConfigState);
+    safeSetJson(CUSTOM_SOUNDS_KEY, customSoundsState);
+  } catch {
+    // Ignore legacy mirror persistence failures.
+  }
+}
+
+function ensureSoundStateInitialized() {
+  if (soundStateInitialized) return;
+  soundStateInitialized = true;
+  const legacy = readLegacySoundState();
+  if (legacy.hasAny) {
+    soundConfigState = legacy.soundConfig;
+    customSoundsState = legacy.customSounds;
+  }
+}
+
+export function readLegacySoundState(): {
+  soundConfig: Record<SoundSlot, string>;
+  customSounds: CustomSoundParams[];
+  hasAny: boolean;
+} {
+  let rawConfig: Partial<Record<SoundSlot, string>> | null = null;
+  let rawCustomSounds: unknown = null;
+
+  try {
+    const configRaw = safeGetItem(SOUND_CONFIG_KEY);
+    if (configRaw) rawConfig = JSON.parse(configRaw);
+  } catch {
+    rawConfig = null;
+  }
+
+  try {
+    const customRaw = safeGetItem(CUSTOM_SOUNDS_KEY);
+    if (customRaw) rawCustomSounds = JSON.parse(customRaw);
+  } catch {
+    rawCustomSounds = null;
+  }
+
+  const soundConfig = normalizeSoundConfigState(rawConfig);
+  const customSounds = normalizeCustomSoundsState(rawCustomSounds);
+  const hasAny = rawConfig != null || customSounds.length > 0;
+
+  return { soundConfig, customSounds, hasAny };
+}
+
+export function getSoundStateSnapshot(): {
+  soundConfig: Record<SoundSlot, string>;
+  customSounds: CustomSoundParams[];
+} {
+  ensureSoundStateInitialized();
+  return {
+    soundConfig: { ...soundConfigState },
+    customSounds: [...customSoundsState],
+  };
+}
+
+export function hydrateSoundState(raw: {
+  soundConfig?: Partial<Record<SoundSlot, string>> | null;
+  customSounds?: unknown;
+} | null | undefined): {
+  soundConfig: Record<SoundSlot, string>;
+  customSounds: CustomSoundParams[];
+} {
+  soundConfigState = normalizeSoundConfigState(raw?.soundConfig);
+  customSoundsState = normalizeCustomSoundsState(raw?.customSounds);
+  soundStateInitialized = true;
+  dispatchSoundStateUpdate();
+  return getSoundStateSnapshot();
+}
 
 export function getSoundConfig(): Record<SoundSlot, string> {
-  try {
-    const raw = safeGetItem(SOUND_CONFIG_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return { navClick: "default", tabClick: "default", diceRoll: "default", successChime: "default" };
+  ensureSoundStateInitialized();
+  return { ...soundConfigState };
 }
 
 export function setSoundConfig(config: Record<SoundSlot, string>) {
-  safeSetJson(SOUND_CONFIG_KEY, config);
+  ensureSoundStateInitialized();
+  soundConfigState = normalizeSoundConfigState(config);
+  persistLegacySoundState();
+  dispatchSoundStateUpdate();
 }
 
 export function setSlotSound(slot: SoundSlot, soundId: string) {
-  const cfg = getSoundConfig();
-  cfg[slot] = soundId;
-  setSoundConfig(cfg);
+  ensureSoundStateInitialized();
+  soundConfigState = {
+    ...soundConfigState,
+    [slot]: soundId,
+  };
+  persistLegacySoundState();
+  dispatchSoundStateUpdate();
 }
 
 // ────────────────────────────────────────────
@@ -76,8 +189,6 @@ function playNone() { /* intentionally silent */ }
 // ────────────────────────────────────────────
 // CUSTOM SOUND support
 // ────────────────────────────────────────────
-
-const CUSTOM_SOUNDS_KEY = "inet-custom-sounds";
 
 export type DecayCurve = "exponential" | "linear" | "sharp";
 export type FilterKind = "none" | "lowpass" | "highpass" | "bandpass";
@@ -160,25 +271,37 @@ export const CUSTOM_PRESETS: { label: string; emoji: string; apply: Partial<Cust
 ];
 
 export function getCustomSounds(): CustomSoundParams[] {
-  try {
-    const raw = safeGetItem(CUSTOM_SOUNDS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return [];
+  ensureSoundStateInitialized();
+  return [...customSoundsState];
 }
 
 export function saveCustomSounds(sounds: CustomSoundParams[]) {
-  safeSetJson(CUSTOM_SOUNDS_KEY, sounds);
+  ensureSoundStateInitialized();
+  customSoundsState = normalizeCustomSoundsState(sounds);
+  persistLegacySoundState();
+  dispatchSoundStateUpdate();
 }
 
 export function deleteCustomSound(id: string) {
-  const sounds = getCustomSounds().filter(s => s.id !== id);
-  saveCustomSounds(sounds);
-  const cfg = getSoundConfig();
-  for (const slot of Object.keys(cfg) as SoundSlot[]) {
-    if (cfg[slot] === id) cfg[slot] = slot === "navClick" ? "nav-default" : slot === "tabClick" ? "tab-default" : slot === "diceRoll" ? "dice-default" : "chime-default";
+  ensureSoundStateInitialized();
+  customSoundsState = customSoundsState.filter((sound) => sound.id !== id);
+
+  const nextConfig = { ...soundConfigState };
+  for (const slot of Object.keys(nextConfig) as SoundSlot[]) {
+    if (nextConfig[slot] === id) {
+      nextConfig[slot] = slot === "navClick"
+        ? "nav-default"
+        : slot === "tabClick"
+          ? "tab-default"
+          : slot === "diceRoll"
+            ? "dice-default"
+            : "chime-default";
+    }
   }
-  setSoundConfig(cfg);
+
+  soundConfigState = nextConfig;
+  persistLegacySoundState();
+  dispatchSoundStateUpdate();
 }
 
 export function playCustomSound(params: CustomSoundParams, vol: number) {

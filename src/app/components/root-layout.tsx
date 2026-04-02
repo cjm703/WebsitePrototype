@@ -1,9 +1,10 @@
 import { useEffect, useRef, Suspense } from "react";
 import { Outlet, useLocation } from "react-router";
 import { DiceAnimationOverlay } from "./dice-animation";
-import { playNavClick } from "./sound-effects";
+import { hydrateSoundState, playNavClick, readLegacySoundState } from "./sound-effects";
 import { ErrorBoundary } from "./error-boundary";
-import { pruneIfNeeded } from "./safe-storage";
+import { pruneIfNeeded, safeGetItem } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 
 function RouteFallback() {
@@ -37,9 +38,81 @@ function RouteFallback() {
 // Run a single prune check on first load
 const _pruneOnce = (() => { try { pruneIfNeeded(); } catch {} return true; })();
 
+type PlayerCustomizationSoundDoc = {
+  playerId?: string;
+  version?: number;
+  soundConfig?: Record<string, string>;
+  customSounds?: unknown[];
+  [key: string]: unknown;
+};
+
 export function RootLayout() {
   const { pathname } = useLocation();
   const prevPath = useRef(pathname);
+  const hydratedPlayerIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateInterfaceSoundState = async () => {
+      const playerId = (safeGetItem("inet-user-id") || "").trim();
+      if (!playerId || hydratedPlayerIdRef.current === playerId) return;
+
+      try {
+        const remoteDoc = await appStore.loadPlayerCustomization<PlayerCustomizationSoundDoc | null>(playerId, null);
+        if (cancelled) return;
+
+        const legacy = readLegacySoundState();
+        const remoteConfig = remoteDoc && typeof remoteDoc.soundConfig === "object" && remoteDoc.soundConfig !== null
+          ? remoteDoc.soundConfig
+          : null;
+        const remoteCustomSounds = Array.isArray(remoteDoc?.customSounds)
+          ? remoteDoc.customSounds
+          : null;
+
+        const hasRemoteSoundState = remoteConfig !== null || remoteCustomSounds !== null;
+
+        if (hasRemoteSoundState) {
+          const mergedSoundConfig = remoteConfig ?? (legacy.hasAny ? legacy.soundConfig : undefined);
+          const mergedCustomSounds = remoteCustomSounds ?? (legacy.hasAny ? legacy.customSounds : undefined);
+
+          hydrateSoundState({
+            soundConfig: mergedSoundConfig,
+            customSounds: mergedCustomSounds,
+          });
+
+          if ((remoteConfig === null || remoteCustomSounds === null) && legacy.hasAny) {
+            await appStore.savePlayerCustomization<PlayerCustomizationSoundDoc>(playerId, {
+              ...(remoteDoc ?? {}),
+              playerId,
+              version: typeof remoteDoc?.version === "number" ? remoteDoc.version : 1,
+              soundConfig: mergedSoundConfig,
+              customSounds: mergedCustomSounds,
+            });
+          }
+        } else if (legacy.hasAny) {
+          hydrateSoundState(legacy);
+          await appStore.savePlayerCustomization<PlayerCustomizationSoundDoc>(playerId, {
+            ...(remoteDoc ?? {}),
+            playerId,
+            version: typeof remoteDoc?.version === "number" ? remoteDoc.version : 1,
+            soundConfig: legacy.soundConfig,
+            customSounds: legacy.customSounds,
+          });
+        }
+
+        hydratedPlayerIdRef.current = playerId;
+      } catch (error) {
+        console.warn("Failed to hydrate interface sound settings", error);
+      }
+    };
+
+    void hydrateInterfaceSoundState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Play navigation sound on route change (not on initial mount)
   useEffect(() => {
