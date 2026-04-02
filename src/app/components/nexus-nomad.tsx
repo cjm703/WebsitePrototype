@@ -707,7 +707,37 @@ function loadLocalOfficeReputation(): number {
   }
 }
 
-function buildLocalNexusNomadState(): NexusNomadState {
+const REMOTE_NEXUS_SENTINEL_VERSION = -1;
+
+function clonePlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function buildDefaultNexusNomadState(): NexusNomadState {
+  return {
+    id: NEXUS_NOMAD_STATE_ID,
+    version: NEXUS_NOMAD_STATE_VERSION,
+    officeName: DEFAULT_OFFICE_NAME,
+    reputation: 25,
+    entityReps: [],
+    govConfig: {
+      ...DEFAULT_GOV_CONFIG,
+      tiers: defaultGovTiers(),
+    },
+    employees: clonePlain(DEFAULT_EMPLOYEES),
+    employeeCats: [{ id: "cat-default", name: "General", employeeIds: DEFAULT_EMPLOYEES.map(e => e.id), collapsed: false }],
+    presets: [],
+    loadouts: [],
+    facilities: clonePlain(DEFAULT_FACILITIES),
+    facilityCats: [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }],
+    contracts: clonePlain(DEFAULT_CONTRACTS),
+    contractCats: [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }],
+    officeInfo: clonePlain(DEFAULT_OFFICE_INFO),
+    invTabs: clonePlain(DEFAULT_INVENTORY),
+  };
+}
+
+function buildLegacyNexusNomadState(): NexusNomadState {
   return {
     id: NEXUS_NOMAD_STATE_ID,
     version: NEXUS_NOMAD_STATE_VERSION,
@@ -728,8 +758,15 @@ function buildLocalNexusNomadState(): NexusNomadState {
   };
 }
 
+function buildRemoteSentinelNexusNomadState(): NexusNomadState {
+  return {
+    ...buildDefaultNexusNomadState(),
+    version: REMOTE_NEXUS_SENTINEL_VERSION,
+  };
+}
+
 function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefined): NexusNomadState {
-  const fallback = buildLocalNexusNomadState();
+  const fallback = buildDefaultNexusNomadState();
   if (!raw || typeof raw !== "object") return fallback;
   return {
     id: typeof raw.id === "string" && raw.id.trim() ? raw.id : fallback.id,
@@ -737,7 +774,7 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
     officeName: typeof raw.officeName === "string" && raw.officeName.trim() ? raw.officeName : fallback.officeName,
     reputation: typeof raw.reputation === "number" ? Math.max(-100, Math.min(100, raw.reputation)) : fallback.reputation,
     entityReps: Array.isArray(raw.entityReps) ? raw.entityReps : fallback.entityReps,
-    govConfig: raw.govConfig && typeof raw.govConfig === "object" ? raw.govConfig : fallback.govConfig,
+    govConfig: raw.govConfig && typeof raw.govConfig === "object" ? raw.govConfig as CityGovConfig : fallback.govConfig,
     employees: Array.isArray(raw.employees) ? raw.employees : fallback.employees,
     employeeCats: Array.isArray(raw.employeeCats) ? raw.employeeCats : fallback.employeeCats,
     presets: Array.isArray(raw.presets) ? raw.presets : fallback.presets,
@@ -746,7 +783,7 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
     facilityCats: Array.isArray(raw.facilityCats) ? raw.facilityCats : fallback.facilityCats,
     contracts: Array.isArray(raw.contracts) ? raw.contracts : fallback.contracts,
     contractCats: Array.isArray(raw.contractCats) ? raw.contractCats : fallback.contractCats,
-    officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo : fallback.officeInfo,
+    officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo as OfficeInfoData : fallback.officeInfo,
     invTabs: Array.isArray(raw.invTabs) ? raw.invTabs : fallback.invTabs,
   };
 }
@@ -1434,31 +1471,33 @@ export function NexusNomad() {
   const pageBg = theme.pageBg || "linear-gradient(180deg, #050510 0%, #020208 100%)";
 
 
-  const [officeName, setOfficeName] = useState(loadOfficeName);
+  const initialStateRef = useRef<NexusNomadState>(buildDefaultNexusNomadState());
+
+  const [officeName, setOfficeName] = useState(initialStateRef.current.officeName);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
-  const [reputation, setReputation] = useState(loadLocalOfficeReputation);
+  const [reputation, setReputation] = useState(initialStateRef.current.reputation);
   const [showRepPanel, setShowRepPanel] = useState(false);
-  const [entityReps, setEntityReps] = useState<ReputationEntity[]>(loadEntityReps);
+  const [entityReps, setEntityReps] = useState<ReputationEntity[]>(initialStateRef.current.entityReps);
   const [addingEntity, setAddingEntity] = useState(false);
   const [newEntityName, setNewEntityName] = useState("");
   const [newEntityIcon, setNewEntityIcon] = useState("shield");
   const [editingEntityId, setEditingEntityId] = useState<string | null>(null);
-  const [govConfig, setGovConfig] = useState<CityGovConfig>(loadGovConfig);
+  const [govConfig, setGovConfig] = useState<CityGovConfig>(initialStateRef.current.govConfig);
   const [editingGov, setEditingGov] = useState(false);
-  const [employees, setEmployees] = useState<Employee[]>(loadEmployees);
-  const [employeeCats, setEmployeeCats] = useState<EmployeeCategory[]>(loadEmployeeCats);
+  const [employees, setEmployees] = useState<Employee[]>(initialStateRef.current.employees);
+  const [employeeCats, setEmployeeCats] = useState<EmployeeCategory[]>(initialStateRef.current.employeeCats);
   const [addingEmployeeCatId, setAddingEmployeeCatId] = useState<string | null>(null);
   const [newEmpName, setNewEmpName] = useState("");
   const [newEmpRole, setNewEmpRole] = useState("");
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
-  const [presets, setPresets] = useState<EmployeePreset[]>(loadPresets);
+  const [presets, setPresets] = useState<EmployeePreset[]>(initialStateRef.current.presets);
   const [presetNameDraft, setPresetNameDraft] = useState("");
   const [showSavePreset, setShowSavePreset] = useState(false);
   const [showLoadPreset, setShowLoadPreset] = useState(false);
-  const [loadouts, setLoadouts] = useState<EquipLoadout[]>(loadLoadouts);
+  const [loadouts, setLoadouts] = useState<EquipLoadout[]>(initialStateRef.current.loadouts);
   const [loadoutNameDraft, setLoadoutNameDraft] = useState("");
   const [showSaveLoadout, setShowSaveLoadout] = useState(false);
   const [showLoadLoadout, setShowLoadLoadout] = useState(false);
@@ -1468,8 +1507,8 @@ export function NexusNomad() {
   const [photoDragging, setPhotoDragging] = useState(false);
   const [photoDragStart, setPhotoDragStart] = useState<{ x: number; y: number; offX: number; offY: number } | null>(null);
 
-  const [facilities, setFacilities] = useState<Facility[]>(loadFacilities);
-  const [facilityCats, setFacilityCats] = useState<FacilityCategory[]>(loadFacilityCats);
+  const [facilities, setFacilities] = useState<Facility[]>(initialStateRef.current.facilities);
+  const [facilityCats, setFacilityCats] = useState<FacilityCategory[]>(initialStateRef.current.facilityCats);
   const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(null);
   const [addingFacilityCat, setAddingFacilityCat] = useState(false);
   const [newFacCatName, setNewFacCatName] = useState("");
@@ -1477,8 +1516,8 @@ export function NexusNomad() {
   const [newFacName, setNewFacName] = useState("");
   const [newFacType, setNewFacType] = useState<FacilityType>("Facility");
 
-  const [contracts, setContracts] = useState<Contract[]>(loadContracts);
-  const [contractCats, setContractCats] = useState<ContractCategory[]>(loadContractCats);
+  const [contracts, setContracts] = useState<Contract[]>(initialStateRef.current.contracts);
+  const [contractCats, setContractCats] = useState<ContractCategory[]>(initialStateRef.current.contractCats);
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [addingContractCat, setAddingContractCat] = useState(false);
   const [newConCatName, setNewConCatName] = useState("");
@@ -1486,7 +1525,7 @@ export function NexusNomad() {
   const [newConName, setNewConName] = useState("");
   const [showArchive, setShowArchive] = useState(false);
   const [showFinancePanel, setShowFinancePanel] = useState(false);
-  const [officeInfo, setOfficeInfo] = useState<OfficeInfoData>(loadOfficeInfo);
+  const [officeInfo, setOfficeInfo] = useState<OfficeInfoData>(initialStateRef.current.officeInfo);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newServiceName, setNewServiceName] = useState("");
@@ -1498,7 +1537,7 @@ export function NexusNomad() {
   const [editingDossier, setEditingDossier] = useState(false);
   const [dossierDraft, setDossierDraft] = useState("");
 
-  const [invTabs, setInvTabs] = useState<InvSubTab[]>(loadInventory);
+  const [invTabs, setInvTabs] = useState<InvSubTab[]>(initialStateRef.current.invTabs);
   const [activeInvTab, setActiveInvTab] = useState<string | null>(null);
   const [addingInvTab, setAddingInvTab] = useState(false);
   const [newInvTabName, setNewInvTabName] = useState("");
@@ -1543,17 +1582,36 @@ export function NexusNomad() {
 
     (async () => {
       try {
-        const fallback = buildLocalNexusNomadState();
-        const loaded = normalizeNexusNomadState(await appStore.loadNexusNomadState(fallback));
+        const sentinel = buildRemoteSentinelNexusNomadState();
+        const remoteOrSentinel = await appStore.loadNexusNomadState(sentinel);
+        const hasRemoteState = !!remoteOrSentinel && typeof remoteOrSentinel === "object" && remoteOrSentinel.version !== REMOTE_NEXUS_SENTINEL_VERSION;
+
+        if (hasRemoteState) {
+          const loaded = normalizeNexusNomadState(remoteOrSentinel);
+          if (cancelled) return;
+          applyLoadedState(loaded);
+          lastSavedStateJsonRef.current = JSON.stringify(loaded);
+          setStateSaveError(null);
+          return;
+        }
+
+        const legacy = normalizeNexusNomadState(buildLegacyNexusNomadState());
         if (cancelled) return;
-        applyLoadedState(loaded);
-        lastSavedStateJsonRef.current = JSON.stringify(loaded);
-        setStateSaveError(null);
+        applyLoadedState(legacy);
+
+        try {
+          await appStore.saveNexusNomadState(legacy);
+          lastSavedStateJsonRef.current = JSON.stringify(legacy);
+          setStateSaveError(null);
+        } catch (saveError) {
+          lastSavedStateJsonRef.current = null;
+          setStateSaveError(saveError instanceof Error ? saveError.message : "Failed to import Nexus Nomad state.");
+        }
       } catch (error) {
         if (cancelled) return;
-        const fallback = buildLocalNexusNomadState();
-        applyLoadedState(fallback);
-        lastSavedStateJsonRef.current = JSON.stringify(fallback);
+        const legacy = normalizeNexusNomadState(buildLegacyNexusNomadState());
+        applyLoadedState(legacy);
+        lastSavedStateJsonRef.current = null;
         setStateSaveError(error instanceof Error ? error.message : "Failed to load Nexus Nomad state.");
       } finally {
         if (!cancelled) setIsStateHydrated(true);
