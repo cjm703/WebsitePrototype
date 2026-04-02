@@ -18,6 +18,7 @@ import {
 } from "./game-leaderboard";
 import {
   getPlayerTheme,
+  hydrateThemeState,
   resetPlayerTheme,
   DEFAULT_THEME,
   THEME_ELEMENT_LABELS,
@@ -37,11 +38,10 @@ import { STICKER_IMAGES } from "./sticker-images";
 import { fetchProfilePicture, uploadProfilePicture, resizeImage, invalidatePfpCache, deleteProfilePicture } from "./profile-picture";
 import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import {
-  getSoundStateSnapshot,
-  hydrateSoundState,
+  getSoundConfig,
   setSlotSound,
+  getVariantsForSlot,
   getVariantsForSlotWithCustom,
   previewSound,
   ALL_SOUND_VARIANTS,
@@ -218,7 +218,7 @@ function cloneTheme(theme: PlayerTheme): PlayerTheme {
 }
 
 function normalizeSoundConfig(raw: Partial<CustomSoundConfig> | null | undefined): CustomSoundConfig {
-  const fallback = getSoundStateSnapshot().soundConfig;
+  const fallback = getSoundConfig();
   return {
     navClick: raw?.navClick || fallback.navClick,
     tabClick: raw?.tabClick || fallback.tabClick,
@@ -228,13 +228,12 @@ function normalizeSoundConfig(raw: Partial<CustomSoundConfig> | null | undefined
 }
 
 function buildLocalCustomizationDoc(playerId: string, theme: PlayerTheme): PlayerCustomizationDoc {
-  const snapshot = getSoundStateSnapshot();
   return {
     playerId,
     version: CUSTOMIZATION_VERSION,
     theme: cloneTheme(theme),
-    soundConfig: normalizeSoundConfig(snapshot.soundConfig),
-    customSounds: [...snapshot.customSounds],
+    soundConfig: normalizeSoundConfig(getSoundConfig()),
+    customSounds: [...getCustomSounds()],
   };
 }
 
@@ -251,10 +250,11 @@ function normalizeCustomizationDoc(playerId: string, raw: Partial<PlayerCustomiz
 }
 
 function applyCustomizationDocToLocal(doc: PlayerCustomizationDoc) {
-  hydrateSoundState({
-    soundConfig: normalizeSoundConfig(doc.soundConfig),
-    customSounds: [...(doc.customSounds || [])],
-  });
+  saveCustomSounds([...(doc.customSounds || [])]);
+  const soundConfig = normalizeSoundConfig(doc.soundConfig);
+  for (const slot of SOUND_SLOT_ORDER) {
+    setSlotSound(slot, soundConfig[slot]);
+  }
 }
 
 /* ═══════════════════════���═══════════════════ */
@@ -676,12 +676,10 @@ export function CustomizationPage() {
   const currentUserId = safeGetItem("inet-user-id") || "";
 
   // Theme state — must be before any conditional returns (Rules of Hooks)
-  const [theme, setTheme] = useState<PlayerTheme>(() => getPlayerTheme());
+  const [theme, setTheme] = useState<PlayerTheme>(() => getPlayerTheme(currentUserId || undefined));
   const [activeElement, setActiveElement] = useState<keyof PlayerTheme>("accentColor");
   const [activeCategory, setActiveCategory] = useState(0);
 
-  const themeStorageKey = `inet-player-theme-${currentUserId || "default"}`;
-  useDebouncedJsonStorage(themeStorageKey, theme, 400);
   const [customizationLoaded, setCustomizationLoaded] = useState(false);
   const [customizationError, setCustomizationError] = useState<string | null>(null);
   const [soundSyncNonce, setSoundSyncNonce] = useState(0);
@@ -744,6 +742,7 @@ export function CustomizationPage() {
         if (cancelled) return;
         const normalized = normalizeCustomizationDoc(currentUserId, remoteDoc, theme);
         setTheme(normalized.theme);
+        hydrateThemeState(currentUserId, normalized.theme);
         applyCustomizationDocToLocal(normalized);
         refreshArcadeOwnership();
       } catch (err) {
@@ -770,6 +769,11 @@ export function CustomizationPage() {
     }, 400);
     return () => window.clearTimeout(timeout);
   }, [currentUserId, customizationLoaded, theme, soundSyncNonce]);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    hydrateThemeState(currentUserId, theme);
+  }, [currentUserId, theme]);
 
   // Gradient mode state
   const [gradientMode, setGradientMode] = useState(false);
@@ -1565,7 +1569,7 @@ export function CustomizationPage() {
         {/* SOUNDS TAB                      */}
         {/* ============================== */}
         {tab === "sounds" && (() => {
-          const soundConfig = getSoundStateSnapshot().soundConfig;
+          const soundConfig = getSoundConfig();
           const SLOT_LABELS: Record<SoundSlot, { label: string; desc: string }> = {
             navClick: { label: "Page Navigation", desc: "Plays when navigating between pages" },
             tabClick: { label: "Tab Switch", desc: "Plays when switching tabs within a page" },
