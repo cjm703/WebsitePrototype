@@ -4,10 +4,8 @@ import mascotImg from "@/assets/figma/Gnarpy_Boss1.png";
 import type { MascotTrigger } from "./initial-data";
 import { playRandomMascotSound } from "./mascot-sounds";
 import { safeGetItem } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 
-// ========================
-// Types
-// ========================
 interface MascotContext {
   currentHP: number;
   maxHP: number;
@@ -22,20 +20,24 @@ interface MascotContext {
 
 interface MascotPopupProps {
   context: MascotContext;
-  /** Called when a status effect is added — pass the name to trigger an event-based check */
   statusEffectAdded?: string | null;
 }
 
-// ========================
-// Helpers
-// ========================
-const STORAGE_KEY = "inet-dm-mascotTriggers";
-const DISPLAY_DURATION = 5000; // ms popup stays visible
-const IDLE_CHECK_INTERVAL = 15000; // ms between random idle checks
+const LEGACY_STORAGE_KEY = "inet-dm-mascotTriggers";
+const DISPLAY_DURATION = 5000;
+const IDLE_CHECK_INTERVAL = 30000;
+const REMOTE_REFRESH_INTERVAL = 45000;
+const CUSTOMIZE_EVENT = "inet-dm-customize-updated";
 
-function loadTriggers(): MascotTrigger[] {
+type DmCustomizeState = {
+  mascotTriggers?: MascotTrigger[];
+  partyColorPrompt?: string;
+  boredLines?: string[];
+};
+
+function readLegacyTriggers(): MascotTrigger[] {
   try {
-    const raw = safeGetItem(STORAGE_KEY);
+    const raw = safeGetItem(LEGACY_STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -51,14 +53,16 @@ function rollChance(chance: number): boolean {
   return Math.random() * 100 < chance;
 }
 
-// ========================
-// Component
-// ========================
+function getEnabledTriggers(triggers: MascotTrigger[]): MascotTrigger[] {
+  return Array.isArray(triggers) ? triggers.filter((trigger) => !!trigger?.enabled) : [];
+}
+
 export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
   const [visible, setVisible] = useState(false);
   const [message, setMessage] = useState("");
+  const [triggers, setTriggers] = useState<MascotTrigger[]>(() => readLegacyTriggers());
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cooldownRef = useRef(false); // prevent overlapping popups
+  const cooldownRef = useRef(false);
 
   const showPopup = useCallback((msg: string) => {
     if (cooldownRef.current) return;
@@ -69,18 +73,26 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       setVisible(false);
-      // Brief cooldown so it doesn't immediately retrigger
       setTimeout(() => {
         cooldownRef.current = false;
       }, 3000);
     }, DISPLAY_DURATION);
   }, []);
 
-  // Check condition-based triggers (called on context changes)
-  const checkConditionTriggers = useCallback(() => {
-    const triggers = loadTriggers().filter((t) => t.enabled);
+  const refreshTriggers = useCallback(async () => {
+    try {
+      const remote = await appStore.loadDmCustomizeState<DmCustomizeState | null>(null);
+      const next = Array.isArray(remote?.mascotTriggers) ? remote!.mascotTriggers! : readLegacyTriggers();
+      setTriggers(next);
+    } catch {
+      setTriggers(readLegacyTriggers());
+    }
+  }, []);
 
-    for (const trigger of triggers) {
+  const checkConditionTriggers = useCallback(() => {
+    const enabledTriggers = getEnabledTriggers(triggers);
+
+    for (const trigger of enabledTriggers) {
       switch (trigger.type) {
         case "low_hp": {
           if (context.maxHP > 0) {
@@ -126,7 +138,7 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
           if (
             trigger.statusEffectName &&
             context.statusEffectNames.some(
-              (n) => n.toLowerCase() === trigger.statusEffectName.toLowerCase()
+              (name) => name.toLowerCase() === trigger.statusEffectName.toLowerCase(),
             ) &&
             rollChance(trigger.chance)
           ) {
@@ -138,7 +150,7 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
         case "status_effect_count": {
           const count = trigger.statusEffectName
             ? context.statusEffectNames.filter(
-                (n) => n.toLowerCase() === trigger.statusEffectName.toLowerCase()
+                (name) => name.toLowerCase() === trigger.statusEffectName.toLowerCase(),
               ).length
             : context.statusEffectNames.length;
           if (count >= trigger.threshold && rollChance(trigger.chance)) {
@@ -149,13 +161,30 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
         }
       }
     }
-  }, [context, showPopup]);
+  }, [context, showPopup, triggers]);
 
-  // Random idle timer
+  useEffect(() => {
+    void refreshTriggers();
+
+    const onRefresh = () => {
+      void refreshTriggers();
+    };
+
+    window.addEventListener("focus", onRefresh);
+    window.addEventListener(CUSTOMIZE_EVENT, onRefresh as EventListener);
+    const interval = window.setInterval(onRefresh, REMOTE_REFRESH_INTERVAL);
+
+    return () => {
+      window.removeEventListener("focus", onRefresh);
+      window.removeEventListener(CUSTOMIZE_EVENT, onRefresh as EventListener);
+      window.clearInterval(interval);
+    };
+  }, [refreshTriggers]);
+
   useEffect(() => {
     const interval = setInterval(() => {
-      const triggers = loadTriggers().filter((t) => t.enabled && t.type === "random");
-      for (const trigger of triggers) {
+      const randomTriggers = getEnabledTriggers(triggers).filter((trigger) => trigger.type === "random");
+      for (const trigger of randomTriggers) {
         if (rollChance(trigger.chance)) {
           showPopup(pickLine(trigger.lines));
           break;
@@ -164,9 +193,8 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
     }, IDLE_CHECK_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [showPopup]);
+  }, [showPopup, triggers]);
 
-  // Check condition triggers when context values change
   useEffect(() => {
     checkConditionTriggers();
   }, [
@@ -175,26 +203,26 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
     context.currentWeight,
     context.exhaustion,
     context.statusEffectNames.length,
+    checkConditionTriggers,
   ]);
 
-  // Event-based: status effect was just added
   useEffect(() => {
     if (!statusEffectAdded) return;
-    const triggers = loadTriggers().filter(
-      (t) =>
-        t.enabled &&
-        t.type === "status_effect" &&
-        t.statusEffectName.toLowerCase() === statusEffectAdded.toLowerCase()
+    const matchingTriggers = getEnabledTriggers(triggers).filter(
+      (trigger) =>
+        trigger.type === "status_effect" &&
+        !!trigger.statusEffectName &&
+        trigger.statusEffectName.toLowerCase() === statusEffectAdded.toLowerCase(),
     );
-    for (const trigger of triggers) {
+
+    for (const trigger of matchingTriggers) {
       if (rollChance(trigger.chance)) {
         showPopup(pickLine(trigger.lines));
         break;
       }
     }
-  }, [statusEffectAdded, showPopup]);
+  }, [statusEffectAdded, showPopup, triggers]);
 
-  // Cleanup
   useEffect(() => {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -223,7 +251,6 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
         }
       `}</style>
       <div className="flex items-end gap-3">
-        {/* Speech bubble */}
         <div
           className={`${retro.raised} relative max-w-[510px] pointer-events-auto`}
           style={{
@@ -241,7 +268,6 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
           >
             {message}
           </div>
-          {/* Tail pointing right toward mascot */}
           <div
             style={{
               position: "absolute",
@@ -255,7 +281,6 @@ export function MascotPopup({ context, statusEffectAdded }: MascotPopupProps) {
             }}
           />
         </div>
-        {/* Mascot image */}
         <div
           style={{ animation: "mascotBob 2s ease-in-out infinite", cursor: "pointer" }}
           className="pointer-events-auto"

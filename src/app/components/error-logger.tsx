@@ -1,23 +1,24 @@
 // ========================
 // Error & Problem Report Logger
-// Catches unhandled JS errors and unhandled promise rejections,
-// and provides a function for players to submit manual reports.
-// All entries are persisted to localStorage under "inet-error-log".
-// Cache-bust v3
+// Current setup note:
+// This remains local because the current Supabase schema/appStore layer does not
+// expose a dedicated remote error-log document or table.
 // ========================
+
+import { safeGetItem, safeRemoveItem, safeSetJson } from "./safe-storage";
 
 export interface ErrorLogEntry {
   id: string;
   type: "error" | "report";
   message: string;
-  source: string; // file:line for errors, player name for reports
-  player: string; // which user was logged in at the time
+  source: string;
+  player: string;
   timestamp: string;
 }
 
 const STORAGE_KEY = "inet-error-log";
 const MAX_ENTRIES = 200;
-import { safeGetItem, safeSetItem, safeRemoveItem, safeSetJson } from "./safe-storage";
+const LOG_EVENT = "inet-error-log-updated";
 
 function getEntries(): ErrorLogEntry[] {
   try {
@@ -28,11 +29,18 @@ function getEntries(): ErrorLogEntry[] {
   }
 }
 
+function emitUpdate(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(LOG_EVENT));
+  }
+}
+
 function persist(entries: ErrorLogEntry[]): void {
   try {
     safeSetJson(STORAGE_KEY, entries.slice(0, MAX_ENTRIES));
+    emitUpdate();
   } catch {
-    // localStorage might be full — silently fail
+    // local storage may be unavailable/full
   }
 }
 
@@ -43,13 +51,16 @@ function now(): string {
 
 function currentPlayer(): string {
   try {
-    return safeGetItem("inet-user") || "Unknown";
+    return (
+      safeGetItem("inet-user") ||
+      safeGetItem("inet-user-id") ||
+      "Unknown"
+    );
   } catch {
     return "Unknown";
   }
 }
 
-/** Add an auto-caught error entry */
 function logError(message: string, source: string): void {
   const entry: ErrorLogEntry = {
     id: `err-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -64,7 +75,6 @@ function logError(message: string, source: string): void {
   persist(entries);
 }
 
-/** Add a player-submitted problem report */
 export function submitReport(message: string): void {
   const player = currentPlayer();
   const entry: ErrorLogEntry = {
@@ -80,25 +90,21 @@ export function submitReport(message: string): void {
   persist(entries);
 }
 
-/** Read all log entries (for DM Area) */
 export function readErrorLog(): ErrorLogEntry[] {
   return getEntries();
 }
 
-/** Clear all log entries */
 export function clearErrorLog(): void {
   safeRemoveItem(STORAGE_KEY);
+  emitUpdate();
 }
 
-/** Remove a single entry by id */
 export function removeLogEntry(id: string): void {
-  const entries = getEntries().filter((e) => e.id !== id);
+  const entries = getEntries().filter((entry) => entry.id !== id);
   persist(entries);
 }
 
-/** Install global error handlers. Call once at app startup. */
 export function installErrorHandlers(): void {
-  // Unhandled JS errors
   window.addEventListener("error", (event) => {
     const msg = event.message || "Unknown error";
     const src = event.filename
@@ -107,7 +113,6 @@ export function installErrorHandlers(): void {
     logError(msg, src);
   });
 
-  // Unhandled promise rejections
   window.addEventListener("unhandledrejection", (event) => {
     const msg =
       event.reason instanceof Error
@@ -121,4 +126,10 @@ export function installErrorHandlers(): void {
         : "promise";
     logError(msg, src);
   });
+}
+
+export function subscribeErrorLog(listener: () => void): () => void {
+  const handler = () => listener();
+  window.addEventListener(LOG_EVENT, handler);
+  return () => window.removeEventListener(LOG_EVENT, handler);
 }
