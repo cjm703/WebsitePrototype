@@ -1,4 +1,4 @@
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 
 export interface LeaderboardEntry {
@@ -141,26 +141,6 @@ function normalizeLeaderboardEntries(value: unknown): LeaderboardEntry[] {
     .filter((entry): entry is LeaderboardEntry => entry !== null);
 }
 
-function persistLegacyProfile(playerId: string, profile: ArcadeProfile): void {
-  try {
-    safeSetItem(playerKey(LEGACY_CREDITS_KEY, playerId), String(profile.credits));
-    safeSetJson(playerKey(LEGACY_OWNED_COLORS_KEY, playerId), profile.ownedColors);
-    safeSetJson(playerKey(LEGACY_OWNED_PACKS_KEY, playerId), profile.ownedPacks);
-    safeSetJson(playerKey(LEGACY_OWNED_STICKERS_KEY, playerId), profile.ownedStickers);
-    safeSetJson(playerKey(LEGACY_OWNED_MYSTERY_KEY, playerId), profile.ownedMystery);
-    safeSetJson(playerKey(LEGACY_OWNED_SOUNDS_KEY, playerId), profile.ownedSounds);
-  } catch {
-    // Ignore legacy mirror persistence failures.
-  }
-}
-
-function persistLegacyLeaderboard(entries: LeaderboardEntry[]): void {
-  try {
-    safeSetJson(LEGACY_STORAGE_KEY, entries);
-  } catch {
-    // Ignore legacy mirror persistence failures.
-  }
-}
 
 function readLegacyList(base: string, playerId: string): string[] {
   try {
@@ -214,8 +194,7 @@ async function hydrateProfile(playerId: string): Promise<void> {
   try {
     const remote = await appStore.loadPlayerArcadeProfile<ArcadeProfile | null>(playerId, null);
     if (remote) {
-      const normalized = setProfileCache(playerId, remote);
-      persistLegacyProfile(playerId, normalized);
+      setProfileCache(playerId, remote);
       return;
     }
 
@@ -223,7 +202,6 @@ async function hydrateProfile(playerId: string): Promise<void> {
     const normalized = setProfileCache(playerId, legacy.profile);
     if (legacy.hasAny) {
       await appStore.savePlayerArcadeProfile(playerId, normalized).catch(() => {});
-      persistLegacyProfile(playerId, normalized);
     }
   } catch {
     const legacy = readLegacyProfile(playerId);
@@ -236,7 +214,6 @@ async function hydrateProfile(playerId: string): Promise<void> {
 
 function saveProfileRemote(playerId: string): void {
   const profile = ensureProfileCache(playerId);
-  persistLegacyProfile(playerId, profile);
   void appStore.savePlayerArcadeProfile(playerId, profile).catch(() => {});
 }
 
@@ -267,8 +244,7 @@ async function hydrateLeaderboard(): Promise<void> {
     const remote = await appStore.loadArcadeLeaderboardState<LeaderboardDoc>({ entries: [] });
     const remoteEntries = normalizeLeaderboardEntries(remote?.entries);
     if (remoteEntries.length > 0) {
-      const normalized = setLeaderboardCache(remoteEntries);
-      persistLegacyLeaderboard(normalized);
+      setLeaderboardCache(remoteEntries);
       return;
     }
 
@@ -276,7 +252,6 @@ async function hydrateLeaderboard(): Promise<void> {
     const normalized = setLeaderboardCache(legacy.entries);
     if (legacy.hasAny) {
       await appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries: normalized }).catch(() => {});
-      persistLegacyLeaderboard(normalized);
     }
   } catch {
     const legacy = readLegacyLeaderboard();
@@ -289,7 +264,6 @@ async function hydrateLeaderboard(): Promise<void> {
 
 function saveLeaderboardRemote(entries: LeaderboardEntry[]): void {
   const normalized = setLeaderboardCache(entries);
-  persistLegacyLeaderboard(normalized);
   void appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries: normalized }).catch(() => {});
 }
 

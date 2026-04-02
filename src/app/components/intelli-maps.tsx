@@ -688,25 +688,30 @@ function migrateZone(z: any): MapZone {
 }
 
 const INTELLI_MAPS_STORAGE_KEY = "inet-map-hexcity-v3";
-function loadLocalZones(): MapZone[] {
+
+function buildDefaultMapZones(): MapZone[] {
+  return buildDefaultZones();
+}
+
+function readLegacyZones(): { zones: MapZone[]; hasAny: boolean } {
   const saved = safeGetJson<any[]>(INTELLI_MAPS_STORAGE_KEY, []);
-  if (saved.length === 0 || saved.length < 15) return buildDefaultZones();
-  const defaults = buildDefaultZones();
+  const defaults = buildDefaultMapZones();
+  if (!Array.isArray(saved) || saved.length === 0) {
+    return { zones: defaults, hasAny: false };
+  }
   const migrated = saved.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
   const missing = defaults.filter((zone) => !existingIds.has(zone.id));
-  if (missing.length > 0) return [...migrated, ...missing];
-  return migrated;
+  return { zones: missing.length > 0 ? [...migrated, ...missing] : migrated, hasAny: true };
 }
 
-function normalizeZones(raw: unknown): MapZone[] {
-  if (!Array.isArray(raw)) return loadLocalZones();
-  const defaults = buildDefaultZones();
+function normalizeZones(raw: unknown, fallback: MapZone[] = buildDefaultMapZones()): MapZone[] {
+  if (!Array.isArray(raw) || raw.length === 0) return fallback;
+  const defaults = buildDefaultMapZones();
   const migrated = raw.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
   const missing = defaults.filter((zone) => !existingIds.has(zone.id));
-  if (missing.length > 0) return [...migrated, ...missing];
-  return migrated;
+  return missing.length > 0 ? [...migrated, ...missing] : migrated;
 }
 
 /* ==============================================================
@@ -716,7 +721,7 @@ function normalizeZones(raw: unknown): MapZone[] {
 export function IntelliMaps() {
   const navigate = useNavigate();
   const [currentUser] = useState<string>(() => safeGetItem("inet-user") || "Agent Phoenix");
-  const [zones, setZones] = useState<MapZone[]>(loadLocalZones);
+  const [zones, setZones] = useState<MapZone[]>(buildDefaultMapZones);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -848,18 +853,31 @@ export function IntelliMaps() {
     let cancelled = false;
 
     async function loadMapsState() {
+      const fallbackZones = buildDefaultMapZones();
+      const legacy = readLegacyZones();
       try {
         setMapsLoading(true);
         setMapsError(null);
-        const remoteZones = await appStore.loadIntelliMapsState<MapZone[]>(loadLocalZones());
-        if (!cancelled) {
-          setZones(normalizeZones(remoteZones));
+        const remoteZones = await appStore.loadIntelliMapsState<MapZone[]>(fallbackZones);
+        const remoteUsedFallback = remoteZones === fallbackZones;
+        const normalizedRemote = normalizeZones(remoteZones, fallbackZones);
+        if (cancelled) return;
+
+        if (remoteUsedFallback && legacy.hasAny) {
+          setZones(legacy.zones);
           hasLoadedMapsRef.current = true;
+          void appStore.saveIntelliMapsState<MapZone[]>(legacy.zones).catch((err) => {
+            console.warn("Failed to import legacy Intelli Maps state", err);
+          });
+          return;
         }
+
+        setZones(normalizedRemote);
+        hasLoadedMapsRef.current = true;
       } catch (err) {
         if (!cancelled) {
           setMapsError(err instanceof Error ? err.message : "Failed to load Intelli Maps state");
-          setZones(loadLocalZones());
+          setZones(legacy.hasAny ? legacy.zones : fallbackZones);
           hasLoadedMapsRef.current = true;
         }
       } finally {

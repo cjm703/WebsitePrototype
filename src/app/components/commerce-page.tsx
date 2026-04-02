@@ -115,8 +115,6 @@ function uid(): string {
 }
 
 // ── Inventory integration ──
-const INVENTORY_KEY = "inet-office-inventory";
-
 interface InvItemCompat {
   id: string;
   name: string;
@@ -187,14 +185,6 @@ function normalizeNexusNomadInventoryState(raw: unknown): NexusNomadInventorySta
   } as NexusNomadInventoryState;
 }
 
-function loadLocalDmItemsCache(): DmManagedItemCompat[] {
-  try {
-    const raw = safeGetItem("inet-dm-items");
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
 
 function getCurrencyItems(
   invTabs: InvSubTabCompat[],
@@ -672,7 +662,7 @@ export function CommercePage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [nexusNomadState, setNexusNomadState] = useState<NexusNomadInventoryState>(defaultNexusNomadInventoryState);
-  const [dmItemsCache, setDmItemsCache] = useState<DmManagedItemCompat[]>(loadLocalDmItemsCache);
+  const [dmItemsCache, setDmItemsCache] = useState<DmManagedItemCompat[]>([]);
   const [commerceLoading, setCommerceLoading] = useState(true);
   const [commerceError, setCommerceError] = useState<string | null>(null);
   const hasLoadedCommerceRef = useRef(false);
@@ -727,11 +717,14 @@ export function CommercePage() {
             if (!cancelled && Array.isArray(remoteItems)) {
               setDmItemsCache(remoteItems as unknown as DmManagedItemCompat[]);
             }
-          } catch {
+          } catch (err) {
             if (!cancelled) {
-              setDmItemsCache(loadLocalDmItemsCache());
+              setDmItemsCache([]);
+              console.warn("Failed to load DM item templates for commerce", err);
             }
           }
+        } else if (!cancelled) {
+          setDmItemsCache([]);
         }
 
         hasLoadedCommerceRef.current = true;
