@@ -16,11 +16,14 @@ const admin = () =>
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-const expectedApiKey = (
-  Deno.env.get("SB_PUBLISHABLE_KEY") ||
-  Deno.env.get("SUPABASE_ANON_KEY") ||
-  ""
-).trim();
+const allowedApiKeys = new Set(
+  [
+    Deno.env.get("SB_PUBLISHABLE_KEY"),
+    Deno.env.get("SUPABASE_ANON_KEY"),
+  ]
+    .map((value) => (value || "").trim())
+    .filter(Boolean),
+);
 
 function requireApiKey(c: any) {
   const apiKey = (c.req.header("apikey") || "").trim();
@@ -28,7 +31,7 @@ function requireApiKey(c: any) {
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const provided = apiKey || bearer;
 
-  if (!expectedApiKey || provided !== expectedApiKey) {
+  if (!provided || allowedApiKeys.size === 0 || !allowedApiKeys.has(provided)) {
     return c.json({ error: "Invalid API key" }, 401);
   }
   return null;
