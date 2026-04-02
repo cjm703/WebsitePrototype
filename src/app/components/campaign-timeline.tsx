@@ -643,113 +643,38 @@ function VirtualDayRuler({ marks, laneColor, trackWidth, railY }: {
   );
 }
 
-function normalizeTimelineData(raw: TimelineData | null | undefined): TimelineData {
-  if (!raw || raw.version !== 2 || !Array.isArray(raw.books)) {
-    return { version: 2, books: [] };
-  }
-
-  return {
-    version: 2,
-    books: raw.books.map((book, bookIndex) => ({
-      ...book,
-      order: typeof book.order === "number" ? book.order : bookIndex,
-      lanes: Array.isArray(book.lanes)
-        ? book.lanes.map((lane) => ({
-            ...lane,
-            eras: Array.isArray(lane.eras) ? lane.eras : [],
-            events: Array.isArray(lane.events)
-              ? lane.events.map((event, eventIndex) => ({
-                  ...event,
-                  sortIndex: typeof event.sortIndex === "number" ? event.sortIndex : eventIndex,
-                  wikiLinks: Array.isArray(event.wikiLinks) ? event.wikiLinks : [],
-                }))
-              : [],
-          }))
-        : [],
-    })),
-  };
+function loadSessions(): SessionEntry[] {
+  return [];
 }
 
-function loadLegacySessions(): SessionEntry[] {
-  try {
-    const raw = safeGetItem("inet-session-log");
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadLegacyWikiPages(): WikiPage[] {
-  try {
-    const raw = safeGetItem("inet-dm-sites");
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+function loadWikiPages(): WikiPage[] {
+  return [];
 }
 
 function migrateOldData(): TimelineData {
-  try {
-    const oldRaw = safeGetItem(OLD_STORAGE_KEY);
-    if (oldRaw) {
-      const oldEvents = JSON.parse(oldRaw);
-      if (Array.isArray(oldEvents) && oldEvents.length > 0) {
-        return normalizeTimelineData({
-          version: 2,
-          books: [{
-            id: uid(),
-            name: "Book 1",
-            order: 0,
-            lanes: [{
-              id: uid(),
-              name: "Main Story",
-              color: "#5B8CFF",
-              collapsed: false,
-              events: oldEvents.map((e: TimelineEvent, i: number) => ({ ...e, sortIndex: e.sortIndex ?? i })),
-            }],
-          }],
-        });
-      }
-    }
-  } catch { /* ignore */ }
   return { version: 2, books: [] };
 }
 
-function loadLegacyTimelineData(): TimelineData {
-  try {
-    const raw = safeGetItem(STORAGE_KEY);
-    if (raw) {
-      return normalizeTimelineData(JSON.parse(raw));
-    }
-  } catch { /* ignore */ }
-  return migrateOldData();
+function loadData(): TimelineData {
+  return { version: 2, books: [] };
 }
 
-function normalizeTimelineCalendarPresets(raw: TimelineCalendarPreset[] | null | undefined): TimelineCalendarPreset[] {
-  return Array.isArray(raw) ? raw.map((preset: any) => ({ ...preset, builtin: false })) : [];
-}
-
-function loadLegacyCustomPresets(): TimelineCalendarPreset[] {
-  try {
-    const raw = safeGetItem(CUSTOM_PRESETS_KEY);
-    return raw ? normalizeTimelineCalendarPresets(JSON.parse(raw)) : [];
-  } catch {
-    return [];
-  }
+function loadLocalCustomPresets(): TimelineCalendarPreset[] {
+  return [];
 }
 
 // ══════════════════════════════════════��═══��═
 // Wiki Link Picker
 // ══════════════════���═════════════════════════
-function WikiLinkPicker({ onAdd, onClose, existingIds }: {
+function WikiLinkPicker({ onAdd, onClose, existingIds, pages }: {
   onAdd: (link: { articleId: string; articleTitle: string; displayText: string }) => void;
   onClose: () => void;
   existingIds: string[];
+  pages: WikiPage[];
 }) {
   const [search, setSearch] = useState("");
   const [selectedPage, setSelectedPage] = useState<WikiPage | null>(null);
   const [displayText, setDisplayText] = useState("");
-  const pages = useMemo(() => loadLegacyWikiPages(), []);
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return pages.filter(p =>
@@ -895,14 +820,14 @@ export function CampaignTimeline() {
   const pageBg = buildPageGradient(theme.pageBg);
   const accent = firstColor(theme.accentColor);
 
-  const [data, setData] = useState<TimelineData>({ version: 2, books: [] });
-  const [customCalendarPresets, setCustomCalendarPresets] = useState<TimelineCalendarPreset[]>([]);
+  const [data, setData] = useState<TimelineData>(loadData);
+  const [customCalendarPresets, setCustomCalendarPresets] = useState<TimelineCalendarPreset[]>(loadLocalCustomPresets);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [timelineSaveStatus, setTimelineSaveStatus] = useState<"saving" | "saved" | "error" | null>(null);
   const [timelineSaveError, setTimelineSaveError] = useState<string | null>(null);
 
-  const [sessions, setSessions] = useState<SessionEntry[]>([]);
-  const [wikiPages, setWikiPages] = useState<WikiPage[]>([]);
+  const [sessions, setSessions] = useState<SessionEntry[]>(loadSessions);
+  const [wikiPages, setWikiPages] = useState<WikiPage[]>(loadWikiPages);
 
   const [activeBookId, setActiveBookId] = useState<string>(() =>
     data.books.length > 0 ? data.books[0].id : ""
@@ -956,52 +881,22 @@ export function CampaignTimeline() {
       try {
         setTimelineLoading(true);
         setTimelineSaveError(null);
-
-        const legacyData = loadLegacyTimelineData();
-        const legacyPresets = loadLegacyCustomPresets();
-        const legacySessions = loadLegacySessions();
-        const legacyWikiPages = loadLegacyWikiPages();
-
+        const fallbackData: TimelineData = { version: 2, books: [] };
+        const fallbackPresets: TimelineCalendarPreset[] = [];
         const [remoteData, remotePresets, remoteSessions, remoteWikiPages] = await Promise.all([
-          appStore.loadCampaignTimelineState<TimelineData | null>(null),
-          appStore.loadTimelineCalendarPresets<TimelineCalendarPreset[] | null>(null),
-          appStore.loadSessionLogState<SessionEntry[] | null>(null).catch(() => null),
+          appStore.loadCampaignTimelineState<TimelineData>(fallbackData),
+          appStore.loadTimelineCalendarPresets<TimelineCalendarPreset[]>(fallbackPresets),
+          appStore.loadSessionLogState<SessionEntry[]>([]).catch(() => []),
           appStore.listSites<WikiPage>().catch(() => []),
         ]);
         if (cancelled) return;
-
-        const normalizedRemoteData = normalizeTimelineData(remoteData);
-        const hasRemoteTimelineData = normalizedRemoteData.books.length > 0;
-        const nextData = hasRemoteTimelineData ? normalizedRemoteData : legacyData;
-
-        const normalizedRemotePresets = normalizeTimelineCalendarPresets(remotePresets);
-        const hasRemotePresets = normalizedRemotePresets.length > 0;
-        const nextPresets = hasRemotePresets ? normalizedRemotePresets : legacyPresets;
-
-        const nextSessions = Array.isArray(remoteSessions) && remoteSessions.length > 0 ? remoteSessions : legacySessions;
-        const nextWikiPages = Array.isArray(remoteWikiPages) && remoteWikiPages.length > 0 ? remoteWikiPages : legacyWikiPages;
-
-        setData(nextData);
-        setCustomCalendarPresets(nextPresets);
-        setSessions(nextSessions);
-        setWikiPages(nextWikiPages);
-
-        if (!hasRemoteTimelineData && legacyData.books.length > 0) {
-          void appStore.saveCampaignTimelineState<TimelineData>(legacyData).catch(() => {});
-        }
-        if (!hasRemotePresets && legacyPresets.length > 0) {
-          void appStore.saveTimelineCalendarPresets<TimelineCalendarPreset[]>(legacyPresets).catch(() => {});
-        }
-        if ((!Array.isArray(remoteSessions) || remoteSessions.length === 0) && legacySessions.length > 0) {
-          void appStore.saveSessionLogState<SessionEntry[]>(legacySessions).catch(() => {});
-        }
+        setData(remoteData && remoteData.version === 2 ? remoteData : fallbackData);
+        setCustomCalendarPresets(Array.isArray(remotePresets) ? remotePresets.map((preset) => ({ ...preset, builtin: false })) : fallbackPresets);
+        setSessions(Array.isArray(remoteSessions) ? remoteSessions : []);
+        setWikiPages(Array.isArray(remoteWikiPages) ? remoteWikiPages : []);
       } catch (err) {
         if (cancelled) return;
         setTimelineSaveError(err instanceof Error ? err.message : "Failed to load campaign timeline.");
-        setData(loadLegacyTimelineData());
-        setCustomCalendarPresets(loadLegacyCustomPresets());
-        setSessions(loadLegacySessions());
-        setWikiPages(loadLegacyWikiPages());
       } finally {
         if (!cancelled) setTimelineLoading(false);
       }
@@ -3650,7 +3545,7 @@ export function CampaignTimeline() {
       {renderEventEditor()}
 
       {showWikiPicker && editingEvent && (
-        <WikiLinkPicker existingIds={(editingEvent.wikiLinks || []).map(l => l.articleId)} onAdd={handleAddWikiLink} onClose={() => setShowWikiPicker(false)} />
+        <WikiLinkPicker existingIds={(editingEvent.wikiLinks || []).map(l => l.articleId)} pages={wikiPages} onAdd={handleAddWikiLink} onClose={() => setShowWikiPicker(false)} />
       )}
 
       {moveEventInfo && activeBook && (
