@@ -5,7 +5,7 @@ import { retro } from "./retro-styles";
 import { S_MUTED, S_SUBTLE, S_TEXT, S_RED, S_ACCENT, S_GREEN_BTN, SUNKEN_INPUT } from "./shared-styles";
 import { Search, FileText, Building2, Map, ShieldAlert, LogOut, Bell, User, ArrowRight, AlertCircle, X, History, Trash2, ChevronDown, ChevronRight, MessageSquareWarning, Send, Cat, Paintbrush, Users, CalendarDays, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind, Store } from "lucide-react";
 import { submitReport } from "./error-logger";
-import { safeGetItem, safeSetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import mascotImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { playRandomMascotSound } from "./mascot-sounds";
 import { getPlayerTheme, getPlacedStickers, buildPageGradient, isGradient, firstColor, ts, getSlot, type PlayerTheme, type PlacedSticker } from "./player-theme";
@@ -14,6 +14,7 @@ import { ServerStatusPanel } from "./server-status-panel";
 import { loadOfficeName } from "./nexus-nomad";
 import { STICKER_IMAGES } from "./sticker-images";
 import type { DMNotification } from "./types";
+import { appStore } from "@/lib/app-store";
 
 export function IntelliInterface() {
   const navigate = useNavigate();
@@ -28,63 +29,43 @@ export function IntelliInterface() {
   const theme = getPlayerTheme();
   const placedStickers = getPlacedStickers();
 
-  // Load dynamic details for all sections from localStorage
-  const loadSectionDetails = () => {
-    const players: Array<{ id: string; name: string; class: string; level: number; currentHP: number; maxHP: number }> = safeGetJson("inet-dm-players", []);
-    const items: Array<{ id: string; assignedTo: string }> = safeGetJson("inet-dm-items", []);
-    const cards: Array<{ id: string; assignedTo: string }> = safeGetJson("inet-dm-cards", []);
-    const infos: Array<{ id: string }> = safeGetJson("inet-dm-infos", []);
-    const locations: Array<{ id: string }> = safeGetJson("inet-map-locations", []);
-    const notifications: Array<{ id: string }> = safeGetJson("inet-dm-notifications", []);
-
-    // Personal Files — current player's data
-    const me = players.find((p) => p.name === currentUser);
-    const personalFiles = me
-      ? `${me.class} level ${me.level} · HP: ${me.currentHP}/${me.maxHP}`
-      : "View and manage your character sheet";
-
-    // My assigned content counts
-    const myItems = me ? items.filter((i) => i.assignedTo === me.id).length : 0;
-    const myCards = me ? cards.filter((c) => c.assignedTo === me.id).length : 0;
-    const personalSuffix = me ? ` · ${myItems} item${myItems !== 1 ? "s" : ""} · ${myCards} card${myCards !== 1 ? "s" : ""}` : "";
-
-    // I-Net Wiki
-    const totalPages = items.length + cards.length + infos.length;
-    const inetSearch = `Browse the I-Net encyclopedia. Currently ${totalPages} article${totalPages !== 1 ? "s" : ""} indexed.`;
-
-    // Nexus Nomad
-    const nexusNomad = `${players.length} active agent${players.length !== 1 ? "s" : ""} · ${items.length} item${items.length !== 1 ? "s" : ""} cataloged · ${locations.length} location${locations.length !== 1 ? "s" : ""} mapped`;
-
-    // Intelli Maps
-    const intelliMaps = `13 sectors · Hexagonal deep city map with fog of war and path connections.`;
-
-    // DM Area
-    const dmArea = `${players.length} player${players.length !== 1 ? "s" : ""} · ${items.length} item${items.length !== 1 ? "s" : ""} · ${cards.length} card${cards.length !== 1 ? "s" : ""} · ${infos.length} info entr${infos.length !== 1 ? "ies" : "y"} · ${notifications.length} notification${notifications.length !== 1 ? "s" : ""}`;
-
-    // Community
-    const communityPosts: Array<{ id: string }> = safeGetJson("inet-community-posts", []);
-    const community = `${communityPosts.length} post${communityPosts.length !== 1 ? "s" : ""} · Share updates and messages with your party.`;
-
-    // Session Log
-    const sessionEntries: Array<{ id: string }> = safeGetJson("inet-session-log", []);
-    const sessionLog = `${sessionEntries.length} session${sessionEntries.length !== 1 ? "s" : ""} recorded · Chronicle your campaign adventures.`;
-
-    return { personalFiles: personalFiles + personalSuffix, inetSearch, nexusNomad, intelliMaps, dmArea, community, sessionLog };
+  const DEFAULT_SECTION_DETAILS = {
+    personalFiles: "View and manage your character sheet",
+    inetSearch: "Browse the I-Net encyclopedia.",
+    nexusNomad: "Company headquarters and operations.",
+    intelliMaps: "13 sectors · Hexagonal deep city map with fog of war and path connections.",
+    dmArea: "Campaign management tools.",
+    community: "Share updates and messages with your party.",
+    sessionLog: "Chronicle your campaign adventures.",
   };
 
-  const [sectionDetails, setSectionDetails] = useState(loadSectionDetails);
+  const DEFAULT_CALENDAR = { month: 1, day: 1, year: 1, isStarfall: false };
+  const DEFAULT_WEATHER = {
+    condition: "Overcast",
+    temperature: "Cool",
+    wind: "Light breeze",
+    description: "A thick gray blanket of clouds hangs over The Great City.",
+  };
+  const DEFAULT_BORED_LINES = [
+    "Hey there! You look like you could use some excitement...",
+    "I'm just vibing. What about you?",
+    "Did you know there are secret corners of I-Net most people never find?",
+    "Psst... keep clicking if you dare.",
+    "I've been sitting here for ages. Entertain me!",
+    "Meow? ...I mean, hello fellow human.",
+  ];
 
-  // Re-read on focus and mount
-  useEffect(() => {
-    setSectionDetails(loadSectionDetails());
-    const onFocus = () => setSectionDetails(loadSectionDetails());
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [currentUser]);
+  const assignedToMatches = (assignedTo: unknown, playerId: string) =>
+    Array.isArray(assignedTo)
+      ? assignedTo.includes(playerId) || assignedTo.includes("all")
+      : assignedTo === playerId || assignedTo === "all";
+
+  const [sectionDetails, setSectionDetails] = useState(DEFAULT_SECTION_DETAILS);
+  const [calendarState, setCalendarState] = useState(DEFAULT_CALENDAR);
+  const [weatherState, setWeatherState] = useState(DEFAULT_WEATHER);
+  const [boredLines, setBoredLines] = useState<string[]>(DEFAULT_BORED_LINES);
 
   // Notification types & state
-  // DM notifications are stored in localStorage under "inet-dm-notifications"
-  // Per-user read/deleted state stored under "inet-read-{user}" / "inet-deleted-{user}"
 
   interface DisplayNotification {
     id: string;
@@ -95,18 +76,13 @@ export function IntelliInterface() {
   }
 
   // Load all DM notifications, filter for current user, then split into active/past
-  const loadUserNotifications = (): { active: DisplayNotification[]; past: DisplayNotification[] } => {
+  const buildUserNotifications = (all: DMNotification[]): { active: DisplayNotification[]; past: DisplayNotification[] } => {
     try {
-      const raw = safeGetItem("inet-dm-notifications");
-      const all: DMNotification[] = raw ? JSON.parse(raw) : [];
-      const readRaw = safeGetItem(`inet-read-${currentUser}`);
-      const readIds: string[] = readRaw ? JSON.parse(readRaw) : [];
-      const deletedRaw = safeGetItem(`inet-deleted-${currentUser}`);
-      const deletedIds: string[] = deletedRaw ? JSON.parse(deletedRaw) : [];
+      const readIds: string[] = safeGetJson(`inet-read-${currentUser}`, []);
+      const deletedIds: string[] = safeGetJson(`inet-deleted-${currentUser}`, []);
 
-      // Filter for this user
       const forUser = all.filter((n) =>
-        n.assignedTo.includes("ALL") || n.assignedTo.includes(currentUser)
+        Array.isArray(n.assignedTo) && (n.assignedTo.includes("ALL") || n.assignedTo.includes(currentUser))
       );
 
       const toDisplay = (n: DMNotification): DisplayNotification => ({
@@ -130,16 +106,86 @@ export function IntelliInterface() {
     }
   };
 
-  const [notifData, setNotifData] = useState(loadUserNotifications);
+  const [notifData, setNotifData] = useState<{ active: DisplayNotification[]; past: DisplayNotification[] }>({ active: [], past: [] });
   const [openNotification, setOpenNotification] = useState<DisplayNotification | null>(null);
   const [showPastNotifs, setShowPastNotifs] = useState(false);
   const [expandedPastId, setExpandedPastId] = useState<string | null>(null);
 
-  // Re-check localStorage on focus (in case DM sent new notifications)
   useEffect(() => {
-    const onFocus = () => setNotifData(loadUserNotifications());
+    let cancelled = false;
+
+    const hydrateDashboardState = async () => {
+      try {
+        const [players, items, cards, infos, notifications, sessions, mapsState, calendarWeatherState] = await Promise.all([
+          appStore.listPlayers<any>().catch(() => [] as any[]),
+          appStore.listItems<any>().catch(() => [] as any[]),
+          appStore.listCards<any>().catch(() => [] as any[]),
+          appStore.listInfos<any>().catch(() => [] as any[]),
+          appStore.listNotifications<DMNotification>().catch(() => [] as DMNotification[]),
+          appStore.loadSessionLogState<Array<{ id: string }>>([]).catch(() => [] as Array<{ id: string }>),
+          appStore.loadIntelliMapsState<any[]>([]).catch(() => [] as any[]),
+          appStore.loadCalendarWeatherState<any>({}).catch(() => ({})),
+        ]);
+
+        if (cancelled) return;
+
+        const playerRows = Array.isArray(players) ? players : [];
+        const itemRows = Array.isArray(items) ? items : [];
+        const cardRows = Array.isArray(cards) ? cards : [];
+        const infoRows = Array.isArray(infos) ? infos : [];
+        const notifRows = Array.isArray(notifications) ? notifications : [];
+        const sessionRows = Array.isArray(sessions) ? sessions : [];
+        const mapRows = Array.isArray(mapsState) ? mapsState : [];
+
+        const me = playerRows.find((p) => p?.name === currentUser);
+        const personalFiles = me
+          ? `${me.class || "Operative"} level ${me.level ?? 1} · HP: ${me.currentHP ?? me.hp ?? 0}/${me.maxHP ?? me.maxHp ?? 0}`
+          : DEFAULT_SECTION_DETAILS.personalFiles;
+        const myItems = me ? itemRows.filter((i) => assignedToMatches(i?.assignedTo, me.id)).length : 0;
+        const myCards = me ? cardRows.filter((c) => assignedToMatches(c?.assignedTo, me.id)).length : 0;
+        const personalSuffix = me ? ` · ${myItems} item${myItems !== 1 ? "s" : ""} · ${myCards} card${myCards !== 1 ? "s" : ""}` : "";
+        const totalPages = itemRows.length + cardRows.length + infoRows.length;
+
+        setSectionDetails({
+          personalFiles: personalFiles + personalSuffix,
+          inetSearch: `Browse the I-Net encyclopedia. Currently ${totalPages} article${totalPages !== 1 ? "s" : ""} indexed.`,
+          nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged · ${mapRows.length} location${mapRows.length !== 1 ? "s" : ""} mapped`,
+          intelliMaps: DEFAULT_SECTION_DETAILS.intelliMaps,
+          dmArea: `${playerRows.length} player${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} · ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} · ${infoRows.length} info entr${infoRows.length !== 1 ? "ies" : "y"} · ${notifRows.length} notification${notifRows.length !== 1 ? "s" : ""}`,
+          community: DEFAULT_SECTION_DETAILS.community,
+          sessionLog: `${sessionRows.length} session${sessionRows.length !== 1 ? "s" : ""} recorded · Chronicle your campaign adventures.`,
+        });
+
+        const nextCalendar = calendarWeatherState?.calendar && typeof calendarWeatherState.calendar === "object"
+          ? { ...DEFAULT_CALENDAR, ...calendarWeatherState.calendar }
+          : DEFAULT_CALENDAR;
+        const nextWeather = calendarWeatherState?.weather && typeof calendarWeatherState.weather === "object"
+          ? { ...DEFAULT_WEATHER, ...calendarWeatherState.weather }
+          : DEFAULT_WEATHER;
+        setCalendarState(nextCalendar);
+        setWeatherState(nextWeather);
+        if (Array.isArray(calendarWeatherState?.boredLines) && calendarWeatherState.boredLines.length > 0) {
+          setBoredLines(calendarWeatherState.boredLines.map((line: unknown) => String(line)).filter(Boolean));
+        }
+
+        setNotifData(buildUserNotifications(notifRows));
+      } catch {
+        if (!cancelled) {
+          setSectionDetails(DEFAULT_SECTION_DETAILS);
+          setCalendarState(DEFAULT_CALENDAR);
+          setWeatherState(DEFAULT_WEATHER);
+          setNotifData({ active: [], past: [] });
+        }
+      }
+    };
+
+    void hydrateDashboardState();
+    const onFocus = () => { void hydrateDashboardState(); };
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, [currentUser]);
 
   const handleReadNotification = (notif: DisplayNotification) => {
@@ -190,27 +236,11 @@ export function IntelliInterface() {
   const [boredSpeech, setBoredSpeech] = useState<string | null>(null);
   const boredClickTimesRef = useRef<number[]>([]);
 
-  const loadBoredLines = (): string[] => {
-    try {
-      const raw = safeGetItem("inet-dm-bored-lines");
-      return raw ? JSON.parse(raw) : [
-        "Hey there! You look like you could use some excitement...",
-        "I'm just vibing. What about you?",
-        "Did you know there are secret corners of I-Net most people never find?",
-        "Psst... keep clicking if you dare.",
-        "I've been sitting here for ages. Entertain me!",
-        "Meow? ...I mean, hello fellow human.",
-      ];
-    } catch {
-      return ["Hey there!"];
-    }
-  };
 
   const handleBoredClick = useCallback(() => {
     // Show a random speech line
-    const lines = loadBoredLines();
-    if (lines.length > 0) {
-      setBoredSpeech(lines[Math.floor(Math.random() * lines.length)]);
+    if (boredLines.length > 0) {
+      setBoredSpeech(boredLines[Math.floor(Math.random() * boredLines.length)]);
     }
 
     // Track rapid clicks for secret navigation
@@ -225,7 +255,7 @@ export function IntelliInterface() {
 
     // Play a random sound
     playRandomMascotSound();
-  }, [navigate]);
+  }, [boredLines, navigate]);
 
   const messagePool = ["Blobgorb"];
 
@@ -281,17 +311,17 @@ export function IntelliInterface() {
   };
 
   const sections = [
-    { 
-      name: "I-Net Wiki", 
-      path: "/interface/inet-search", 
-      icon: Search, 
+    {
+      name: "I-Net Wiki",
+      path: "/interface/inet-search",
+      icon: Search,
       description: "Browse the I-Net encyclopedia",
       details: sectionDetails.inetSearch
     },
-    { 
-      name: "Community", 
-      path: "/interface/community", 
-      icon: Users, 
+    {
+      name: "Community",
+      path: "/interface/community",
+      icon: Users,
       description: "Share updates and messages with your party",
       details: sectionDetails.community,
     },
@@ -302,31 +332,31 @@ export function IntelliInterface() {
       description: "Browse shops and trade with merchants",
       details: `Marketplace for buying and selling goods.`,
     },
-    { 
-      name: "Personal Files", 
-      path: "/interface/personal-files", 
-      icon: FileText, 
+    {
+      name: "Personal Files",
+      path: "/interface/personal-files",
+      icon: FileText,
       description: "View and manage your character sheet",
       details: sectionDetails.personalFiles
     },
-    { 
-      name: loadOfficeName(), 
-      path: "/interface/nexus-nomad", 
-      icon: Building2, 
+    {
+      name: loadOfficeName(),
+      path: "/interface/nexus-nomad",
+      icon: Building2,
       description: "Company headquarters and operations",
       details: sectionDetails.nexusNomad
     },
-    { 
-      name: "Intelli Maps", 
-      path: "/interface/intelli-maps", 
-      icon: Map, 
+    {
+      name: "Intelli Maps",
+      path: "/interface/intelli-maps",
+      icon: Map,
       description: "The Inner City — Hexagonal deep city map",
       details: sectionDetails.intelliMaps
     },
-    { 
-      name: "DM Area", 
-      path: "/interface/dm-area", 
-      icon: ShieldAlert, 
+    {
+      name: "DM Area",
+      path: "/interface/dm-area",
+      icon: ShieldAlert,
       description: "Campaign management tools",
       details: sectionDetails.dmArea,
       dmOnly: true,
@@ -360,16 +390,9 @@ export function IntelliInterface() {
         </div>
         <span className="text-[11px]" style={{ color: theme.labelColor }}>
           {(() => {
-            try {
-              const raw = safeGetItem("inet-dm-calendar");
-              if (raw) {
-                const cal = JSON.parse(raw);
-                const MONTHS = ["Lunara","Selene","Artemina","Diantha","Solyndra","Astraeus","Eosara","Umbriel","Astralia","Caelion","Serevain","Brimara","Hiemsyl"];
-                if (cal.isStarfall) return `Starfall Day${cal.day > 1 ? ` ${cal.day}` : ""}, Year ${cal.year}`;
-                return `${cal.day} ${MONTHS[cal.month - 1] || "Unknown"}, Year ${cal.year}`;
-              }
-            } catch {}
-            return "1 Lunara, Year 1";
+            const MONTHS = ["Lunara","Selene","Artemina","Diantha","Solyndra","Astraeus","Eosara","Umbriel","Astralia","Caelion","Serevain","Brimara","Hiemsyl"];
+            if (calendarState.isStarfall) return `Starfall Day${calendarState.day > 1 ? ` ${calendarState.day}` : ""}, Year ${calendarState.year}`;
+            return `${calendarState.day} ${MONTHS[calendarState.month - 1] || "Unknown"}, Year ${calendarState.year}`;
           })()}
         </span>
       </div>
@@ -479,7 +502,7 @@ export function IntelliInterface() {
                       >
                         <Icon size={32} style={{ color: firstColor(theme.accentColor) }} />
                       </div>
-                      
+
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
                           <h3 className="text-[18px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
@@ -539,7 +562,7 @@ export function IntelliInterface() {
                 USER SESSION
               </h3>
             </div>
-            
+
             <div className={`${retro.sunken} p-3 mb-3`} style={{ background: theme.inputBg }}>
               <div className="text-[10px] mb-1" style={{ color: theme.labelColor }}>
                 Logged in as:
@@ -700,12 +723,9 @@ export function IntelliInterface() {
               "Lunara", "Selene", "Artemina", "Diantha", "Solyndra", "Astraeus", "Eosara",
               "Umbriel", "Astralia", "Caelion", "Serevain", "Brimara", "Hiemsyl",
             ];
-            const cal: { month: number; day: number; year: number; isStarfall?: boolean } = safeGetJson("inet-dm-calendar", { month: 1, day: 1, year: 1 });
-            const wthr: { condition: string; temperature: string; wind: string; description: string } = safeGetJson("inet-dm-weather", { condition: "Overcast", temperature: "Cool", wind: "Light breeze", description: "A thick gray blanket of clouds hangs over The Great City." });
-
-            const dateStr = cal.isStarfall
-              ? `Starfall Day${cal.day > 1 ? ` ${cal.day}` : ""}, Year ${cal.year}`
-              : `${cal.day} ${MONTHS[cal.month - 1] || "Unknown"}, Year ${cal.year}`;
+            const dateStr = calendarState.isStarfall
+              ? `Starfall Day${calendarState.day > 1 ? ` ${calendarState.day}` : ""}, Year ${calendarState.year}`
+              : `${calendarState.day} ${MONTHS[calendarState.month - 1] || "Unknown"}, Year ${calendarState.year}`;
 
             const WI: Record<string, React.ComponentType<{ size?: number; style?: React.CSSProperties; className?: string }>> = {
               "Drizzle": CloudDrizzle, "Light Rain": CloudDrizzle, "Rain": CloudRain,
@@ -714,7 +734,7 @@ export function IntelliInterface() {
               "Cold Rain": CloudRain, "Haze": Wind, "Freezing Drizzle": Snowflake,
               "Gray Skies": Cloud, "Torrential Downpour": CloudRain,
             };
-            const WeatherIcon = WI[wthr.condition] || Cloud;
+            const WeatherIcon = WI[weatherState.condition] || Cloud;
 
             return (
               <div className={`${retro.raised} bg-[#0E0E35] p-4 hover:bg-[#111140] transition-all cursor-pointer`} onClick={() => navigate("/interface/calendar")}>
@@ -725,20 +745,18 @@ export function IntelliInterface() {
                   </h3>
                 </div>
 
-                {/* Date */}
                 <div className={`${retro.sunken} bg-[#0C0C2E] p-3 mb-3`}>
                   <div className="text-[10px] mb-1" style={S_MUTED}>Current Date</div>
-                  <div className="text-[14px]" style={{ color: cal.isStarfall ? "#FFD700" : "#7AB0FF", fontWeight: 600 }}>
+                  <div className="text-[14px]" style={{ color: calendarState.isStarfall ? "#FFD700" : "#7AB0FF", fontWeight: 600 }}>
                     {dateStr}
                   </div>
-                  {cal.isStarfall && (
+                  {calendarState.isStarfall && (
                     <div className="text-[9px] mt-1" style={{ color: "#FFD700AA" }}>
                       ★ A day outside the regular months
                     </div>
                   )}
                 </div>
 
-                {/* Weather */}
                 <div className={`${retro.sunken} bg-[#0C0C2E] p-3`}>
                   <div className="text-[10px] mb-2" style={S_MUTED}>The Great City — Forecast</div>
                   <div className="flex items-center gap-3 mb-2">
@@ -746,13 +764,13 @@ export function IntelliInterface() {
                       <WeatherIcon size={24} style={{ color: "#6A8ABB" }} />
                     </div>
                     <div>
-                      <div className="text-[14px]" style={{ color: "#9AAFCF", fontWeight: 600 }}>{wthr.condition}</div>
-                      <div className="text-[10px]" style={S_MUTED}>{wthr.temperature} · {wthr.wind}</div>
+                      <div className="text-[14px]" style={{ color: "#9AAFCF", fontWeight: 600 }}>{weatherState.condition}</div>
+                      <div className="text-[10px]" style={S_MUTED}>{weatherState.temperature} · {weatherState.wind}</div>
                     </div>
                   </div>
-                  {wthr.description && (
+                  {weatherState.description && (
                     <div className="text-[10px] leading-relaxed mt-1" style={{ color: "#6A7A9A", fontStyle: "italic" }}>
-                      "{wthr.description}"
+                      "{weatherState.description}"
                     </div>
                   )}
                 </div>

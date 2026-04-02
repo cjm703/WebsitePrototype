@@ -216,7 +216,7 @@ function persistThemeState(playerId: string, theme: Partial<PlayerTheme> | null 
 }
 
 export function hydrateThemeState(playerId: string, theme: Partial<PlayerTheme> | null | undefined): PlayerTheme {
-  return persistThemeState(playerId, theme, true);
+  return persistThemeState(playerId, theme, false);
 }
 
 export function getPlayerThemeSnapshot(playerId?: string): PlayerTheme {
@@ -238,13 +238,14 @@ export function getPlayerTheme(playerId?: string): PlayerTheme {
 export function setPlayerTheme(theme: Partial<PlayerTheme>, playerId?: string): void {
   const pid = ensureThemeInitialized(playerId);
   const merged = normalizeTheme({ ...themeCache.get(pid), ...theme });
-  persistThemeState(pid, merged, true);
+  persistThemeState(pid, merged, false);
   saveThemeToRemote(pid, merged);
 }
 
 export function resetPlayerTheme(playerId?: string): void {
   const pid = ensureThemeInitialized(playerId);
-  const normalized = persistThemeState(pid, { ...DEFAULT_THEME }, true);
+  const normalized = persistThemeState(pid, { ...DEFAULT_THEME }, false);
+  try { safeRemoveItem(themeKey(pid)); } catch {}
   saveThemeToRemote(pid, normalized);
 }
 
@@ -372,7 +373,7 @@ function persistStickerState(playerId: string, stickers: unknown, mirrorLegacy =
 }
 
 export function hydratePlacedStickersState(playerId: string, stickers: unknown): PlacedSticker[] {
-  return persistStickerState(playerId, stickers, true);
+  return persistStickerState(playerId, stickers, false);
 }
 
 function saveStickersToRemote(playerId: string, stickers: PlacedSticker[]): void {
@@ -390,7 +391,7 @@ export function getPlacedStickers(playerId?: string): PlacedSticker[] {
 
 export function setPlacedStickers(stickers: PlacedSticker[], playerId?: string): void {
   const pid = ensureStickerInitialized(playerId);
-  const next = persistStickerState(pid, stickers, true);
+  const next = persistStickerState(pid, stickers, false);
   saveStickersToRemote(pid, next);
 }
 

@@ -4,16 +4,9 @@ import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_ACCENT, S_RED } from "./shared-styles";
 import { LogIn, Shield, User, ChevronDown, X } from "lucide-react";
 import { initialPlayers } from "./initial-data";
-import { verifyAuthCode, getAuthStatuses, migrateAuthCodes } from "./auth-utils";
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { verifyAuthCode, getAuthStatuses } from "./auth-utils";
+import { safeSetItem } from "./safe-storage";
 import type { LoginProfile } from "./types";
-
-interface LegacyProfile {
-  id: string;
-  name: string;
-  authCode?: string;
-  description: string;
-}
 
 const DM_PROFILE: LoginProfile = {
   id: "dm",
@@ -73,38 +66,19 @@ async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
     }));
 }
 
-function loadProfilesSync(): LoginProfile[] {
-  try {
-    const playersRaw = safeGetItem("inet-dm-players");
-    if (playersRaw) {
-      const players: Array<{ id: string; name: string; class?: string; level?: number; authCode?: string }> = JSON.parse(playersRaw);
-      const profiles: LoginProfile[] = players
-        .filter((p) => p.id !== "dm")
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
+function buildFallbackProfiles(): LoginProfile[] {
+  const baseProfiles = Array.isArray(initialPlayers)
+    ? initialPlayers
+        .filter((p: any) => String(p?.id) !== "dm")
+        .map((p: any) => ({
+          id: String(p.id),
+          name: String(p.name ?? p.id),
           hasAuthCode: false,
           description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
-        }));
-      return [...profiles, DM_PROFILE];
-    }
+        }))
+    : [];
 
-    const raw = safeGetItem("inet-profiles");
-    if (raw) {
-      const parsed: LegacyProfile[] = JSON.parse(raw);
-      const profiles: LoginProfile[] = parsed
-        .filter((p) => p.id !== "dm")
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          hasAuthCode: false,
-          description: p.description,
-        }));
-      return [...profiles, DM_PROFILE];
-    }
-  } catch {}
-
-  return [DM_PROFILE];
+  return [...baseProfiles, DM_PROFILE];
 }
 
 function LoadingLogo() {
@@ -188,7 +162,7 @@ function LoadingLogo() {
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [profiles, setProfiles] = useState<LoginProfile[]>(loadProfilesSync);
+  const [profiles, setProfiles] = useState<LoginProfile[]>(buildFallbackProfiles);
   const [selectedProfile, setSelectedProfile] = useState<LoginProfile | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [password, setPassword] = useState("");
@@ -201,73 +175,13 @@ export function LoginPage() {
     let cancelled = false;
 
     (async () => {
-      try {
-        const codesToMigrate: Array<{ profileId: string; plainCode: string }> = [];
-        const playersRaw = safeGetItem("inet-dm-players");
-
-        if (playersRaw) {
-          try {
-            const players: Array<{ id: string; authCode?: string }> = JSON.parse(playersRaw);
-            for (const p of players) {
-              if (p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-                codesToMigrate.push({ profileId: p.id, plainCode: p.authCode });
-              }
-            }
-          } catch {}
-        }
-
-        const legacyRaw = safeGetItem("inet-profiles");
-        if (legacyRaw) {
-          try {
-            const legacy: LegacyProfile[] = JSON.parse(legacyRaw);
-            for (const p of legacy) {
-              if (p.id !== "dm" && p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-                if (!codesToMigrate.some((c) => c.profileId === p.id)) {
-                  codesToMigrate.push({ profileId: p.id, plainCode: p.authCode });
-                }
-              }
-            }
-          } catch {}
-        }
-
-        if (codesToMigrate.length > 0) {
-          const migrated = await migrateAuthCodes(codesToMigrate);
-          console.log(`Migrated ${migrated} legacy auth codes to server`);
-
-          if (playersRaw) {
-            try {
-              const players = JSON.parse(playersRaw);
-              for (const p of players) {
-                if (p.authCode && !/^[0-9a-f]{64}$/i.test(p.authCode)) {
-                  p.authCode = "";
-                }
-              }
-              safeSetJson("inet-dm-players", players);
-            } catch {}
-          }
-        }
-      } catch (err) {
-        console.error("Auth code migration error:", err);
-      }
-
-      let nextProfiles: LoginProfile[] = [DM_PROFILE];
+      let nextProfiles: LoginProfile[] = buildFallbackProfiles();
 
       try {
         const serverProfiles = await fetchProfilesFromServer();
         nextProfiles = [...serverProfiles, DM_PROFILE];
-
-        safeSetJson(
-          "inet-profiles",
-          nextProfiles.map((p) => ({
-            id: p.id,
-            name: p.name,
-            description: p.description,
-            authCode: "",
-          }))
-        );
       } catch (err) {
-        console.error("Failed to fetch profiles from server, using fallback:", err);
-        nextProfiles = loadProfilesSync();
+        console.error("Failed to fetch profiles from server, using built-in fallback:", err);
       }
 
       try {

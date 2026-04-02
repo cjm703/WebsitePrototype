@@ -123,10 +123,10 @@ export function SessionLog() {
   const isDM = currentUser === "DM";
 
   const [players, setPlayers] = useState<Array<{ id: string; name: string }>>([]);
-  const [sessions, setSessions] = useState<SessionEntry[]>(loadLocalSessions);
-  const [playerNotes, setPlayerNotes] = useState<PlayerNote[]>(loadLocalPlayerNotes);
-  const [timelineData, setTimelineData] = useState<TimelineDataLite>(loadLocalTimelineData);
-  const [wikiPages, setWikiPages] = useState<WikiPageLite[]>(loadLocalWikiPages);
+  const [sessions, setSessions] = useState<SessionEntry[]>([]);
+  const [playerNotes, setPlayerNotes] = useState<PlayerNote[]>([]);
+  const [timelineData, setTimelineData] = useState<TimelineDataLite>({});
+  const [wikiPages, setWikiPages] = useState<WikiPageLite[]>([]);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [sessionSaveStatus, setSessionSaveStatus] = useState<"saving" | "saved" | "error" | null>(null);
   const [sessionSaveError, setSessionSaveError] = useState<string | null>(null);
@@ -142,22 +142,22 @@ export function SessionLog() {
         setSessionSaveError(null);
 
         const [remotePlayers, remoteSessions, remoteNotes, remoteTimeline, remoteSites] = await Promise.all([
-          appStore.listPlayers<any>().catch(() => loadLocalPlayers() as any),
-          appStore.loadSessionLogState<SessionEntry[]>(loadLocalSessions()),
-          appStore.loadSessionPlayerNotes<PlayerNote[]>(loadLocalPlayerNotes()),
-          appStore.loadCampaignTimelineState<TimelineDataLite>(loadLocalTimelineData()).catch(() => loadLocalTimelineData()),
-          appStore.listSites<WikiPageLite>().catch(() => loadLocalWikiPages()),
+          appStore.listPlayers<any>().catch(() => [] as any),
+          appStore.loadSessionLogState<SessionEntry[]>([]),
+          appStore.loadSessionPlayerNotes<PlayerNote[]>([]),
+          appStore.loadCampaignTimelineState<TimelineDataLite>({}).catch(() => ({})),
+          appStore.listSites<WikiPageLite>().catch(() => [] as WikiPageLite[]),
         ]);
 
         if (cancelled) return;
 
         setPlayers(Array.isArray(remotePlayers)
           ? remotePlayers.map((player: any) => ({ id: player.id, name: player.name || player.playerName || player.title || player.id }))
-          : loadLocalPlayers());
-        setSessions(Array.isArray(remoteSessions) ? remoteSessions : loadLocalSessions());
-        setPlayerNotes(Array.isArray(remoteNotes) ? remoteNotes : loadLocalPlayerNotes());
-        setTimelineData(remoteTimeline && Array.isArray(remoteTimeline.books) ? remoteTimeline : loadLocalTimelineData());
-        setWikiPages(Array.isArray(remoteSites) ? remoteSites.map((page: any) => ({ id: page.id, title: page.title })) : loadLocalWikiPages());
+          : []);
+        setSessions(Array.isArray(remoteSessions) ? remoteSessions : []);
+        setPlayerNotes(Array.isArray(remoteNotes) ? remoteNotes : []);
+        setTimelineData(remoteTimeline && typeof remoteTimeline === "object" ? remoteTimeline : {});
+        setWikiPages(Array.isArray(remoteSites) ? remoteSites.map((page: any) => ({ id: page.id, title: page.title })) : []);
       } catch (err) {
         if (!cancelled) {
           setSessionSaveError(err instanceof Error ? err.message : "Failed to load session log.");
