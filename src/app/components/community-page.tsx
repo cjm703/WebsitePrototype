@@ -3250,7 +3250,7 @@ export function CommunityPage() {
 
   return (
     <div
-      className="min-h-screen relative overflow-hidden flex flex-col"
+      className="h-screen max-h-screen relative overflow-hidden flex flex-col"
       style={{
         background: "#010108",
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
@@ -3315,7 +3315,7 @@ export function CommunityPage() {
         </button>
       </div>
 
-      <div className={`relative z-10 flex flex-1 min-h-0 transition-opacity duration-300 ${chatHidden ? "opacity-0 pointer-events-none" : "opacity-100"}`} style={{ background: `rgba(1,1,8,${bgOpacity})`, backdropFilter: chatHidden ? "none" : "blur(2px)" }}>
+      <div className={`relative z-10 flex flex-1 min-h-0 overflow-hidden transition-opacity duration-300 ${chatHidden ? "opacity-0 pointer-events-none" : "opacity-100"}`} style={{ background: `rgba(1,1,8,${bgOpacity})`, backdropFilter: chatHidden ? "none" : "blur(2px)" }}>
 
         {/* ── Left: Channel List ── */}
         <div
@@ -3586,7 +3586,7 @@ export function CommunityPage() {
         </div>
 
         {/* ── Center: Chat Area ── */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           {/* Chat header */}
           <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ background: "rgba(8,8,32,0.9)", borderBottom: `1px solid ${accent}22` }}>
             {lastPingNotice && (
@@ -3886,7 +3886,7 @@ export function CommunityPage() {
           )}
 
           {/* Messages area */}
-          <div className="flex-1 overflow-y-auto px-4 py-3" style={{ background: "rgba(4,4,16,0.5)" }} onClick={() => { if (reactionPickerMsgId) setReactionPickerMsgId(null); }}>
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3" style={{ background: "rgba(4,4,16,0.5)" }} onClick={() => { if (reactionPickerMsgId) setReactionPickerMsgId(null); }}>
             {channelMessages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <MessageSquare size={36} style={{ color: "#1A2A4A" }} className="mb-3" />

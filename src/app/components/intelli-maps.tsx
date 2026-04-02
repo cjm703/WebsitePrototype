@@ -688,30 +688,25 @@ function migrateZone(z: any): MapZone {
 }
 
 const INTELLI_MAPS_STORAGE_KEY = "inet-map-hexcity-v3";
-
-function buildDefaultMapZones(): MapZone[] {
-  return buildDefaultZones();
-}
-
-function readLegacyZones(): { zones: MapZone[]; hasAny: boolean } {
+function loadLocalZones(): MapZone[] {
   const saved = safeGetJson<any[]>(INTELLI_MAPS_STORAGE_KEY, []);
-  const defaults = buildDefaultMapZones();
-  if (!Array.isArray(saved) || saved.length === 0) {
-    return { zones: defaults, hasAny: false };
-  }
+  if (saved.length === 0 || saved.length < 15) return buildDefaultZones();
+  const defaults = buildDefaultZones();
   const migrated = saved.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
   const missing = defaults.filter((zone) => !existingIds.has(zone.id));
-  return { zones: missing.length > 0 ? [...migrated, ...missing] : migrated, hasAny: true };
+  if (missing.length > 0) return [...migrated, ...missing];
+  return migrated;
 }
 
-function normalizeZones(raw: unknown, fallback: MapZone[] = buildDefaultMapZones()): MapZone[] {
-  if (!Array.isArray(raw) || raw.length === 0) return fallback;
-  const defaults = buildDefaultMapZones();
+function normalizeZones(raw: unknown): MapZone[] {
+  if (!Array.isArray(raw)) return loadLocalZones();
+  const defaults = buildDefaultZones();
   const migrated = raw.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
   const missing = defaults.filter((zone) => !existingIds.has(zone.id));
-  return missing.length > 0 ? [...migrated, ...missing] : migrated;
+  if (missing.length > 0) return [...migrated, ...missing];
+  return migrated;
 }
 
 /* ==============================================================
@@ -721,7 +716,7 @@ function normalizeZones(raw: unknown, fallback: MapZone[] = buildDefaultMapZones
 export function IntelliMaps() {
   const navigate = useNavigate();
   const [currentUser] = useState<string>(() => safeGetItem("inet-user") || "Agent Phoenix");
-  const [zones, setZones] = useState<MapZone[]>(buildDefaultMapZones);
+  const [zones, setZones] = useState<MapZone[]>(loadLocalZones);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -853,31 +848,18 @@ export function IntelliMaps() {
     let cancelled = false;
 
     async function loadMapsState() {
-      const fallbackZones = buildDefaultMapZones();
-      const legacy = readLegacyZones();
       try {
         setMapsLoading(true);
         setMapsError(null);
-        const remoteZones = await appStore.loadIntelliMapsState<MapZone[]>(fallbackZones);
-        const remoteUsedFallback = remoteZones === fallbackZones;
-        const normalizedRemote = normalizeZones(remoteZones, fallbackZones);
-        if (cancelled) return;
-
-        if (remoteUsedFallback && legacy.hasAny) {
-          setZones(legacy.zones);
+        const remoteZones = await appStore.loadIntelliMapsState<MapZone[]>(loadLocalZones());
+        if (!cancelled) {
+          setZones(normalizeZones(remoteZones));
           hasLoadedMapsRef.current = true;
-          void appStore.saveIntelliMapsState<MapZone[]>(legacy.zones).catch((err) => {
-            console.warn("Failed to import legacy Intelli Maps state", err);
-          });
-          return;
         }
-
-        setZones(normalizedRemote);
-        hasLoadedMapsRef.current = true;
       } catch (err) {
         if (!cancelled) {
           setMapsError(err instanceof Error ? err.message : "Failed to load Intelli Maps state");
-          setZones(legacy.hasAny ? legacy.zones : fallbackZones);
+          setZones(loadLocalZones());
           hasLoadedMapsRef.current = true;
         }
       } finally {
@@ -2041,13 +2023,17 @@ export function IntelliMaps() {
               </div>
               <div className="flex-1 overflow-y-auto">
                 {(() => {
-                  const innerZones = zones; // Sectors 0-14 are all inner city
+                  const innerZones = zones.filter(zone => !zone.id.startsWith("os-"));
+                  const outerZones = zones.filter(zone => zone.id.startsWith("os-"));
 
                   const renderZoneRow = (zone: MapZone) => {
                     const fog = zone.fogMode;
                     const isHov = hoveredSector === zone.id;
                     if (!isDM && showFog && fog === "invisible") return null;
                     const isLockedForPlayer = !isDM && showFog && fog === "locked";
+                    const isOuterZone = zone.id.startsWith("os-");
+                    const zoneLabel = isOuterZone ? zone.name : `Sector ${zone.sectorNumber}`;
+                    const zoneMeta = isOuterZone ? zone.subtitle : undefined;
                     return (
                       <div key={zone.id} onMouseEnter={() => setHoveredSector(zone.id)} onMouseLeave={() => setHoveredSector(null)} className="flex items-center gap-2 px-3 py-2 transition-colors" style={{ borderBottom: "1px solid #0E0E35", background: isHov ? `${zone.color}0D` : "transparent" }}>
                         <button
@@ -2056,10 +2042,11 @@ export function IntelliMaps() {
                           style={{ cursor: isLockedForPlayer ? "not-allowed" : "pointer", opacity: isLockedForPlayer ? 0.5 : 1 }}
                         >
                           <div className="w-7 h-7 shrink-0 flex items-center justify-center text-[10px] font-bold" style={{ border: `1px solid ${isLockedForPlayer ? "#2A2A4B" : `${zone.color}55`}`, color: isLockedForPlayer ? "#5A6A8A" : zone.color, background: isLockedForPlayer ? "#080820" : `${zone.color}0A`, fontFamily: "'Courier New', monospace" }}>
-                            {isLockedForPlayer ? <Lock size={10} /> : `${zone.sectorNumber}`}
+                            {isLockedForPlayer ? <Lock size={10} /> : isOuterZone ? zone.name.split(" ").slice(-1)[0] : `${zone.sectorNumber}`}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[11px] font-semibold truncate" style={{ color: isLockedForPlayer ? "#5A6A8A" : zone.color }}>Sector {zone.sectorNumber}</div>
+                            <div className="text-[11px] font-semibold truncate" style={{ color: isLockedForPlayer ? "#5A6A8A" : zone.color }}>{zoneLabel}</div>
+                            {zoneMeta && <div className="text-[9px] truncate" style={S_DIM}>{zoneMeta}</div>}
                           </div>
                         </button>
                         {isDM && isEditMode ? (
@@ -2086,25 +2073,15 @@ export function IntelliMaps() {
                       <div className="px-3 py-1.5 flex items-center gap-2" style={{ background: "#0A0A2A", borderBottom: "1px solid #1A1A4B" }}>
                         <div className="w-2 h-2 rounded-full" style={{ background: "#4A7BFF", boxShadow: "0 0 4px #4A7BFF55" }} />
                         <span className="text-[9px] tracking-widest" style={{ color: "#5A7ABB", fontFamily: "'Courier New', monospace" }}>INNER SECTORS</span>
-                        <span className="text-[8px] ml-auto" style={{ color: "#3A4A6B" }}>{zones.length}</span>
+                        <span className="text-[8px] ml-auto" style={{ color: "#3A4A6B" }}>{innerZones.length}</span>
                       </div>
                       {innerZones.map(renderZoneRow)}
                       <div className="px-3 py-1.5 flex items-center gap-2" style={{ background: "#0A0A2A", borderBottom: "1px solid #1A1A4B" }}>
                         <div className="w-2 h-2" style={{ background: "#4AFFFF22", border: "1px solid #4AFFFF55" }} />
-                        <span className="text-[9px] tracking-widest" style={{ color: "#5A7ABB", fontFamily: "'Courier New', monospace" }}>OUTER SECTORS</span>
-                        <span className="text-[8px] ml-auto" style={{ color: "#3A4A6B" }}>{OUTER_SECTORS_V2.length}</span>
+                        <span className="text-[9px] tracking-widest" style={{ color: "#5A7ABB", fontFamily: "'Courier New', monospace" }}>OUTER SUBSECTORS</span>
+                        <span className="text-[8px] ml-auto" style={{ color: "#3A4A6B" }}>{outerZones.length}</span>
                       </div>
-                      {OUTER_SECTORS_V2.map(os => (
-                        <div key={os.id} className="flex items-center gap-2 px-3 py-2 transition-colors" style={{ borderBottom: "1px solid #0E0E35" }}>
-                          <div className="w-7 h-7 shrink-0 flex items-center justify-center text-[10px] font-bold" style={{ border: `1px solid ${os.color}55`, color: os.color, background: `${os.color}0A`, fontFamily: "'Courier New', monospace" }}>
-                            {os.id}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[11px] font-semibold truncate" style={{ color: os.color }}>Sector {os.id}</div>
-                          </div>
-                          <span className="text-[8px] shrink-0" style={{ color: "#3A4A6B" }}>{os.numSubs} sub</span>
-                        </div>
-                      ))}
+                      {outerZones.map(renderZoneRow)}
                     </>
                   );
                 })()}
