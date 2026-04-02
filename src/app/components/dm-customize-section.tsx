@@ -1,7 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { retro } from "./retro-styles";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
-import { safeGetItem, safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { S_MUTED, S_TEXT, S_ACCENT_HDR, S_SECTION_HDR, S_GREEN_BTN, S_RED, S_ACCENT, S_SUBTLE, S_WARN } from "./dm-styles";
 import {
   Plus, Save, X, Edit, Trash2, ToggleLeft, ToggleRight, Palette, Cat,
@@ -43,31 +42,37 @@ const DEFAULT_BORED_LINES = [
 
 
 export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[] }) {
-  const [mascotTriggers, setMascotTriggers] = useState<MascotTrigger[]>(() => safeGetJson("inet-dm-mascotTriggers", sharedInitialMascotTriggers));
+  const [mascotTriggers, setMascotTriggers] = useState<MascotTrigger[]>(sharedInitialMascotTriggers);
   const [editingTrigger, setEditingTrigger] = useState<MascotTrigger | null>(null);
   const [isAddingNewTrigger, setIsAddingNewTrigger] = useState(false);
   const [newLineText, setNewLineText] = useState("");
 
-  const [partyColorPrompt, setPartyColorPrompt] = useState<string>(() => {
-    try {
-      const saved = safeGetItem("inet-dm-party-color-prompt");
-      if (saved !== null) return JSON.parse(saved);
-    } catch {}
-    return "box";
-  });
+  const [partyColorPrompt, setPartyColorPrompt] = useState<string>("box");
 
-  const [boredLines, setBoredLines] = useState<string[]>(() => {
-    try {
-      const saved = safeGetItem("inet-dm-bored-lines");
-      if (saved !== null) return JSON.parse(saved);
-    } catch {}
-    return DEFAULT_BORED_LINES;
-  });
+  const [boredLines, setBoredLines] = useState<string[]>(DEFAULT_BORED_LINES);
   const [editingBoredLine, setEditingBoredLine] = useState("");
 
-  useDebouncedJsonStorage("inet-dm-mascotTriggers", mascotTriggers, 400);
-  useDebouncedJsonStorage("inet-dm-party-color-prompt", partyColorPrompt, 300);
-  useDebouncedJsonStorage("inet-dm-bored-lines", boredLines, 400);
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void appStore.loadDmCustomizeState({ mascotTriggers: sharedInitialMascotTriggers, partyColorPrompt: "box", boredLines: DEFAULT_BORED_LINES }).then((state: any) => {
+      if (cancelled) return;
+      setMascotTriggers(Array.isArray(state.mascotTriggers) ? state.mascotTriggers : sharedInitialMascotTriggers);
+      setPartyColorPrompt(typeof state.partyColorPrompt === "string" ? state.partyColorPrompt : "box");
+      setBoredLines(Array.isArray(state.boredLines) ? state.boredLines : DEFAULT_BORED_LINES);
+      hydratedRef.current = true;
+    }).catch(() => { hydratedRef.current = true; });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const handle = setTimeout(() => {
+      void appStore.saveDmCustomizeState({ mascotTriggers, partyColorPrompt, boredLines }).catch(() => {});
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [mascotTriggers, partyColorPrompt, boredLines]);
 
   const handleStartAddTrigger = () => {
     setEditingTrigger({

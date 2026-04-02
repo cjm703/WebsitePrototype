@@ -1112,7 +1112,12 @@ useEffect(() => {
 
     if (!deleteTarget) return;
 
-    await deleteDMPlayer(deleteTarget.id);
+    try {
+      await deleteDMPlayer(deleteTarget.id);
+    } catch (err) {
+      setDmError(getSaveError(err, "Failed to delete player"));
+      return;
+    }
 
     const nextDeleted = [...deletedPlayers.filter((p) => p.id !== "dm"), deleteTarget];
     const updatedPlayers = players.filter((p) => p.id !== deleteTarget.id);
@@ -1653,33 +1658,40 @@ const handleSaveItem = async () => {
                     </div>
                   </div>
 
-                  {/* Authorization Code */}
-                  <div className="mb-4">
-                    <label className="text-[10px] block mb-1" style={labelStyle}>
-                      {hasAuthCodeMap[editingPlayer.id] ? "Change Authorization Code:" : "Set Authorization Code (for Login):"}
-                    </label>
-                    <input
-                      type="password"
-                      value={pendingAuthCode}
-                      onChange={(e) => setPendingAuthCode(e.target.value)}
-                      placeholder={hasAuthCodeMap[editingPlayer.id] ? "Enter new code to change..." : "Set login authorization code..."}
-                      className={inputClass}
-                      style={inputStyle}
-                      autoComplete="off"
-                    />
-                    <div className="text-[9px] mt-1" style={S_DIM}>
-                      {hasAuthCodeMap[editingPlayer.id]
-                        ? "A code is set on the server. Leave blank to keep it, or type a new one to replace."
-                        : "Players will use this code to log in. Stored securely on the server."}
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      await handleSavePlayer();
+                    }}
+                  >
+                    {/* Authorization Code */}
+                    <div className="mb-4">
+                      <label className="text-[10px] block mb-1" style={labelStyle}>
+                        {hasAuthCodeMap[editingPlayer.id] ? "Change Authorization Code:" : "Set Authorization Code (for Login):"}
+                      </label>
+                      <input
+                        type="password"
+                        value={pendingAuthCode}
+                        onChange={(e) => setPendingAuthCode(e.target.value)}
+                        placeholder={hasAuthCodeMap[editingPlayer.id] ? "Enter new code to change..." : "Set login authorization code..."}
+                        className={inputClass}
+                        style={inputStyle}
+                        autoComplete="off"
+                      />
+                      <div className="text-[9px] mt-1" style={S_DIM}>
+                        {hasAuthCodeMap[editingPlayer.id]
+                          ? "A code is set on the server. Leave blank to keep it, or type a new one to replace."
+                          : "Players will use this code to log in. Stored securely on the server."}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex gap-2">
-                    <button onClick={handleSavePlayer} className={`${retro.button} px-6 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-                      <Save size={14} /> {isAddingNewPlayer ? "Add Player" : "Save Changes"}
-                    </button>
-                    <button onClick={handleCancelPlayerEdit} className={`${retro.button} px-6 py-2 text-[12px]`} style={S_TEXT}>Cancel</button>
-                  </div>
+                    <div className="flex gap-2">
+                      <button type="submit" className={`${retro.button} px-6 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+                        <Save size={14} /> {isAddingNewPlayer ? "Add Player" : "Save Changes"}
+                      </button>
+                      <button type="button" onClick={handleCancelPlayerEdit} className={`${retro.button} px-6 py-2 text-[12px]`} style={S_TEXT}>Cancel</button>
+                    </div>
+                  </form>
                 </div>
               )}
 
@@ -1833,28 +1845,34 @@ const handleSaveItem = async () => {
                         <p className="text-[11px] mb-4" style={S_MUTED}>
                           Enter the DM authorization code to confirm.
                         </p>
-                        <div className="mb-4">
-                          <label className="text-[10px] block mb-1" style={S_MUTED}>DM Password:</label>
-                          <input
-                            type="password"
-                            value={deletePassword}
-                            onChange={(e) => { setDeletePassword(e.target.value); setDeletePasswordError(false); }}
-                            onKeyDown={async (e) => { if (e.key === "Enter") confirmDeletePlayer(); }}
-                            placeholder="Enter DM auth code..."
-                            className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`}
-                            style={dmErrBorder(!!deletePasswordError)}
-                            autoFocus
-                          />
-                          {deletePasswordError && (
-                            <div className="text-[10px] mt-1" style={S_RED}>
-                              Incorrect authorization code. Access denied.
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex gap-2 justify-end">
-                          <button onClick={cancelDelete} className={`${retro.button} px-5 py-2 text-[12px]`} style={S_TEXT}>Cancel</button>
-                          <button onClick={confirmDeletePlayer} className={`${retro.button} px-5 py-2 text-[12px]`} style={S_RED}>Confirm Removal</button>
-                        </div>
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            await confirmDeletePlayer();
+                          }}
+                        >
+                          <div className="mb-4">
+                            <label className="text-[10px] block mb-1" style={S_MUTED}>DM Password:</label>
+                            <input
+                              type="password"
+                              value={deletePassword}
+                              onChange={(e) => { setDeletePassword(e.target.value); setDeletePasswordError(false); }}
+                              placeholder="Enter DM auth code..."
+                              className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`}
+                              style={dmErrBorder(!!deletePasswordError)}
+                              autoFocus
+                            />
+                            {deletePasswordError && (
+                              <div className="text-[10px] mt-1" style={S_RED}>
+                                Incorrect authorization code. Access denied.
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2 justify-end">
+                            <button type="button" onClick={cancelDelete} className={`${retro.button} px-5 py-2 text-[12px]`} style={S_TEXT}>Cancel</button>
+                            <button type="submit" className={`${retro.button} px-5 py-2 text-[12px]`} style={S_RED}>Confirm Removal</button>
+                          </div>
+                        </form>
                       </div>
                     )}
                   </div>

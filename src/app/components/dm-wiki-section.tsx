@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import {
@@ -7,8 +7,7 @@ import {
 } from "lucide-react";
 import { PAGE_ICONS } from "./page-icons";
 import { RichTextEditor } from "./rich-text-editor";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
-import { safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import {
   DM_WIKI_EDITOR_BG, DM_WIKI_EDITOR_TITLE, DM_WIKI_BODY_BG, DM_BTN_LINK, DM_BTN_CLOSE,
   DM_INFO_BAR, DM_SECTION_LEFT, DM_SECTION_HDR, DM_SECTION_LEFT_PURPLE, DM_SECTION_HDR_PURPLE,
@@ -157,7 +156,7 @@ const inputStyle = { color: "#C0D0F0" } as const;
 export function DMWikiSection() {
   const navigate = useNavigate();
 
-  const [sitePages, setSitePages] = useState<SitePage[]>(() => safeGetJson("inet-dm-sites", []));
+  const [sitePages, setSitePages] = useState<SitePage[]>([]);
   const [pageFormTitle, setPageFormTitle] = useState("");
   const [pageFormUrl, setPageFormUrl] = useState("");
   const [pageFormDesc, setPageFormDesc] = useState("");
@@ -185,7 +184,7 @@ export function DMWikiSection() {
   const [showAppearancePanel, setShowAppearancePanel] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
   const [showPanelsToggle, setShowPanelsToggle] = useState(false);
-  const [customPanelStyles] = useState<{ id: string; label: string; accent: string; bg: string; border: string }[]>(() => safeGetJson("inet-custom-panel-styles", []));
+  const [customPanelStyles, setCustomPanelStyles] = useState<{ id: string; label: string; accent: string; bg: string; border: string }[]>([]);
   const [pageFormInfobox, setPageFormInfobox] = useState<{ label: string; value: string }[]>([]);
   const [pageFormQuality, setPageFormQuality] = useState<"featured" | "good" | "start" | "stub" | "draft">("start");
   const [pageFormTags, setPageFormTags] = useState<string[]>([]);
@@ -205,7 +204,29 @@ export function DMWikiSection() {
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
   const [wikiEditorTab, setWikiEditorTab] = useState<"edit" | "metadata" | "infobox" | "appearance" | "list">("list");
 
-  useDebouncedJsonStorage("inet-dm-sites", sitePages, 400);
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      appStore.listSites<SitePage>(),
+      appStore.listCustomPanelStyles<{ id: string; label: string; accent: string; bg: string; border: string }>(),
+    ]).then(([sites, styles]) => {
+      if (cancelled) return;
+      setSitePages(sites);
+      setCustomPanelStyles(styles);
+      hydratedRef.current = true;
+    }).catch(() => { hydratedRef.current = true; });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const handle = setTimeout(() => {
+      void appStore.saveSites(sitePages).catch(() => {});
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [sitePages]);
 
   const selectDateStyle = { color: "#C0D0F0", cursor: "pointer" as const };
   const isEditing = editingPageId !== null;

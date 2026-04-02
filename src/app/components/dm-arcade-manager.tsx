@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { retro } from "./retro-styles";
 import {
   Trash2, Plus, Save, X, Edit, Users,
@@ -18,7 +18,7 @@ import {
   setOwnedMystery,
   type LeaderboardEntry,
 } from "./game-leaderboard";
-import { safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { S_MUTED, S_ACCENT, S_TEXT, S_RED } from "./shared-styles";
 
 // ========================
@@ -158,9 +158,6 @@ const BUILTIN_STICKERS: StickerItem[] = [
 // ========================
 // Helpers
 // ========================
-function saveJson(key: string, data: unknown): void {
-  try { safeSetJson(key, data); } catch {}
-}
 
 type ArcadeTab = "credits" | "colors" | "colorpacks" | "stickers" | "mystery" | "leaderboard";
 
@@ -235,16 +232,16 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
   };
 
   // Global catalog data (not per-player)
-  const [customColors, setCustomColors] = useState<SingleColor[]>(() => safeGetJson(CUSTOM_COLORS_KEY, []));
-  const [customPacks, setCustomPacks] = useState<ColorPack[]>(() => safeGetJson(CUSTOM_PACKS_KEY, []));
-  const [customStickers, setCustomStickers] = useState<StickerItem[]>(() => safeGetJson(CUSTOM_STICKERS_KEY, []));
-  const [mysteryItems, setMysteryItems] = useState<MysteryItem[]>(() => safeGetJson(MYSTERY_ITEMS_KEY, []));
-  const [hiddenColors, setHiddenColors] = useState<string[]>(() => safeGetJson(HIDDEN_COLORS_KEY, []));
-  const [hiddenPacks, setHiddenPacks] = useState<string[]>(() => safeGetJson(HIDDEN_PACKS_KEY, []));
-  const [hiddenStickers, setHiddenStickers] = useState<string[]>(() => safeGetJson(HIDDEN_STICKERS_KEY, []));
+  const [customColors, setCustomColors] = useState<SingleColor[]>([]);
+  const [customPacks, setCustomPacks] = useState<ColorPack[]>([]);
+  const [customStickers, setCustomStickers] = useState<StickerItem[]>([]);
+  const [mysteryItems, setMysteryItems] = useState<MysteryItem[]>([]);
+  const [hiddenColors, setHiddenColors] = useState<string[]>([]);
+  const [hiddenPacks, setHiddenPacks] = useState<string[]>([]);
+  const [hiddenStickers, setHiddenStickers] = useState<string[]>([]);
 
   // Leaderboard
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => getLeaderboard());
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [editingEntry, setEditingEntry] = useState<LeaderboardEntry | null>(null);
   const [isAddingEntry, setIsAddingEntry] = useState(false);
 
@@ -261,15 +258,43 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
   const [newMysteryDesc, setNewMysteryDesc] = useState("");
   const [newMysteryPrice, setNewMysteryPrice] = useState(50);
 
-  // Persist global catalog data
-  useEffect(() => { saveJson(CUSTOM_COLORS_KEY, customColors); }, [customColors]);
-  useEffect(() => { saveJson(CUSTOM_PACKS_KEY, customPacks); }, [customPacks]);
-  useEffect(() => { saveJson(CUSTOM_STICKERS_KEY, customStickers); }, [customStickers]);
-  useEffect(() => { saveJson(HIDDEN_COLORS_KEY, hiddenColors); }, [hiddenColors]);
-  useEffect(() => { saveJson(HIDDEN_PACKS_KEY, hiddenPacks); }, [hiddenPacks]);
-  useEffect(() => { saveJson(HIDDEN_STICKERS_KEY, hiddenStickers); }, [hiddenStickers]);
-  useEffect(() => { saveJson(MYSTERY_ITEMS_KEY, mysteryItems); }, [mysteryItems]);
-  useEffect(() => { saveJson(LEADERBOARD_KEY, leaderboard); }, [leaderboard]);
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      appStore.loadArcadeCatalogState<any>({ customColors: [], customPacks: [], customStickers: [], mysteryItems: [], hiddenColors: [], hiddenPacks: [], hiddenStickers: [] }),
+      appStore.loadArcadeLeaderboardState<{ entries: LeaderboardEntry[] }>({ entries: [] }),
+    ]).then(([catalog, board]) => {
+      if (cancelled) return;
+      setCustomColors(Array.isArray(catalog.customColors) ? catalog.customColors : []);
+      setCustomPacks(Array.isArray(catalog.customPacks) ? catalog.customPacks : []);
+      setCustomStickers(Array.isArray(catalog.customStickers) ? catalog.customStickers : []);
+      setMysteryItems(Array.isArray(catalog.mysteryItems) ? catalog.mysteryItems : []);
+      setHiddenColors(Array.isArray(catalog.hiddenColors) ? catalog.hiddenColors : []);
+      setHiddenPacks(Array.isArray(catalog.hiddenPacks) ? catalog.hiddenPacks : []);
+      setHiddenStickers(Array.isArray(catalog.hiddenStickers) ? catalog.hiddenStickers : []);
+      setLeaderboard(Array.isArray(board.entries) ? board.entries : []);
+      hydratedRef.current = true;
+    }).catch(() => { hydratedRef.current = true; });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const handle = setTimeout(() => {
+      void appStore.saveArcadeCatalogState({ customColors, customPacks, customStickers, mysteryItems, hiddenColors, hiddenPacks, hiddenStickers }).catch(() => {});
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [customColors, customPacks, customStickers, mysteryItems, hiddenColors, hiddenPacks, hiddenStickers]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const handle = setTimeout(() => {
+      void appStore.saveArcadeLeaderboardState({ entries: leaderboard }).catch(() => {});
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [leaderboard]);
 
   // Search filter
   const [colorSearch, setColorSearch] = useState("");

@@ -5,7 +5,7 @@ import {
   ArrowLeft, ZoomIn, ZoomOut, Maximize2, Filter,
   Eye, FileText, Link2, Tag, FolderOpen, BookOpen,
 } from "lucide-react";
-import { safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_MUTED, S_SUBTLE } from "./shared-styles";
 
 // ═══════════════════════════════════════════
@@ -203,11 +203,17 @@ export function WikiGraph() {
   const [isDragging, setIsDragging] = useState(false);
   const [isSimulating, setIsSimulating] = useState(true);
   const [graphReady, setGraphReady] = useState(false);
+  const [pages, setPages] = useState<SitePage[]>([]);
   const tickCountRef = useRef(0);
 
-  // Build graph from localStorage data
   useEffect(() => {
-    const pages: SitePage[] = safeGetJson("inet-dm-sites", []);
+    let cancelled = false;
+    void appStore.listSites<SitePage>().then((rows) => { if (!cancelled) setPages(rows); }).catch(() => { if (!cancelled) setPages([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Build graph from remote wiki data
+  useEffect(() => {
     const pageIds = new Set(pages.map((p) => p.id));
 
     const nodes: GraphNode[] = pages.map((p, i) => {

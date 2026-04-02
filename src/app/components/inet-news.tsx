@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { SearchLogo } from "./search-logo";
 import { retro } from "./retro-styles";
@@ -7,7 +7,7 @@ import {
   ArrowLeft, Clock, User, ChevronRight, Newspaper, Search, Globe,
 } from "lucide-react";
 import { RenderFormattedText } from "./render-text";
-import { safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import type { NewsArticle } from "./types";
 
 function formatDate(dateStr: string): string {
@@ -45,17 +45,22 @@ function timeAgo(dateStr: string): string {
 export function InetNews() {
   const navigate = useNavigate();
   const [expandedArticle, setExpandedArticle] = useState<string | null>(null);
+  const [newsRows, setNewsRows] = useState<NewsArticle[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void appStore.listNews<NewsArticle>().then((rows) => { if (!cancelled) setNewsRows(rows); }).catch(() => { if (!cancelled) setNewsRows([]); });
+    return () => { cancelled = true; };
+  }, []);
 
   const articles: NewsArticle[] = useMemo(() => {
-    const raw = safeGetJson<NewsArticle[]>("inet-dm-news", []);
-    // Sort by date descending (newest first); falls back to string compare for non-ISO dates
-    return [...raw].sort((a, b) => {
+    return [...newsRows].sort((a, b) => {
       const da = new Date(a.publishedAt).getTime();
       const db = new Date(b.publishedAt).getTime();
       if (!isNaN(da) && !isNaN(db)) return db - da;
       return a.publishedAt.localeCompare(b.publishedAt);
     });
-  }, []);
+  }, [newsRows]);
 
   const featuredArticles = articles.filter((a) => a.isFeatured);
   const latestArticles = articles.slice(0, 5);

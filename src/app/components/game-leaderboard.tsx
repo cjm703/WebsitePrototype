@@ -1,5 +1,5 @@
-// Cache-bust v3
 import { safeGetItem, safeSetItem, safeRemoveItem, safeSetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 
 export interface LeaderboardEntry {
   id: string;
@@ -7,194 +7,211 @@ export interface LeaderboardEntry {
   gameName: string;
   player: string;
   score: number;
-  date: string; // ISO string
+  date: string;
+}
+
+interface ArcadeProfile {
+  credits: number;
+  ownedColors: string[];
+  ownedPacks: string[];
+  ownedStickers: string[];
+  ownedMystery: string[];
+  ownedSounds: string[];
+}
+
+interface LeaderboardDoc {
+  entries: LeaderboardEntry[];
 }
 
 const STORAGE_KEY = "inet-arcade-leaderboard";
-
-export function getLeaderboard(): LeaderboardEntry[] {
-  try {
-    const raw = safeGetItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as LeaderboardEntry[];
-  } catch {
-    return [];
-  }
-}
-
-export function saveScore(gameId: string, gameName: string, player: string, score: number): LeaderboardEntry {
-  const entries = getLeaderboard();
-  const entry: LeaderboardEntry = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    gameId,
-    gameName,
-    player,
-    score,
-    date: new Date().toISOString(),
-  };
-  entries.push(entry);
-  safeSetJson(STORAGE_KEY, entries);
-  return entry;
-}
-
-export function getLeaderboardByGame(gameId: string): LeaderboardEntry[] {
-  return getLeaderboard()
-    .filter((e) => e.gameId === gameId)
-    .sort((a, b) => b.score - a.score);
-}
-
-export function getTopScores(gameId: string, limit = 10): LeaderboardEntry[] {
-  return getLeaderboardByGame(gameId).slice(0, limit);
-}
-
-export function getAllTopScores(limit = 10): LeaderboardEntry[] {
-  return getLeaderboard()
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-}
-
-export function clearLeaderboard(gameId?: string): void {
-  if (gameId) {
-    const entries = getLeaderboard().filter((e) => e.gameId !== gameId);
-    safeSetJson(STORAGE_KEY, entries);
-  } else {
-    safeRemoveItem(STORAGE_KEY);
-  }
-}
-
-// ========================
-// Credits System
-// ========================
 const CREDITS_KEY = "inet-arcade-credits";
-
-// Credit rates per game: how many score points per 1 credit
-const CREDIT_RATES: Record<string, number> = {
-  snake: 2,        // 1 credit per 2 score
-  runner: 100,     // 1 credit per 100 score
-  osu: 500,        // 1 credit per 500 score
-  doodlejump: 200, // 1 credit per 200 score
-  bossfight: 50,   // 1 credit per 50 score
-};
-
-// Helper: resolve the current player ID from localStorage
-function getCurrentPlayerId(): string {
-  return safeGetItem("inet-user-id") || "default";
-}
-
-// Per-player key builder
-function playerKey(base: string, playerId?: string): string {
-  const pid = playerId ?? getCurrentPlayerId();
-  return `${base}-${pid}`;
-}
-
-// Migrate legacy global data → per-player on first access
-function migrateGlobalCredits(pid: string): void {
-  const perPlayerKey = `${CREDITS_KEY}-${pid}`;
-  if (safeGetItem(perPlayerKey) !== null) return; // already migrated
-  const globalRaw = safeGetItem(CREDITS_KEY);
-  if (globalRaw !== null) {
-    safeSetItem(perPlayerKey, globalRaw);
-    safeRemoveItem(CREDITS_KEY);
-  }
-}
-
-export function getCredits(playerId?: string): number {
-  const pid = playerId ?? getCurrentPlayerId();
-  migrateGlobalCredits(pid);
-  try {
-    return parseInt(safeGetItem(playerKey(CREDITS_KEY, pid)) || "0", 10) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-export function setCreditsDirectly(amount: number, playerId?: string): void {
-  const pid = playerId ?? getCurrentPlayerId();
-  safeSetItem(playerKey(CREDITS_KEY, pid), String(amount));
-}
-
-export function addCredits(amount: number, playerId?: string): void {
-  const pid = playerId ?? getCurrentPlayerId();
-  const current = getCredits(pid);
-  safeSetItem(playerKey(CREDITS_KEY, pid), String(current + amount));
-}
-
-export function spendCredits(amount: number, playerId?: string): boolean {
-  const pid = playerId ?? getCurrentPlayerId();
-  const current = getCredits(pid);
-  if (current < amount) return false;
-  safeSetItem(playerKey(CREDITS_KEY, pid), String(current - amount));
-  return true;
-}
-
-// ========================
-// Per-player owned items helpers
-// ========================
 const OWNED_COLORS_KEY = "inet-arcade-owned-colors";
 const OWNED_PACKS_KEY = "inet-arcade-owned-packs";
 const OWNED_STICKERS_KEY = "inet-arcade-owned-stickers";
 const OWNED_MYSTERY_KEY = "inet-arcade-owned-mystery";
+const OWNED_SOUNDS_KEY = "inet-arcade-owned-sounds";
+const CREDIT_RATES: Record<string, number> = {
+  snake: 2,
+  runner: 100,
+  osu: 500,
+  doodlejump: 200,
+  bossfight: 50,
+};
 
-function migrateGlobalOwned(baseKey: string, pid: string): void {
-  const perPlayerKeyStr = `${baseKey}-${pid}`;
-  if (safeGetItem(perPlayerKeyStr) !== null) return;
-  const globalRaw = safeGetItem(baseKey);
-  if (globalRaw !== null) {
-    safeSetItem(perPlayerKeyStr, globalRaw);
-    safeRemoveItem(baseKey);
+const profileCache = new Map<string, ArcadeProfile>();
+let leaderboardCache: LeaderboardEntry[] | null = null;
+const profileHydrating = new Set<string>();
+let leaderboardHydrating = false;
+
+function getCurrentPlayerId(): string {
+  return safeGetItem("inet-user-id") || "default";
+}
+function playerKey(base: string, playerId?: string): string {
+  return `${base}-${playerId ?? getCurrentPlayerId()}`;
+}
+function defaultProfile(): ArcadeProfile {
+  return { credits: 0, ownedColors: [], ownedPacks: [], ownedStickers: [], ownedMystery: [], ownedSounds: [] };
+}
+function normalizeProfile(raw: Partial<ArcadeProfile> | null | undefined): ArcadeProfile {
+  const f = defaultProfile();
+  return {
+    credits: typeof raw?.credits === 'number' ? raw.credits : f.credits,
+    ownedColors: Array.isArray(raw?.ownedColors) ? [...raw.ownedColors] : f.ownedColors,
+    ownedPacks: Array.isArray(raw?.ownedPacks) ? [...raw.ownedPacks] : f.ownedPacks,
+    ownedStickers: Array.isArray(raw?.ownedStickers) ? [...raw.ownedStickers] : f.ownedStickers,
+    ownedMystery: Array.isArray(raw?.ownedMystery) ? [...raw.ownedMystery] : f.ownedMystery,
+    ownedSounds: Array.isArray(raw?.ownedSounds) ? [...raw.ownedSounds] : f.ownedSounds,
+  };
+}
+function readLocalProfile(playerId?: string): ArcadeProfile {
+  const pid = playerId ?? getCurrentPlayerId();
+  if (profileCache.has(pid)) return normalizeProfile(profileCache.get(pid));
+  try {
+    const legacyCredits = parseInt(safeGetItem(playerKey(CREDITS_KEY, pid)) || '0', 10) || 0;
+    const readList = (key: string) => {
+      const raw = safeGetItem(playerKey(key, pid));
+      return raw ? JSON.parse(raw) : [];
+    };
+    const profile = normalizeProfile({
+      credits: legacyCredits,
+      ownedColors: readList(OWNED_COLORS_KEY),
+      ownedPacks: readList(OWNED_PACKS_KEY),
+      ownedStickers: readList(OWNED_STICKERS_KEY),
+      ownedMystery: readList(OWNED_MYSTERY_KEY),
+      ownedSounds: readList(OWNED_SOUNDS_KEY),
+    });
+    profileCache.set(pid, profile);
+    return profile;
+  } catch {
+    const profile = defaultProfile();
+    profileCache.set(pid, profile);
+    return profile;
   }
 }
-
-function getOwnedList(baseKey: string, playerId?: string): string[] {
-  const pid = playerId ?? getCurrentPlayerId();
-  migrateGlobalOwned(baseKey, pid);
+function persistLocalProfile(pid: string, profile: ArcadeProfile): void {
+  profileCache.set(pid, normalizeProfile(profile));
+  safeSetItem(playerKey(CREDITS_KEY, pid), String(profile.credits));
+  safeSetJson(playerKey(OWNED_COLORS_KEY, pid), profile.ownedColors);
+  safeSetJson(playerKey(OWNED_PACKS_KEY, pid), profile.ownedPacks);
+  safeSetJson(playerKey(OWNED_STICKERS_KEY, pid), profile.ownedStickers);
+  safeSetJson(playerKey(OWNED_MYSTERY_KEY, pid), profile.ownedMystery);
+  safeSetJson(playerKey(OWNED_SOUNDS_KEY, pid), profile.ownedSounds);
+}
+async function hydrateProfile(pid: string): Promise<void> {
+  if (profileHydrating.has(pid)) return;
+  profileHydrating.add(pid);
   try {
-    const raw = safeGetItem(playerKey(baseKey, pid));
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+    const remote = await appStore.loadPlayerArcadeProfile<ArcadeProfile | null>(pid, null);
+    if (remote) persistLocalProfile(pid, normalizeProfile(remote));
+  } catch {}
+  finally { profileHydrating.delete(pid); }
+}
+function saveProfileRemote(pid: string): void {
+  const profile = readLocalProfile(pid);
+  void appStore.savePlayerArcadeProfile(pid, profile).catch(() => {});
+}
+function readLocalLeaderboard(): LeaderboardEntry[] {
+  if (leaderboardCache) return [...leaderboardCache];
+  try {
+    const raw = safeGetItem(STORAGE_KEY);
+    const entries = raw ? JSON.parse(raw) as LeaderboardEntry[] : [];
+    leaderboardCache = Array.isArray(entries) ? entries : [];
+  } catch { leaderboardCache = []; }
+  return [...leaderboardCache!];
+}
+function persistLocalLeaderboard(entries: LeaderboardEntry[]): void {
+  leaderboardCache = [...entries];
+  safeSetJson(STORAGE_KEY, entries);
+}
+async function hydrateLeaderboard(): Promise<void> {
+  if (leaderboardHydrating) return;
+  leaderboardHydrating = true;
+  try {
+    const remote = await appStore.loadArcadeLeaderboardState<LeaderboardDoc>({ entries: [] });
+    persistLocalLeaderboard(Array.isArray(remote?.entries) ? remote.entries : []);
+  } catch {}
+  finally { leaderboardHydrating = false; }
+}
+function saveLeaderboardRemote(entries: LeaderboardEntry[]): void {
+  persistLocalLeaderboard(entries);
+  void appStore.saveArcadeLeaderboardState<LeaderboardDoc>({ entries }).catch(() => {});
 }
 
-function setOwnedList(baseKey: string, list: string[], playerId?: string): void {
-  const pid = playerId ?? getCurrentPlayerId();
-  safeSetItem(playerKey(baseKey, pid), JSON.stringify(list));
+export function getLeaderboard(): LeaderboardEntry[] {
+  void hydrateLeaderboard();
+  return readLocalLeaderboard();
 }
-
-function addOwned(baseKey: string, id: string, playerId?: string): void {
+export function saveScore(gameId: string, gameName: string, player: string, score: number): LeaderboardEntry {
+  const entries = getLeaderboard();
+  const entry: LeaderboardEntry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, gameId, gameName, player, score, date: new Date().toISOString() };
+  entries.push(entry);
+  saveLeaderboardRemote(entries);
+  return entry;
+}
+export function getLeaderboardByGame(gameId: string): LeaderboardEntry[] {
+  return getLeaderboard().filter((e) => e.gameId === gameId).sort((a, b) => b.score - a.score);
+}
+export function getTopScores(gameId: string, limit = 10): LeaderboardEntry[] {
+  return getLeaderboardByGame(gameId).slice(0, limit);
+}
+export function getAllTopScores(limit = 10): LeaderboardEntry[] {
+  return getLeaderboard().sort((a, b) => b.score - a.score).slice(0, limit);
+}
+export function clearLeaderboard(gameId?: string): void {
+  if (gameId) saveLeaderboardRemote(getLeaderboard().filter((e) => e.gameId !== gameId));
+  else saveLeaderboardRemote([]);
+}
+export function getCredits(playerId?: string): number {
   const pid = playerId ?? getCurrentPlayerId();
-  const list = getOwnedList(baseKey, pid);
+  void hydrateProfile(pid);
+  return readLocalProfile(pid).credits;
+}
+export function setCreditsDirectly(amount: number, playerId?: string): void {
+  const pid = playerId ?? getCurrentPlayerId();
+  const next = { ...readLocalProfile(pid), credits: amount };
+  persistLocalProfile(pid, next);
+  saveProfileRemote(pid);
+}
+export function addCredits(amount: number, playerId?: string): void {
+  setCreditsDirectly(getCredits(playerId) + amount, playerId);
+}
+export function spendCredits(amount: number, playerId?: string): boolean {
+  const current = getCredits(playerId);
+  if (current < amount) return false;
+  setCreditsDirectly(current - amount, playerId);
+  return true;
+}
+function getOwnedList(key: keyof ArcadeProfile, playerId?: string): string[] {
+  const pid = playerId ?? getCurrentPlayerId();
+  void hydrateProfile(pid);
+  return [...readLocalProfile(pid)[key] as string[]];
+}
+function setOwnedList(key: keyof ArcadeProfile, list: string[], playerId?: string): void {
+  const pid = playerId ?? getCurrentPlayerId();
+  const next = { ...readLocalProfile(pid), [key]: [...list] } as ArcadeProfile;
+  persistLocalProfile(pid, next);
+  saveProfileRemote(pid);
+}
+function addOwned(key: keyof ArcadeProfile, id: string, playerId?: string): void {
+  const list = getOwnedList(key, playerId);
   if (!list.includes(id)) {
     list.push(id);
-    setOwnedList(baseKey, list, pid);
+    setOwnedList(key, list, playerId);
   }
 }
-
-// Colors
-export function getOwnedColors(playerId?: string): string[] { return getOwnedList(OWNED_COLORS_KEY, playerId); }
-export function setOwnedColors(list: string[], playerId?: string): void { setOwnedList(OWNED_COLORS_KEY, list, playerId); }
-export function addOwnedColor(id: string, playerId?: string): void { addOwned(OWNED_COLORS_KEY, id, playerId); }
-
-// Packs
-export function getOwnedPacks(playerId?: string): string[] { return getOwnedList(OWNED_PACKS_KEY, playerId); }
-export function setOwnedPacks(list: string[], playerId?: string): void { setOwnedList(OWNED_PACKS_KEY, list, playerId); }
-export function addOwnedPack(id: string, playerId?: string): void { addOwned(OWNED_PACKS_KEY, id, playerId); }
-
-// Stickers
-export function getOwnedStickers(playerId?: string): string[] { return getOwnedList(OWNED_STICKERS_KEY, playerId); }
-export function setOwnedStickers(list: string[], playerId?: string): void { setOwnedList(OWNED_STICKERS_KEY, list, playerId); }
-export function addOwnedSticker(id: string, playerId?: string): void { addOwned(OWNED_STICKERS_KEY, id, playerId); }
-
-// Mystery
-export function getOwnedMystery(playerId?: string): string[] { return getOwnedList(OWNED_MYSTERY_KEY, playerId); }
-export function setOwnedMystery(list: string[], playerId?: string): void { setOwnedList(OWNED_MYSTERY_KEY, list, playerId); }
-export function addOwnedMystery(id: string, playerId?: string): void { addOwned(OWNED_MYSTERY_KEY, id, playerId); }
-
-// Sounds
-const OWNED_SOUNDS_KEY = "inet-arcade-owned-sounds";
-export function getOwnedSounds(playerId?: string): string[] { return getOwnedList(OWNED_SOUNDS_KEY, playerId); }
-export function setOwnedSounds(list: string[], playerId?: string): void { setOwnedList(OWNED_SOUNDS_KEY, list, playerId); }
-export function addOwnedSound(id: string, playerId?: string): void { addOwned(OWNED_SOUNDS_KEY, id, playerId); }
-
-export function scoreToCredits(gameId: string, score: number): number {
-  const rate = CREDIT_RATES[gameId] || 100;
-  return Math.floor(score / rate);
-}
+export function getOwnedColors(playerId?: string): string[] { return getOwnedList('ownedColors', playerId); }
+export function setOwnedColors(list: string[], playerId?: string): void { setOwnedList('ownedColors', list, playerId); }
+export function addOwnedColor(id: string, playerId?: string): void { addOwned('ownedColors', id, playerId); }
+export function getOwnedPacks(playerId?: string): string[] { return getOwnedList('ownedPacks', playerId); }
+export function setOwnedPacks(list: string[], playerId?: string): void { setOwnedList('ownedPacks', list, playerId); }
+export function addOwnedPack(id: string, playerId?: string): void { addOwned('ownedPacks', id, playerId); }
+export function getOwnedStickers(playerId?: string): string[] { return getOwnedList('ownedStickers', playerId); }
+export function setOwnedStickers(list: string[], playerId?: string): void { setOwnedList('ownedStickers', list, playerId); }
+export function addOwnedSticker(id: string, playerId?: string): void { addOwned('ownedStickers', id, playerId); }
+export function getOwnedMystery(playerId?: string): string[] { return getOwnedList('ownedMystery', playerId); }
+export function setOwnedMystery(list: string[], playerId?: string): void { setOwnedList('ownedMystery', list, playerId); }
+export function addOwnedMystery(id: string, playerId?: string): void { addOwned('ownedMystery', id, playerId); }
+export function getOwnedSounds(playerId?: string): string[] { return getOwnedList('ownedSounds', playerId); }
+export function setOwnedSounds(list: string[], playerId?: string): void { setOwnedList('ownedSounds', list, playerId); }
+export function addOwnedSound(id: string, playerId?: string): void { addOwned('ownedSounds', id, playerId); }
+export function scoreToCredits(gameId: string, score: number): number { const rate = CREDIT_RATES[gameId] || 100; return Math.floor(score / rate); }

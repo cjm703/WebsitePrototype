@@ -404,6 +404,28 @@ async function replaceTagRows(kind: DMTagKind, rows: Array<{ id: string; [key: s
   }
 }
 
+async function deletePlayerOwnedRows(
+  supabase: ReturnType<typeof admin>,
+  table: string,
+  playerId: string,
+  column = "player_id",
+) {
+  const { error } = await supabase.from(table).delete().eq(column, playerId);
+  if (!error) return;
+
+  const message = String(error.message || "");
+  const code = String((error as { code?: string } | null)?.code || "");
+
+  // Some of the newer player-owned tables may not exist yet in every environment.
+  // Ignore missing-table errors so player deletion can still proceed for the tables that do exist.
+  if (code === "42P01" || code === "PGRST205" || /does not exist/i.test(message) || /schema cache/i.test(message)) {
+    console.warn(`Skipping missing table during player delete: ${table}`);
+    return;
+  }
+
+  throw new Error(error.message);
+}
+
 async function movePlayerToDeleted(playerId: string) {
   if (playerId === "dm") throw new Error("Cannot delete dm");
 
@@ -434,21 +456,24 @@ async function movePlayerToDeleted(playerId: string) {
     "app_sessions",
     "community_read_state",
     "player_activity_log",
+    "player_arcade_profiles",
+    "player_commerce_cart",
     "player_community_profile",
+    "player_customization",
     "player_equipment_slots",
     "player_level_categories",
     "player_node_tree_unlocks",
+    "player_placed_stickers",
     "player_quick_items",
     "player_skill_proficiencies",
     "player_skill_settings",
     "player_source_usage_log",
     "player_status_effects",
+    "player_wiki_editor_drafts",
   ];
 
   for (const table of childTables) {
-    const column = table === "app_sessions" ? "player_id" : "player_id";
-    const { error } = await supabase.from(table).delete().eq(column, playerId);
-    if (error) throw new Error(error.message);
+    await deletePlayerOwnedRows(supabase, table, playerId);
   }
 
   const { error: deletePlayerError } = await supabase
@@ -1566,7 +1591,16 @@ function registerRoutes(prefix: string) {
       await movePlayerToDeleted(playerId);
       return c.json({ ok: true });
     } catch (err) {
-      return c.json({ error: String(err) }, 403);
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        /Missing session token|Invalid session|Session revoked|Session expired/i.test(message)
+      ) {
+        return c.json({ error: message }, 401);
+      }
+      if (/DM access only|Cannot delete dm/i.test(message)) {
+        return c.json({ error: message }, 403);
+      }
+      return c.json({ error: message }, 500);
     }
   });
 

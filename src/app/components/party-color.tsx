@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { retro } from "./retro-styles";
 import { Eraser, Download, Eye, EyeOff, Grid3x3 } from "lucide-react";
 import { usePageVisibility } from "./use-visibility";
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_GREEN, S_TEXT } from "./shared-styles";
 
 const CANVAS_SIZE = 250;
@@ -21,6 +22,11 @@ interface CursorEntry {
 }
 
 type CursorsMap = Record<string, CursorEntry>;
+
+interface PartyColorStateDoc {
+  canvasData: string;
+  prompt: string;
+}
 
 const COLOR_PALETTE = [
   { name: "Black", hex: "#000000" },
@@ -110,21 +116,9 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
     }
   }, [showGrid, displaySize]);
 
-  // Load prompt
-  useEffect(() => {
-    const loadPrompt = () => {
-      const saved = safeGetItem(PROMPT_KEY);
-      if (saved) {
-        try { setPrompt(JSON.parse(saved)); } catch { setPrompt(saved); }
-      }
-    };
-    loadPrompt();
-    if (!isPageVisible) return;
-    const interval = setInterval(loadPrompt, 2000);
-    return () => clearInterval(interval);
-  }, [isPageVisible]);
+  const remoteStateRef = useRef<PartyColorStateDoc>({ canvasData: "", prompt: "" });
 
-  // Load canvas from localStorage
+  // Load prompt + canvas from shared remote state
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -133,46 +127,43 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    const savedData = safeGetItem(STORAGE_KEY);
-    if (savedData) {
-      const img = new Image();
-      img.onload = () => { ctx.drawImage(img, 0, 0); };
-      img.src = savedData;
-    }
-  }, []);
-
-  // Poll for canvas changes from other users
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    let lastKnown = safeGetItem(STORAGE_KEY);
-
-    if (!isPageVisible) return;
-    const interval = setInterval(() => {
-      if (isDrawingRef.current) return;
-      const current = safeGetItem(STORAGE_KEY);
-      if (current && current !== lastKnown) {
-        lastKnown = current;
+    let cancelled = false;
+    const applyState = (state: PartyColorStateDoc) => {
+      if (cancelled) return;
+      remoteStateRef.current = state;
+      setPrompt(state.prompt || "");
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      if (state.canvasData) {
         const img = new Image();
         img.onload = () => { ctx.drawImage(img, 0, 0); };
-        img.src = current;
+        img.src = state.canvasData;
       }
+    };
+
+    void appStore.loadPartyColorState<PartyColorStateDoc>({ canvasData: "", prompt: "" }).then(applyState).catch(() => {});
+
+    if (!isPageVisible) return () => { cancelled = true; };
+    const interval = setInterval(() => {
+      if (isDrawingRef.current) return;
+      void appStore.loadPartyColorState<PartyColorStateDoc>({ canvasData: "", prompt: "" }).then((state) => {
+        if (cancelled) return;
+        if (state.prompt !== remoteStateRef.current.prompt || state.canvasData !== remoteStateRef.current.canvasData) {
+          applyState(state);
+        }
+      }).catch(() => {});
     }, 1500);
-    return () => clearInterval(interval);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [isPageVisible]);
 
-  // Write my cursor position to localStorage
+  // Write my cursor position to shared remote state
   const writeMyCursor = useCallback(
     (lx: number, ly: number) => {
       if (!currentUser) return;
-      try {
-        const raw = safeGetItem(CURSORS_KEY);
-        const map: CursorsMap = raw ? JSON.parse(raw) : {};
-        map[currentUser] = { x: lx, y: ly, timestamp: Date.now(), color: isErasing ? "#FFFFFF" : selectedColor };
-        safeSetJson(CURSORS_KEY, map);
-      } catch { /* ignore */ }
+      void appStore.loadPartyColorCursors<CursorsMap>({}).then((map) => {
+        const next = { ...map, [currentUser]: { x: lx, y: ly, timestamp: Date.now(), color: isErasing ? "#FFFFFF" : selectedColor } };
+        return appStore.savePartyColorCursors(next);
+      }).catch(() => {});
     },
     [currentUser, selectedColor, isErasing]
   );
@@ -180,12 +171,11 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
   // Remove my cursor when leaving
   const removeMyCursor = useCallback(() => {
     if (!currentUser) return;
-    try {
-      const raw = safeGetItem(CURSORS_KEY);
-      const map: CursorsMap = raw ? JSON.parse(raw) : {};
-      delete map[currentUser];
-      safeSetJson(CURSORS_KEY, map);
-    } catch { /* ignore */ }
+    void appStore.loadPartyColorCursors<CursorsMap>({}).then((map) => {
+      const next = { ...map };
+      delete next[currentUser];
+      return appStore.savePartyColorCursors(next);
+    }).catch(() => {});
   }, [currentUser]);
 
   // Cleanup on unmount
@@ -198,29 +188,29 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
     if (!showOtherPlayers || !isPageVisible) { setOtherCursors({}); return; }
 
     const interval = setInterval(() => {
-      try {
-        const raw = safeGetItem(CURSORS_KEY);
-        if (!raw) { setOtherCursors({}); return; }
-        const map: CursorsMap = JSON.parse(raw);
+      void appStore.loadPartyColorCursors<CursorsMap>({}).then((map) => {
         const now = Date.now();
         const others: CursorsMap = {};
-        for (const [name, entry] of Object.entries(map)) {
+        for (const [name, entry] of Object.entries(map || {})) {
           if (name === currentUser) continue;
           if (now - entry.timestamp < CURSOR_STALE_MS) {
             others[name] = entry;
           }
         }
         setOtherCursors(others);
-      } catch { setOtherCursors({}); }
-    }, 250);
+      }).catch(() => setOtherCursors({}));
+    }, 500);
     return () => clearInterval(interval);
   }, [currentUser, showOtherPlayers, isPageVisible]);
 
   const saveCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    try { safeSetItem(STORAGE_KEY, canvas.toDataURL("image/png")); } catch {}
-  }, []);
+    const canvasData = canvas.toDataURL("image/png");
+    const nextState = { canvasData, prompt: prompt || remoteStateRef.current.prompt || "" };
+    remoteStateRef.current = nextState;
+    void appStore.savePartyColorState(nextState).catch(() => {});
+  }, [prompt]);
 
   const getCanvasPos = (e: React.MouseEvent): { x: number; y: number } => {
     const grid = gridRef.current;

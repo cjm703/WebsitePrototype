@@ -1,5 +1,6 @@
 import React from "react";
-import { safeGetItem, safeSetItem, safeRemoveItem, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeRemoveItem, safeSetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 
 export interface PlayerTheme {
   // General
@@ -170,24 +171,72 @@ function themeKey(pid?: string): string {
   return `inet-player-theme-${pid ?? getPlayerId()}`;
 }
 
-export function getPlayerTheme(playerId?: string): PlayerTheme {
+const themeCache = new Map<string, PlayerTheme>();
+const themeHydrating = new Set<string>();
+
+function readLocalTheme(playerId?: string): PlayerTheme {
+  const pid = playerId ?? getPlayerId();
+  if (themeCache.has(pid)) return { ...DEFAULT_THEME, ...themeCache.get(pid)! };
   try {
-    const raw = safeGetItem(themeKey(playerId));
-    if (!raw) return { ...DEFAULT_THEME };
-    return { ...DEFAULT_THEME, ...JSON.parse(raw) };
+    const raw = safeGetItem(themeKey(pid));
+    const value = raw ? { ...DEFAULT_THEME, ...JSON.parse(raw) } : { ...DEFAULT_THEME };
+    themeCache.set(pid, value);
+    return value;
   } catch {
-    return { ...DEFAULT_THEME };
+    const value = { ...DEFAULT_THEME };
+    themeCache.set(pid, value);
+    return value;
   }
 }
 
+function persistLocalTheme(playerId: string, theme: PlayerTheme): void {
+  themeCache.set(playerId, { ...DEFAULT_THEME, ...theme });
+  try { safeSetJson(themeKey(playerId), themeCache.get(playerId)); } catch {}
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("player-theme-updated", { detail: { playerId } }));
+  }
+}
+
+async function hydrateThemeFromRemote(playerId: string): Promise<void> {
+  if (themeHydrating.has(playerId)) return;
+  themeHydrating.add(playerId);
+  try {
+    const remote = await appStore.loadPlayerCustomization<{ theme?: Partial<PlayerTheme> } | null>(playerId, null);
+    if (remote?.theme) {
+      persistLocalTheme(playerId, { ...DEFAULT_THEME, ...remote.theme });
+    }
+  } catch {
+    // ignore; local cache remains fallback
+  } finally {
+    themeHydrating.delete(playerId);
+  }
+}
+
+function saveThemeToRemote(playerId: string, theme: PlayerTheme): void {
+  void appStore
+    .loadPlayerCustomization<Record<string, unknown> | null>(playerId, null)
+    .then((current) => appStore.savePlayerCustomization(playerId, { ...(current || {}), theme }))
+    .catch(() => {});
+}
+
+export function getPlayerTheme(playerId?: string): PlayerTheme {
+  const pid = playerId ?? getPlayerId();
+  void hydrateThemeFromRemote(pid);
+  return readLocalTheme(pid);
+}
+
 export function setPlayerTheme(theme: Partial<PlayerTheme>, playerId?: string): void {
-  const current = getPlayerTheme(playerId);
-  const merged = { ...current, ...theme };
-  try { safeSetJson(themeKey(playerId), merged); } catch {}
+  const pid = playerId ?? getPlayerId();
+  const merged = { ...readLocalTheme(pid), ...theme };
+  persistLocalTheme(pid, merged);
+  saveThemeToRemote(pid, merged);
 }
 
 export function resetPlayerTheme(playerId?: string): void {
-  safeRemoveItem(themeKey(playerId));
+  const pid = playerId ?? getPlayerId();
+  persistLocalTheme(pid, { ...DEFAULT_THEME });
+  saveThemeToRemote(pid, { ...DEFAULT_THEME });
+  safeRemoveItem(themeKey(pid));
 }
 
 // ========================
@@ -259,20 +308,62 @@ function stickerKey(pid?: string): string {
   return `inet-player-placed-stickers-${pid ?? getPlayerId()}`;
 }
 
-export function getPlacedStickers(playerId?: string): PlacedSticker[] {
+const stickerCache = new Map<string, PlacedSticker[]>();
+const stickerHydrating = new Set<string>();
+
+function readLocalStickers(playerId?: string): PlacedSticker[] {
+  const pid = playerId ?? getPlayerId();
+  if (stickerCache.has(pid)) return [...stickerCache.get(pid)!];
   try {
-    const raw = safeGetItem(stickerKey(playerId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as any[];
-    // Filter out legacy entries that don't have slotId
-    return parsed.filter((s) => s.slotId);
+    const raw = safeGetItem(stickerKey(pid));
+    const parsed = raw ? (JSON.parse(raw) as PlacedSticker[]) : [];
+    const filtered = parsed.filter((s) => s.slotId);
+    stickerCache.set(pid, filtered);
+    return [...filtered];
   } catch {
+    stickerCache.set(pid, []);
     return [];
   }
 }
 
+function persistLocalStickers(playerId: string, stickers: PlacedSticker[]): void {
+  const filtered = stickers.filter((s) => s.slotId);
+  stickerCache.set(playerId, [...filtered]);
+  try { safeSetJson(stickerKey(playerId), filtered); } catch {}
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("player-stickers-updated", { detail: { playerId } }));
+  }
+}
+
+async function hydrateStickersFromRemote(playerId: string): Promise<void> {
+  if (stickerHydrating.has(playerId)) return;
+  stickerHydrating.add(playerId);
+  try {
+    const remote = await appStore.loadPlayerPlacedStickers<PlacedSticker[] | null>(playerId, null);
+    if (Array.isArray(remote)) {
+      persistLocalStickers(playerId, remote);
+    }
+  } catch {
+    // ignore; local cache remains fallback
+  } finally {
+    stickerHydrating.delete(playerId);
+  }
+}
+
+function saveStickersToRemote(playerId: string, stickers: PlacedSticker[]): void {
+  void appStore.savePlayerPlacedStickers(playerId, stickers).catch(() => {});
+}
+
+export function getPlacedStickers(playerId?: string): PlacedSticker[] {
+  const pid = playerId ?? getPlayerId();
+  void hydrateStickersFromRemote(pid);
+  return readLocalStickers(pid);
+}
+
 export function setPlacedStickers(stickers: PlacedSticker[], playerId?: string): void {
-  try { safeSetJson(stickerKey(playerId), stickers); } catch {}
+  const pid = playerId ?? getPlayerId();
+  persistLocalStickers(pid, stickers);
+  saveStickersToRemote(pid, stickers);
 }
 
 export function addPlacedSticker(sticker: PlacedSticker, playerId?: string): void {

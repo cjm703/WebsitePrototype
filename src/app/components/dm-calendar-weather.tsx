@@ -1,7 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { retro } from "./retro-styles";
-import { useDebouncedJsonStorage } from "./use-debounced-storage";
-import { safeGetItem, safeGetJson } from "./safe-storage";
+import { appStore } from "@/lib/app-store";
 import { S_MUTED, S_TEXT, S_SECTION_HDR, S_GREEN_BTN } from "./dm-styles";
 import {
   CalendarDays, Plus, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind,
@@ -69,15 +68,32 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 
 export function DMCalendarWeather() {
-  const [calendarDate, setCalendarDate] = useState<CalendarDate>(() => safeGetJson("inet-dm-calendar", DEFAULT_CALENDAR));
-  const [weather, setWeather] = useState<WeatherState>(() => safeGetJson("inet-dm-weather", DEFAULT_WEATHER));
-  const [monthFlavorTexts, setMonthFlavorTexts] = useState<Record<string, string>>(() => safeGetJson("inet-dm-month-flavors", {}));
-  const [dailyForecast, setDailyForecast] = useState<Record<string, { condition: string; temp: string }>>(() => safeGetJson("inet-dm-forecast", {}));
+  const [calendarDate, setCalendarDate] = useState<CalendarDate>(DEFAULT_CALENDAR);
+  const [weather, setWeather] = useState<WeatherState>(DEFAULT_WEATHER);
+  const [monthFlavorTexts, setMonthFlavorTexts] = useState<Record<string, string>>({});
+  const [dailyForecast, setDailyForecast] = useState<Record<string, { condition: string; temp: string }>>({});
+  const hydratedRef = useRef(false);
 
-  useDebouncedJsonStorage("inet-dm-calendar", calendarDate, 300);
-  useDebouncedJsonStorage("inet-dm-weather", weather, 300);
-  useDebouncedJsonStorage("inet-dm-month-flavors", monthFlavorTexts, 400);
-  useDebouncedJsonStorage("inet-dm-forecast", dailyForecast, 400);
+  useEffect(() => {
+    let cancelled = false;
+    void appStore.loadCalendarWeatherState({ calendarDate: DEFAULT_CALENDAR, weather: DEFAULT_WEATHER, monthFlavorTexts: {}, dailyForecast: {} }).then((state: any) => {
+      if (cancelled) return;
+      setCalendarDate(state.calendarDate || DEFAULT_CALENDAR);
+      setWeather(state.weather || DEFAULT_WEATHER);
+      setMonthFlavorTexts(state.monthFlavorTexts || {});
+      setDailyForecast(state.dailyForecast || {});
+      hydratedRef.current = true;
+    }).catch(() => { hydratedRef.current = true; });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    const handle = setTimeout(() => {
+      void appStore.saveCalendarWeatherState({ calendarDate, weather, monthFlavorTexts, dailyForecast }).catch(() => {});
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [calendarDate, weather, monthFlavorTexts, dailyForecast]);
 
   return (
     <div className="space-y-6">

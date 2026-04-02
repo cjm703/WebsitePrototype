@@ -162,4 +162,45 @@ export const appStore = {
     loadPlayerDoc<T>("player_wiki_editor_drafts", playerId, fallback),
   savePlayerWikiEditorDrafts: <T>(playerId: string, data: T) =>
     savePlayerDoc<T>("player_wiki_editor_drafts", playerId, data),
+
+  loadPlayerPlacedStickers: <T>(playerId: string, fallback: T) =>
+    loadPlayerDoc<T>("player_placed_stickers", playerId, fallback),
+  savePlayerPlacedStickers: <T>(playerId: string, data: T) =>
+    savePlayerDoc<T>("player_placed_stickers", playerId, data),
+
+  loadPartyColorState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_party_color_state", "default", fallback),
+  savePartyColorState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_party_color_state", "default", data),
+
+  loadPartyColorCursors: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_party_color_cursors", "default", fallback),
+  savePartyColorCursors: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_party_color_cursors", "default", data),
+
+  loadCalendarWeatherState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_calendar_weather_state", "default", fallback),
+  saveCalendarWeatherState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_calendar_weather_state", "default", data),
+
+  loadDmCustomizeState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_dm_customize_state", "default", fallback),
+  saveDmCustomizeState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_dm_customize_state", "default", data),
+
+  loadArcadeCatalogState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "default", fallback),
+  saveArcadeCatalogState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_arcade_catalog_state", "default", data),
+
+  loadArcadeLeaderboardState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_arcade_leaderboard_state", "default", fallback),
+  saveArcadeLeaderboardState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_arcade_leaderboard_state", "default", data),
+
+  loadPlayerArcadeProfile: <T>(playerId: string, fallback: T) =>
+    loadPlayerDoc<T>("player_arcade_profiles", playerId, fallback),
+  savePlayerArcadeProfile: <T>(playerId: string, data: T) =>
+    savePlayerDoc<T>("player_arcade_profiles", playerId, data),
+
 };
