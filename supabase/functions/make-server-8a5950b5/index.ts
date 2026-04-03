@@ -500,15 +500,10 @@ async function purgeDeletedPlayer(playerId: string) {
     .eq("id", playerId);
   if (deleteDeletedError) throw new Error(deleteDeletedError.message);
 
-  const childTables = [
-    "auth_codes",
-  ];
-
-  for (const table of childTables) {
-    const column = table === "auth_codes" ? "profile_id" : "player_id";
-    const { error } = await supabase.from(table).delete().eq(column, playerId);
-    if (error) throw new Error(error.message);
-  }
+  await Promise.all([
+    kv.del(authKey(playerId)),
+    kv.del(pfpKey(playerId)),
+  ]);
 }
 
 async function clearDeletedPlayers() {
@@ -1123,6 +1118,69 @@ function registerRoutes(prefix: string) {
 
     if (error) throw new Error(error.message);
   }
+
+  app.get(`${prefix}/wiki/bootstrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const [sites, players, wikiTags, customPanelStyles] = await Promise.all([
+        listCollectionRows("app_sites"),
+        listEntityRows("app_players"),
+        listTagRows("wiki"),
+        listCollectionRows("app_custom_panel_styles"),
+      ]);
+
+      return c.json({ sites, players, wikiTags, customPanelStyles });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/sites/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      const sites = Array.isArray(body?.sites) ? body.sites : null;
+      if (!sites) return c.json({ error: "sites must be an array" }, 400);
+
+      await replaceCollectionRows("app_sites", sites);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/custom-panel-styles/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      const customPanelStyles = Array.isArray(body?.customPanelStyles)
+        ? body.customPanelStyles
+        : null;
+      if (!customPanelStyles) {
+        return c.json({ error: "customPanelStyles must be an array" }, 400);
+      }
+
+      await replaceCollectionRows("app_custom_panel_styles", customPanelStyles);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
 
 
   function normalizeLooseInventoryName(value: unknown): string {

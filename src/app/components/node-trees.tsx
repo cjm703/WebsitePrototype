@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import { retro } from "./retro-styles";
 import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight } from "lucide-react";
 import { appStore } from "@/lib/app-store";
-import { loadDMNodeTrees, saveDMNodeTrees } from "@/lib/player-state-api";
+import { loadDMNodeTrees, loadPlayerState, saveDMNodeTrees, savePlayerState } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 
 // ═══════════════════════════════════════════════
@@ -187,10 +187,12 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
       try {
         setError(null);
 
-        const [treeData, unlockData] = await Promise.all([
+        const [treeData, playerState] = await Promise.all([
           appStore.listNodeTrees<NodeTree>(),
-          appStore.loadPlayerNodeTreeUnlocks<Record<string, string[]>>(playerId, {}),
+          loadPlayerState(),
         ]);
+
+        const unlockData = (playerState?.nodeUnlocks ?? {}) as Record<string, string[]>;
 
         if (cancelled) return;
 
@@ -262,7 +264,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
 
       try {
         setError(null);
-        await appStore.savePlayerNodeTreeUnlocks(playerId, newUnlocks);
+        await savePlayerState({ nodeUnlocks: newUnlocks });
         setUnlocks(newUnlocks);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to unlock node");

@@ -20,6 +20,11 @@ import { WikiLinkDialog } from "./wiki-link-dialog";
 import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
 import { safeGetItem, safeRemoveItem, safeGetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
+import {
+  loadWikiBootstrap,
+  saveWikiCustomPanelStyles,
+  saveWikiSites,
+} from "@/lib/player-state-api";
 import type { TagField, TagDefinition, PlayerData } from "./types";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
 
@@ -350,19 +355,19 @@ export function WikiEditor() {
       try {
         setWikiLoading(true);
         setWikiLoadError("");
-        const [siteRows, playerRows, wikiTagRows, panelStyleRows] = await Promise.all([
-          appStore.listSites<SitePage>().catch(() => safeGetJson<SitePage[]>("inet-dm-sites", [])),
-          appStore.listPlayers<PlayerData>().catch(() => safeGetJson<PlayerData[]>("inet-dm-players", [])),
-          appStore.listTags<WikiTagDefinition>("wiki").catch(() => safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", [])),
-          appStore.listCustomPanelStyles<CustomPanelStyle>().catch(() => safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", [])),
-        ]);
+        const bootstrap = await loadWikiBootstrap().catch(() => ({
+          sites: safeGetJson<SitePage[]>("inet-dm-sites", []),
+          players: safeGetJson<PlayerData[]>("inet-dm-players", []),
+          wikiTags: safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []),
+          customPanelStyles: safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []),
+        }));
 
         if (cancelled) return;
 
-        setAllPages(Array.isArray(siteRows) ? siteRows : []);
-        setPlayers(Array.isArray(playerRows) ? playerRows : []);
-        setWikiTagDefs(Array.isArray(wikiTagRows) ? wikiTagRows : []);
-        setCustomPanelStyles(Array.isArray(panelStyleRows) ? panelStyleRows : []);
+        setAllPages(Array.isArray(bootstrap?.sites) ? bootstrap.sites : []);
+        setPlayers(Array.isArray(bootstrap?.players) ? bootstrap.players : []);
+        setWikiTagDefs(Array.isArray(bootstrap?.wikiTags) ? bootstrap.wikiTags : []);
+        setCustomPanelStyles(Array.isArray(bootstrap?.customPanelStyles) ? bootstrap.customPanelStyles : []);
       } catch (err) {
         if (cancelled) return;
         setWikiLoadError(err instanceof Error ? err.message : "Failed to load wiki editor data");
@@ -434,7 +439,7 @@ export function WikiEditor() {
 
   const saveCustomStyles = (styles: CustomPanelStyle[]) => {
     setCustomPanelStyles(styles);
-    void appStore.saveCustomPanelStyles<CustomPanelStyle>(styles).catch((err) => {
+    void saveWikiCustomPanelStyles(styles as unknown as Record<string, unknown>[]).catch((err) => {
       console.warn("Failed to persist custom wiki panel styles", err);
       setError("Failed to save custom panel styles");
     });
@@ -584,7 +589,7 @@ export function WikiEditor() {
     }
 
     try {
-      await appStore.saveSites<SitePage>(stored);
+      await saveWikiSites(stored as unknown as Record<string, unknown>[]);
       if (currentUserId) {
         const nextDrafts = { ...remoteDrafts };
         delete nextDrafts[data.id];

@@ -189,3 +189,24 @@ export async function deleteDMPlayer(playerId: string) {
     body: JSON.stringify({ playerId }),
   });
 }
+
+
+export async function loadWikiBootstrap() {
+  return apiFetch("/wiki/bootstrap", { method: "GET" });
+}
+
+export async function saveWikiSites(sites: Record<string, unknown>[]) {
+  await apiFetch("/wiki/sites/save", {
+    method: "POST",
+    body: JSON.stringify({ sites }),
+  });
+}
+
+export async function saveWikiCustomPanelStyles(
+  customPanelStyles: Record<string, unknown>[],
+) {
+  await apiFetch("/wiki/custom-panel-styles/save", {
+    method: "POST",
+    body: JSON.stringify({ customPanelStyles }),
+  });
+}
