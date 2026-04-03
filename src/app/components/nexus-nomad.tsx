@@ -1480,7 +1480,29 @@ export function NexusNomad() {
   const [draftEffects, setDraftEffects] = useState<InvItemEffect[]>([]);
   const [isStateHydrated, setIsStateHydrated] = useState(false);
   const [stateSaveError, setStateSaveError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<{ type: "saving" | "saved" | "error"; message: string } | null>(null);
   const lastSavedStateJsonRef = useRef<string | null>(null);
+  const saveNoticeTimeoutRef = useRef<number | null>(null);
+
+  const showSaveNotice = useCallback((
+    type: "saving" | "saved" | "error",
+    message: string,
+    autoHideMs?: number,
+  ) => {
+    if (typeof window !== "undefined" && saveNoticeTimeoutRef.current) {
+      window.clearTimeout(saveNoticeTimeoutRef.current);
+      saveNoticeTimeoutRef.current = null;
+    }
+
+    setSaveNotice({ type, message });
+
+    if (typeof window !== "undefined" && autoHideMs && autoHideMs > 0) {
+      saveNoticeTimeoutRef.current = window.setTimeout(() => {
+        setSaveNotice((current) => (current?.type === type && current.message === message ? null : current));
+        saveNoticeTimeoutRef.current = null;
+      }, autoHideMs);
+    }
+  }, []);
 
   const applyLoadedState = useCallback((state: NexusNomadState) => {
     officeNameCache = state.officeName || DEFAULT_OFFICE_NAME;
@@ -1510,7 +1532,7 @@ export function NexusNomad() {
     (async () => {
       try {
         const sentinel = buildRemoteSentinelNexusNomadState();
-        const remoteOrSentinel = await appStore.loadNexusNomadState(sentinel);
+        const remoteOrSentinel = await appStore.loadNexusNomadState(NEXUS_NOMAD_STATE_ID, sentinel);
         const hasRemoteState = !!remoteOrSentinel && typeof remoteOrSentinel === "object" && remoteOrSentinel.version !== REMOTE_NEXUS_SENTINEL_VERSION;
 
         if (hasRemoteState) {
@@ -1532,14 +1554,18 @@ export function NexusNomad() {
           setStateSaveError(null);
         } catch (saveError) {
           lastSavedStateJsonRef.current = null;
-          setStateSaveError(saveError instanceof Error ? saveError.message : "Failed to import Nexus Nomad state.");
+          const message = saveError instanceof Error ? saveError.message : "Failed to import Nexus Nomad state.";
+          setStateSaveError(message);
+          showSaveNotice("error", message, 4500);
         }
       } catch (error) {
         if (cancelled) return;
         const legacy = normalizeNexusNomadState(buildLegacyNexusNomadState());
         applyLoadedState(legacy);
         lastSavedStateJsonRef.current = null;
-        setStateSaveError(error instanceof Error ? error.message : "Failed to load Nexus Nomad state.");
+        const message = error instanceof Error ? error.message : "Failed to load Nexus Nomad state.";
+        setStateSaveError(message);
+        showSaveNotice("error", message, 4500);
       } finally {
         if (!cancelled) setIsStateHydrated(true);
       }
@@ -1548,7 +1574,16 @@ export function NexusNomad() {
     return () => {
       cancelled = true;
     };
-  }, [applyLoadedState]);
+  }, [applyLoadedState, showSaveNotice]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && saveNoticeTimeoutRef.current) {
+        window.clearTimeout(saveNoticeTimeoutRef.current);
+        saveNoticeTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const persistentState = useMemo<NexusNomadState>(() => {
     officeNameCache = officeName || DEFAULT_OFFICE_NAME;
@@ -1581,20 +1616,25 @@ export function NexusNomad() {
     if (!isStateHydrated) return;
     if (lastSavedStateJsonRef.current === persistentStateJson) return;
 
+    showSaveNotice("saving", "Saving Nexus Nomad updates...");
+
     const timeout = window.setTimeout(() => {
       void (async () => {
         try {
           await appStore.saveNexusNomadState(persistentState);
           lastSavedStateJsonRef.current = persistentStateJson;
           setStateSaveError(null);
+          showSaveNotice("saved", "Nexus Nomad updated.", 1800);
         } catch (error) {
-          setStateSaveError(error instanceof Error ? error.message : "Failed to save Nexus Nomad state.");
+          const message = error instanceof Error ? error.message : "Failed to save Nexus Nomad state.";
+          setStateSaveError(message);
+          showSaveNotice("error", message, 4500);
         }
       })();
     }, 450);
 
     return () => window.clearTimeout(timeout);
-  }, [isStateHydrated, persistentState, persistentStateJson]);
+  }, [isStateHydrated, persistentState, persistentStateJson, showSaveNotice]);
 
   const saveRep = useCallback((v: number) => {
     setReputation(Math.max(-100, Math.min(100, v)));
@@ -2611,6 +2651,23 @@ export function NexusNomad() {
         </div>
       </div>
 
+      {saveNotice && (
+        <div className="fixed top-4 right-4 z-[120] pointer-events-none">
+          <div
+            className="px-3 py-2 rounded-lg shadow-lg border text-[11px] font-medium max-w-[320px]"
+            style={
+              saveNotice.type === "saving"
+                ? { background: "rgba(15, 24, 40, 0.96)", border: "1px solid rgba(106,154,218,0.45)", color: "#C8D8FF" }
+                : saveNotice.type === "saved"
+                  ? { background: "rgba(10, 26, 18, 0.96)", border: "1px solid rgba(74,202,106,0.45)", color: "#B8F5C8" }
+                  : { background: "rgba(40, 12, 12, 0.96)", border: "1px solid rgba(255,106,106,0.45)", color: "#FFD2D2" }
+            }
+          >
+            {saveNotice.message}
+          </div>
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex-1 flex flex-col px-4 py-6 max-w-[1300px] mx-auto w-full">
         {/* Header */}
@@ -2623,6 +2680,15 @@ export function NexusNomad() {
               <Building2 size={24} style={nsTextColor(accent)} />
             </div>
             <div className="flex-1 min-w-0">
+              {stateSaveError && (
+                <div
+                  className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-medium"
+                  style={{ background: "rgba(80, 20, 20, 0.65)", border: "1px solid rgba(255,106,106,0.35)", color: "#FFD2D2" }}
+                >
+                  <AlertTriangle size={11} />
+                  <span>{stateSaveError}</span>
+                </div>
+              )}
               {editingName ? (
                 <div className="flex items-center gap-2 mb-1">
                   <input
