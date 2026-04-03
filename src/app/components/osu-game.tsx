@@ -11,6 +11,7 @@ const CIRCLE_RADIUS = 32;
 const APPROACH_RADIUS = 80;
 const SPAWN_MARGIN = 70;
 const MAX_HP = 100;
+const TARGET_FRAME_MS = 1000 / 60;
 
 // Hold / Slider shared
 const HOLD_PROXIMITY = CIRCLE_RADIUS + 18;
@@ -347,6 +348,7 @@ export function OsuGame({
   const missesRef = useRef(0);
   const gameElapsedRef = useRef(0); // gameplay ms elapsed (excludes pauses)
   const lastFrameTimeRef = useRef(0);
+  const frameCapTimeRef = useRef(0);
   const endReasonRef = useRef<"hp" | "time">("hp");
 
   const mouseDownRef = useRef(false);
@@ -756,6 +758,7 @@ export function OsuGame({
     totalPausedRef.current = 0;
     gameElapsedRef.current = 0;
     lastFrameTimeRef.current = 0;
+    frameCapTimeRef.current = 0;
     endReasonRef.current = "hp";
     setScore(0);
     setTimeLeft(0);
@@ -776,6 +779,7 @@ export function OsuGame({
       startTimeRef.current = performance.now();
       lastSpawnRef.current = performance.now();
       lastFrameTimeRef.current = performance.now();
+      frameCapTimeRef.current = 0;
       totalPausedRef.current = 0;
       setGameState("playing");
     },
@@ -797,6 +801,7 @@ export function OsuGame({
       }
       lastSpawnRef.current += pausedDuration;
       lastFrameTimeRef.current += pausedDuration;
+      frameCapTimeRef.current = 0;
       setGameState("playing");
     }
   }, []);
@@ -1015,6 +1020,11 @@ export function OsuGame({
     const loop = (now: number) => {
       const cfg = diffRef.current;
       if (!cfg) return;
+      if (frameCapTimeRef.current !== 0 && now - frameCapTimeRef.current < TARGET_FRAME_MS) {
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      frameCapTimeRef.current = now;
 
       // Track elapsed game time
       const dt = now - lastFrameTimeRef.current;

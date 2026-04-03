@@ -24,6 +24,7 @@ export function IntelliInterface() {
 
   // Read user from localStorage, redirect to login if not found
   const currentUser = safeGetItem("inet-user") || "";
+  const currentUserId = safeGetItem("inet-user-id") || "";
 
   // Player theme
   const theme = getPlayerTheme();
@@ -223,13 +224,37 @@ export function IntelliInterface() {
   const [reportText, setReportText] = useState("");
   const [reportSent, setReportSent] = useState(false);
 
-  const handleSendReport = () => {
+  const handleSendReport = async () => {
     const trimmed = reportText.trim();
     if (!trimmed) return;
-    submitReport(trimmed);
-    setReportText("");
-    setReportSent(true);
-    setTimeout(() => setReportSent(false), 3000);
+
+    const now = new Date();
+    const timestamp = `${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
+
+    const reportNotification: DMNotification = {
+      id: `report-${Date.now()}`,
+      subject: `[Player Report] ${currentUser || "Unknown Player"}`,
+      message: trimmed,
+      assignedTo: ["DM"],
+      createdAt: timestamp,
+    };
+
+    try {
+      const existingNotifications = await appStore.listNotifications<DMNotification>().catch(() => [] as DMNotification[]);
+      const nextNotifications = [reportNotification, ...(Array.isArray(existingNotifications) ? existingNotifications : [])];
+      await appStore.saveNotifications<DMNotification>(nextNotifications);
+
+      submitReport(`[${currentUser || "Unknown Player"}${currentUserId ? ` / ${currentUserId}` : ""}] ${trimmed}`);
+      setReportText("");
+      setReportSent(true);
+      setTimeout(() => setReportSent(false), 3000);
+    } catch (err) {
+      console.error("Failed to submit player report to DM notifications:", err);
+      submitReport(`[FAILED_REMOTE][${currentUser || "Unknown Player"}${currentUserId ? ` / ${currentUserId}` : ""}] ${trimmed}`);
+      setReportText("");
+      setReportSent(true);
+      setTimeout(() => setReportSent(false), 3000);
+    }
   };
 
   // "Are you Bored?" character state

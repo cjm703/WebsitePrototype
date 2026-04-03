@@ -6,6 +6,7 @@ import { safeGetItem, safeSetItem } from "./safe-storage";
 
 const GRID_SIZE = 20;
 const CELL_SIZE = 30;
+const SNAKE_SPEED_MULTIPLIER = 1.05;
 const INITIAL_SPEED = 150;
 const SPEED_INCREMENT = 3;
 const MIN_SPEED = 60;
@@ -95,7 +96,7 @@ export function SnakeGame({ onBack, onScoreSave }: { onBack: () => void; onScore
       return;
     }
 
-    const speed = Math.max(MIN_SPEED, INITIAL_SPEED - scoreRef.current * SPEED_INCREMENT);
+    const speed = SNAKE_SPEED_MULTIPLIER * Math.max(MIN_SPEED, INITIAL_SPEED - scoreRef.current * SPEED_INCREMENT);
 
     const tick = () => {
       // Apply queued direction

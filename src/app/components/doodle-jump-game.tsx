@@ -20,6 +20,7 @@ const JUMP_VEL = -11.2;
 const MOVE_SPEED = 5.5;
 const PLATFORM_COUNT = 8;
 const SCROLL_THRESHOLD = CANVAS_H * 0.35;
+const TARGET_FRAME_MS = 1000 / 60;
 
 // Platform types
 const PLAT_NORMAL = 0;
@@ -69,6 +70,7 @@ export function DoodleJumpGame({
   const charJumpImgRef = useRef<HTMLImageElement | null>(null);
   const charLoadedRef = useRef(false);
   const rafRef = useRef<number>(0);
+  const frameCapTimeRef = useRef(0);
   const keysRef = useRef<Set<string>>(new Set());
   const gameRef = useRef({
     px: CANVAS_W / 2 - PLAYER_W / 2,
@@ -149,6 +151,7 @@ export function DoodleJumpGame({
     g.springBounce = false;
     g.jumpSquash = 0;
     g.particles = [];
+    frameCapTimeRef.current = 0;
 
     // Generate initial platforms
     const plats: Platform[] = [];
@@ -230,9 +233,14 @@ export function DoodleJumpGame({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const loop = () => {
+    const loop = (now: number) => {
       const g = gameRef.current;
       if (!g.running) return;
+      if (frameCapTimeRef.current !== 0 && now - frameCapTimeRef.current < TARGET_FRAME_MS) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      frameCapTimeRef.current = now;
 
       // Input
       const keys = keysRef.current;

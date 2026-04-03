@@ -13,6 +13,7 @@ const JUMP_FORCE = -14;
 const INITIAL_SPEED = 4;
 const MAX_SPEED = 12;
 const SPEED_ACCEL = 0.001;
+const FRAME_MS = 1000 / 60;
 
 // Obstacle types
 interface Obstacle {
@@ -117,6 +118,7 @@ export function RunnerGame({ onBack, onScoreSave }: { onBack: () => void; onScor
   const frameRef = useRef(0);
   const spawnTimerRef = useRef(0);
   const animRef = useRef<number | null>(null);
+  const lastFrameTimeRef = useRef(0);
   const mascotImgRef = useRef<HTMLImageElement | null>(null);
   const groundOffsetRef = useRef(0);
 
@@ -334,12 +336,24 @@ export function RunnerGame({ onBack, onScoreSave }: { onBack: () => void; onScor
         cancelAnimationFrame(animRef.current);
         animRef.current = null;
       }
+      lastFrameTimeRef.current = 0;
       // Still draw the idle/paused/gameover frame
       requestAnimationFrame(() => drawFrame());
       return;
     }
 
-    const loop = () => {
+    const loop = (now: number) => {
+      if (!lastFrameTimeRef.current) {
+        lastFrameTimeRef.current = now;
+      }
+
+      const elapsed = now - lastFrameTimeRef.current;
+      if (elapsed < FRAME_MS) {
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      lastFrameTimeRef.current = now - (elapsed % FRAME_MS);
+
       const p = playerRef.current;
       const speed = speedRef.current;
 
@@ -430,12 +444,14 @@ export function RunnerGame({ onBack, onScoreSave }: { onBack: () => void; onScor
       animRef.current = requestAnimationFrame(loop);
     };
 
+    lastFrameTimeRef.current = 0;
     animRef.current = requestAnimationFrame(loop);
     return () => {
       if (animRef.current) {
         cancelAnimationFrame(animRef.current);
         animRef.current = null;
       }
+      lastFrameTimeRef.current = 0;
     };
   }, [gameState, spawnObstacle]);
 

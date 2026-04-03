@@ -709,6 +709,32 @@ function normalizeZones(raw: unknown): MapZone[] {
   return migrated;
 }
 
+const OUTER_ZONE_ID_PREFIX = "os-";
+
+function parseOuterSubLabel(value: string): { sectorNumber: number; subLetter: string } | null {
+  const match = value.match(/(\d+)\.([A-Z]+)/i);
+  if (!match) return null;
+  return {
+    sectorNumber: parseInt(match[1], 10),
+    subLetter: match[2].toUpperCase(),
+  };
+}
+
+function getOuterSubLabelFromZone(zone: MapZone): string {
+  if (!zone.id.startsWith(OUTER_ZONE_ID_PREFIX)) return "";
+  return zone.id.slice(OUTER_ZONE_ID_PREFIX.length);
+}
+
+function compareOuterZones(a: MapZone, b: MapZone): number {
+  const aParsed = parseOuterSubLabel(getOuterSubLabelFromZone(a));
+  const bParsed = parseOuterSubLabel(getOuterSubLabelFromZone(b));
+  if (!aParsed || !bParsed) return a.name.localeCompare(b.name);
+  if (aParsed.sectorNumber !== bParsed.sectorNumber) {
+    return aParsed.sectorNumber - bParsed.sectorNumber;
+  }
+  return aParsed.subLetter.localeCompare(bParsed.subLetter);
+}
+
 /* ==============================================================
    COMPONENT
    ============================================================== */
@@ -1584,10 +1610,10 @@ export function IntelliMaps() {
                     <polygon points={subPolyStr}
                       fill={color}
                       fillOpacity={isSel ? 0.15 : isHov ? 0.08 : 0}
-                      stroke={isSel ? color : isHov ? color : "none"}
-                      strokeWidth={isSel ? "2" : "1"}
-                      strokeOpacity={isSel ? 0.7 : isHov ? 0.35 : 0}
-                      filter={isHov || isSel ? "url(#sectorGlow)" : undefined}
+                      stroke={isSel ? color : color}
+                      strokeWidth={isSel ? "2" : isHov ? "1.5" : "0.9"}
+                      strokeOpacity={isSel ? 0.8 : isHov ? 0.55 : 0.22}
+                      filter={isSel ? "url(#strongGlow)" : "url(#sectorGlow)"}
                       style={{ transition: "all 0.2s" }} />
                     <text x={sub.x} y={sub.y}
                       textAnchor="middle" dominantBaseline="middle"
@@ -2023,26 +2049,41 @@ export function IntelliMaps() {
               </div>
               <div className="flex-1 overflow-y-auto">
                 {(() => {
-                  const innerZones = zones.filter(zone => !zone.id.startsWith("os-"));
-                  const outerZones = zones.filter(zone => zone.id.startsWith("os-"));
+                  const innerZones = zones.filter(zone => !zone.id.startsWith(OUTER_ZONE_ID_PREFIX));
+                  const outerZones = zones
+                    .filter(zone => zone.id.startsWith(OUTER_ZONE_ID_PREFIX))
+                    .sort(compareOuterZones);
 
                   const renderZoneRow = (zone: MapZone) => {
                     const fog = zone.fogMode;
-                    const isHov = hoveredSector === zone.id;
+                    const outerSubLabel = getOuterSubLabelFromZone(zone);
+                    const isOuterZone = zone.id.startsWith(OUTER_ZONE_ID_PREFIX);
+                    const isHov = isOuterZone ? hoveredOuterSub === outerSubLabel : hoveredSector === zone.id;
                     if (!isDM && showFog && fog === "invisible") return null;
                     const isLockedForPlayer = !isDM && showFog && fog === "locked";
-                    const isOuterZone = zone.id.startsWith("os-");
-                    const zoneLabel = isOuterZone ? zone.name : `Sector ${zone.sectorNumber}`;
+                    const zoneLabel = isOuterZone ? `Sector ${outerSubLabel}` : `Sector ${zone.sectorNumber}`;
                     const zoneMeta = isOuterZone ? zone.subtitle : undefined;
                     return (
-                      <div key={zone.id} onMouseEnter={() => setHoveredSector(zone.id)} onMouseLeave={() => setHoveredSector(null)} className="flex items-center gap-2 px-3 py-2 transition-colors" style={{ borderBottom: "1px solid #0E0E35", background: isHov ? `${zone.color}0D` : "transparent" }}>
+                      <div
+                        key={zone.id}
+                        onMouseEnter={() => {
+                          if (isOuterZone) setHoveredOuterSub(outerSubLabel);
+                          else setHoveredSector(zone.id);
+                        }}
+                        onMouseLeave={() => {
+                          if (isOuterZone) setHoveredOuterSub(null);
+                          else setHoveredSector(null);
+                        }}
+                        className="flex items-center gap-2 px-3 py-2 transition-colors"
+                        style={{ borderBottom: "1px solid #0E0E35", background: isHov ? `${zone.color}0D` : "transparent" }}
+                      >
                         <button
                           onClick={() => !isLockedForPlayer && handleSectorClick(zone.id)}
                           className="flex items-center gap-2.5 flex-1 text-left min-w-0"
                           style={{ cursor: isLockedForPlayer ? "not-allowed" : "pointer", opacity: isLockedForPlayer ? 0.5 : 1 }}
                         >
                           <div className="w-7 h-7 shrink-0 flex items-center justify-center text-[10px] font-bold" style={{ border: `1px solid ${isLockedForPlayer ? "#2A2A4B" : `${zone.color}55`}`, color: isLockedForPlayer ? "#5A6A8A" : zone.color, background: isLockedForPlayer ? "#080820" : `${zone.color}0A`, fontFamily: "'Courier New', monospace" }}>
-                            {isLockedForPlayer ? <Lock size={10} /> : isOuterZone ? zone.name.split(" ").slice(-1)[0] : `${zone.sectorNumber}`}
+                            {isLockedForPlayer ? <Lock size={10} /> : isOuterZone ? outerSubLabel : `${zone.sectorNumber}`}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-[11px] font-semibold truncate" style={{ color: isLockedForPlayer ? "#5A6A8A" : zone.color }}>{zoneLabel}</div>

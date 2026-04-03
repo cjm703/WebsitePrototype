@@ -340,6 +340,7 @@ const CHARGE_TIME = 700;
 const BEAM_LINGER = 650;
 const WARN_TIME = 400;
 const BORDER_W = 3;
+const TARGET_FRAME_MS = 1000 / 60;
 
 // Spiral attack constants
 const SPIRAL_COUNT = 12; // beams in the spiral
@@ -1285,9 +1286,15 @@ export function BossFight({
     let running = true;
     const startTime = Date.now();
     let lastTime = Date.now();
+    let lastFrameAt = 0;
 
-    const loop = () => {
+    const loop = (frameNow: number) => {
       if (!running) return;
+      if (lastFrameAt !== 0 && frameNow - lastFrameAt < TARGET_FRAME_MS) {
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      lastFrameAt = frameNow;
       const now = Date.now();
       const dt = now - lastTime;
       lastTime = now;
@@ -1975,8 +1982,14 @@ export function BossFight({
     // Beam geometry — 85% of box width, centered
     const beamW = BOX_W * BS_BEAM_WIDTH_RATIO;
     const beamX = (BOX_W - beamW) / 2;
-    const loop = () => {
+    let lastFrameAt = 0;
+    const loop = (frameNow: number) => {
       if (!running) return;
+      if (lastFrameAt !== 0 && frameNow - lastFrameAt < TARGET_FRAME_MS) {
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      lastFrameAt = frameNow;
       const now = Date.now();
       const dt = now - lastTime;
       lastTime = now;
@@ -2318,9 +2331,15 @@ export function BossFight({
     let running = true;
     const startTime = Date.now();
     let lastTime = Date.now();
+    let lastFrameAt = 0;
 
-    const loop = () => {
+    const loop = (frameNow: number) => {
       if (!running) return;
+      if (lastFrameAt !== 0 && frameNow - lastFrameAt < TARGET_FRAME_MS) {
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      lastFrameAt = frameNow;
       const now = Date.now();
       const dt = now - lastTime;
       lastTime = now;
@@ -2803,9 +2822,15 @@ export function BossFight({
     let running = true;
     const startTime = Date.now();
     let lastTime = Date.now();
+    let lastFrameAt = 0;
 
-    const loop = () => {
+    const loop = (frameNow: number) => {
       if (!running) return;
+      if (lastFrameAt !== 0 && frameNow - lastFrameAt < TARGET_FRAME_MS) {
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      lastFrameAt = frameNow;
       const now = Date.now();
       const dt = now - lastTime;
       lastTime = now;
@@ -3105,7 +3130,7 @@ export function BossFight({
         if (newPos <= 0) { setFightBarDir(1); return 0; }
         return newPos;
       });
-    }, 16);
+    }, TARGET_FRAME_MS);
     return () => clearInterval(interval);
   }, [phase, fightBarStopped, fightBarDir, fightBarSpeed]);
 
@@ -3277,8 +3302,14 @@ export function BossFight({
     let last = performance.now();
     let lastStateSync = 0;
     let raf = 0;
+    let lastFrameAt = 0;
     const STATE_SYNC_MS = 50; // sync to React state every 50ms instead of every frame
     const tick = (now: number) => {
+      if (lastFrameAt !== 0 && now - lastFrameAt < TARGET_FRAME_MS) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      lastFrameAt = now;
       const dt = (now - last) / 1000;
       last = now;
       if (resolveActiveRef.current && resolveRef.current > 0) {
