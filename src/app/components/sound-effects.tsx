@@ -86,12 +86,7 @@ function normalizeCustomSoundsState(raw: unknown): CustomSoundParams[] {
 }
 
 function persistLegacySoundState() {
-  try {
-    safeSetJson(SOUND_CONFIG_KEY, soundConfigState);
-    safeSetJson(CUSTOM_SOUNDS_KEY, customSoundsState);
-  } catch {
-    // Ignore legacy mirror persistence failures.
-  }
+  // Legacy browser mirroring is intentionally disabled.
 }
 
 function ensureSoundStateInitialized() {

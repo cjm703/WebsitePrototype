@@ -198,13 +198,12 @@ export function readLegacyThemeState(playerId?: string): { theme: PlayerTheme; h
 function ensureThemeInitialized(playerId?: string): string {
   const pid = playerId ?? getPlayerId();
   if (themeInitialized.has(pid) && themeCache.has(pid)) return pid;
-  const legacy = readLegacyThemeState(pid);
-  themeCache.set(pid, legacy.theme);
+  themeCache.set(pid, { ...DEFAULT_THEME });
   themeInitialized.add(pid);
   return pid;
 }
 
-function persistThemeState(playerId: string, theme: Partial<PlayerTheme> | null | undefined, mirrorLegacy = true): PlayerTheme {
+function persistThemeState(playerId: string, theme: Partial<PlayerTheme> | null | undefined, mirrorLegacy = false): PlayerTheme {
   const normalized = normalizeTheme(theme);
   themeCache.set(playerId, normalized);
   themeInitialized.add(playerId);
@@ -355,13 +354,12 @@ export function readLegacyPlacedStickersState(playerId?: string): { stickers: Pl
 function ensureStickerInitialized(playerId?: string): string {
   const pid = playerId ?? getPlayerId();
   if (stickerInitialized.has(pid) && stickerCache.has(pid)) return pid;
-  const legacy = readLegacyPlacedStickersState(pid);
-  stickerCache.set(pid, legacy.stickers);
+  stickerCache.set(pid, []);
   stickerInitialized.add(pid);
   return pid;
 }
 
-function persistStickerState(playerId: string, stickers: unknown, mirrorLegacy = true): PlacedSticker[] {
+function persistStickerState(playerId: string, stickers: unknown, mirrorLegacy = false): PlacedSticker[] {
   const filtered = normalizePlacedStickers(stickers);
   stickerCache.set(playerId, [...filtered]);
   stickerInitialized.add(playerId);

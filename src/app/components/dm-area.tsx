@@ -98,6 +98,26 @@ function getSaveError(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback;
 }
 
+const PLAYER_REPORT_PREFIX = "[Player Report]";
+
+function isPlayerReportNotification(notif: DMNotification) {
+  return typeof notif?.subject === "string" && notif.subject.startsWith(PLAYER_REPORT_PREFIX);
+}
+
+function extractPlayerReportName(notif: DMNotification) {
+  const subjectName = (notif.subject || "").replace(PLAYER_REPORT_PREFIX, "").trim();
+  if (subjectName) return subjectName;
+
+  const submittedByMatch = (notif.message || "").match(/\[Submitted by:\s*([^\]/]+)(?:\s*\/[^\]]+)?\]/i);
+  if (submittedByMatch?.[1]) return submittedByMatch[1].trim();
+
+  return "Unknown Player";
+}
+
+function stripPlayerReportMeta(message: string) {
+  return (message || "").replace(/\n\n\[Submitted by:[^\]]+\]\s*$/i, "").trim();
+}
+
 // ========================
 // Initial Data (imported from shared module)
 // ========================
@@ -614,34 +634,6 @@ useEffect(() => {
   };
 }, []);
 
-useEffect(() => {
-  if (activeSection !== "notifs") return;
-
-  let cancelled = false;
-
-  const refreshNotifications = async () => {
-    try {
-      const notificationData = await loadDMNotifications<DMNotification>();
-      if (!cancelled) {
-        setDmNotifications(Array.isArray(notificationData) ? notificationData : []);
-      }
-    } catch (err) {
-      if (!cancelled) {
-        setDmError(getSaveError(err, "Failed to refresh notifications"));
-      }
-    }
-  };
-
-  void refreshNotifications();
-  const onFocus = () => { void refreshNotifications(); };
-  window.addEventListener("focus", onFocus);
-
-  return () => {
-    cancelled = true;
-    window.removeEventListener("focus", onFocus);
-  };
-}, [activeSection]);
-
 async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
@@ -997,17 +989,68 @@ useEffect(() => {
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  const handleClearErrorLog = useCallback(() => {
+  const handleClearErrorLog = useCallback(async () => {
     clearErrorLog();
     setErrorLog([]);
-  }, []);
 
-  const handleRemoveLogEntry = useCallback((id: string) => {
+    const nextNotifications = dmNotifications.filter((notif) => !isPlayerReportNotification(notif));
+    if (nextNotifications.length !== dmNotifications.length) {
+      try {
+        await persistNotifications(nextNotifications);
+      } catch (err) {
+        console.error("Failed to clear remote player reports", err);
+      }
+    }
+  }, [dmNotifications]);
+
+  const handleRemoveLogEntry = useCallback(async (id: string) => {
+    if (id.startsWith("remote-report:")) {
+      const notificationId = id.replace("remote-report:", "");
+      const nextNotifications = dmNotifications.filter((notif) => notif.id !== notificationId);
+      try {
+        await persistNotifications(nextNotifications);
+      } catch (err) {
+        console.error("Failed to remove remote player report", err);
+      }
+      return;
+    }
+
     removeLogEntry(id);
     setErrorLog((prev) => prev.filter((e) => e.id !== id));
-  }, []);
+  }, [dmNotifications]);
 
-  const filteredErrorLog = useMemo(() => errorLog.filter((e) => errorLogFilter === "all" || e.type === errorLogFilter), [errorLog, errorLogFilter]);
+  const reportNotifications = useMemo(
+    () => dmNotifications.filter(isPlayerReportNotification),
+    [dmNotifications],
+  );
+
+  const visibleDmNotifications = useMemo(
+    () => dmNotifications.filter((notif) => !isPlayerReportNotification(notif)),
+    [dmNotifications],
+  );
+
+  const combinedErrorLog = useMemo<ErrorLogEntry[]>(() => {
+    const remoteReportEntries: ErrorLogEntry[] = reportNotifications.map((notif) => ({
+      id: `remote-report:${notif.id}`,
+      type: "report",
+      timestamp: notif.createdAt || "",
+      player: extractPlayerReportName(notif),
+      message: stripPlayerReportMeta(notif.message || ""),
+      source: "Interface Report",
+    }));
+
+    const merged = [...remoteReportEntries, ...errorLog];
+    return merged.sort((a, b) => {
+      const at = Date.parse(a.timestamp || "") || 0;
+      const bt = Date.parse(b.timestamp || "") || 0;
+      return bt - at;
+    });
+  }, [errorLog, reportNotifications]);
+
+  const filteredErrorLog = useMemo(
+    () => combinedErrorLog.filter((e) => errorLogFilter === "all" || e.type === errorLogFilter),
+    [combinedErrorLog, errorLogFilter],
+  );
 
 
 
@@ -3158,12 +3201,12 @@ const handleSaveItem = async () => {
 
               {/* Notification List */}
               <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-                <div className="text-[12px] mb-3" style={S_SECTION_HDR}>SENT NOTIFICATIONS ({dmNotifications.length})</div>
-                {dmNotifications.length === 0 ? (
+                <div className="text-[12px] mb-3" style={S_SECTION_HDR}>SENT NOTIFICATIONS ({visibleDmNotifications.length})</div>
+                {visibleDmNotifications.length === 0 ? (
                   <div className="text-[12px] text-center py-6" style={S_MUTED}>No notifications sent yet.</div>
                 ) : (
                   <div className="space-y-2">
-                    {dmNotifications.map((notif) => (
+                    {visibleDmNotifications.map((notif) => (
                       <div key={notif.id} className={`${retro.raised} bg-[#0E0E35] p-3`}>
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex-1 min-w-0">

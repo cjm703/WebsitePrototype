@@ -58,10 +58,10 @@ import {
 
 const OFFICE_NAME_KEY = "inet-office-name";
 const DEFAULT_OFFICE_NAME = "Nexus Nomad's Office";
+let officeNameCache = DEFAULT_OFFICE_NAME;
 
 function loadOfficeName(): string {
-  const v = safeGetItem(OFFICE_NAME_KEY);
-  return v || DEFAULT_OFFICE_NAME;
+  return officeNameCache || DEFAULT_OFFICE_NAME;
 }
 
 function saveOfficeName(_name: string) {
@@ -202,11 +202,7 @@ const DEFAULT_INVENTORY: InvSubTab[] = [
 ];
 
 function loadInventory(): InvSubTab[] {
-  try {
-    const v = safeGetItem(INVENTORY_KEY);
-    if (v) return JSON.parse(v);
-    return DEFAULT_INVENTORY.map(t => ({ ...t, items: t.items.map(i => ({ ...i })) }));
-  } catch { return DEFAULT_INVENTORY.map(t => ({ ...t, items: t.items.map(i => ({ ...i })) })); }
+  return clonePlain(DEFAULT_INVENTORY);
 }
 
 function saveInventory(_tabs: InvSubTab[]) {
@@ -251,11 +247,7 @@ const DEFAULT_OFFICE_INFO: OfficeInfoData = {
 };
 
 function loadOfficeInfo(): OfficeInfoData {
-  try {
-    const v = safeGetItem(OFFICE_INFO_KEY);
-    if (v) return JSON.parse(v);
-    return DEFAULT_OFFICE_INFO;
-  } catch { return DEFAULT_OFFICE_INFO; }
+  return clonePlain(DEFAULT_OFFICE_INFO);
 }
 
 function saveOfficeInfo(_data: OfficeInfoData) {
@@ -347,17 +339,10 @@ const DEFAULT_GOV_CONFIG: CityGovConfig = {
 const GOV_CONFIG_KEY = "inet-office-gov-config";
 
 function loadGovConfig(): CityGovConfig {
-  try {
-    const v = safeGetItem(GOV_CONFIG_KEY);
-    if (!v) return { ...DEFAULT_GOV_CONFIG, tiers: DEFAULT_GOV_TIERS.map(t => ({ ...t })) };
-    const parsed = JSON.parse(v);
-    return {
-      name: parsed.name || DEFAULT_GOV_CONFIG.name,
-      subtitle: parsed.subtitle || DEFAULT_GOV_CONFIG.subtitle,
-      icon: parsed.icon || DEFAULT_GOV_CONFIG.icon,
-      tiers: parsed.tiers?.length ? parsed.tiers : DEFAULT_GOV_TIERS.map(t => ({ ...t })),
-    };
-  } catch { return { ...DEFAULT_GOV_CONFIG, tiers: DEFAULT_GOV_TIERS.map(t => ({ ...t })) }; }
+  return {
+    ...DEFAULT_GOV_CONFIG,
+    tiers: defaultGovTiers(),
+  };
 }
 
 function saveGovConfig(_cfg: CityGovConfig) {
@@ -375,16 +360,7 @@ interface ReputationEntity {
 const ENTITY_REP_KEY = "inet-office-entity-reputations";
 
 function loadEntityReps(): ReputationEntity[] {
-  try {
-    const v = safeGetItem(ENTITY_REP_KEY);
-    if (!v) return [];
-    const parsed = JSON.parse(v);
-    return parsed.map((e: any) => ({
-      ...e,
-      icon: e.icon || "shield",
-      tiers: e.tiers?.length ? e.tiers : DEFAULT_ENTITY_TIERS.map(t => ({ ...t })),
-    }));
-  } catch { return []; }
+  return [];
 }
 
 function saveEntityReps(_entities: ReputationEntity[]) {
@@ -464,10 +440,7 @@ interface EmployeePreset {
 const EMPLOYEE_PRESETS_KEY = "inet-office-emp-presets";
 
 function loadPresets(): EmployeePreset[] {
-  try {
-    const v = safeGetItem(EMPLOYEE_PRESETS_KEY);
-    return v ? JSON.parse(v) : [];
-  } catch { return []; }
+  return [];
 }
 
 function savePresets(_presets: EmployeePreset[]) {
@@ -484,10 +457,7 @@ interface EquipLoadout {
 const EQUIP_LOADOUTS_KEY = "inet-office-equip-loadouts";
 
 function loadLoadouts(): EquipLoadout[] {
-  try {
-    const v = safeGetItem(EQUIP_LOADOUTS_KEY);
-    return v ? JSON.parse(v) : [];
-  } catch { return []; }
+  return [];
 }
 
 function saveLoadouts(_loadouts: EquipLoadout[]) {
@@ -523,10 +493,7 @@ const DEFAULT_EMPLOYEES: Employee[] = [
 ];
 
 function loadEmployees(): Employee[] {
-  try {
-    const v = safeGetItem(EMPLOYEES_KEY);
-    return v ? JSON.parse(v) : DEFAULT_EMPLOYEES.map(e => ({ ...e }));
-  } catch { return DEFAULT_EMPLOYEES.map(e => ({ ...e })); }
+  return clonePlain(DEFAULT_EMPLOYEES);
 }
 
 function saveEmployees(_emps: Employee[]) {
@@ -534,11 +501,7 @@ function saveEmployees(_emps: Employee[]) {
 }
 
 function loadEmployeeCats(): EmployeeCategory[] {
-  try {
-    const v = safeGetItem(EMPLOYEE_CATS_KEY);
-    if (!v) return [{ id: "cat-default", name: "General", employeeIds: DEFAULT_EMPLOYEES.map(e => e.id), collapsed: false }];
-    return JSON.parse(v);
-  } catch { return [{ id: "cat-default", name: "General", employeeIds: DEFAULT_EMPLOYEES.map(e => e.id), collapsed: false }]; }
+  return [{ id: "cat-default", name: "General", employeeIds: DEFAULT_EMPLOYEES.map(e => e.id), collapsed: false }];
 }
 
 function saveEmployeeCats(_cats: EmployeeCategory[]) {
@@ -587,10 +550,7 @@ const DEFAULT_FACILITIES: Facility[] = [
 ];
 
 function loadFacilities(): Facility[] {
-  try {
-    const v = safeGetItem(FACILITIES_KEY);
-    return v ? JSON.parse(v) : DEFAULT_FACILITIES.map(f => ({ ...f }));
-  } catch { return DEFAULT_FACILITIES.map(f => ({ ...f })); }
+  return clonePlain(DEFAULT_FACILITIES);
 }
 
 function saveFacilities(_facs: Facility[]) {
@@ -598,11 +558,7 @@ function saveFacilities(_facs: Facility[]) {
 }
 
 function loadFacilityCats(): FacilityCategory[] {
-  try {
-    const v = safeGetItem(FACILITY_CATS_KEY);
-    if (!v) return [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }];
-    return JSON.parse(v);
-  } catch { return [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }]; }
+  return [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }];
 }
 
 function saveFacilityCats(_cats: FacilityCategory[]) {
@@ -653,10 +609,7 @@ const DEFAULT_CONTRACTS: Contract[] = [
 ];
 
 function loadContracts(): Contract[] {
-  try {
-    const v = safeGetItem(CONTRACTS_KEY);
-    return v ? JSON.parse(v) : DEFAULT_CONTRACTS.map(c => ({ ...c }));
-  } catch { return DEFAULT_CONTRACTS.map(c => ({ ...c })); }
+  return clonePlain(DEFAULT_CONTRACTS);
 }
 
 function saveContracts(_cons: Contract[]) {
@@ -664,11 +617,7 @@ function saveContracts(_cons: Contract[]) {
 }
 
 function loadContractCats(): ContractCategory[] {
-  try {
-    const v = safeGetItem(CONTRACT_CATS_KEY);
-    if (!v) return [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }];
-    return JSON.parse(v);
-  } catch { return [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }]; }
+  return [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }];
 }
 
 function saveContractCats(_cats: ContractCategory[]) {
@@ -698,13 +647,7 @@ const NEXUS_NOMAD_STATE_ID = "default";
 const NEXUS_NOMAD_STATE_VERSION = 1;
 
 function loadLocalOfficeReputation(): number {
-  try {
-    const v = safeGetItem("inet-office-reputation");
-    const parsed = v ? parseInt(v, 10) : NaN;
-    return Number.isFinite(parsed) ? parsed : 25;
-  } catch {
-    return 25;
-  }
+  return 25;
 }
 
 const REMOTE_NEXUS_SENTINEL_VERSION = -1;
@@ -738,24 +681,7 @@ function buildDefaultNexusNomadState(): NexusNomadState {
 }
 
 function buildLegacyNexusNomadState(): NexusNomadState {
-  return {
-    id: NEXUS_NOMAD_STATE_ID,
-    version: NEXUS_NOMAD_STATE_VERSION,
-    officeName: loadOfficeName(),
-    reputation: loadLocalOfficeReputation(),
-    entityReps: loadEntityReps(),
-    govConfig: loadGovConfig(),
-    employees: loadEmployees(),
-    employeeCats: loadEmployeeCats(),
-    presets: loadPresets(),
-    loadouts: loadLoadouts(),
-    facilities: loadFacilities(),
-    facilityCats: loadFacilityCats(),
-    contracts: loadContracts(),
-    contractCats: loadContractCats(),
-    officeInfo: loadOfficeInfo(),
-    invTabs: loadInventory(),
-  };
+  return buildDefaultNexusNomadState();
 }
 
 function buildRemoteSentinelNexusNomadState(): NexusNomadState {
@@ -1557,6 +1483,7 @@ export function NexusNomad() {
   const lastSavedStateJsonRef = useRef<string | null>(null);
 
   const applyLoadedState = useCallback((state: NexusNomadState) => {
+    officeNameCache = state.officeName || DEFAULT_OFFICE_NAME;
     setOfficeName(state.officeName);
     setReputation(Math.max(-100, Math.min(100, state.reputation)));
     setEntityReps(state.entityReps);
@@ -1623,24 +1550,27 @@ export function NexusNomad() {
     };
   }, [applyLoadedState]);
 
-  const persistentState = useMemo<NexusNomadState>(() => ({
-    id: NEXUS_NOMAD_STATE_ID,
-    version: NEXUS_NOMAD_STATE_VERSION,
-    officeName,
-    reputation: Math.max(-100, Math.min(100, reputation)),
-    entityReps,
-    govConfig,
-    employees,
-    employeeCats,
-    presets,
-    loadouts,
-    facilities,
-    facilityCats,
-    contracts,
-    contractCats,
-    officeInfo,
-    invTabs,
-  }), [
+  const persistentState = useMemo<NexusNomadState>(() => {
+    officeNameCache = officeName || DEFAULT_OFFICE_NAME;
+    return {
+      id: NEXUS_NOMAD_STATE_ID,
+      version: NEXUS_NOMAD_STATE_VERSION,
+      officeName,
+      reputation: Math.max(-100, Math.min(100, reputation)),
+      entityReps,
+      govConfig,
+      employees,
+      employeeCats,
+      presets,
+      loadouts,
+      facilities,
+      facilityCats,
+      contracts,
+      contractCats,
+      officeInfo,
+      invTabs,
+    };
+  }, [
     officeName, reputation, entityReps, govConfig, employees, employeeCats,
     presets, loadouts, facilities, facilityCats, contracts, contractCats, officeInfo, invTabs,
   ]);
