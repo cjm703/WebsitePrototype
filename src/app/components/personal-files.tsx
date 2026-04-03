@@ -49,6 +49,17 @@ interface SourceUsageEntry { id: string; cardName: string; sourceType: string; a
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
 
+const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
+const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
+const CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
+const CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
+const CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
+const CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
+const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
+const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
+const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
+const CARD_DESCRIPTION_KEY = "Description";
+
 
 
 // ========================
@@ -191,6 +202,22 @@ function stepTE(potency: string): string {
   const next = sign === "+" ? num + step : num - step;
   const stepStr = step !== 1 ? String(step) : "";
   return `${next}${sign}TE${stepStr}`;
+}
+
+function getBuiltInCardTrackerBucket(card: ManagedCard): "status" | "ability" | "" {
+  const bucket = (card.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
+  return bucket === "status" || bucket === "ability" ? bucket : "";
+}
+
+function hasBuiltInCardTracker(card: ManagedCard): boolean {
+  return !!(
+    getBuiltInCardTrackerBucket(card)
+    || (card.customFields?.[CARD_TRACKER_NAME_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DURATION_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || "").trim()
+  );
 }
 
 type StatusTag = TagDefinition;
@@ -1497,34 +1524,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     const isBuff = card.tags.some((t) => t.toLowerCase() === "buff");
     const isTimedEffect = card.tags.some((t) => t.toLowerCase() === "timed effect");
+    const builtInTrackerBucket = getBuiltInCardTrackerBucket(card);
 
-    if (isBuff) {
-      // Extract Buff fields from customFields
-      const duration = card.customFields["Buff::Duration"] || "1";
-      const stat = card.customFields["Buff::Stat"] || card.name;
-      const amount = card.customFields["Buff::Amount"] || "";
+    if (hasBuiltInCardTracker(card) && builtInTrackerBucket) {
+      const effectName = card.customFields[CARD_TRACKER_NAME_KEY] || card.name;
+      const duration = card.customFields[CARD_TRACKER_DURATION_KEY] || "1";
+      const potency = card.customFields[CARD_TRACKER_POTENCY_KEY] || "";
+      const damage = card.customFields[CARD_TRACKER_DAMAGE_KEY] || "";
+      const description =
+        card.customFields[CARD_TRACKER_DESCRIPTION_KEY]
+        || card.customFields[CARD_DESCRIPTION_KEY]?.replace(/<[^>]*>/g, "")
+        || card.effect.replace(/<[^>]*>/g, "");
 
-      const newEffect: StatusEffectRow = {
-        id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: stat || card.name,
-        potency: amount,
-        duration: duration,
-        damage: "",
-        effect: `From card: ${card.name}`,
-      };
-
-      setStatusEffects((prev) => [...prev, newEffect]);
-    }
-
-    if (isTimedEffect) {
-      // Extract Timed Effect fields from customFields
-      const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
-      const duration = card.customFields["Timed Effect::Duration"] || "1";
-      const potency = card.customFields["Timed Effect::Potency"] || "";
-      const damage = card.customFields["Timed Effect::Damage"] || "";
-      const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
-
-      // Auto-roll damage on use if it contains dice notation
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
         const diceGroups = parseDiceGroups(damage, potency);
@@ -1533,37 +1544,94 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         const result = rollDiceExpression(damage, potency);
         if (result) {
           triggerDiceAnimation(parseDiceGroups(damage, potency));
-          initialRoll = result.breakdown
-            ? `⚔ ${result.total} (${result.breakdown})`
-            : `⚔ ${result.total}`;
+          initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
         }
       } else {
         playSuccessChime();
       }
 
-      // Extract optional buff configuration from card
-      const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
-      const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
-      const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
-
-      let targetType: StatusEffectRow["targetType"];
-      if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
-      else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
+      const buffType = (card.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || "") as StatusEffectRow["buffType"];
+      const buffTarget = card.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || "";
+      const buffValue = card.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || "";
 
       const newEffect: StatusEffectRow = {
         id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: effectName,
-        potency: potency,
-        duration: duration,
-        damage: damage,
+        potency,
+        duration,
+        damage,
         effect: description || `From card: ${card.name}`,
         lastRoll: initialRoll,
-        ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-        ...(targetType ? { targetType } : {}),
+        ...(builtInTrackerBucket === "status" && buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+        targetType: builtInTrackerBucket === "ability" ? "enemy" : "self",
       };
 
       setStatusEffects((prev) => [...prev, newEffect]);
       setLastAddedStatusEffect(effectName);
+    } else {
+      if (isBuff) {
+        const duration = card.customFields["Buff::Duration"] || "1";
+        const stat = card.customFields["Buff::Stat"] || card.name;
+        const amount = card.customFields["Buff::Amount"] || "";
+
+        const newEffect: StatusEffectRow = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: stat || card.name,
+          potency: amount,
+          duration: duration,
+          damage: "",
+          effect: `From card: ${card.name}`,
+        };
+
+        setStatusEffects((prev) => [...prev, newEffect]);
+      }
+
+      if (isTimedEffect) {
+        const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
+        const duration = card.customFields["Timed Effect::Duration"] || "1";
+        const potency = card.customFields["Timed Effect::Potency"] || "";
+        const damage = card.customFields["Timed Effect::Damage"] || "";
+        const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
+
+        let initialRoll: string | undefined;
+        if (damage && hasDiceNotation(damage)) {
+          const diceGroups = parseDiceGroups(damage, potency);
+          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+          playDiceRoll(totalDice);
+          const result = rollDiceExpression(damage, potency);
+          if (result) {
+            triggerDiceAnimation(parseDiceGroups(damage, potency));
+            initialRoll = result.breakdown
+              ? `⚔ ${result.total} (${result.breakdown})`
+              : `⚔ ${result.total}`;
+          }
+        } else {
+          playSuccessChime();
+        }
+
+        const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
+        const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
+        const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
+
+        let targetType: StatusEffectRow["targetType"];
+        if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
+        else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
+
+        const newEffect: StatusEffectRow = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: effectName,
+          potency: potency,
+          duration: duration,
+          damage: damage,
+          effect: description || `From card: ${card.name}`,
+          lastRoll: initialRoll,
+          ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+          ...(targetType ? { targetType } : {}),
+        };
+
+        setStatusEffects((prev) => [...prev, newEffect]);
+        setLastAddedStatusEffect(effectName);
+      }
     }
 
     // ── Source usage tracking ──
@@ -1662,8 +1730,35 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
           </div>
 
-          {/* Timed Effect indicator */}
-          {card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
+          {/* Built-in tracker indicator */}
+          {hasBuiltInCardTracker(card) && card.tags.some((t) => t.toLowerCase() === "use-able") ? (
+            <div
+              className="mb-4 p-3 flex items-start gap-2 text-[11px]"
+              style={{
+                background: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A12" : "#4ADE8012",
+                border: `1px solid ${getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A33" : "#4ADE8033"}`,
+                color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80",
+              }}
+            >
+              <Zap size={13} className="shrink-0 mt-0.5" />
+              <div>
+                <div style={{ fontWeight: 600 }}>
+                  {getBuiltInCardTrackerBucket(card) === "ability" ? "ABILITY / CARD EFFECT TRACKER" : "STATUS EFFECT TRACKER"}
+                </div>
+                <div style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5AAA" : "#4ADE80AA", marginTop: 2 }}>
+                  Using this card adds{" "}
+                  <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>
+                    {card.customFields[CARD_TRACKER_NAME_KEY] || card.name}
+                  </span>
+                  {" "}to {getBuiltInCardTrackerBucket(card) === "ability" ? "Abilities / Card Effects" : "Status Effects"}
+                  {card.customFields[CARD_TRACKER_DURATION_KEY] && (
+                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>{card.customFields[CARD_TRACKER_DURATION_KEY]}</span> turn(s)</div>
+                  )}
+                  .
+                </div>
+              </div>
+            </div>
+          ) : card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
             <div
               className="mb-4 p-3 flex items-start gap-2 text-[11px]"
               style={{ background: "#4ADE8012", border: "1px solid #4ADE8033", color: "#4ADE80" }}
