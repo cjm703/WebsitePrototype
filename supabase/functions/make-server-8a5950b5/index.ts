@@ -999,6 +999,78 @@ function registerRoutes(prefix: string) {
   });
 
 
+
+  app.post(`${prefix}/player/report-notification`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const reporterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+
+      const subject = typeof body?.subject === "string" ? body.subject.trim() : "";
+      const message = typeof body?.message === "string" ? body.message.trim() : "";
+      const createdAt = typeof body?.createdAt === "string" && body.createdAt.trim()
+        ? body.createdAt.trim()
+        : new Date().toISOString();
+      const playerName = typeof body?.playerName === "string" && body.playerName.trim()
+        ? body.playerName.trim()
+        : reporterId;
+      const playerId = typeof body?.playerId === "string" && body.playerId.trim()
+        ? body.playerId.trim()
+        : reporterId;
+
+      if (!message) {
+        return c.json({ error: "Missing report message" }, 400);
+      }
+
+      const notificationId = `report-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+      const notification = {
+        id: notificationId,
+        subject: subject || `[Player Report] ${playerName}`,
+        message: `${message}\n\n[Submitted by: ${playerName}${playerId ? ` / ${playerId}` : ""}]`,
+        assignedTo: ["DM"],
+        createdAt,
+      };
+
+      const supabase = admin();
+      const now = new Date().toISOString();
+
+      const { data: existingRows, error: loadError } = await supabase
+        .from("app_notifications")
+        .select("id, data")
+        .order("updated_at", { ascending: false });
+
+      if (loadError) return c.json({ error: loadError.message }, 500);
+
+      const existingNotifications = (existingRows ?? []).map((row: any) => ({
+        id: row.id,
+        ...(row.data ?? {}),
+      }));
+
+      const deduped = Array.from(
+        new Map([notification, ...existingNotifications].map((row: any) => [row.id, row])).values(),
+      );
+
+      const payload = deduped.map((row: any) => ({
+        id: row.id,
+        data: { ...row, id: row.id },
+        updated_at: now,
+      }));
+
+      const { error: upsertError } = await supabase
+        .from("app_notifications")
+        .upsert(payload, { onConflict: "id" });
+
+      if (upsertError) return c.json({ error: upsertError.message }, 500);
+
+      return c.json({ ok: true, notificationId });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+
   async function listJsonRows(table: string) {
     const supabase = admin();
     const { data, error } = await supabase

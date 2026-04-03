@@ -27,6 +27,7 @@ export function IntelliInterface() {
   const currentUserId = safeGetItem("inet-user-id") || "";
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
   const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+  const REPORT_API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
 
   // Player theme
   const theme = getPlayerTheme();
@@ -119,14 +120,13 @@ export function IntelliInterface() {
 
     const hydrateDashboardState = async () => {
       try {
-        const [players, items, cards, infos, notifications, sessions, mapsState, calendarWeatherState] = await Promise.all([
+        const [players, items, cards, infos, notifications, sessions, calendarWeatherState] = await Promise.all([
           appStore.listPlayers<any>().catch(() => [] as any[]),
           appStore.listItems<any>().catch(() => [] as any[]),
           appStore.listCards<any>().catch(() => [] as any[]),
           appStore.listInfos<any>().catch(() => [] as any[]),
           appStore.listNotifications<DMNotification>().catch(() => [] as DMNotification[]),
           appStore.loadSessionLogState<Array<{ id: string }>>([]).catch(() => [] as Array<{ id: string }>),
-          appStore.loadIntelliMapsState<any[]>([]).catch(() => [] as any[]),
           appStore.loadCalendarWeatherState<any>({}).catch(() => ({})),
         ]);
 
@@ -138,7 +138,6 @@ export function IntelliInterface() {
         const infoRows = Array.isArray(infos) ? infos : [];
         const notifRows = Array.isArray(notifications) ? notifications : [];
         const sessionRows = Array.isArray(sessions) ? sessions : [];
-        const mapRows = Array.isArray(mapsState) ? mapsState : [];
 
         const me = playerRows.find((p) => p?.name === currentUser);
         const personalFiles = me
@@ -152,7 +151,7 @@ export function IntelliInterface() {
         setSectionDetails({
           personalFiles: personalFiles + personalSuffix,
           inetSearch: `Browse the I-Net encyclopedia. Currently ${totalPages} article${totalPages !== 1 ? "s" : ""} indexed.`,
-          nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged · ${mapRows.length} location${mapRows.length !== 1 ? "s" : ""} mapped`,
+          nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged`,
           intelliMaps: DEFAULT_SECTION_DETAILS.intelliMaps,
           dmArea: `${playerRows.length} player${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} · ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} · ${infoRows.length} info entr${infoRows.length !== 1 ? "ies" : "y"} · ${notifRows.length} notification${notifRows.length !== 1 ? "s" : ""}`,
           community: DEFAULT_SECTION_DETAILS.community,
@@ -230,42 +229,31 @@ export function IntelliInterface() {
     const trimmed = reportText.trim();
     if (!trimmed) return;
 
+    const sessionToken = safeGetItem("inet-session-token") || "";
     const now = new Date();
     const timestamp = `${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
 
-    const reportNotification: DMNotification = {
-      id: `report-${Date.now()}`,
-      subject: `[Player Report] ${currentUser || "Unknown Player"}`,
-      message: trimmed,
-      assignedTo: ["DM"],
-      createdAt: timestamp,
-    };
-
-    const rowPayload = {
-      id: reportNotification.id,
-      data: reportNotification,
-      updated_at: new Date().toISOString(),
-    };
-
     try {
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-        throw new Error("Missing Supabase client environment variables");
-      }
-
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/app_notifications`, {
+      const res = await fetch(`${REPORT_API_BASE}/player/report-notification`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: SUPABASE_ANON_KEY,
           Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          Prefer: "resolution=merge-duplicates,return=minimal",
+          apikey: SUPABASE_ANON_KEY,
+          "X-Session-Token": sessionToken,
         },
-        body: JSON.stringify([rowPayload]),
+        body: JSON.stringify({
+          subject: `[Player Report] ${currentUser || "Unknown Player"}`,
+          message: trimmed,
+          createdAt: timestamp,
+          playerName: currentUser || "Unknown Player",
+          playerId: currentUserId || "",
+        }),
       });
 
+      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const errText = await res.text().catch(() => "");
-        throw new Error(errText || `Failed to save report notification (${res.status})`);
+        throw new Error(typeof body?.error === "string" ? body.error : `Request failed: ${res.status}`);
       }
 
       submitReport(`[${currentUser || "Unknown Player"}${currentUserId ? ` / ${currentUserId}` : ""}] ${trimmed}`);
