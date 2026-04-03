@@ -665,6 +665,34 @@ function toneChipStyle(tone: CardSectionTone) {
   return { color: "#7ACA8A", border: "1px solid #7ACA8A33", background: "#7ACA8A15" };
 }
 
+
+
+function editorSurfaceStyle(accent: string) {
+  return {
+    border: `1px solid ${accent}22`,
+    boxShadow: `inset 0 0 0 1px ${accent}14`,
+    background: `linear-gradient(180deg, rgba(10,16,42,0.96) 0%, rgba(12,12,46,0.96) 100%)`,
+  } as React.CSSProperties;
+}
+
+function sectionBadgeStyle(accent: string) {
+  return {
+    color: accent,
+    border: `1px solid ${accent}33`,
+    background: `${accent}14`,
+  } as React.CSSProperties;
+}
+
+function panelButtonStyle(active: boolean, accent: string) {
+  return {
+    color: active ? accent : "#8A9ABB",
+    fontWeight: active ? 700 : 500,
+    border: active ? `1px solid ${accent}44` : "1px solid #1A1A4B",
+    background: active ? `linear-gradient(180deg, ${accent}18 0%, rgba(10,23,58,0.98) 100%)` : "linear-gradient(180deg, rgba(22,22,72,0.98) 0%, rgba(14,14,53,0.98) 100%)",
+    boxShadow: active ? `inset 0 0 0 1px ${accent}16` : "inset 0 0 0 1px rgba(255,255,255,0.03)",
+  } as React.CSSProperties;
+}
+
 function withPersistedEditorStructure(card: ManagedCard, builder: MechanicsBuilderState, blocks: CardSectionBlock[]): ManagedCard {
   return {
     ...card,
