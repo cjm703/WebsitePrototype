@@ -25,6 +25,8 @@ export function IntelliInterface() {
   // Read user from localStorage, redirect to login if not found
   const currentUser = safeGetItem("inet-user") || "";
   const currentUserId = safeGetItem("inet-user-id") || "";
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
   // Player theme
   const theme = getPlayerTheme();
@@ -239,10 +241,32 @@ export function IntelliInterface() {
       createdAt: timestamp,
     };
 
+    const rowPayload = {
+      id: reportNotification.id,
+      data: reportNotification,
+      updated_at: new Date().toISOString(),
+    };
+
     try {
-      const existingNotifications = await appStore.listNotifications<DMNotification>().catch(() => [] as DMNotification[]);
-      const nextNotifications = [reportNotification, ...(Array.isArray(existingNotifications) ? existingNotifications : [])];
-      await appStore.saveNotifications<DMNotification>(nextNotifications);
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        throw new Error("Missing Supabase client environment variables");
+      }
+
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/app_notifications`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        },
+        body: JSON.stringify([rowPayload]),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(errText || `Failed to save report notification (${res.status})`);
+      }
 
       submitReport(`[${currentUser || "Unknown Player"}${currentUserId ? ` / ${currentUserId}` : ""}] ${trimmed}`);
       setReportText("");

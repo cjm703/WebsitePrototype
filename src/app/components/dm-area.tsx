@@ -614,6 +614,34 @@ useEffect(() => {
   };
 }, []);
 
+useEffect(() => {
+  if (activeSection !== "notifs") return;
+
+  let cancelled = false;
+
+  const refreshNotifications = async () => {
+    try {
+      const notificationData = await loadDMNotifications<DMNotification>();
+      if (!cancelled) {
+        setDmNotifications(Array.isArray(notificationData) ? notificationData : []);
+      }
+    } catch (err) {
+      if (!cancelled) {
+        setDmError(getSaveError(err, "Failed to refresh notifications"));
+      }
+    }
+  };
+
+  void refreshNotifications();
+  const onFocus = () => { void refreshNotifications(); };
+  window.addEventListener("focus", onFocus);
+
+  return () => {
+    cancelled = true;
+    window.removeEventListener("focus", onFocus);
+  };
+}, [activeSection]);
+
 async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
