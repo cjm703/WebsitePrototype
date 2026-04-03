@@ -371,44 +371,49 @@ function getCardFamilyDef(family: CardFamily): CardFamilyDef | null {
 }
 
 function withCardFamilyDefaults(card: ManagedCard, family: CardFamily): ManagedCard {
-  const next: ManagedCard = {
-    ...card,
-    customFields: {
-      ...card.customFields,
-      [CARD_FAMILY_KEY]: family,
-    },
-  };
-
-  const setIfBlank = (key: string, value: string) => {
-    if (!(next.customFields[key] || "").trim()) next.customFields[key] = value;
+  const previousUses = (card.customFields?.[USE_PROFILE_USES_KEY] || "").trim();
+  const nextCustomFields: Record<string, string> = {
+    ...card.customFields,
+    [CARD_FAMILY_KEY]: family,
+    [USE_PROFILE_MAGIC_NATURE_KEY]: "",
+    [USE_PROFILE_COST_MODEL_KEY]: "",
+    [USE_PROFILE_PRIMARY_COST_KEY]: "",
+    [USE_PROFILE_USES_KEY]: "",
+    [USE_PROFILE_COMPONENTS_KEY]: "",
+    [USE_PROFILE_UPCAST_KEY]: "",
+    [USE_PROFILE_ORIGIN_KEY]: "",
+    [USE_PROFILE_PASSIVE_MODE_KEY]: "",
   };
 
   if (family === "spell") {
-    setIfBlank(USE_PROFILE_MAGIC_NATURE_KEY, "Magical (Spell)");
-    setIfBlank(USE_PROFILE_COST_MODEL_KEY, "Source");
-    setIfBlank(USE_PROFILE_PRIMARY_COST_KEY, next.customFields["Level"] ? `${next.customFields["Level"]} matching source` : "Matching source equal to spell level");
-    setIfBlank(USE_PROFILE_COMPONENTS_KEY, "V, S, M");
-    setIfBlank(USE_PROFILE_UPCAST_KEY, "Can spend additional matching source to raise the spell's level when allowed.");
+    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Magical (Spell)";
+    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Source";
+    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = nextCustomFields["Level"] ? `${nextCustomFields["Level"]} matching source` : "Matching source equal to spell level";
+    nextCustomFields[USE_PROFILE_COMPONENTS_KEY] = "V, S, M";
+    nextCustomFields[USE_PROFILE_UPCAST_KEY] = "Can spend additional matching source to raise the spell's level when allowed.";
   }
 
   if (family === "skill") {
-    setIfBlank(USE_PROFILE_MAGIC_NATURE_KEY, "Non-magical or Magical (Non-spell)");
-    setIfBlank(USE_PROFILE_COST_MODEL_KEY, "Exhaustion / Uses");
-    setIfBlank(USE_PROFILE_PRIMARY_COST_KEY, "Usually 1-2 exhaustion");
-    setIfBlank(USE_PROFILE_USES_KEY, "Often limited uses at level 3+ or for magical skills");
-    setIfBlank(USE_PROFILE_ORIGIN_KEY, "Learned / Taught");
+    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Non-magical or Magical (Non-spell)";
+    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Exhaustion / Uses";
+    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = "Usually 1-2 exhaustion";
+    nextCustomFields[USE_PROFILE_ORIGIN_KEY] = "Learned / Taught";
+    nextCustomFields[USE_PROFILE_USES_KEY] = previousUses === "Usually proficiency-based or fixed uses per long rest" ? "" : previousUses;
   }
 
   if (family === "ability") {
-    setIfBlank(USE_PROFILE_MAGIC_NATURE_KEY, "Inherent or Granted (Non-spell)");
-    setIfBlank(USE_PROFILE_COST_MODEL_KEY, "Uses / Exhaustion");
-    setIfBlank(USE_PROFILE_PRIMARY_COST_KEY, "Often uses per long rest");
-    setIfBlank(USE_PROFILE_USES_KEY, "Usually proficiency-based or fixed uses per long rest");
-    setIfBlank(USE_PROFILE_ORIGIN_KEY, "Innate / Granted");
-    setIfBlank(USE_PROFILE_PASSIVE_MODE_KEY, "Passive, activatable passive, or triggered ability");
+    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Inherent or Granted (Non-spell)";
+    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Uses / Exhaustion";
+    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = "Often uses per long rest";
+    nextCustomFields[USE_PROFILE_USES_KEY] = "Usually proficiency-based or fixed uses per long rest";
+    nextCustomFields[USE_PROFILE_ORIGIN_KEY] = "Innate / Granted";
+    nextCustomFields[USE_PROFILE_PASSIVE_MODE_KEY] = "Passive, activatable passive, or triggered ability";
   }
 
-  return next;
+  return {
+    ...card,
+    customFields: nextCustomFields,
+  };
 }
 
 function getCardProfileBadges(card: ManagedCard): string[] {
@@ -438,6 +443,7 @@ function createCardFromTemplate(template: CardTemplateDef, cardTags: TagDefiniti
     customFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Non-spell Technique";
     customFields[USE_PROFILE_COST_MODEL_KEY] = "Exhaustion / Uses";
     customFields[USE_PROFILE_PRIMARY_COST_KEY] = template.level && template.level !== "0" ? `Level ${template.level} technique cost` : "Usually 1-2 exhaustion";
+    customFields[USE_PROFILE_USES_KEY] = "";
     customFields[USE_PROFILE_ORIGIN_KEY] = "Learned / Taught";
   } else if (template.defaultFamily === "ability") {
     customFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Inherent or Granted (Non-spell)";
@@ -1722,53 +1728,107 @@ export function DMCardManagerSection({
 
                   {editorPanel === "mechanics" && (
                     <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
-                      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)] gap-4">
+                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] gap-4">
                         <div className="space-y-4">
-                          <div>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-3`}>
-                              <div className="flex flex-wrap gap-2">
-                                {MECHANICS_BLOCKS.map((block) => (
-                                  <button
-                                    key={block.id}
-                                    onClick={() => addMechanicsStarter(block)}
-                                    className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
-                                    style={S_ACCENT}
-                                  >
-                                    <Plus size={10} /> Add {block.label}
-                                  </button>
-                                ))}
-                                <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
-                                  Clear Builder
-                                </button>
+                          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#6ABAFF")}>
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>MECHANICS WORKSPACE</div>
+                                <div className="text-[11px]" style={S_SUBTLE}>
+                                  Build the card in three layers: outline the resolution flow, add optional section blocks, then decide how much of that should replace or append to the live rules text.
+                                </div>
                               </div>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
+                                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                <div className="text-[10px] mb-1" style={S_SECTION_HDR}>1. RESOLUTION FLOW</div>
+                                <div className="text-[11px]" style={S_SUBTLE}>Use Trigger, Target, Requirement, Effect, Duration, Scaling, and Notes to lay out the actual sequence of play.</div>
+                              </div>
+                              <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                <div className="text-[10px] mb-1" style={S_SECTION_HDR}>2. SUPPORTING SECTIONS</div>
+                                <div className="text-[11px]" style={S_SUBTLE}>Use card section blocks for summaries, follow-ups, limitations, and reminders that help present the card cleanly.</div>
+                              </div>
+                              <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                <div className="text-[10px] mb-1" style={S_SECTION_HDR}>3. OUTPUT CONTROL</div>
+                                <div className="text-[11px]" style={S_SUBTLE}>Replace the current rules text when you want a clean rewrite, or append when you are layering extra structure onto an existing card.</div>
+                              </div>
+                            </div>
+                          </div>
 
-                              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                                {MECHANICS_BLOCKS.map((block) => (
-                                  <div key={block.id}>
-                                    <label className="text-[10px] block mb-1" style={labelStyle}>{block.label}:</label>
+                          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
+                                <div className="text-[10px]" style={S_SUBTLE}>Start with the card's actual play sequence. Each block becomes part of the generated rules text.</div>
+                              </div>
+                              <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
+                                Clear Builder
+                              </button>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {MECHANICS_BLOCKS.map((block) => (
+                                <button
+                                  key={block.id}
+                                  onClick={() => addMechanicsStarter(block)}
+                                  className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+                                  style={sectionBadgeStyle("#6ABAFF")}
+                                >
+                                  <Plus size={10} /> Seed {block.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                              {MECHANICS_BLOCKS.map((block, index) => {
+                                const filled = !!mechanicsBuilder[block.id].trim();
+                                const accent = ["#8AB8FF", "#7ACA8A", "#FFD700", "#C4A0FF", "#FF9A7A", "#6ABAFF", "#7A8AAA"][index % 7];
+                                return (
+                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`} style={editorSurfaceStyle(accent)}>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(accent)}>Step {index + 1}</span>
+                                          <span className="text-[12px]" style={S_TEXT_BOLD}>{block.label}</span>
+                                        </div>
+                                        <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
+                                      </div>
+                                      {!filled && (
+                                        <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} px-2.5 py-1 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
+                                          <Sparkles size={10} /> Seed
+                                        </button>
+                                      )}
+                                    </div>
                                     <textarea
                                       value={mechanicsBuilder[block.id]}
                                       onChange={(e) => updateMechanicsBuilderField(block.id, e.target.value)}
                                       placeholder={block.placeholder}
-                                      className={`${inputClass} min-h-[84px] resize-y`}
+                                      className={`${inputClass} min-h-[102px] resize-y`}
                                       style={inputStyle}
                                     />
+                                    <div className="text-[10px] flex items-center justify-between gap-2" style={S_MUTED}>
+                                      <span>{filled ? "Included in generated output" : "Empty"}</span>
+                                      <span>{mechanicsBuilder[block.id].trim().length} chars</span>
+                                    </div>
                                   </div>
-                                ))}
-                              </div>
+                                );
+                              })}
+                            </div>
 
-                              <div className="flex flex-wrap items-center gap-2 pt-1">
-                                <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                  <Save size={12} /> Replace Rules Text
-                                </button>
-                                <button onClick={() => applyMechanicsBuilder("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
-                                  <Plus size={12} /> Append to Rules Text
-                                </button>
-                                <span className="text-[10px]" style={S_SUBTLE}>
-                                  {getFilledMechanicsCount(mechanicsBuilder)} structured block{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"} ready
-                                </span>
-                              </div>
+                            <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center gap-2`}>
+                              <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                                <Save size={12} /> Replace Rules Text
+                              </button>
+                              <button onClick={() => applyMechanicsBuilder("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                                <Plus size={12} /> Append to Rules Text
+                              </button>
+                              <span className="text-[10px] ml-auto" style={S_SUBTLE}>
+                                Use replace for a clean rebuild. Use append when the current rules text already has material you want to keep.
+                              </span>
                             </div>
                           </div>
 
@@ -1777,7 +1837,7 @@ export function DMCardManagerSection({
                               <div className="text-[12px]" style={S_SECTION_HDR}>CARD SECTION BLOCKS</div>
                               <div className="text-[10px]" style={S_SUBTLE}>{cardSectionBlocks.length} saved section block{cardSectionBlocks.length === 1 ? "" : "s"}</div>
                             </div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-3`}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
                               <div className="flex flex-wrap gap-2">
                                 {CARD_SECTION_BLOCK_PRESETS.map((preset) => (
                                   <button
@@ -1825,8 +1885,19 @@ export function DMCardManagerSection({
                               ) : (
                                 <div className="space-y-3">
                                   {cardSectionBlocks.map((block, index) => (
-                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`}>
-                                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
+                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} style={editorSurfaceStyle(block.tone === "rules" ? "#7ACA8A" : block.tone === "highlight" ? "#8AB8FF" : block.tone === "limitation" ? "#FF9A7A" : "#FFD700")}>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>Section {index + 1}</span>
+                                          <span className="text-[10px]" style={S_SUBTLE}>Reorder or tone-shift this block before sending it into the rules text.</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1 justify-end">
+                                          <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
+                                          <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
+                                          <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
+                                        </div>
+                                      </div>
+                                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
                                         <div>
                                           <label className="text-[10px] block mb-1" style={labelStyle}>Section Title:</label>
                                           <input
@@ -1846,11 +1917,6 @@ export function DMCardManagerSection({
                                             <option value="reminder">Reminder</option>
                                           </select>
                                         </div>
-                                        <div className="flex flex-wrap gap-1 justify-end">
-                                          <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
-                                          <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
-                                          <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
-                                        </div>
                                       </div>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Content:</label>
@@ -1867,7 +1933,7 @@ export function DMCardManagerSection({
                                 </div>
                               )}
 
-                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                              <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center gap-2`}>
                                 <button onClick={() => applySectionBlocks("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
                                   <Save size={12} /> Replace Rules Text with Blocks
                                 </button>
@@ -1877,27 +1943,39 @@ export function DMCardManagerSection({
                                 <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={toneChipStyle("highlight")}>
                                   <Sparkles size={12} /> Build Full Rules Text
                                 </button>
-                                <span className="text-[10px]" style={S_SUBTLE}>Blocks now persist as editor structure inside custom fields on save.</span>
                               </div>
                             </div>
                           </div>
 
                           <div>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>RULES / EFFECT TEXT</div>
-                            <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effect description..." minHeight={180} />
+                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>LIVE RULES / EFFECT TEXT</div>
+                            <div className="text-[10px] mb-2" style={S_SUBTLE}>This is still the player-facing rules field. The builders above help generate or reorganize it, but this box remains the final saved runtime text.</div>
+                            <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effect description..." minHeight={200} />
                           </div>
                         </div>
 
                         <div className="space-y-4">
+                          <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle("#8AB8FF")}>
+                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>QUICK READ</div>
+                            <div className="space-y-2 text-[11px]" style={S_SUBTLE}>
+                              <div><span style={S_TEXT_BOLD}>Structured Preview</span> shows the builder output in the order it will read.</div>
+                              <div><span style={S_TEXT_BOLD}>Block Preview</span> helps you polish supporting summaries, follow-ups, and limitations.</div>
+                              <div><span style={S_TEXT_BOLD}>Full Generated Output</span> shows the combined result before you commit it to rules text.</div>
+                            </div>
+                          </div>
+
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED PREVIEW</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#6ABAFF")}>
                               {MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).length === 0 ? (
                                 <div className="text-[11px]" style={S_MUTED}>No structured mechanics blocks yet. Add a block or load one from the existing rules text.</div>
                               ) : (
-                                MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block) => (
-                                  <div key={block.id}>
-                                    <div className="text-[10px] mb-1" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
+                                MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block, index) => (
+                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
+                                      <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
+                                    </div>
                                     <div className="text-[11px]" style={S_TEXT}>{mechanicsBuilder[block.id]}</div>
                                   </div>
                                 ))
@@ -1907,12 +1985,12 @@ export function DMCardManagerSection({
 
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>BLOCK PREVIEW</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#FFD700")}>
                               {cardSectionBlocks.length === 0 ? (
                                 <div className="text-[11px]" style={S_MUTED}>No card section blocks yet.</div>
                               ) : (
                                 cardSectionBlocks.map((block) => (
-                                  <div key={block.id}>
+                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
                                     <div className="flex items-center gap-2 mb-1">
                                       <div className="text-[10px]" style={S_SECTION_HDR}>{block.title.toUpperCase() || "SECTION"}</div>
                                       <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>{block.tone}</span>
@@ -1926,7 +2004,7 @@ export function DMCardManagerSection({
 
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>FULL GENERATED OUTPUT</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[160px] text-[11px]`} style={S_TEXT}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[160px] text-[11px]`} style={{ ...editorSurfaceStyle("#8AB8FF"), ...S_TEXT }}>
                               {buildCombinedRulesHtml(mechanicsBuilder, cardSectionBlocks) ? (
                                 <div dangerouslySetInnerHTML={{ __html: buildCombinedRulesHtml(mechanicsBuilder, cardSectionBlocks) }} />
                               ) : (
@@ -1935,10 +2013,10 @@ export function DMCardManagerSection({
                             </div>
                           </div>
 
-                          <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>PHASE 6 NOTE</div>
+                          <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#C4A0FF")}>
+                            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>EDITOR STRUCTURE</div>
                             <div className="text-[11px]" style={S_SUBTLE}>
-                              Mechanics builder data and card section blocks now persist as first-class editor structure inside reserved custom field keys, while the player-facing rules text still comes from the existing effect field.
+                              Mechanics builder data and card section blocks persist as editor-only structure inside reserved custom field keys, while the player-facing rules text still comes from the normal effect field.
                             </div>
                           </div>
                         </div>
