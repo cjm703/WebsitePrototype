@@ -1388,13 +1388,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     const compact = !!options?.compact;
     const gridClass = compact
-      ? "grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-2 mt-3"
+      ? "grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-1.5 mt-3"
       : "grid grid-cols-2 md:grid-cols-3 gap-3 mt-3";
     const boxClass = compact
-      ? `${retro.raised} bg-[#0E0E35] px-2.5 py-2`
+      ? `${retro.raised} bg-[#0E0E35] px-2 py-1.5`
       : `${retro.raised} bg-[#0E0E35] p-3`;
-    const labelClass = compact ? "text-[8px] mb-0.5 leading-tight" : "text-[9px] mb-1";
-    const valueClass = compact ? "text-[11px] leading-tight break-words" : "text-[13px]";
+    const labelClass = compact ? "text-[8px] mb-0.5 leading-none uppercase tracking-[0.04em]" : "text-[9px] mb-1";
+    const valueClass = compact ? "text-[10px] leading-tight break-words" : "text-[13px]";
 
     return (
       <div className={gridClass}>
@@ -1860,7 +1860,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
                 DESCRIPTION
               </div>
-              <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
+              <div className={`${retro.sunken} p-4`} style={{ background: theme.inputBg }}>
+                <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
+              </div>
             </div>
           )}
 
@@ -1869,7 +1871,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
               EFFECT
             </div>
-            <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
+            <div className={`${retro.sunken} p-4`} style={{ background: theme.inputBg }}>
+              <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
+            </div>
           </div>
 
           {/* Built-in tracker indicator */}
