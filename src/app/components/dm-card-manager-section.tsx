@@ -60,15 +60,6 @@ type LevelCategory = { id: string; name: string; order: number; cardIds: string[
 type CardEditorPanel = "preview" | "core" | "mechanics" | "tags" | "progression" | "assignment";
 type CardTemplateId = "blank" | "attack" | "heal" | "buff" | "debuff" | "reaction" | "passive" | "utility";
 type TagFilterMode = "all" | "active" | "withFields" | "simple";
-type CardFamily = "" | "spell" | "skill" | "ability";
-
-interface CardFamilyDef {
-  id: Exclude<CardFamily, "">;
-  label: string;
-  accent: string;
-  description: string;
-  helper: string;
-}
 
 interface CardTemplateDef {
   id: CardTemplateId;
@@ -82,8 +73,6 @@ interface CardTemplateDef {
   sourceType?: string;
   level?: string;
   suggestedTags?: string[];
-  defaultFamily?: Exclude<CardFamily, "">;
-  familyHints?: Array<Exclude<CardFamily, "">>;
 }
 
 type MechanicsBuilderField = "trigger" | "target" | "requirement" | "effect" | "duration" | "scaling" | "notes";
@@ -116,55 +105,6 @@ interface CardSectionBlock {
 
 const EDITOR_MECHANICS_KEY = "__editor_mechanics_builder";
 const EDITOR_SECTION_BLOCKS_KEY = "__editor_section_blocks";
-const CARD_FAMILY_KEY = "Card Family";
-const USE_PROFILE_MAGIC_NATURE_KEY = "Use Profile::Magic Nature";
-const USE_PROFILE_COST_MODEL_KEY = "Use Profile::Cost Model";
-const USE_PROFILE_PRIMARY_COST_KEY = "Use Profile::Primary Cost";
-const USE_PROFILE_USES_KEY = "Use Profile::Uses Per Long Rest";
-const USE_PROFILE_RANGE_KEY = "Use Profile::Range";
-const USE_PROFILE_DURATION_KEY = "Use Profile::Duration";
-const USE_PROFILE_REQUIREMENTS_KEY = "Use Profile::Requirements";
-const USE_PROFILE_COMPONENTS_KEY = "Use Profile::Components";
-const USE_PROFILE_UPCAST_KEY = "Use Profile::Upcast / Scaling";
-const USE_PROFILE_ORIGIN_KEY = "Use Profile::Origin";
-const USE_PROFILE_PASSIVE_MODE_KEY = "Use Profile::Passive Mode";
-const USE_PROFILE_COMPONENT_DETAILS_KEY = "Use Profile::Component Details";
-const CARD_DESCRIPTION_KEY = "Description";
-const CARD_TRACKER_BUCKET_KEY = "Card Tracker::Bucket";
-const CARD_TRACKER_NAME_KEY = "Card Tracker::Name";
-const CARD_TRACKER_DURATION_KEY = "Card Tracker::Duration";
-const CARD_TRACKER_POTENCY_KEY = "Card Tracker::Potency";
-const CARD_TRACKER_DAMAGE_KEY = "Card Tracker::Damage";
-const CARD_TRACKER_DESCRIPTION_KEY = "Card Tracker::Effect";
-const CARD_TRACKER_BUFF_TYPE_KEY = "Card Tracker::Buff Type";
-const CARD_TRACKER_BUFF_TARGET_KEY = "Card Tracker::Buff Target";
-const CARD_TRACKER_BUFF_VALUE_KEY = "Card Tracker::Buff Value";
-
-type CardTrackerBucket = "" | "status" | "ability";
-
-const CARD_FAMILY_OPTIONS: CardFamilyDef[] = [
-  {
-    id: "spell",
-    label: "Spell",
-    accent: "#8AB8FF",
-    description: "True magic that uses source, usually matching the spell's nature and level.",
-    helper: "Best for source costs, upcasting, concentration, and component-based casting.",
-  },
-  {
-    id: "skill",
-    label: "Skill",
-    accent: "#7ACA8A",
-    description: "A learned technique, usually paying exhaustion and sometimes uses per long rest.",
-    helper: "Best for martial techniques, taught tricks, and learned magical-but-non-spell effects.",
-  },
-  {
-    id: "ability",
-    label: "Ability",
-    accent: "#C4A0FF",
-    description: "An inherent or granted power that is natural to the character, lineage, or source.",
-    helper: "Best for innate gifts, racial powers, passives, and granted supernatural expressions.",
-  },
-];
 
 const EMPTY_MECHANICS_BUILDER: MechanicsBuilderState = {
   trigger: "",
@@ -204,7 +144,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     type: "",
     actionCost: "",
     effect: "",
-    familyHints: ["spell", "skill", "ability"],
   },
   {
     id: "attack",
@@ -218,8 +157,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     sourceType: "Martial",
     level: "1",
     suggestedTags: ["Attack", "Damage", "Target: Enemy"],
-    defaultFamily: "skill",
-    familyHints: ["skill", "spell"],
   },
   {
     id: "heal",
@@ -233,8 +170,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     sourceType: "Divine",
     level: "1",
     suggestedTags: ["Heal", "Support", "Target: Self"],
-    defaultFamily: "spell",
-    familyHints: ["spell", "ability"],
   },
   {
     id: "buff",
@@ -248,8 +183,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     sourceType: "Arcane",
     level: "1",
     suggestedTags: ["Buff", "Timed Effect", "Target: Self"],
-    defaultFamily: "spell",
-    familyHints: ["spell", "ability"],
   },
   {
     id: "debuff",
@@ -263,8 +196,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     sourceType: "Occult",
     level: "1",
     suggestedTags: ["Debuff", "Timed Effect", "Target: Enemy"],
-    defaultFamily: "spell",
-    familyHints: ["spell", "ability"],
   },
   {
     id: "reaction",
@@ -277,8 +208,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     effect: "<p><strong>Trigger:</strong> Define the event that allows this card to be used.</p><p><strong>Effect:</strong> Resolve the reaction immediately after the trigger.</p>",
     sourceType: "Martial",
     suggestedTags: ["Reaction"],
-    defaultFamily: "skill",
-    familyHints: ["skill", "ability"],
   },
   {
     id: "passive",
@@ -290,8 +219,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     actionCost: "Passive",
     effect: "<p><strong>Passive Effect:</strong> Describe the continuous benefit or rule this card provides.</p>",
     suggestedTags: ["Passive", "Buff"],
-    defaultFamily: "ability",
-    familyHints: ["ability"],
   },
   {
     id: "utility",
@@ -304,8 +231,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     effect: "<p><strong>Use:</strong> Describe the non-damage purpose of this card and how it resolves.</p>",
     sourceType: "Arcane",
     suggestedTags: ["Utility"],
-    defaultFamily: "skill",
-    familyHints: ["skill", "spell"],
   },
 ];
 
@@ -356,28 +281,6 @@ function getNodeAssignmentLabel(card: ManagedCard, nodeTrees: NodeTree[]) {
 }
 
 
-function getCardTrackerBucket(card: ManagedCard | null): CardTrackerBucket {
-  const raw = (card?.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
-  return raw === "status" || raw === "ability" ? raw : "";
-}
-
-function hasBuiltInCardTracker(card: ManagedCard | null) {
-  return getCardTrackerBucket(card) !== "";
-}
-
-function trackerBucketLabel(bucket: CardTrackerBucket) {
-  if (bucket === "status") return "Status Effect";
-  if (bucket === "ability") return "Ability / Card Effect";
-  return "Not tracked";
-}
-
-function trackerBucketAccent(bucket: CardTrackerBucket) {
-  if (bucket === "status") return "#4ACA6A";
-  if (bucket === "ability") return "#FF8A5A";
-  return "#7A8AAA";
-}
-
-
 function normalizeTemplateTagName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -389,103 +292,10 @@ function getTemplateTags(cardTags: TagDefinition[], suggestedTags: string[] = []
     .map((tag) => tag.name);
 }
 
-function getCardFamily(card: ManagedCard | null): CardFamily {
-  if (!card) return "";
-  const stored = (card.customFields?.[CARD_FAMILY_KEY] || "").trim().toLowerCase();
-  if (stored === "spell" || stored === "skill" || stored === "ability") return stored as CardFamily;
-
-  const hintBlob = `${card.type} ${card.customFields?.["Source Type"] || ""} ${stripHtml(card.effect || "")}`.toLowerCase();
-  if (/(magical \(spell\)|spell|source magic)/.test(hintBlob)) return "spell";
-  if (/(ability|passive|innate|granted|lineage|blood)/.test(hintBlob)) return "ability";
-  if (/(skill|martial|technique|learned)/.test(hintBlob)) return "skill";
-  return "";
-}
-
-function getCardFamilyDef(family: CardFamily): CardFamilyDef | null {
-  return CARD_FAMILY_OPTIONS.find((option) => option.id === family) || null;
-}
-
-function withCardFamilyDefaults(card: ManagedCard, family: CardFamily): ManagedCard {
-  const previousUses = (card.customFields?.[USE_PROFILE_USES_KEY] || "").trim();
-  const nextCustomFields: Record<string, string> = {
-    ...card.customFields,
-    [CARD_FAMILY_KEY]: family,
-    [USE_PROFILE_MAGIC_NATURE_KEY]: "",
-    [USE_PROFILE_COST_MODEL_KEY]: "",
-    [USE_PROFILE_PRIMARY_COST_KEY]: "",
-    [USE_PROFILE_USES_KEY]: "",
-    [USE_PROFILE_COMPONENTS_KEY]: "",
-    [USE_PROFILE_UPCAST_KEY]: "",
-    [USE_PROFILE_ORIGIN_KEY]: "",
-    [USE_PROFILE_PASSIVE_MODE_KEY]: "",
-  };
-
-  if (family === "spell") {
-    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Magical (Spell)";
-    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Source";
-    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = nextCustomFields["Level"] ? `${nextCustomFields["Level"]} matching source` : "Matching source equal to spell level";
-    nextCustomFields[USE_PROFILE_COMPONENTS_KEY] = "V, S, M";
-    nextCustomFields[USE_PROFILE_UPCAST_KEY] = "Can spend additional matching source to raise the spell's level when allowed.";
-  }
-
-  if (family === "skill") {
-    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Non-magical or Magical (Non-spell)";
-    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Exhaustion / Uses";
-    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = "Usually 1-2 exhaustion";
-    nextCustomFields[USE_PROFILE_ORIGIN_KEY] = "Learned / Taught";
-    nextCustomFields[USE_PROFILE_USES_KEY] = previousUses === "Usually proficiency-based or fixed uses per long rest" ? "" : previousUses;
-  }
-
-  if (family === "ability") {
-    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Inherent or Granted (Non-spell)";
-    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Uses / Exhaustion";
-    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = "Often uses per long rest";
-    nextCustomFields[USE_PROFILE_USES_KEY] = "Usually proficiency-based or fixed uses per long rest";
-    nextCustomFields[USE_PROFILE_ORIGIN_KEY] = "Innate / Granted";
-    nextCustomFields[USE_PROFILE_PASSIVE_MODE_KEY] = "Passive, activatable passive, or triggered ability";
-  }
-
-  return {
-    ...card,
-    customFields: nextCustomFields,
-  };
-}
-
-function getCardProfileBadges(card: ManagedCard): string[] {
-  const badges: string[] = [];
-  const family = getCardFamily(card);
-  const familyDef = getCardFamilyDef(family);
-  if (familyDef) badges.push(familyDef.label);
-  if ((card.customFields["Level"] || "").trim()) badges.push(`Level ${card.customFields["Level"]}`);
-  if ((card.customFields["Source Type"] || "").trim()) badges.push(card.customFields["Source Type"].trim());
-  if ((card.customFields[USE_PROFILE_PRIMARY_COST_KEY] || "").trim()) badges.push(card.customFields[USE_PROFILE_PRIMARY_COST_KEY].trim());
-  if ((card.customFields[USE_PROFILE_USES_KEY] || "").trim()) badges.push(card.customFields[USE_PROFILE_USES_KEY].trim());
-  return badges;
-}
-
 function createCardFromTemplate(template: CardTemplateDef, cardTags: TagDefinition[]): ManagedCard {
   const customFields: Record<string, string> = {};
   if (template.level) customFields["Level"] = template.level;
   if (template.sourceType) customFields["Source Type"] = template.sourceType;
-  if (template.defaultFamily) customFields[CARD_FAMILY_KEY] = template.defaultFamily;
-
-  if (template.defaultFamily === "spell") {
-    customFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Magical (Spell)";
-    customFields[USE_PROFILE_COST_MODEL_KEY] = "Source";
-    customFields[USE_PROFILE_PRIMARY_COST_KEY] = template.level ? `${template.level} matching source` : "Matching source";
-    customFields[USE_PROFILE_COMPONENTS_KEY] = "V, S";
-  } else if (template.defaultFamily === "skill") {
-    customFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Non-spell Technique";
-    customFields[USE_PROFILE_COST_MODEL_KEY] = "Exhaustion / Uses";
-    customFields[USE_PROFILE_PRIMARY_COST_KEY] = template.level && template.level !== "0" ? `Level ${template.level} technique cost` : "Usually 1-2 exhaustion";
-    customFields[USE_PROFILE_USES_KEY] = "";
-    customFields[USE_PROFILE_ORIGIN_KEY] = "Learned / Taught";
-  } else if (template.defaultFamily === "ability") {
-    customFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Inherent or Granted (Non-spell)";
-    customFields[USE_PROFILE_COST_MODEL_KEY] = "Uses / Exhaustion";
-    customFields[USE_PROFILE_PRIMARY_COST_KEY] = "Usually limited uses per long rest";
-    customFields[USE_PROFILE_ORIGIN_KEY] = "Innate / Granted";
-  }
 
   return {
     id: `mc-${Date.now()}`,
@@ -706,8 +516,6 @@ function toneChipStyle(tone: CardSectionTone) {
   return { color: "#7ACA8A", border: "1px solid #7ACA8A33", background: "#7ACA8A15" };
 }
 
-
-
 function editorSurfaceStyle(accent: string) {
   return {
     border: `1px solid ${accent}22`,
@@ -732,24 +540,6 @@ function panelButtonStyle(active: boolean, accent: string) {
     background: active ? `linear-gradient(180deg, ${accent}18 0%, rgba(10,23,58,0.98) 100%)` : "linear-gradient(180deg, rgba(22,22,72,0.98) 0%, rgba(14,14,53,0.98) 100%)",
     boxShadow: active ? `inset 0 0 0 1px ${accent}16` : "inset 0 0 0 1px rgba(255,255,255,0.03)",
   } as React.CSSProperties;
-}
-
-const COMPONENT_FLAGS = ["V", "S", "M"] as const;
-type ComponentFlag = (typeof COMPONENT_FLAGS)[number];
-
-function parseComponentFlags(value: string) {
-  return COMPONENT_FLAGS.filter((flag) => new RegExp(`(^|\\W)${flag}(\\W|$)`, "i").test(value));
-}
-
-function buildComponentsValue(flags: ComponentFlag[]) {
-  return flags.join(", ");
-}
-
-function buildComponentsDisplay(components: string, detail?: string) {
-  const base = components.trim();
-  const extra = (detail || "").trim();
-  if (base && extra) return `${base} (${extra})`;
-  return base || extra || "";
 }
 
 function withPersistedEditorStructure(card: ManagedCard, builder: MechanicsBuilderState, blocks: CardSectionBlock[]): ManagedCard {
@@ -778,13 +568,10 @@ function CardPreviewPanel({
     const value = card.customFields[cf.key];
     return typeof value === "string" && value.trim();
   });
-  const family = getCardFamily(card);
-  const familyDef = getCardFamilyDef(family);
-  const profileBadges = getCardProfileBadges(card);
 
   return (
     <div className="space-y-4">
-      <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+      <div className={`${retro.sunken} p-5`} style={editorSurfaceStyle("#8AB8FF")}>
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -809,66 +596,41 @@ function CardPreviewPanel({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5 mb-4">
-          {familyDef && (
-            <span className="text-[9px] px-2 py-1" style={sectionBadgeStyle(familyDef.accent)}>{familyDef.label}</span>
-          )}
-          {profileBadges.slice(familyDef ? 1 : 0).map((badge) => (
-            <span key={badge} className="text-[9px] px-2 py-1" style={sectionBadgeStyle("#6ABAFF")}>{badge}</span>
-          ))}
-          {card.tags.map((tag) => (
-            <span key={tag} className="text-[9px] px-2 py-1" style={DM_TAG_BADGE}>{tag}</span>
-          ))}
-        </div>
+        {card.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {card.tags.map((tag) => (
+              <span key={tag} className="text-[9px] px-2 py-1" style={DM_TAG_BADGE}>{tag}</span>
+            ))}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)] gap-4">
-          <div className="space-y-3">
-            {(card.customFields[CARD_DESCRIPTION_KEY] || "").trim() && (
-              <div>
-                <div className="text-[10px] mb-2" style={S_SECTION_HDR}>DESCRIPTION</div>
-                <div className={`${retro.raised} bg-[#0E0E35] p-3 text-[12px]`} style={S_TEXT}>
-                  <div dangerouslySetInnerHTML={{ __html: card.customFields[CARD_DESCRIPTION_KEY] }} />
-                </div>
-              </div>
-            )}
-            <div>
-              <div className="text-[10px] mb-2" style={S_SECTION_HDR}>EFFECT(S)</div>
-              <div className={`${retro.raised} bg-[#0E0E35] p-3 min-h-[140px] text-[12px]`} style={S_TEXT}>
-                {card.effect ? (
-                  <div dangerouslySetInnerHTML={{ __html: card.effect }} />
-                ) : (
-                  <span style={S_MUTED}>No card effects written yet.</span>
-                )}
-              </div>
+          <div>
+            <div className="text-[10px] mb-2" style={S_SECTION_HDR}>RULES TEXT</div>
+            <div className={`${retro.raised} p-4 min-h-[160px] text-[12px]`} style={{ ...editorSurfaceStyle("#273357"), ...S_TEXT }}>
+              {card.effect ? (
+                <div dangerouslySetInnerHTML={{ __html: card.effect }} />
+              ) : (
+                <span style={S_MUTED}>No card effect written yet.</span>
+              )}
             </div>
-            {(card.customFields[USE_PROFILE_UPCAST_KEY] || "").trim() && (
-              <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#FFD700")}>
-                <div className="text-[10px] mb-1" style={S_SECTION_HDR}>SCALING / UPCAST</div>
-                <div className="text-[11px]" style={S_TEXT}>{card.customFields[USE_PROFILE_UPCAST_KEY]}</div>
-              </div>
-            )}
           </div>
 
           <div className="space-y-4">
             <div>
               <div className="text-[10px] mb-2" style={S_SECTION_HDR}>AT A GLANCE</div>
-              <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-2 text-[11px]`}>
+              <div className={`${retro.raised} p-3 space-y-2 text-[11px]`} style={editorSurfaceStyle("#273357")}>
                 <div><span style={S_MUTED}>Name:</span> <span style={S_TEXT}>{card.name || "—"}</span></div>
-                <div><span style={S_MUTED}>Family:</span> <span style={S_TEXT}>{familyDef?.label || "Not set"}</span></div>
                 <div><span style={S_MUTED}>Type:</span> <span style={S_TEXT}>{card.type || "—"}</span></div>
                 <div><span style={S_MUTED}>Action Cost:</span> <span style={S_TEXT}>{card.actionCost || "—"}</span></div>
                 <div><span style={S_MUTED}>Level:</span> <span style={S_TEXT}>{card.customFields["Level"] || "0"}</span></div>
-                {(card.customFields["Source Type"] || "").trim() && <div><span style={S_MUTED}>Source Type:</span> <span style={S_TEXT}>{card.customFields["Source Type"]}</span></div>}
-                <div><span style={S_MUTED}>Primary Cost:</span> <span style={S_TEXT}>{card.customFields[USE_PROFILE_PRIMARY_COST_KEY] || "—"}</span></div>
-                {(card.customFields[USE_PROFILE_USES_KEY] || "").trim() && <div><span style={S_MUTED}>Uses / Rest:</span> <span style={S_TEXT}>{card.customFields[USE_PROFILE_USES_KEY]}</span></div>}
-                <div><span style={S_MUTED}>Range:</span> <span style={S_TEXT}>{card.customFields[USE_PROFILE_RANGE_KEY] || "—"}</span></div>
-                <div><span style={S_MUTED}>Duration:</span> <span style={S_TEXT}>{card.customFields[USE_PROFILE_DURATION_KEY] || "—"}</span></div>
+                <div><span style={S_MUTED}>Source Type:</span> <span style={S_TEXT}>{card.customFields["Source Type"] || "—"}</span></div>
               </div>
             </div>
 
             <div>
               <div className="text-[10px] mb-2" style={S_SECTION_HDR}>TAG FIELDS</div>
-              <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-1`}>
+              <div className={`${retro.raised} p-3 space-y-1`} style={editorSurfaceStyle("#273357")}>
                 {visibleCustomFields.length === 0 ? (
                   <div className="text-[11px]" style={S_MUTED}>No active tag fields with values.</div>
                 ) : (
@@ -904,7 +666,6 @@ export function DMCardManagerSection({
   const [cardTypeFilter, setCardTypeFilter] = useState<string>("all");
   const [editorPanel, setEditorPanel] = useState<CardEditorPanel>("preview");
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
-  const [pendingTemplate, setPendingTemplate] = useState<CardTemplateDef | null>(null);
   const [mechanicsBuilder, setMechanicsBuilder] = useState<MechanicsBuilderState>(EMPTY_MECHANICS_BUILDER);
   const [cardSectionBlocks, setCardSectionBlocks] = useState<CardSectionBlock[]>([]);
   const [newSectionTitle, setNewSectionTitle] = useState("");
@@ -919,7 +680,6 @@ export function DMCardManagerSection({
   const [laCollapsedLevels, setLaCollapsedLevels] = useState<Set<string>>(new Set());
   const [laEditingDesc, setLaEditingDesc] = useState<string | null>(null);
   const [laCopyConfirm, setLaCopyConfirm] = useState(false);
-  const [showRequirementsField, setShowRequirementsField] = useState(false);
 
   const renderTypedField = useCallback((
     key: string,
@@ -941,7 +701,6 @@ export function DMCardManagerSection({
       setCardSectionBlocks([]);
       setNewSectionTitle("");
       setNewSectionTone("rules");
-      setShowRequirementsField(false);
       return;
     }
 
@@ -949,7 +708,6 @@ export function DMCardManagerSection({
     setCardSectionBlocks(parseStoredSectionBlocks(editingCard));
     setNewSectionTitle("");
     setNewSectionTone("rules");
-    setShowRequirementsField(!!(editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
   }, [editingCard?.id]);
 
   const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
@@ -1019,27 +777,13 @@ export function DMCardManagerSection({
   }, [laSelectedPlayerId, players, setDmError]);
 
   const handleAddCard = () => {
-    setShowTemplatePicker((prev) => {
-      const next = !prev;
-      if (!next) setPendingTemplate(null);
-      return next;
-    });
+    setShowTemplatePicker((prev) => !prev);
   };
 
-  const handleSelectTemplate = (template: CardTemplateDef) => {
-    setPendingTemplate(template);
-  };
-
-  const handleCreateCardFromTemplate = (template: CardTemplateDef, familyOverride?: Exclude<CardFamily, "">) => {
-    const preferredFamily = familyOverride || template.defaultFamily || "";
-    const nextCard = preferredFamily
-      ? withCardFamilyDefaults(createCardFromTemplate({ ...template, defaultFamily: preferredFamily }, cardTags), preferredFamily)
-      : createCardFromTemplate(template, cardTags);
-
-    setEditingCard(nextCard);
+  const handleCreateCardFromTemplate = (template: CardTemplateDef) => {
+    setEditingCard(createCardFromTemplate(template, cardTags));
     setIsAddingNewCard(true);
-    setEditorPanel("core");
-    setPendingTemplate(null);
+    setEditorPanel(template.focusPanel);
     setShowTemplatePicker(false);
   };
 
@@ -1079,7 +823,6 @@ export function DMCardManagerSection({
       setEditingCard({ ...cardToSave, customFields: { ...cardToSave.customFields } });
       setIsAddingNewCard(false);
       setShowTemplatePicker(false);
-      setPendingTemplate(null);
       setEditorPanel("preview");
     } catch (err) {
       setDmError(getSaveError(err, "Failed to save card"));
@@ -1095,7 +838,6 @@ export function DMCardManagerSection({
         setEditingCard(null);
         setIsAddingNewCard(false);
         setShowTemplatePicker(false);
-        setPendingTemplate(null);
       }
     } catch (err) {
       setDmError(getSaveError(err, "Failed to delete card"));
@@ -1106,7 +848,6 @@ export function DMCardManagerSection({
     setEditingCard(null);
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
-    setPendingTemplate(null);
     setEditorPanel("preview");
   };
 
@@ -1118,7 +859,6 @@ export function DMCardManagerSection({
     setEditingCard({ ...card, customFields: { ...card.customFields } });
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
-    setPendingTemplate(null);
     setEditorPanel(nextPanel);
   };
 
@@ -1131,15 +871,6 @@ export function DMCardManagerSection({
   const updateCardCustomField = (key: string, value: string) => {
     if (!editingCard) return;
     setEditingCard({ ...editingCard, customFields: { ...editingCard.customFields, [key]: value } });
-  };
-
-  const toggleComponentFlag = (flag: ComponentFlag) => {
-    if (!editingCard) return;
-    const current = parseComponentFlags(editingCard.customFields[USE_PROFILE_COMPONENTS_KEY] || "");
-    const next = current.includes(flag)
-      ? current.filter((entry) => entry !== flag)
-      : [...current, flag];
-    updateCardCustomField(USE_PROFILE_COMPONENTS_KEY, buildComponentsValue(next));
   };
 
 
@@ -1419,16 +1150,6 @@ export function DMCardManagerSection({
     [selectedNodeTree, editingCard?.nodeId],
   );
 
-  const currentFamily = useMemo(() => getCardFamily(editingCard), [editingCard]);
-  const currentFamilyDef = useMemo(() => getCardFamilyDef(currentFamily), [currentFamily]);
-  const currentProfileBadges = useMemo(() => (editingCard ? getCardProfileBadges(editingCard) : []), [editingCard]);
-  const currentTrackerBucket = useMemo(() => getCardTrackerBucket(editingCard), [editingCard]);
-
-  const applyCardFamily = (family: CardFamily) => {
-    if (!editingCard) return;
-    setEditingCard(withCardFamilyDefaults(editingCard, family));
-  };
-
   const editorPanels: { id: CardEditorPanel; label: string; icon: React.ComponentType<{ size?: number }>; accent: string }[] = [
     { id: "preview", label: "Preview", icon: Eye, accent: "#8AB8FF" },
     { id: "core", label: "Core", icon: Settings, accent: "#4A7BFF" },
@@ -1439,8 +1160,22 @@ export function DMCardManagerSection({
   ];
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Cards</h2>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className={`${retro.raised} flex h-10 w-10 items-center justify-center bg-[#121B44]`} style={editorSurfaceStyle("#4A7BFF")}>
+            <CreditCard size={18} style={S_ACCENT} />
+          </div>
+          <div>
+            <h2 className="text-[18px] leading-none" style={S_ACCENT_HDR}>Card Editor Studio</h2>
+            <div className="text-[10px] mt-1" style={S_SUBTLE}>Build, preview, and organize player cards in one workspace.</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#4A7BFF")}>{managedCards.length} saved card{managedCards.length === 1 ? "" : "s"}</span>
+          <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#9A7ABB")}>{cardTags.length} card tag{cardTags.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
 
       <div className="flex gap-2 mb-2">
         {([
@@ -1450,8 +1185,8 @@ export function DMCardManagerSection({
           <button
             key={sub.id}
             onClick={() => setDmCardsSubTab(sub.id)}
-            className={`${dmCardsSubTab === sub.id ? retro.sunken + " bg-[#0C0C2E]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-4 py-2 text-[12px] flex items-center gap-1.5 transition-colors`}
-            style={{ color: dmCardsSubTab === sub.id ? sub.accent : "#8A9ABB", fontWeight: dmCardsSubTab === sub.id ? 600 : 400 }}
+            className={`${dmCardsSubTab === sub.id ? retro.sunken : retro.raised} px-4 py-2.5 text-[12px] flex items-center gap-1.5 transition-colors`}
+            style={panelButtonStyle(dmCardsSubTab === sub.id, sub.accent)}
           >
             <sub.icon size={14} /> {sub.label}
           </button>
@@ -1460,33 +1195,39 @@ export function DMCardManagerSection({
 
       {dmCardsSubTab === "cards" && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-[12px]" style={S_SECTION_HDR}>CARD WORKSPACE</div>
-              <div className="text-[10px] mt-1" style={S_SUBTLE}>
-                Edit cards in focused panels similar to the wiki editor. The card data model stays the same for now.
+          <div className={`${retro.sunken} p-4 md:p-5`} style={editorSurfaceStyle("#4A7BFF")}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="max-w-[680px]">
+                <div className="text-[12px]" style={S_SECTION_HDR}>CARD WORKSPACE</div>
+                <div className="text-[18px] mt-1" style={S_TEXT_BOLD}>Create cards with templates, structured mechanics, tag helpers, and reusable sections.</div>
+                <div className="text-[10px] mt-2" style={S_SUBTLE}>
+                  The current editor preserves your existing card data shape while giving the card workspace a cleaner studio layout.
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{filteredCards.length} in view</span>
+                <button onClick={handleAddCard} className={`${retro.button} px-4 py-2.5 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+                  <Plus size={14} /> {showTemplatePicker ? "Hide Templates" : "New Card"}
+                </button>
               </div>
             </div>
-            <button onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-              <Plus size={14} /> {showTemplatePicker ? "Hide Templates" : "New Card"}
-            </button>
           </div>
 
           {showTemplatePicker && (
-            <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`}>
+            <div className={`${retro.sunken} p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
               <div>
                 <div className="text-[12px]" style={S_SECTION_HDR}>CARD TEMPLATES</div>
                 <div className="text-[10px] mt-1" style={S_SUBTLE}>
-                  Step 1: pick a template. Step 2: pick whether the new card is a Spell, Skill, or Ability.
+                  Start from a preset so new cards take less setup. Templates only prefill the current card schema.
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 {CARD_TEMPLATES.map((template) => (
                   <button
                     key={template.id}
-                    onClick={() => handleSelectTemplate(template)}
-                    className={`${retro.raised} bg-[#0E0E35] p-3 text-left hover:bg-[#121244] transition-colors`}
-                    style={{ border: "1px solid #1A1A4B" }}
+                    onClick={() => handleCreateCardFromTemplate(template)}
+                    className={`${retro.raised} p-3 text-left hover:bg-[#121244] transition-colors min-h-[132px] flex flex-col justify-between`}
+                    style={editorSurfaceStyle("#6ABAFF")}
                   >
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-[12px]" style={S_TEXT_BOLD}>{template.label}</span>
@@ -1496,16 +1237,6 @@ export function DMCardManagerSection({
                       {template.type || "Flexible"}{template.actionCost ? ` · ${template.actionCost}` : ""}
                     </div>
                     <div className="text-[10px]" style={S_SUBTLE}>{template.description}</div>
-                    {template.familyHints && template.familyHints.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {template.familyHints.map((family) => {
-                          const familyDef = getCardFamilyDef(family);
-                          return familyDef ? (
-                            <span key={family} className="text-[8px] px-1.5 py-0.5" style={sectionBadgeStyle(familyDef.accent)}>{familyDef.label}</span>
-                          ) : null;
-                        })}
-                      </div>
-                    )}
                     {template.suggestedTags && template.suggestedTags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {template.suggestedTags.slice(0, 3).map((tag) => (
@@ -1516,45 +1247,14 @@ export function DMCardManagerSection({
                   </button>
                 ))}
               </div>
-              {pendingTemplate && (
-                <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#4A7BFF")}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[12px]" style={S_SECTION_HDR}>STEP 2: CHOOSE CARD CORE</div>
-                      <div className="text-[11px]" style={S_SUBTLE}>
-                        Template selected: <span style={S_TEXT_BOLD}>{pendingTemplate.label}</span>. Pick whether this new card is a Spell, Skill, or Ability.
-                      </div>
-                    </div>
-                    <button onClick={() => setPendingTemplate(null)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_TEXT}>
-                      Clear Selection
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {CARD_FAMILY_OPTIONS.map((family) => (
-                      <button
-                        key={family.id}
-                        onClick={() => handleCreateCardFromTemplate(pendingTemplate, family.id)}
-                        className={`${retro.raised} p-3 text-left transition-colors hover:bg-[#121244]`}
-                        style={editorSurfaceStyle(family.accent)}
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className="text-[12px]" style={S_TEXT_BOLD}>{family.label}</span>
-                          <span className="text-[8px] px-1.5 py-0.5" style={sectionBadgeStyle(family.accent)}>Core</span>
-                        </div>
-                        <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
-            <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`}>
+          <div className="grid grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)] gap-4 items-start">
+            <div className={`${retro.sunken} p-4 space-y-3 xl:sticky xl:top-3`} style={editorSurfaceStyle("#4A7BFF")}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
-                <span className="text-[10px] px-2 py-1" style={{ color: "#7A8AAA", border: "1px solid #1A1A4B", background: "#0A0A28" }}>
+                <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#7A8AAA")}>
                   {filteredCards.length}/{managedCards.length}
                 </span>
               </div>
@@ -1590,7 +1290,7 @@ export function DMCardManagerSection({
                   filteredCards.map((card) => {
                     const isSelected = editingCard?.id === card.id;
                     return (
-                      <div key={card.id} className={`${retro.raised} p-3 transition-colors`} style={{ background: isSelected ? "#111B40" : "#0E0E35", border: isSelected ? "1px solid #2A4A8A" : "1px solid #1A1A4B" }}>
+                      <div key={card.id} className={`${retro.raised} p-3.5 transition-colors relative overflow-hidden`} style={{ ...editorSurfaceStyle(isSelected ? "#4A7BFF" : "#273357"), background: isSelected ? "linear-gradient(180deg, rgba(17,27,64,0.98) 0%, rgba(11,18,46,0.98) 100%)" : "linear-gradient(180deg, rgba(14,14,53,0.98) 0%, rgba(10,10,40,0.98) 100%)" }}>
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-1.5 mb-1">
@@ -1626,41 +1326,49 @@ export function DMCardManagerSection({
 
             <div className="space-y-4">
               {!editingCard ? (
-                <div className={`${retro.sunken} bg-[#0C0C2E] p-6`}>
+                <div className={`${retro.sunken} p-6`} style={editorSurfaceStyle("#6ABAFF")}>
                   <div className="flex items-center gap-3 mb-4">
                     <Sparkles size={18} style={S_ACCENT} />
                     <div className="text-[13px]" style={S_TEXT_BOLD}>Card Editor Workspace</div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-                    {CARD_FAMILY_OPTIONS.map((family) => (
-                      <div key={family.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(family.accent)}>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <div className="text-[11px]" style={S_TEXT_BOLD}>{family.label}</div>
-                          <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(family.accent)}>{family.label}</span>
-                        </div>
-                        <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
-                      </div>
-                    ))}
+                    <div className={`${retro.raised} p-3`} style={editorSurfaceStyle("#273357")}>
+                      <div className="text-[10px] mb-1" style={S_SECTION_HDR}>Preview-first</div>
+                      <div className="text-[11px]" style={S_SUBTLE}>Open any card and swap between preview, core, mechanics, tags, progression, and assignment panels.</div>
+                    </div>
+                    <div className={`${retro.raised} p-3`} style={editorSurfaceStyle("#273357")}>
+                      <div className="text-[10px] mb-1" style={S_SECTION_HDR}>Safer editing</div>
+                      <div className="text-[11px]" style={S_SUBTLE}>The card schema has not changed yet, so player-facing card behavior should stay intact while the editor gets easier to use.</div>
+                    </div>
+                    <div className={`${retro.raised} p-3`} style={editorSurfaceStyle("#273357")}>
+                      <div className="text-[10px] mb-1" style={S_SECTION_HDR}>Templates built in</div>
+                      <div className="text-[11px]" style={S_SUBTLE}>Use the template picker to start from attack, heal, buff, debuff, reaction, passive, utility, or a blank card.</div>
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
                       <Plus size={14} /> Open Template Picker
-                    </button>                  </div>
+                    </button>
+                    <button onClick={() => handleCreateCardFromTemplate(CARD_TEMPLATES[0])} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_TEXT}>
+                      <Plus size={14} /> Quick Blank Card
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>
-                  <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+                  <div className={`${retro.sunken} p-4 space-y-4`} style={editorSurfaceStyle("#4A7BFF")}>
                     <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                       <div>
                         <div className="text-[10px] mb-1" style={S_SECTION_HDR}>{isAddingNewCard ? "NEW CARD" : "CARD WORKSPACE"}</div>
-                        <div className="text-[16px]" style={S_TEXT_BOLD}>{editingCard.name || "Untitled Card"}</div>
+                        <div className="text-[18px]" style={S_TEXT_BOLD}>{editingCard.name || "Untitled Card"}</div>
                         <div className="text-[11px] mt-1" style={S_MUTED}>
                           {editingCard.type || "No type"} · {formatOwners(editingCard.assignedTo, players)}
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3">
-                          {currentProfileBadges.map((badge, index) => (
-                            <span key={`${badge}-${index}`} className="text-[10px] px-2 py-1" style={sectionBadgeStyle(index === 0 && currentFamilyDef ? currentFamilyDef.accent : "#6ABAFF")}>{badge}</span>
-                          ))}
+                          {editingCard.actionCost && <span className="text-[10px] px-2 py-1" style={DM_ACTION_BADGE}>{editingCard.actionCost}</span>}
+                          {(editingCard.customFields["Level"] || "").trim() && <span className="text-[10px] px-2 py-1" style={DM_LEVEL_BADGE}>Lv.{editingCard.customFields["Level"]}</span>}
+                          {(editingCard.customFields["Source Type"] || "").trim() && <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#9A7ABB")}>{editingCard.customFields["Source Type"]}</span>}
+                          <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#7ACA8A")}>{editingCard.tags.length} tag{editingCard.tags.length === 1 ? "" : "s"}</span>
                           {hasBuiltInCardTracker(editingCard) && (
                             <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle(trackerBucketAccent(currentTrackerBucket))}>{trackerBucketLabel(currentTrackerBucket)}</span>
                           )}
@@ -1684,8 +1392,8 @@ export function DMCardManagerSection({
                           <button
                             key={panel.id}
                             onClick={() => setEditorPanel(panel.id)}
-                            className={`${active ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
-                            style={{ color: active ? panel.accent : "#8A9ABB", fontWeight: active ? 600 : 400 }}
+                            className={`${active ? retro.sunken : retro.raised} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
+                            style={panelButtonStyle(active, panel.accent)}
                           >
                             <Icon size={12} /> {panel.label}
                           </button>
@@ -1699,282 +1407,125 @@ export function DMCardManagerSection({
                   )}
 
                   {editorPanel === "core" && (
-                    <div className={`${retro.sunken} p-5 space-y-5`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#4A7BFF")}>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className={`${retro.sunken} p-5 space-y-4`} style={editorSurfaceStyle("#4A7BFF")}>
+                      <div className="text-[12px]" style={S_SECTION_HDR}>CORE CARD DETAILS</div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                         <div>
-                          <div className="text-[12px]" style={S_SECTION_HDR}>IDENTITY + USE PROFILE</div>
-                          <div className="text-[10px] mt-1" style={S_SUBTLE}>
-                            Start by deciding whether this card is a spell, skill, or ability. The rest of the profile becomes much easier to fill out from there.
-                          </div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Card Name:</label>
+                          <input type="text" value={editingCard.name} onChange={(e) => updateCardField("name", e.target.value)} placeholder="Enter card name..." className={inputClass} style={inputStyle} />
                         </div>
-                        {currentFamilyDef && (
-                          <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle(currentFamilyDef.accent)}>{currentFamilyDef.label}</span>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)] gap-4">
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Card Name:</label>
-                              <input type="text" value={editingCard.name} onChange={(e) => updateCardField("name", e.target.value)} placeholder="Enter card name..." className={inputClass} style={inputStyle} />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Card Type:</label>
-                              <input type="text" value={editingCard.type} onChange={(e) => updateCardField("type", e.target.value)} placeholder="e.g., Combat, Utility..." className={inputClass} style={inputStyle} />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Action Cost:</label>
-                              <input type="text" value={editingCard.actionCost} onChange={(e) => updateCardField("actionCost", e.target.value)} placeholder="e.g., 1 Action, Reaction, Passive..." className={inputClass} style={inputStyle} />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Level:</label>
-                              <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => updateCardCustomField("Level", e.target.value)} placeholder="0" className={inputClass} style={inputStyle} />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Source / Discipline Type:</label>
-                              <input type="text" value={editingCard.customFields["Source Type"] || ""} onChange={(e) => updateCardCustomField("Source Type", e.target.value)} placeholder="e.g., Light, Martial, Fairy Blood..." className={inputClass} style={inputStyle} />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Magic Nature:</label>
-                              <input type="text" value={editingCard.customFields[USE_PROFILE_MAGIC_NATURE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_MAGIC_NATURE_KEY, e.target.value)} placeholder="e.g., Magical (Spell), Non-spell Technique..." className={inputClass} style={inputStyle} />
-                            </div>
-                          </div>
-
-                          <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
-                            <div>
-                              <div className="text-[10px] mb-2" style={S_SECTION_HDR}>CARD FAMILY</div>
-                              <div className="flex flex-wrap gap-2">
-                                {CARD_FAMILY_OPTIONS.map((family) => {
-                                  const active = currentFamily === family.id;
-                                  return (
-                                    <button
-                                      key={family.id}
-                                      onClick={() => applyCardFamily(family.id)}
-                                      className={`${active ? retro.sunken : retro.raised} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
-                                      style={panelButtonStyle(active, family.accent)}
-                                    >
-                                      {family.label}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              {CARD_FAMILY_OPTIONS.map((family) => (
-                                <div key={family.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(family.accent)}>
-                                  <div className="flex items-center justify-between gap-2 mb-1">
-                                    <div className="text-[11px]" style={S_TEXT_BOLD}>{family.label}</div>
-                                    <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(family.accent)}>{family.label}</span>
-                                  </div>
-                                  <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
-                                  <div className="text-[10px] mt-2" style={S_MUTED}>{family.helper}</div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Card Type:</label>
+                          <input type="text" value={editingCard.type} onChange={(e) => updateCardField("type", e.target.value)} placeholder="e.g., Combat, Utility..." className={inputClass} style={inputStyle} />
                         </div>
-
-                        <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
-                          <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT RULE PROFILE</div>
-                          <div className="flex flex-wrap gap-2">
-                            {currentProfileBadges.length > 0 ? currentProfileBadges.map((badge, index) => (
-                              <span key={`${badge}-${index}`} className="text-[9px] px-2 py-1" style={sectionBadgeStyle(index === 0 && currentFamilyDef ? currentFamilyDef.accent : "#6ABAFF")}>{badge}</span>
-                            )) : <span className="text-[10px]" style={S_MUTED}>No family summary yet. Pick a card family to shape the creator around the card's real rules.</span>}
-                          </div>
-                          {currentFamilyDef ? (
-                            <div className="text-[11px]" style={S_TEXT}>{currentFamilyDef.description}</div>
-                          ) : (
-                            <div className="text-[11px]" style={S_SUBTLE}>Choose Spell, Skill, or Ability first. That makes the rest of the card builder more intuitive.</div>
-                          )}
-                          <div className="space-y-2 text-[11px]">
-                            <div><span style={S_MUTED}>Cost Model:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || "—"}</span></div>
-                            <div><span style={S_MUTED}>Primary Cost:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_PRIMARY_COST_KEY] || "—"}</span></div>
-                            <div><span style={S_MUTED}>Uses / Long Rest:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_USES_KEY] || "—"}</span></div>
-                            <div><span style={S_MUTED}>Origin:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || "—"}</span></div>
-                          </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Action Cost:</label>
+                          <input type="text" value={editingCard.actionCost} onChange={(e) => updateCardField("actionCost", e.target.value)} placeholder="e.g., 1 Action, Instant..." className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Level (Source Cost):</label>
+                          <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => updateCardCustomField("Level", e.target.value)} placeholder="0" className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Source Type:</label>
+                          <input type="text" value={editingCard.customFields["Source Type"] || ""} onChange={(e) => updateCardCustomField("Source Type", e.target.value)} placeholder="e.g., Arcane, Divine, Martial..." className={inputClass} style={inputStyle} />
                         </div>
                       </div>
-
-                      <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle("#6ABAFF")}>
-                        <div className="text-[10px]" style={S_SECTION_HDR}>USE PROFILE</div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Cost Model:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_COST_MODEL_KEY, e.target.value)} placeholder="e.g., Source, Exhaustion / Uses, Uses / Exhaustion..." className={inputClass} style={inputStyle} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Primary Cost:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_PRIMARY_COST_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_PRIMARY_COST_KEY, e.target.value)} placeholder="e.g., 3 Fire Source, 1 Exhaustion, PB / Long Rest..." className={inputClass} style={inputStyle} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Uses Per Long Rest:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_USES_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_USES_KEY, e.target.value)} placeholder="e.g., PB / Long Rest, 2 / Long Rest..." className={inputClass} style={inputStyle} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Range:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_RANGE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_RANGE_KEY, e.target.value)} placeholder="e.g., Self, 30 feet, 15-foot radius..." className={inputClass} style={inputStyle} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Duration:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_DURATION_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_DURATION_KEY, e.target.value)} placeholder="e.g., Instant, Concentration 1 minute..." className={inputClass} style={inputStyle} />
-                          </div>
-                          <div className="md:col-span-2">
-                            <label className="text-[10px] block mb-2" style={labelStyle}>Components:</label>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {COMPONENT_FLAGS.map((flag) => {
-                                const active = parseComponentFlags(editingCard.customFields[USE_PROFILE_COMPONENTS_KEY] || "").includes(flag);
-                                return (
-                                  <button
-                                    key={flag}
-                                    type="button"
-                                    onClick={() => toggleComponentFlag(flag)}
-                                    className={`${active ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
-                                    style={panelButtonStyle(active, "#8AB8FF")}
-                                  >
-                                    {flag}
-                                  </button>
-                                );
-                              })}
-                              <input
-                                type="text"
-                                value={editingCard.customFields[USE_PROFILE_COMPONENT_DETAILS_KEY] || ""}
-                                onChange={(e) => updateCardCustomField(USE_PROFILE_COMPONENT_DETAILS_KEY, e.target.value)}
-                                placeholder="Material details or notes..."
-                                className={`${inputClass} min-w-[220px] flex-1`}
-                                style={inputStyle}
-                              />
-                            </div>
-                          </div>
-                          {showRequirementsField ? (
-                            <div className="md:col-span-2 xl:col-span-3">
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <label className="text-[10px] block" style={labelStyle}>Requirements:</label>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    updateCardCustomField(USE_PROFILE_REQUIREMENTS_KEY, "");
-                                    setShowRequirementsField(false);
-                                  }}
-                                  className={`${retro.button} px-2 py-1 text-[10px]`}
-                                  style={S_RED}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                              <input type="text" value={editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_REQUIREMENTS_KEY, e.target.value)} placeholder="e.g., Wielding a melee weapon, dealt damage..." className={inputClass} style={inputStyle} />
-                            </div>
-                          ) : (
-                            <div>
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Requirements:</label>
-                              <button type="button" onClick={() => setShowRequirementsField(true)} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_TEXT}>
-                                Add Requirements
-                              </button>
-                            </div>
-                          )}
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Origin / Source:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_ORIGIN_KEY, e.target.value)} placeholder="e.g., Learned / Taught, Fairy Blood, Granted by entity..." className={inputClass} style={inputStyle} />
-                          </div>
-                          <div className="md:col-span-2 xl:col-span-3">
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Passive / Trigger Notes:</label>
-                            <input type="text" value={editingCard.customFields[USE_PROFILE_PASSIVE_MODE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_PASSIVE_MODE_KEY, e.target.value)} placeholder="e.g., Activatable Passive, Triggered on damage, Passive while equipped..." className={inputClass} style={inputStyle} />
-                          </div>
-                        </div>
-                      </div>
-
                       <div className="text-[10px]" style={S_SUBTLE}>
-                        Keep this panel focused on what the card is and how it is paid for or activated. Let Mechanics handle the actual resolution text.
+                        This panel is for the fields players are most likely to scan first when reading a card.
                       </div>
                     </div>
                   )}
 
                   {editorPanel === "mechanics" && (
-                    <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
-                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] gap-4">
-                        <div className="space-y-4">
-                          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#6ABAFF")}>
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>MECHANICS WORKSPACE</div>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
-                                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
-                              </div>
+                    <div className={`${retro.sunken} p-5 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
+                      <div className={`${retro.raised} p-4`} style={editorSurfaceStyle("#6ABAFF")}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[12px] mb-1" style={S_SECTION_HDR}>MECHANICS WORKSPACE</div>
+                            <div className="text-[11px]" style={S_SUBTLE}>
+                              Shape the play sequence, optional applied effect, support blocks, and final Effect(s) from one page.
                             </div>
                           </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
+                            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#4ACA6A")}>{hasBuiltInCardTracker(editingCard) ? trackerBucketLabel(getCardTrackerBucket(editingCard)) : "Tracker off"}</span>
+                            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
+                          </div>
+                        </div>
+                      </div>
 
-                          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
-                                <div className="text-[10px]" style={S_SUBTLE}>Start with the card's actual play sequence. Each block becomes part of the generated rules text.</div>
-                              </div>
-                              <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
-                                Clear Builder
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
-                              {MECHANICS_BLOCKS.map((block) => (
-                                <button
-                                  key={block.id}
-                                  onClick={() => addMechanicsStarter(block)}
-                                  className={`${retro.button} w-full justify-center px-3 py-2 text-[10px] flex items-center gap-1.5`}
-                                  style={sectionBadgeStyle("#6ABAFF")}
-                                >
-                                  <Plus size={10} /> Seed {block.label}
+                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)] gap-4">
+                        <div className="space-y-4">
+                          <div>
+                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
+                            <div className={`${retro.raised} p-4 space-y-4`} style={editorSurfaceStyle("#273357")}>
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="text-[10px] max-w-[520px]" style={S_SUBTLE}>
+                                  Use the seed buttons to drop in starter text, then refine each step below.
+                                </div>
+                                <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
+                                  Clear Builder
                                 </button>
-                              ))}
-                            </div>
+                              </div>
 
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                              {MECHANICS_BLOCKS.map((block, index) => {
-                                const filled = !!mechanicsBuilder[block.id].trim();
-                                const accent = ["#8AB8FF", "#7ACA8A", "#FFD700", "#C4A0FF", "#FF9A7A", "#6ABAFF", "#7A8AAA"][index % 7];
-                                return (
-                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`} style={editorSurfaceStyle(accent)}>
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div>
-                                        <div className="flex items-center gap-2 mb-1">
-                                          <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(accent)}>Step {index + 1}</span>
-                                          <span className="text-[12px]" style={S_TEXT_BOLD}>{block.label}</span>
+                              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2">
+                                {MECHANICS_BLOCKS.map((block) => (
+                                  <button
+                                    key={block.id}
+                                    onClick={() => addMechanicsStarter(block)}
+                                    className={`${retro.button} min-h-[48px] px-2 py-2 text-[10px] flex flex-col items-center justify-center gap-1 text-center leading-tight whitespace-normal`}
+                                    style={S_ACCENT}
+                                    title={`Add ${block.label}`}
+                                  >
+                                    <Plus size={10} />
+                                    <span>Add {block.label}</span>
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                {MECHANICS_BLOCKS.map((block, index) => {
+                                  const filled = !!mechanicsBuilder[block.id].trim();
+                                  const accent = ["#8AB8FF", "#7ACA8A", "#FFD700", "#C4A0FF", "#FF9A7A", "#6ABAFF", "#7A8AAA"][index % 7];
+                                  return (
+                                    <div key={block.id} className={`${retro.sunken} p-3 space-y-2`} style={editorSurfaceStyle(accent)}>
+                                      <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(accent)}>{block.label}</span>
+                                            {filled && <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#4ACA6A")}>Ready</span>}
+                                          </div>
+                                          <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
                                         </div>
-                                        <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
                                       </div>
-                                      {!filled && (
-                                        <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} shrink-0 px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
-                                          <Sparkles size={10} /> Seed
-                                        </button>
-                                      )}
+                                      <textarea
+                                        value={mechanicsBuilder[block.id]}
+                                        onChange={(e) => updateMechanicsBuilderField(block.id, e.target.value)}
+                                        placeholder={block.placeholder}
+                                        className={`${inputClass} min-h-[104px] resize-y`}
+                                        style={inputStyle}
+                                      />
+                                      <div className="flex items-center justify-between gap-2 text-[10px]" style={S_MUTED}>
+                                        <span>{filled ? "Included in generated output" : "Empty"}</span>
+                                        <span>{mechanicsBuilder[block.id].trim().length} chars</span>
+                                      </div>
                                     </div>
-                                    <textarea
-                                      value={mechanicsBuilder[block.id]}
-                                      onChange={(e) => updateMechanicsBuilderField(block.id, e.target.value)}
-                                      placeholder={block.placeholder}
-                                      className={`${inputClass} min-h-[102px] resize-y`}
-                                      style={inputStyle}
-                                    />
-                                    <div className="text-[10px] flex items-center justify-between gap-2" style={S_MUTED}>
-                                      <span>{filled ? "Included in generated output" : "Empty"}</span>
-                                      <span>{mechanicsBuilder[block.id].trim().length} chars</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                                  );
+                                })}
+                              </div>
 
-                            <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center gap-2`}>
-                              <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                <Save size={12} /> Replace Effect(s)
-                              </button>
-                              <button onClick={() => applyMechanicsBuilder("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
-                                <Plus size={12} /> Append to Effect(s)
-                              </button>
-                              <span className="text-[10px] ml-auto" style={S_SUBTLE}>
-                                Use replace for a clean rebuild. Use append when the current rules text already has material you want to keep.
-                              </span>
+                              <div className={`${retro.sunken} p-3 flex flex-wrap items-center gap-2`} style={editorSurfaceStyle("#22304F")}>
+                                <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                                  <Save size={12} /> Replace Rules Text
+                                </button>
+                                <button onClick={() => applyMechanicsBuilder("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                                  <Plus size={12} /> Append to Rules Text
+                                </button>
+                                <div className="text-[10px] ml-auto max-w-[300px] leading-relaxed" style={S_SUBTLE}>
+                                  Replace rebuilds the current text. Append keeps the existing Effect(s) and adds the generated mechanics after it.
+                                </div>
+                              </div>
                             </div>
                           </div>
 
@@ -2093,7 +1644,7 @@ export function DMCardManagerSection({
                               <div className="text-[12px]" style={S_SECTION_HDR}>CARD SECTION BLOCKS</div>
                               <div className="text-[10px]" style={S_SUBTLE}>{cardSectionBlocks.length} saved section block{cardSectionBlocks.length === 1 ? "" : "s"}</div>
                             </div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-3`}>
                               <div className="flex flex-wrap gap-2">
                                 {CARD_SECTION_BLOCK_PRESETS.map((preset) => (
                                   <button
@@ -2141,19 +1692,8 @@ export function DMCardManagerSection({
                               ) : (
                                 <div className="space-y-3">
                                   {cardSectionBlocks.map((block, index) => (
-                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} style={editorSurfaceStyle(block.tone === "rules" ? "#7ACA8A" : block.tone === "highlight" ? "#8AB8FF" : block.tone === "limitation" ? "#FF9A7A" : "#FFD700")}>
-                                      <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>Section {index + 1}</span>
-                                          <span className="text-[10px]" style={S_SUBTLE}>Reorder or tone-shift this block before sending it into the rules text.</span>
-                                        </div>
-                                        <div className="flex flex-wrap gap-1 justify-end">
-                                          <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
-                                          <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
-                                          <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
-                                        </div>
-                                      </div>
-                                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
+                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`}>
+                                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
                                         <div>
                                           <label className="text-[10px] block mb-1" style={labelStyle}>Section Title:</label>
                                           <input
@@ -2173,6 +1713,11 @@ export function DMCardManagerSection({
                                             <option value="reminder">Reminder</option>
                                           </select>
                                         </div>
+                                        <div className="flex flex-wrap gap-1 justify-end">
+                                          <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
+                                          <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
+                                          <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
+                                        </div>
                                       </div>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Content:</label>
@@ -2189,68 +1734,37 @@ export function DMCardManagerSection({
                                 </div>
                               )}
 
-                              <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center gap-2`}>
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
                                 <button onClick={() => applySectionBlocks("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                  <Save size={12} /> Replace Effect(s) with Blocks
+                                  <Save size={12} /> Replace Rules Text with Blocks
                                 </button>
                                 <button onClick={() => applySectionBlocks("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
-                                  <Plus size={12} /> Append Blocks to Effect(s)
+                                  <Plus size={12} /> Append Blocks to Rules Text
                                 </button>
                                 <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={toneChipStyle("highlight")}>
-                                  <Sparkles size={12} /> Build Full Effect(s)
+                                  <Sparkles size={12} /> Build Full Rules Text
                                 </button>
+                                <span className="text-[10px]" style={S_SUBTLE}>Blocks now persist as editor structure inside custom fields on save.</span>
                               </div>
                             </div>
                           </div>
 
-                          <div className="space-y-3">
-                            <div>
-                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>DESCRIPTION</div>
-                              <RichTextEditor value={editingCard.customFields[CARD_DESCRIPTION_KEY] || ""} onChange={(html) => updateCardCustomField(CARD_DESCRIPTION_KEY, html)} placeholder="Enter a short overview or setup text..." minHeight={120} />
-                            </div>
-                            <div>
-                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>EFFECT(S)</div>
-                              <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effects..." minHeight={200} />
-                            </div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-2`} style={editorSurfaceStyle("#FFD700")}>
-                              <div className="text-[10px]" style={S_SECTION_HDR}>SCALING / UPCAST</div>
-                              <input
-                                type="text"
-                                value={editingCard.customFields[USE_PROFILE_UPCAST_KEY] || ""}
-                                onChange={(e) => updateCardCustomField(USE_PROFILE_UPCAST_KEY, e.target.value)}
-                                placeholder="How does the card scale, upcast, or improve?"
-                                className={inputClass}
-                                style={inputStyle}
-                              />
-                              {(editingCard.customFields[USE_PROFILE_UPCAST_KEY] || "").trim() && (
-                                <div className="text-[11px]" style={S_TEXT}>{editingCard.customFields[USE_PROFILE_UPCAST_KEY]}</div>
-                              )}
-                            </div>
+                          <div>
+                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>RULES / EFFECT TEXT</div>
+                            <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effect description..." minHeight={180} />
                           </div>
                         </div>
 
                         <div className="space-y-4">
-                          <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle("#8AB8FF")}>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>QUICK READ</div>
-                            <div className="space-y-2 text-[11px]" style={S_SUBTLE}>
-                              <div><span style={S_TEXT_BOLD}>Structured Preview</span> shows the builder output in the order it will read.</div>
-                              <div><span style={S_TEXT_BOLD}>Block Preview</span> helps you polish supporting summaries, follow-ups, and limitations.</div>
-                              <div><span style={S_TEXT_BOLD}>Full Generated Output</span> shows the combined result before you commit it to rules text.</div>
-                            </div>
-                          </div>
-
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED PREVIEW</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#6ABAFF")}>
+                            <div className={`${retro.raised} p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#273357")}>
                               {MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).length === 0 ? (
                                 <div className="text-[11px]" style={S_MUTED}>No structured mechanics blocks yet. Add a block or load one from the existing rules text.</div>
                               ) : (
-                                MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block, index) => (
-                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
-                                      <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
-                                    </div>
+                                MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block) => (
+                                  <div key={block.id}>
+                                    <div className="text-[10px] mb-1" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
                                     <div className="text-[11px]" style={S_TEXT}>{mechanicsBuilder[block.id]}</div>
                                   </div>
                                 ))
@@ -2260,12 +1774,12 @@ export function DMCardManagerSection({
 
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>BLOCK PREVIEW</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#FFD700")}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px] rounded-sm`}>
                               {cardSectionBlocks.length === 0 ? (
                                 <div className="text-[11px]" style={S_MUTED}>No card section blocks yet.</div>
                               ) : (
                                 cardSectionBlocks.map((block) => (
-                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                  <div key={block.id}>
                                     <div className="flex items-center gap-2 mb-1">
                                       <div className="text-[10px]" style={S_SECTION_HDR}>{block.title.toUpperCase() || "SECTION"}</div>
                                       <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>{block.tone}</span>
@@ -2279,7 +1793,7 @@ export function DMCardManagerSection({
 
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>FULL GENERATED OUTPUT</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[160px] text-[11px]`} style={{ ...editorSurfaceStyle("#8AB8FF"), ...S_TEXT }}>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[160px] text-[11px] rounded-sm`} style={S_TEXT}>
                               {buildCombinedRulesHtml(mechanicsBuilder, cardSectionBlocks) ? (
                                 <div dangerouslySetInnerHTML={{ __html: buildCombinedRulesHtml(mechanicsBuilder, cardSectionBlocks) }} />
                               ) : (
@@ -2288,13 +1802,19 @@ export function DMCardManagerSection({
                             </div>
                           </div>
 
+                          <div className={`${retro.raised} p-3`} style={editorSurfaceStyle("#273357")}>
+                            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>PHASE 6 NOTE</div>
+                            <div className="text-[11px]" style={S_SUBTLE}>
+                              Mechanics builder data and card section blocks now persist as first-class editor structure inside reserved custom field keys, while the player-facing rules text still comes from the existing effect field.
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
                   )}
 
                   {editorPanel === "tags" && (
-                    <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
+                    <div className={`${retro.sunken} p-5 space-y-4`} style={editorSurfaceStyle("#9A7ABB")}>
                       <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
                         <div className="text-[12px] mb-1" style={S_SECTION_HDR}>TAGS AS HELPERS AND MODIFIERS</div>
                         <div className="text-[11px]" style={S_SUBTLE}>
@@ -2457,7 +1977,7 @@ export function DMCardManagerSection({
                   )}
 
                   {editorPanel === "progression" && (
-                    <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
+                    <div className={`${retro.sunken} p-5 space-y-4`} style={editorSurfaceStyle("#FFD700")}>
                       <div className="text-[12px]" style={S_SECTION_HDR}>PROGRESSION / NODE TREE</div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
@@ -2509,9 +2029,9 @@ export function DMCardManagerSection({
                   )}
 
                   {editorPanel === "assignment" && (
-                    <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
+                    <div className={`${retro.sunken} p-5 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
                       <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER ASSIGNMENT</div>
-                      <div className={`${retro.sunken} bg-[#0A0A28] p-3 w-full lg:w-2/3`}>
+                      <div className={`${retro.sunken} p-4 w-full lg:w-2/3`} style={editorSurfaceStyle("#1D6B3F")}>
                         <label className="flex items-center gap-2 cursor-pointer mb-2">
                           <input type="checkbox" checked={editingCard.assignedTo.includes("all")} onChange={(e) => {
                             if (e.target.checked) updateCardField("assignedTo", ["all"]);
