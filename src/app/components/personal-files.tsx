@@ -15,6 +15,7 @@ import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
+import { buildVisibleCardTagBadges, buildCardTagFilterGroups, cardMatchesTagFilterGroup } from "./tag-profile-integration";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, ManagedInfo, TagDefinition } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
 import PersonalFilesInformationPanel from "./personal-files-information-panel";
@@ -48,17 +49,6 @@ interface QuickItem { id: string; name: string; qty: number; description?: strin
 interface SourceUsageEntry { id: string; cardName: string; sourceType: string; amount: number; timestamp: number; }
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
-
-const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
-const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
-const CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
-const CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
-const CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
-const CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
-const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
-const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
-const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
-const CARD_DESCRIPTION_KEY = "Description";
 
 
 
@@ -202,22 +192,6 @@ function stepTE(potency: string): string {
   const next = sign === "+" ? num + step : num - step;
   const stepStr = step !== 1 ? String(step) : "";
   return `${next}${sign}TE${stepStr}`;
-}
-
-function getBuiltInCardTrackerBucket(card: ManagedCard): "status" | "ability" | "" {
-  const bucket = (card.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
-  return bucket === "status" || bucket === "ability" ? bucket : "";
-}
-
-function hasBuiltInCardTracker(card: ManagedCard): boolean {
-  return !!(
-    getBuiltInCardTrackerBucket(card)
-    || (card.customFields?.[CARD_TRACKER_NAME_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DURATION_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || "").trim()
-  );
 }
 
 type StatusTag = TagDefinition;
@@ -395,6 +369,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [allCards, setAllCards] = useState<ManagedCard[]>([]);
   const [allInfos, setAllInfos] = useState<ManagedInfo[]>([]);
   const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
+  const [cardTags, setCardTags] = useState<TagDefinition[]>([]);
   const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
   const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
 
@@ -411,6 +386,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         cards,
         infos,
         itemTagRows,
+        cardTagRows,
         statusTagRows,
         infoSubTabRows,
         playerState,
@@ -419,6 +395,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         appStore.listCards<ManagedCard>(),
         appStore.listInfos<ManagedInfo>(),
         appStore.listTags<TagDefinition>("item"),
+        appStore.listTags<TagDefinition>("card"),
         appStore.listTags<TagDefinition>("status"),
         appStore.listInfoSubTabs<InfoSubTab>(),
         loadPlayerState(),
@@ -432,6 +409,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setAllCards(cards);
       setAllInfos(normalizedInfos);
       setItemTags(itemTagRows);
+      setCardTags(cardTagRows);
       setStatusTags(statusTagRows);
       setInfoSubTabs(normalizedInfoSubTabs);
 
@@ -916,7 +894,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   }, [player?.stats]);
 
   const allInvTags = useMemo(() => getAllTags(playerItems), [playerItems]);
-  const allCardTags = useMemo(() => getAllTags(playerCards), [playerCards]);
+  const getCardDisplayBadges = useCallback((card: ManagedCard) => buildVisibleCardTagBadges(card, cardTags, { includeDmOnly: isDM }), [cardTags, isDM]);
+  const allCardTags = useMemo(() => buildCardTagFilterGroups(playerCards, cardTags), [playerCards, cardTags]);
 
   const filteredItems = useMemo(() => {
     return playerItems.filter((item) => {
@@ -1311,13 +1290,15 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const filteredCards = useMemo(() => {
     return playerCards.filter((card) => {
+      const badgeText = getCardDisplayBadges(card).flatMap((badge) => [badge.label, badge.filterGroup]).join(" ").toLowerCase();
       const matchesSearch =
         cardSearch === "" ||
         card.name.toLowerCase().includes(cardSearch.toLowerCase()) ||
         card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(cardSearch.toLowerCase()) ||
+        badgeText.includes(cardSearch.toLowerCase()) ||
         card.tags.some((t) => t.toLowerCase().includes(cardSearch.toLowerCase()));
       const matchesTags =
-        cardActiveTags.length === 0 || cardActiveTags.every((t) => card.tags.includes(t));
+        cardActiveTags.length === 0 || cardActiveTags.every((t) => cardMatchesTagFilterGroup(card, cardTags, t));
       const matchesTree = !cardTreeFilter || card.nodeTreeId === cardTreeFilter;
       const matchesNode = !cardNodeFilter || card.nodeId === cardNodeFilter;
       return matchesSearch && matchesTags && matchesTree && matchesNode;
@@ -1331,7 +1312,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       if (cardSortBy === "sourceType") return (a.customFields["Source Type"] || a.type || "").localeCompare(b.customFields["Source Type"] || b.type || "");
       return 0;
     });
-  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy]);
+  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy, cardTags, getCardDisplayBadges]);
 
   const toggleInvTag = (tag: string) => {
     setInvActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -1524,18 +1505,34 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     const isBuff = card.tags.some((t) => t.toLowerCase() === "buff");
     const isTimedEffect = card.tags.some((t) => t.toLowerCase() === "timed effect");
-    const builtInTrackerBucket = getBuiltInCardTrackerBucket(card);
 
-    if (hasBuiltInCardTracker(card) && builtInTrackerBucket) {
-      const effectName = card.customFields[CARD_TRACKER_NAME_KEY] || card.name;
-      const duration = card.customFields[CARD_TRACKER_DURATION_KEY] || "1";
-      const potency = card.customFields[CARD_TRACKER_POTENCY_KEY] || "";
-      const damage = card.customFields[CARD_TRACKER_DAMAGE_KEY] || "";
-      const description =
-        card.customFields[CARD_TRACKER_DESCRIPTION_KEY]
-        || card.customFields[CARD_DESCRIPTION_KEY]?.replace(/<[^>]*>/g, "")
-        || card.effect.replace(/<[^>]*>/g, "");
+    if (isBuff) {
+      // Extract Buff fields from customFields
+      const duration = card.customFields["Buff::Duration"] || "1";
+      const stat = card.customFields["Buff::Stat"] || card.name;
+      const amount = card.customFields["Buff::Amount"] || "";
 
+      const newEffect: StatusEffectRow = {
+        id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: stat || card.name,
+        potency: amount,
+        duration: duration,
+        damage: "",
+        effect: `From card: ${card.name}`,
+      };
+
+      setStatusEffects((prev) => [...prev, newEffect]);
+    }
+
+    if (isTimedEffect) {
+      // Extract Timed Effect fields from customFields
+      const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
+      const duration = card.customFields["Timed Effect::Duration"] || "1";
+      const potency = card.customFields["Timed Effect::Potency"] || "";
+      const damage = card.customFields["Timed Effect::Damage"] || "";
+      const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
+
+      // Auto-roll damage on use if it contains dice notation
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
         const diceGroups = parseDiceGroups(damage, potency);
@@ -1544,94 +1541,37 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         const result = rollDiceExpression(damage, potency);
         if (result) {
           triggerDiceAnimation(parseDiceGroups(damage, potency));
-          initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
+          initialRoll = result.breakdown
+            ? `⚔ ${result.total} (${result.breakdown})`
+            : `⚔ ${result.total}`;
         }
       } else {
         playSuccessChime();
       }
 
-      const buffType = (card.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || "") as StatusEffectRow["buffType"];
-      const buffTarget = card.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || "";
-      const buffValue = card.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || "";
+      // Extract optional buff configuration from card
+      const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
+      const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
+      const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
+
+      let targetType: StatusEffectRow["targetType"];
+      if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
+      else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
 
       const newEffect: StatusEffectRow = {
         id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: effectName,
-        potency,
-        duration,
-        damage,
+        potency: potency,
+        duration: duration,
+        damage: damage,
         effect: description || `From card: ${card.name}`,
         lastRoll: initialRoll,
-        ...(builtInTrackerBucket === "status" && buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-        targetType: builtInTrackerBucket === "ability" ? "enemy" : "self",
+        ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+        ...(targetType ? { targetType } : {}),
       };
 
       setStatusEffects((prev) => [...prev, newEffect]);
       setLastAddedStatusEffect(effectName);
-    } else {
-      if (isBuff) {
-        const duration = card.customFields["Buff::Duration"] || "1";
-        const stat = card.customFields["Buff::Stat"] || card.name;
-        const amount = card.customFields["Buff::Amount"] || "";
-
-        const newEffect: StatusEffectRow = {
-          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: stat || card.name,
-          potency: amount,
-          duration: duration,
-          damage: "",
-          effect: `From card: ${card.name}`,
-        };
-
-        setStatusEffects((prev) => [...prev, newEffect]);
-      }
-
-      if (isTimedEffect) {
-        const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
-        const duration = card.customFields["Timed Effect::Duration"] || "1";
-        const potency = card.customFields["Timed Effect::Potency"] || "";
-        const damage = card.customFields["Timed Effect::Damage"] || "";
-        const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
-
-        let initialRoll: string | undefined;
-        if (damage && hasDiceNotation(damage)) {
-          const diceGroups = parseDiceGroups(damage, potency);
-          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
-          playDiceRoll(totalDice);
-          const result = rollDiceExpression(damage, potency);
-          if (result) {
-            triggerDiceAnimation(parseDiceGroups(damage, potency));
-            initialRoll = result.breakdown
-              ? `⚔ ${result.total} (${result.breakdown})`
-              : `⚔ ${result.total}`;
-          }
-        } else {
-          playSuccessChime();
-        }
-
-        const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
-        const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
-        const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
-
-        let targetType: StatusEffectRow["targetType"];
-        if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
-        else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
-
-        const newEffect: StatusEffectRow = {
-          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: effectName,
-          potency: potency,
-          duration: duration,
-          damage: damage,
-          effect: description || `From card: ${card.name}`,
-          lastRoll: initialRoll,
-          ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-          ...(targetType ? { targetType } : {}),
-        };
-
-        setStatusEffects((prev) => [...prev, newEffect]);
-        setLastAddedStatusEffect(effectName);
-      }
     }
 
     // ── Source usage tracking ──
@@ -1704,14 +1644,15 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
           {/* Tags */}
           <div className="flex flex-wrap gap-1.5 mb-4">
-            {card.tags.map((tag) => (
+            {getCardDisplayBadges(card).map((badge) => (
               <span
-                key={tag}
+                key={`${card.id}-${badge.tagName}`}
                 className="text-[10px] px-2 py-0.5 flex items-center gap-1"
                 style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                title={badge.filterGroup}
               >
                 <Tag size={8} />
-                {tag}
+                {badge.label}
               </span>
             ))}
           </div>
@@ -1730,35 +1671,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
           </div>
 
-          {/* Built-in tracker indicator */}
-          {hasBuiltInCardTracker(card) && card.tags.some((t) => t.toLowerCase() === "use-able") ? (
-            <div
-              className="mb-4 p-3 flex items-start gap-2 text-[11px]"
-              style={{
-                background: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A12" : "#4ADE8012",
-                border: `1px solid ${getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A33" : "#4ADE8033"}`,
-                color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80",
-              }}
-            >
-              <Zap size={13} className="shrink-0 mt-0.5" />
-              <div>
-                <div style={{ fontWeight: 600 }}>
-                  {getBuiltInCardTrackerBucket(card) === "ability" ? "ABILITY / CARD EFFECT TRACKER" : "STATUS EFFECT TRACKER"}
-                </div>
-                <div style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5AAA" : "#4ADE80AA", marginTop: 2 }}>
-                  Using this card adds{" "}
-                  <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>
-                    {card.customFields[CARD_TRACKER_NAME_KEY] || card.name}
-                  </span>
-                  {" "}to {getBuiltInCardTrackerBucket(card) === "ability" ? "Abilities / Card Effects" : "Status Effects"}
-                  {card.customFields[CARD_TRACKER_DURATION_KEY] && (
-                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>{card.customFields[CARD_TRACKER_DURATION_KEY]}</span> turn(s)</div>
-                  )}
-                  .
-                </div>
-              </div>
-            </div>
-          ) : card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
+          {/* Timed Effect indicator */}
+          {card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
             <div
               className="mb-4 p-3 flex items-start gap-2 text-[11px]"
               style={{ background: "#4ADE8012", border: "1px solid #4ADE8033", color: "#4ADE80" }}
@@ -4094,13 +4008,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 100 ? plain.slice(0, 100) + "..." : plain; })()}
                               </div>
                               <div className="flex flex-wrap gap-1">
-                                {card.tags.map((tag) => (
+                                {getCardDisplayBadges(card).map((badge) => (
                                   <span
-                                    key={tag}
+                                    key={`${card.id}-${badge.tagName}`}
                                     className="text-[9px] px-1.5 py-0.5"
                                     style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                                    title={badge.filterGroup}
                                   >
-                                    {tag}
+                                    {badge.label}
                                   </span>
                                 ))}
                               </div>
@@ -4120,8 +4035,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   const matchesSearch = laSearch === "" ||
                     card.name.toLowerCase().includes(laSearch.toLowerCase()) ||
                     card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(laSearch.toLowerCase()) ||
+                    badgeText.includes(laSearch.toLowerCase()) ||
                     card.tags.some((t) => t.toLowerCase().includes(laSearch.toLowerCase()));
-                  const matchesTags = laActiveTags.length === 0 || laActiveTags.every((t) => card.tags.includes(t));
+                  const badgeText = getCardDisplayBadges(card).flatMap((badge) => [badge.label, badge.filterGroup]).join(" ").toLowerCase();
+                  const matchesTags = laActiveTags.length === 0 || laActiveTags.every((t) => cardMatchesTagFilterGroup(card, cardTags, t));
                   return matchesSearch && matchesTags;
                 });
 
@@ -4290,8 +4207,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                           {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 80 ? plain.slice(0, 80) + "..." : plain; })()}
                                         </div>
                                         <div className="flex flex-wrap gap-1">
-                                          {card.tags.map(tag => (
-                                            <span key={tag} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}>{tag}</span>
+                                          {getCardDisplayBadges(card).map((badge) => (
+                                            <span key={`${card.id}-${badge.tagName}`} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }} title={badge.filterGroup}>{badge.label}</span>
                                           ))}
                                         </div>
                                         {isDM && (

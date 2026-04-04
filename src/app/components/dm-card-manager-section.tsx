@@ -45,6 +45,7 @@ import {
   S_TEXT_BOLD,
 } from "./dm-styles";
 import { DISPLAY_CONTENTS } from "./shared-styles";
+import { applyStarterProfileToCard, buildStarterProfileFromTags, buildVisibleCardTagBadges } from "./tag-profile-integration";
 
 interface DMCardManagerSectionProps {
   players: PlayerData[];
@@ -1125,7 +1126,8 @@ export function DMCardManagerSection({
   const toggleCardTag = (tagName: string) => {
     if (!editingCard) return;
     const has = editingCard.tags.includes(tagName);
-    updateCardField("tags", has ? editingCard.tags.filter((t) => t !== tagName) : [...editingCard.tags, tagName]);
+    const nextTags = has ? editingCard.tags.filter((t) => t !== tagName) : [...editingCard.tags, tagName];
+    setEditingCard(applyStarterProfileToCard({ ...editingCard, tags: nextTags }, buildStarterProfileFromTags(nextTags, cardTags)));
   };
 
   const updateCardCustomField = (key: string, value: string) => {
@@ -1368,6 +1370,16 @@ export function DMCardManagerSection({
   const suggestedTagDefs = useMemo(
     () => (editingCard ? getSuggestedTagDefs(editingCard, cardTags, mechanicsBuilder).filter((tag) => !editingCard.tags.includes(tag.name)) : []),
     [editingCard, cardTags, mechanicsBuilder],
+  );
+
+  const activeTagStarterProfile = useMemo(
+    () => (editingCard ? buildStarterProfileFromTags(editingCard.tags, cardTags) : null),
+    [editingCard, cardTags],
+  );
+
+  const playerFacingTagBadges = useMemo(
+    () => (editingCard ? buildVisibleCardTagBadges(editingCard, cardTags, { includeDmOnly: true }) : []),
+    [editingCard, cardTags],
   );
 
   const visibleTagDefs = useMemo(() => {
@@ -2355,6 +2367,46 @@ export function DMCardManagerSection({
                               );
                             })}
                           </div>
+                        )}
+                      </div>
+
+                      <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-3`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-[12px]" style={S_SECTION_HDR}>TAG STARTER PROFILE</div>
+                          {activeTagStarterProfile && (
+                            <span className="text-[10px] px-2 py-1" style={DM_ACTION_BADGE}>{activeTagStarterProfile.readiness.toUpperCase()}</span>
+                          )}
+                        </div>
+                        {!activeTagStarterProfile ? (
+                          <div className="text-[11px]" style={S_MUTED}>Add helper tags to build a starter profile for this card.</div>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap gap-2 text-[10px]">
+                              {activeTagStarterProfile.families.map((family) => <span key={family} className="px-2 py-1" style={DM_TAG_BADGE}>{family}</span>)}
+                              {activeTagStarterProfile.purposes.map((purpose) => <span key={purpose} className="px-2 py-1" style={DM_TAG_BADGE}>{purpose}</span>)}
+                              {activeTagStarterProfile.targeting && <span className="px-2 py-1" style={DM_TAG_BADGE}>target: {activeTagStarterProfile.targeting}</span>}
+                              {activeTagStarterProfile.costModel && <span className="px-2 py-1" style={DM_TAG_BADGE}>cost: {activeTagStarterProfile.costModel}</span>}
+                              <span className="px-2 py-1" style={DM_TAG_BADGE}>template: {activeTagStarterProfile.template}</span>
+                              <span className="px-2 py-1" style={DM_TAG_BADGE}>panel: {activeTagStarterProfile.focusPanel}</span>
+                            </div>
+                            {activeTagStarterProfile.note && (
+                              <div className="text-[11px]" style={S_MUTED}>{activeTagStarterProfile.note}</div>
+                            )}
+                            <div>
+                              <div className="text-[10px] mb-1" style={S_SECTION_HDR}>PLAYER-FACING TAG PREVIEW</div>
+                              {playerFacingTagBadges.length === 0 ? (
+                                <div className="text-[11px]" style={S_MUTED}>No visible player-facing tag badges yet.</div>
+                              ) : (
+                                <div className="flex flex-wrap gap-2">
+                                  {playerFacingTagBadges.map((badge) => (
+                                    <span key={badge.tagName} className="text-[10px] px-2 py-1" style={DM_TAG_BADGE} title={`${badge.filterGroup} · ${badge.visibility}`}>
+                                      {badge.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
 
