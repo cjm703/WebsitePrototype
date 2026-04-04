@@ -1060,6 +1060,32 @@ export function DMTagsSection({
     [activeTags],
   );
 
+  const collectionSuggestions = useMemo(
+    () => Array.from(new Set([
+      ...TAG_COLLECTIONS[tagSubPage].map((collection) => collection.label),
+      ...activeCollections,
+    ])).sort(),
+    [activeCollections, tagSubPage],
+  );
+
+  const createGroupSuggestions = useMemo(() => {
+    const selectedCollection = findCollectionByLabel(tagSubPage, newTagCollection);
+    return Array.from(new Set([
+      ...TAG_GROUP_OPTIONS[tagSubPage],
+      ...activeGroups,
+      ...(selectedCollection?.groups || []),
+    ])).sort();
+  }, [activeGroups, newTagCollection, tagSubPage]);
+
+  const editGroupSuggestions = useMemo(() => {
+    const selectedCollection = findCollectionByLabel(tagSubPage, editingTag?.meta?.collection || "");
+    return Array.from(new Set([
+      ...TAG_GROUP_OPTIONS[tagSubPage],
+      ...activeGroups,
+      ...(selectedCollection?.groups || []),
+    ])).sort();
+  }, [activeGroups, editingTag?.meta?.collection, tagSubPage]);
+
   const visibleTags = useMemo(() => {
     const query = tagSearch.trim().toLowerCase();
     return sortRichTags(activeTags.filter((tag) => {
@@ -1552,7 +1578,10 @@ export function DMTagsSection({
         name: normalizeTagName(tag.name),
         description: tag.description,
         fields: [],
-        meta: { collection: newTagCollection || "" },
+        meta: {
+          collection: newTagCollection || inferCollectionForGroup(tagSubPage, newTagGroup),
+          group: newTagGroup,
+        },
       }))
       .filter((tag) => {
         const normalized = tag.name.toLowerCase();
@@ -1892,12 +1921,6 @@ export function DMTagsSection({
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-[16px]" style={{ ...S_ACCENT, fontWeight: 600 }}>Manage Tags</h2>
-          <p className="text-[12px] mt-1" style={S_SUBTLE}>
-            Tags should now mainly act as descriptors and identifiers. Extra fields are still available for backward compatibility, but they are no longer the center of tag design.
-          </p>
-          <div className="mt-2 text-[10px]" style={S_MUTED}>
-            Think: what something is, what it is associated with, or who it usually points at. Avoid using tags as the main source of mechanics, costs, scaling, or tracker behavior.
-          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="text-[10px] px-2.5 py-1.5" style={{ color: "#4A7BFF", border: "1px solid #4A7BFF33", background: "#4A7BFF15" }}>
@@ -1950,27 +1973,6 @@ export function DMTagsSection({
             {sp.label}
           </button>
         ))}
-      </div>
-
-      <div className={`${retro.sunken} bg-[#0A0A28] p-4`} style={{ border: "1px solid #1A1A4B" }}>
-        <div className="flex items-center gap-2 mb-2">
-          <AlertTriangle size={12} style={{ color: "#FFB454" }} />
-          <div className="text-[11px]" style={S_SECTION_HDR}>TAG DESIGN CHARTER</div>
-        </div>
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 text-[10px]">
-          <div>
-            <div className="mb-1" style={{ color: "#4ACA6A", fontWeight: 600 }}>Use tags for</div>
-            <div style={S_MUTED}>
-              Identity, theme, targeting shorthand, organization, search, filtering, and quick recognition.
-            </div>
-          </div>
-          <div>
-            <div className="mb-1" style={{ color: "#FF8A6A", fontWeight: 600 }}>Do not rely on tags for</div>
-            <div style={S_MUTED}>
-              Costs, scaling, tracker setup, runtime mechanics, card-specific behavior, or form structure unless you are intentionally preserving legacy compatibility.
-            </div>
-          </div>
-        </div>
       </div>
 
       <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
@@ -2080,10 +2082,19 @@ export function DMTagsSection({
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Collection</label>
-                  <select value={newTagCollection} onChange={(e) => setNewTagCollection(e.target.value)} className={inputClass} style={inputStyle}>
-                    <option value="">No collection</option>
-                    {TAG_COLLECTIONS[tagSubPage].map((collection) => <option key={collection.id} value={collection.label}>{collection.label}</option>)}
-                  </select>
+                  <input
+                    type="text"
+                    list={`tag-collection-suggestions-${tagSubPage}`}
+                    value={newTagCollection}
+                    onChange={(e) => setNewTagCollection(e.target.value)}
+                    placeholder="Optional collection"
+                    className={inputClass}
+                    style={inputStyle}
+                  />
+                  <datalist id={`tag-collection-suggestions-${tagSubPage}`}>
+                    {collectionSuggestions.map((collection) => <option key={collection} value={collection} />)}
+                  </datalist>
+                  <div className="mt-1 text-[9px]" style={S_MUTED}>Type a new collection name to create one.</div>
                 </div>
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Group</label>
@@ -2097,8 +2108,9 @@ export function DMTagsSection({
                     style={inputStyle}
                   />
                   <datalist id={`tag-group-suggestions-${tagSubPage}`}>
-                    {TAG_GROUP_OPTIONS[tagSubPage].map((group) => <option key={group} value={group} />)}
+                    {createGroupSuggestions.map((group) => <option key={group} value={group} />)}
                   </datalist>
+                  <div className="mt-1 text-[9px]" style={S_MUTED}>Type a new group name to create one.</div>
                 </div>
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Aliases</label>
@@ -2110,6 +2122,7 @@ export function DMTagsSection({
                     className={inputClass}
                     style={inputStyle}
                   />
+                  <div className="mt-1 text-[9px]" style={S_MUTED}>Aliases are alternate names used for search, duplicate checks, rename history, and future matching without changing the main tag name.</div>
                 </div>
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Accent Color</label>
@@ -2773,15 +2786,18 @@ export function DMTagsSection({
                           </div>
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Collection</label>
-                            <select
+                            <input
+                              type="text"
+                              list={`edit-tag-collection-suggestions-${tagSubPage}`}
                               value={editingTag.meta?.collection || ""}
                               onChange={(e) => updateEditingTagMeta({ collection: e.target.value })}
                               className={inputClass}
                               style={inputStyle}
-                            >
-                              <option value="">No collection</option>
-                              {TAG_COLLECTIONS[tagSubPage].map((collection) => <option key={collection.id} value={collection.label}>{collection.label}</option>)}
-                            </select>
+                            />
+                            <datalist id={`edit-tag-collection-suggestions-${tagSubPage}`}>
+                              {collectionSuggestions.map((collection) => <option key={collection} value={collection} />)}
+                            </datalist>
+                            <div className="mt-1 text-[9px]" style={S_MUTED}>Type a new collection name to create one.</div>
                           </div>
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Group</label>
@@ -2794,8 +2810,9 @@ export function DMTagsSection({
                               style={inputStyle}
                             />
                             <datalist id={`edit-tag-group-suggestions-${tagSubPage}`}>
-                              {TAG_GROUP_OPTIONS[tagSubPage].map((group) => <option key={group} value={group} />)}
+                              {editGroupSuggestions.map((group) => <option key={group} value={group} />)}
                             </datalist>
+                            <div className="mt-1 text-[9px]" style={S_MUTED}>Type a new group name to create one.</div>
                           </div>
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Aliases</label>
@@ -2807,6 +2824,7 @@ export function DMTagsSection({
                               className={inputClass}
                               style={inputStyle}
                             />
+                            <div className="mt-1 text-[9px]" style={S_MUTED}>Aliases are alternate names used for search, duplicate checks, rename history, and future matching without changing the main tag name.</div>
                           </div>
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Accent Color</label>
