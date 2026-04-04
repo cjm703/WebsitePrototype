@@ -1383,6 +1383,72 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     );
   };
 
+  const getCardFactEntries = (card: ManagedCard) => {
+    const preferredEntries: Array<[string, string]> = [
+      ["Card Type", card.type || ""],
+      ["Action", card.actionCost || ""],
+      ["Level", card.customFields["Level"] ? `Lv. ${card.customFields["Level"]}` : ""],
+      ["Source Type", card.customFields["Source Type"] || ""],
+      ["Primary Cost", card.customFields["Use Profile::Primary Cost"] || ""],
+      ["Uses", card.customFields["Use Profile::Uses Per Long Rest"] || ""],
+      ["Range", card.customFields["Use Profile::Range"] || ""],
+      ["Duration", card.customFields["Use Profile::Duration"] || ""],
+      ["Requirements", card.customFields["Use Profile::Requirements"] || ""],
+      ["Components", card.customFields["Use Profile::Components"] || ""],
+    ].filter(([, value]) => value.trim());
+
+    const usedKeys = new Set([
+      "Description",
+      "Level",
+      "Source Type",
+      "Use Profile::Primary Cost",
+      "Use Profile::Uses Per Long Rest",
+      "Use Profile::Range",
+      "Use Profile::Duration",
+      "Use Profile::Requirements",
+      "Use Profile::Components",
+    ]);
+
+    const extraEntries = Object.entries(card.customFields)
+      .filter(([key, value]) => value && !key.startsWith("Effect::") && !usedKeys.has(key))
+      .map(([key, value]) => {
+        const parts = key.split("::");
+        return [parts.length > 1 ? parts[1] : parts[0], value] as [string, string];
+      });
+
+    return { preferredEntries, extraEntries };
+  };
+
+  const renderCardFactChips = (entries: Array<[string, string]>, compact = false) => {
+    if (entries.length === 0) return null;
+    return (
+      <div className={`grid ${compact ? "grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2" : "grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5"}`}>
+        {entries.map(([label, value]) => (
+          <div
+            key={`${label}-${value}`}
+            className={`${retro.raised} px-2.5 py-2`}
+            style={{ background: compact ? "#0E0E35" : "#10103A", border: `1px solid ${bc(theme.panelBorder)}` }}
+          >
+            <div className="text-[9px] uppercase tracking-[0.08em] mb-0.5" style={S_MUTED}>
+              {label}
+            </div>
+            <div className={compact ? "text-[11px] leading-snug" : "text-[12px] leading-snug"} style={{ color: theme.textColor, fontWeight: 600 }}>
+              {value}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCardPreviewSummary = (card: ManagedCard, clamp = 120) => {
+    const description = (card.customFields["Description"] || "").replace(/<[^>]*>/g, "").trim();
+    const effect = (card.effect || "").replace(/<[^>]*>/g, "").trim();
+    const combined = description || effect;
+    if (!combined) return "No summary yet.";
+    return combined.length > clamp ? `${combined.slice(0, clamp).trim()}...` : combined;
+  };
+
   // --- Item Detail Screen ---
   const renderItemDetail = (item: ManagedItem) => (
     <div className="space-y-4">
@@ -1603,6 +1669,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const renderCardDetail = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
+    const descriptionText = (card.customFields["Description"] || "").trim();
+    const { preferredEntries, extraEntries } = getCardFactEntries(card);
 
     return (
       <div className="space-y-4">
@@ -1616,20 +1684,32 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         </button>
 
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                {card.name}
-              </h2>
-              <div className="text-[12px]" style={S_LABEL}>
-                {card.type} · {card.actionCost}
-                {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <h2 className="text-[20px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+                  {card.name}
+                </h2>
+                {getCardDisplayBadges(card).map((badge) => (
+                  <span
+                    key={`${card.id}-${badge.tagName}`}
+                    className="text-[9px] px-2 py-0.5 inline-flex items-center gap-1 rounded-sm"
+                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                    title={badge.filterGroup}
+                  >
+                    <Tag size={8} />
+                    {badge.label}
+                  </span>
+                ))}
+              </div>
+              <div className="text-[12px]" style={{ color: theme.labelColor }}>
+                {card.type || "Uncategorized"} · {card.actionCost || "No action cost"}
               </div>
             </div>
             {isUseable && (
               <button
                 onClick={() => handleUseCard(card)}
-                className={`${retro.button} px-4 py-2 text-[13px] flex items-center gap-2 font-semibold transition-all`}
+                className={`${retro.button} px-4 py-2 text-[13px] flex items-center gap-2 font-semibold transition-all shrink-0`}
                 style={{
                   color: justUsed ? "#FFF" : "#4ADE80",
                   background: justUsed ? "#4ADE8033" : "#0A0A28",
@@ -1642,36 +1722,33 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             )}
           </div>
 
-          {/* Tags */}
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {getCardDisplayBadges(card).map((badge) => (
-              <span
-                key={`${card.id}-${badge.tagName}`}
-                className="text-[10px] px-2 py-0.5 flex items-center gap-1"
-                style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                title={badge.filterGroup}
-              >
-                <Tag size={8} />
-                {badge.label}
-              </span>
-            ))}
-          </div>
+          {preferredEntries.length > 0 && (
+            <div className="mb-4">
+              {renderCardFactChips(preferredEntries)}
+            </div>
+          )}
 
-          {/* Divider */}
           <div
             className="h-[1px] w-full mb-4"
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
 
-          {/* Effect */}
-          <div className="mb-4">
-            <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-              EFFECT
+          {descriptionText && (
+            <div className={`${retro.raised} bg-[#10103A] p-4 mb-4`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
+              <div className="text-[11px] mb-2 uppercase tracking-[0.08em]" style={{ color: "#7DA1FF", fontWeight: 700 }}>
+                Description
+              </div>
+              <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={13} />
+            </div>
+          )}
+
+          <div className={`${retro.raised} bg-[#0E0E35] p-4 mb-4`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
+            <div className="text-[11px] mb-2 uppercase tracking-[0.08em]" style={{ color: "#5A7ABB", fontWeight: 700 }}>
+              Effect
             </div>
             <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
           </div>
 
-          {/* Timed Effect indicator */}
           {card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
             <div
               className="mb-4 p-3 flex items-start gap-2 text-[11px]"
@@ -1687,7 +1764,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   </span>
                   {" "}to your Status Effects
                   {card.customFields["Timed Effect::Duration"] && (
-                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: "#4ADE80" }}>{card.customFields["Timed Effect::Duration"]}</span> turn(s)</div>
+                    <span> for <span style={{ color: "#4ADE80" }}>{card.customFields["Timed Effect::Duration"]}</span> turn(s)</span>
                   )}
                   .
                 </div>
@@ -1695,8 +1772,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </div>
           )}
 
-          {/* Custom Fields */}
-          {renderCustomFields(card.customFields)}
+          {extraEntries.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] uppercase tracking-[0.08em]" style={S_MUTED}>
+                Additional Info
+              </div>
+              {renderCardFactChips(extraEntries, true)}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -3989,24 +4072,53 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {filteredCards.map((card) => (
+                          {filteredCards.map((card) => {
+                            const factEntries = getCardFactEntries(card).preferredEntries.slice(0, 4);
+                            return (
                             <button
                               key={card.id}
                               onClick={() => setSelectedCard(card)}
                               className={`${retro.raised} p-4 text-left hover:brightness-110 transition-colors cursor-pointer`}
                               style={{ background: theme.cardBg }}
                             >
-                              <div className="text-[14px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                                {card.name}
+                              <div className="flex items-start justify-between gap-3 mb-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[15px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+                                    {card.name}
+                                  </div>
+                                  <div className="text-[10px]" style={{ color: theme.labelColor }}>
+                                    {card.type || "Uncategorized"} · {card.actionCost || "No action cost"}
+                                  </div>
+                                </div>
+                                <div className="flex flex-col items-end gap-1 shrink-0">
+                                  {card.customFields["Level"] && (
+                                    <span className="text-[9px] px-2 py-0.5" style={{ background: "#2A2038", color: "#FFD700", border: "1px solid #FFD70033" }}>
+                                      Lv.{card.customFields["Level"]}
+                                    </span>
+                                  )}
+                                  {card.customFields["Source Type"] && (
+                                    <span className="text-[9px] px-2 py-0.5" style={{ background: "#211C38", color: "#B99AFF", border: "1px solid #9A7ABB33" }}>
+                                      {card.customFields["Source Type"]}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                              <div className="text-[11px] mb-1" style={{ color: theme.labelColor }}>
-                                {card.type} · {card.actionCost}
-                                {card.customFields["Level"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></span>}
-                                {card.customFields["Source Type"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span></span>}
+
+                              {factEntries.length > 0 && (
+                                <div className="grid grid-cols-2 gap-1.5 mb-3">
+                                  {factEntries.map(([label, value]) => (
+                                    <div key={`${card.id}-${label}`} className={`${retro.sunken} px-2 py-1`} style={{ background: "#0C0C2E" }}>
+                                      <div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>{label}</div>
+                                      <div className="text-[10px] leading-snug" style={{ color: theme.textColor, fontWeight: 600 }}>{value}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div className="text-[12px] leading-[1.45] mb-3" style={{ color: theme.textColor }}>
+                                {renderCardPreviewSummary(card, 140)}
                               </div>
-                              <div className="text-[12px] mb-3" style={{ color: theme.textColor }}>
-                                {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 100 ? plain.slice(0, 100) + "..." : plain; })()}
-                              </div>
+
                               <div className="flex flex-wrap gap-1">
                                 {getCardDisplayBadges(card).map((badge) => (
                                   <span
@@ -4020,7 +4132,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 ))}
                               </div>
                             </button>
-                          ))}
+                          )})}
                         </div>
                       )}
                     </div>
@@ -4032,12 +4144,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               {/* ═══ LEVEL ABILITIES SUB-TAB ═══ */}
               {cardsSubTab === "levelabilities" && (() => {
                 const laFilteredCards = playerCards.filter((card) => {
+                  const badgeText = getCardDisplayBadges(card).flatMap((badge) => [badge.label, badge.filterGroup]).join(" ").toLowerCase();
                   const matchesSearch = laSearch === "" ||
                     card.name.toLowerCase().includes(laSearch.toLowerCase()) ||
                     card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(laSearch.toLowerCase()) ||
                     badgeText.includes(laSearch.toLowerCase()) ||
                     card.tags.some((t) => t.toLowerCase().includes(laSearch.toLowerCase()));
-                  const badgeText = getCardDisplayBadges(card).flatMap((badge) => [badge.label, badge.filterGroup]).join(" ").toLowerCase();
                   const matchesTags = laActiveTags.length === 0 || laActiveTags.every((t) => cardMatchesTagFilterGroup(card, cardTags, t));
                   return matchesSearch && matchesTags;
                 });
@@ -4192,19 +4304,40 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                   <div className="text-[10px] py-2" style={S_MUTED}>No cards assigned to this level yet.</div>
                                 ) : (
                                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {levelCards.map(card => (
+                                    {levelCards.map(card => {
+                                      const factEntries = getCardFactEntries(card).preferredEntries.slice(0, 2);
+                                      return (
                                       <button
                                         key={card.id}
                                         onClick={() => setLaSelectedCard(card)}
                                         className={`${retro.raised} p-3 text-left hover:brightness-110 transition-colors cursor-pointer`}
                                         style={{ background: theme.cardBg }}
                                       >
-                                        <div className="text-[13px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</div>
-                                        <div className="text-[10px] mb-1" style={{ color: theme.labelColor }}>
-                                          {card.type} · {card.actionCost}
+                                        <div className="flex items-start justify-between gap-2 mb-1.5">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-[13px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</div>
+                                            <div className="text-[10px]" style={{ color: theme.labelColor }}>
+                                              {card.type || "Uncategorized"} · {card.actionCost || "No action cost"}
+                                            </div>
+                                          </div>
+                                          {card.customFields["Level"] && (
+                                            <span className="text-[8px] px-1.5 py-0.5 shrink-0" style={{ background: "#2A2038", color: "#FFD700", border: "1px solid #FFD70033" }}>
+                                              Lv.{card.customFields["Level"]}
+                                            </span>
+                                          )}
                                         </div>
-                                        <div className="text-[11px] mb-2" style={{ color: theme.textColor }}>
-                                          {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 80 ? plain.slice(0, 80) + "..." : plain; })()}
+                                        {factEntries.length > 0 && (
+                                          <div className="grid grid-cols-2 gap-1 mb-2">
+                                            {factEntries.map(([label, value]) => (
+                                              <div key={`${card.id}-${label}`} className={`${retro.sunken} px-1.5 py-1`} style={{ background: "#0C0C2E" }}>
+                                                <div className="text-[7px] uppercase tracking-[0.06em]" style={S_MUTED}>{label}</div>
+                                                <div className="text-[9px] leading-snug" style={{ color: theme.textColor, fontWeight: 600 }}>{value}</div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                        <div className="text-[11px] leading-[1.4] mb-2.5" style={{ color: theme.textColor }}>
+                                          {renderCardPreviewSummary(card, 90)}
                                         </div>
                                         <div className="flex flex-wrap gap-1">
                                           {getCardDisplayBadges(card).map((badge) => (
@@ -4223,7 +4356,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                           >Remove</button>
                                         )}
                                       </button>
-                                    ))}
+                                    )})}
                                   </div>
                                 )}
                                 {/* DM: Assign card dropdown */}
