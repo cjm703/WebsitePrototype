@@ -1349,6 +1349,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       || key === "__editor_section_blocks";
   };
 
+  const stripHtml = (value: string) =>
+    String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
   const getItemDisplayFacts = (item: ManagedItem) => {
     return Object.entries(item.customFields || {})
       .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(key))
@@ -1377,7 +1380,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   };
 
   const getItemSummaryText = (item: ManagedItem) => {
-    const descriptionText = item.description.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    const descriptionText = stripHtml(item.description || "");
     if (descriptionText) return descriptionText;
 
     const firstEffectKey = Object.keys(item.customFields || {})
@@ -1385,7 +1388,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       .sort((a, b) => parseInt((a.split("::")[1] || "0"), 10) - parseInt((b.split("::")[1] || "0"), 10))[0];
 
     if (firstEffectKey) {
-      return String(item.customFields[firstEffectKey] || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      return stripHtml(String(item.customFields[firstEffectKey] || ""));
     }
 
     const firstFact = getItemDisplayFacts(item)[0];
