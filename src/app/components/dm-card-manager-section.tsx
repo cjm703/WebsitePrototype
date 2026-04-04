@@ -105,6 +105,17 @@ interface CardSectionBlock {
 
 const EDITOR_MECHANICS_KEY = "__editor_mechanics_builder";
 const EDITOR_SECTION_BLOCKS_KEY = "__editor_section_blocks";
+const CARD_TRACKER_BUCKET_KEY = "Card Tracker::Bucket";
+const CARD_TRACKER_NAME_KEY = "Card Tracker::Name";
+const CARD_TRACKER_DURATION_KEY = "Card Tracker::Duration";
+const CARD_TRACKER_POTENCY_KEY = "Card Tracker::Potency";
+const CARD_TRACKER_DAMAGE_KEY = "Card Tracker::Damage";
+const CARD_TRACKER_DESCRIPTION_KEY = "Card Tracker::Effect";
+const CARD_TRACKER_BUFF_TYPE_KEY = "Card Tracker::Buff Type";
+const CARD_TRACKER_BUFF_TARGET_KEY = "Card Tracker::Buff Target";
+const CARD_TRACKER_BUFF_VALUE_KEY = "Card Tracker::Buff Value";
+
+type CardTrackerBucket = "" | "status" | "ability";
 
 const EMPTY_MECHANICS_BUILDER: MechanicsBuilderState = {
   trigger: "",
@@ -278,6 +289,27 @@ function getNodeAssignmentLabel(card: ManagedCard, nodeTrees: NodeTree[]) {
   const node = tree?.nodes.find((n) => n.id === card.nodeId);
   if (!tree) return "Node tree not found";
   return node ? `${tree.name} / ${node.label}` : `${tree.name} / No node selected`;
+}
+
+function getCardTrackerBucket(card: ManagedCard | null): CardTrackerBucket {
+  const raw = (card?.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
+  return raw === "status" || raw === "ability" ? raw : "";
+}
+
+function hasBuiltInCardTracker(card: ManagedCard | null) {
+  return getCardTrackerBucket(card) !== "";
+}
+
+function trackerBucketLabel(bucket: CardTrackerBucket) {
+  if (bucket === "status") return "Status Effect";
+  if (bucket === "ability") return "Ability / Card Effect";
+  return "Not tracked";
+}
+
+function trackerBucketAccent(bucket: CardTrackerBucket) {
+  if (bucket === "status") return "#4ACA6A";
+  if (bucket === "ability") return "#FF8A5A";
+  return "#7A8AAA";
 }
 
 
@@ -1149,6 +1181,8 @@ export function DMCardManagerSection({
     () => selectedNodeTree?.nodes.find((node) => node.id === editingCard?.nodeId) || null,
     [selectedNodeTree, editingCard?.nodeId],
   );
+
+  const currentTrackerBucket = useMemo(() => getCardTrackerBucket(editingCard), [editingCard]);
 
   const editorPanels: { id: CardEditorPanel; label: string; icon: React.ComponentType<{ size?: number }>; accent: string }[] = [
     { id: "preview", label: "Preview", icon: Eye, accent: "#8AB8FF" },
