@@ -1665,6 +1665,114 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setTimeout(() => setUseCardFlash(null), 800);
   };
 
+
+  const stripCardHtml = (value: string) => value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+  const getCardBrowseSummary = (card: ManagedCard, clamp = 140) => {
+    const description = stripCardHtml(card.customFields?.[CARD_DESCRIPTION_KEY] || "");
+    const effect = stripCardHtml(card.effect || "");
+    const summary = description || effect || "No summary available yet.";
+    return summary.length > clamp ? `${summary.slice(0, Math.max(0, clamp - 3)).trim()}...` : summary;
+  };
+
+  const getCardBrowseFacts = (card: ManagedCard, limit = 4) => {
+    const facts = [
+      card.type?.trim(),
+      card.actionCost?.trim(),
+      card.customFields?.["Level"] ? `Lv. ${card.customFields["Level"]}` : "",
+      card.customFields?.["Source Type"]?.trim(),
+      card.customFields?.["Range"]?.trim(),
+      card.customFields?.["Duration"]?.trim(),
+    ].filter(Boolean) as string[];
+
+    const uniqueFacts: string[] = [];
+    facts.forEach((fact) => {
+      if (!uniqueFacts.includes(fact)) uniqueFacts.push(fact);
+    });
+    return uniqueFacts.slice(0, limit);
+  };
+
+  const renderCardBrowseTile = (
+    card: ManagedCard,
+    onClick: () => void,
+    opts?: { compact?: boolean; summaryClamp?: number; factLimit?: number; showOpenHint?: boolean },
+  ) => {
+    const compact = !!opts?.compact;
+    const summary = getCardBrowseSummary(card, opts?.summaryClamp ?? (compact ? 90 : 140));
+    const facts = getCardBrowseFacts(card, opts?.factLimit ?? (compact ? 2 : 4));
+    const visibleTags = card.tags.filter((tag) => !tag.startsWith("__")).slice(0, compact ? 3 : 5);
+    const hiddenTagCount = Math.max(0, card.tags.filter((tag) => !tag.startsWith("__")).length - visibleTags.length);
+
+    return (
+      <button
+        key={card.id}
+        onClick={onClick}
+        className={`${retro.raised} w-full text-left p-0 overflow-hidden transition-all hover:brightness-110`}
+        style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}
+      >
+        <div
+          className="px-3 py-2.5"
+          style={{
+            background: `linear-gradient(180deg, ${firstColor(theme.accentColor)}12 0%, transparent 100%)`,
+            borderBottom: `1px solid ${bc(theme.panelBorder)}`,
+          }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[13px] leading-tight truncate" style={{ ...ts(theme.accentColor), fontWeight: 700 }}>
+                {card.name || "Untitled Card"}
+              </div>
+              <div className="text-[10px] mt-1 flex flex-wrap items-center gap-1.5" style={S_MUTED}>
+                {facts.length > 0 ? facts.map((fact) => (
+                  <span
+                    key={fact}
+                    className="px-1.5 py-0.5"
+                    style={{ background: "#0B0B2E", border: `1px solid ${bc(theme.panelBorder)}`, color: theme.labelColor }}
+                  >
+                    {fact}
+                  </span>
+                )) : <span>No quick facts yet</span>}
+              </div>
+            </div>
+            {opts?.showOpenHint !== false && (
+              <div className="shrink-0 text-[9px] px-2 py-0.5" style={{ color: firstColor(theme.accentColor), border: `1px solid ${firstColor(theme.accentColor)}33`, background: `${firstColor(theme.accentColor)}10` }}>
+                Open
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className={`px-3 ${compact ? "py-2.5" : "py-3"}`}>
+          <div className="text-[11px] leading-5 min-h-[44px]" style={{ color: theme.textColor }}>
+            {summary}
+          </div>
+
+          {(visibleTags.length > 0 || hiddenTagCount > 0) && (
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {visibleTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="text-[9px] px-1.5 py-0.5"
+                  style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                >
+                  {tag}
+                </span>
+              ))}
+              {hiddenTagCount > 0 && (
+                <span
+                  className="text-[9px] px-1.5 py-0.5"
+                  style={{ background: "#0B0B2E", color: theme.labelColor, border: `1px solid ${bc(theme.panelBorder)}` }}
+                >
+                  +{hiddenTagCount} more
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </button>
+    );
+  };
+
   // --- Card Detail Screen ---
   const renderCardDetail = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
