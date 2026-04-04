@@ -49,17 +49,6 @@ interface SourceUsageEntry { id: string; cardName: string; sourceType: string; a
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
 
-const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
-const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
-const CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
-const CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
-const CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
-const CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
-const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
-const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
-const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
-const CARD_DESCRIPTION_KEY = "Description";
-
 
 
 // ========================
@@ -202,22 +191,6 @@ function stepTE(potency: string): string {
   const next = sign === "+" ? num + step : num - step;
   const stepStr = step !== 1 ? String(step) : "";
   return `${next}${sign}TE${stepStr}`;
-}
-
-function getBuiltInCardTrackerBucket(card: ManagedCard): "status" | "ability" | "" {
-  const bucket = (card.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
-  return bucket === "status" || bucket === "ability" ? bucket : "";
-}
-
-function hasBuiltInCardTracker(card: ManagedCard): boolean {
-  return !!(
-    getBuiltInCardTrackerBucket(card)
-    || (card.customFields?.[CARD_TRACKER_NAME_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DURATION_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || "").trim()
-  );
 }
 
 type StatusTag = TagDefinition;
@@ -1370,34 +1343,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
   SLOT_LABELS["ring"] = "Ring (any)";
 
-  const isPlayerHiddenCustomFieldKey = (key: string) => {
-    return key.startsWith("__editor_")
-      || key === "__editor_mechanics_builder"
-      || key === "__editor_section_blocks";
-  };
-
-  const renderCustomFields = (
-    customFields: Record<string, string>,
-    options?: { compact?: boolean; omitKeys?: string[] },
-  ) => {
-    const omitted = new Set(options?.omitKeys || []);
-    const entries = Object.entries(customFields).filter(
-      ([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k) && !omitted.has(k),
-    );
+  const renderCustomFields = (customFields: Record<string, string>) => {
+    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::"));
     if (entries.length === 0) return null;
-
-    const compact = !!options?.compact;
-    const gridClass = compact
-      ? "grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-1.5 mt-3"
-      : "grid grid-cols-2 md:grid-cols-3 gap-3 mt-3";
-    const boxClass = compact
-      ? `${retro.raised} bg-[#0E0E35] px-2 py-1.5`
-      : `${retro.raised} bg-[#0E0E35] p-3`;
-    const labelClass = compact ? "text-[8px] mb-0.5 leading-none uppercase tracking-[0.04em]" : "text-[9px] mb-1";
-    const valueClass = compact ? "text-[10px] leading-tight break-words" : "text-[13px]";
-
     return (
-      <div className={gridClass}>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
         {entries.map(([key, value]) => {
           const [tagName, fieldName] = key.split("::");
           let displayValue = value;
@@ -1411,11 +1361,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             if (!isNaN(n) && n > 0) displayValue = `+${n}`;
           }
           return (
-            <div key={key} className={boxClass}>
-              <div className={labelClass} style={S_MUTED}>
+            <div key={key} className={`${retro.raised} bg-[#0E0E35] p-3`}>
+              <div className="text-[9px] mb-1" style={S_MUTED}>
                 {fieldName || tagName}
               </div>
-              <div className={valueClass} style={{ color: theme.textColor }}>
+              <div className="text-[13px]" style={{ color: theme.textColor }}>
                 {displayValue}
               </div>
             </div>
@@ -1426,91 +1376,120 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   };
 
   // --- Item Detail Screen ---
-  const renderItemDetail = (item: ManagedItem) => (
-    <div className="space-y-4">
-      <button
-        onClick={() => setSelectedItem(null)}
-        className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
-        style={ts(theme.accentColor)}
-      >
-        <ArrowLeft size={14} />
-        BACK TO INVENTORY
-      </button>
+  const renderItemDetail = (item: ManagedItem) => {
+    const descriptionText = stripHtml(item.description || "");
+    const effectKeys = Object.keys(item.customFields ?? {})
+      .filter((key) => key.startsWith("Effect::"))
+      .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
+      .filter((key) => item.customFields[key]?.trim());
+    const facts = getItemDisplayFacts(item);
+    const primaryFacts = facts.slice(0, 6);
+    const secondaryFacts = facts.slice(6);
 
-      <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-              {item.name}
-            </h2>
-            <div className="text-[12px] flex items-center gap-2" style={S_LABEL}>
-              {item.type}
-              {item.rarity && (
-                <span
-                  className="px-2 py-0.5 text-[10px]"
-                  style={{
-                    background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                    color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                    border: `1px solid ${item.rarity === "Rare" ? "#6A3A9B" : item.rarity === "Uncommon" ? "#3A7A4B" : "#3A3A6B"}`,
-                  }}
+    return (
+      <div className="space-y-4">
+        <button
+          onClick={() => setSelectedItem(null)}
+          className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
+          style={ts(theme.accentColor)}
+        >
+          <ArrowLeft size={14} />
+          BACK TO INVENTORY
+        </button>
+
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+          <div className="mb-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <h2 className="text-[20px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+                    {item.name}
+                  </h2>
+                  {item.rarity && (
+                    <span
+                      className="px-2 py-0.5 text-[10px]"
+                      style={{
+                        background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
+                        color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
+                        border: `1px solid ${item.rarity === "Rare" ? "#6A3A9B" : item.rarity === "Uncommon" ? "#3A7A4B" : "#3A3A6B"}`,
+                      }}
+                    >
+                      {item.rarity}
+                    </span>
+                  )}
+                  {item.locked && (
+                    <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
+                      <Lock size={8} /> DM LOCKED
+                    </span>
+                  )}
+                </div>
+                <div className="text-[12px]" style={S_LABEL}>
+                  {item.type || "No type"} • {item.assignedTo.includes("all") ? "Shared item" : "Owned item"}
+                </div>
+              </div>
+              {canPlayerEdit(item) && (
+                <button
+                  onClick={() => { setSelectedItem(null); setInventorySubTab("general"); startEditItem(item); }}
+                  className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5 shrink-0`}
+                  style={{ color: "#5A9AFF" }}
                 >
-                  {item.rarity}
-                </span>
-              )}
-              {item.locked && (
-                <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
-                  <Lock size={8} /> DM LOCKED
-                </span>
+                  <Edit size={12} /> Edit Item
+                </button>
               )}
             </div>
+
+            {item.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {item.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="text-[10px] px-2 py-0.5 flex items-center gap-1"
+                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                  >
+                    <Tag size={8} />
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {primaryFacts.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-3">
+                {primaryFacts.map((fact) => (
+                  <div
+                    key={fact.key}
+                    className={`${retro.raised} px-2.5 py-2`}
+                    style={{ background: "#10103A", border: `1px solid ${bc(theme.panelBorder)}` }}
+                  >
+                    <div className="text-[8px] mb-1 uppercase tracking-[0.06em]" style={S_MUTED}>
+                      {fact.label}
+                    </div>
+                    <div className="text-[11px] leading-tight break-words" style={{ color: theme.textColor }}>
+                      {fact.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          {canPlayerEdit(item) && (
-            <button
-              onClick={() => { setSelectedItem(null); setInventorySubTab("general"); startEditItem(item); }}
-              className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5 shrink-0`}
-              style={{ color: "#5A9AFF" }}
-            >
-              <Edit size={12} /> Edit Item
-            </button>
+
+          <div
+            className="h-[1px] w-full mb-4"
+            style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
+          />
+
+          {descriptionText && (
+            <div className="mb-4">
+              <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
+                DESCRIPTION
+              </div>
+              <div className={`${retro.sunken} p-4`} style={{ background: theme.inputBg }}>
+                <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
+              </div>
+            </div>
           )}
-        </div>
 
-        {/* Tags */}
-        <div className="flex flex-wrap gap-1.5 mb-4">
-          {item.tags.map((tag) => (
-            <span
-              key={tag}
-              className="text-[10px] px-2 py-0.5 flex items-center gap-1"
-              style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-            >
-              <Tag size={8} />
-              {tag}
-            </span>
-          ))}
-        </div>
-
-        {/* Divider */}
-        <div
-          className="h-[1px] w-full mb-4"
-          style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
-        />
-
-        {/* Description */}
-        <div className="mb-4">
-          <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-            DESCRIPTION
-          </div>
-          <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
-        </div>
-
-        {/* Effect areas */}
-        {item.tags.includes("Effect") && (() => {
-          const effectKeys = Object.keys(item.customFields ?? {})
-            .filter(k => k.startsWith("Effect::"))
-            .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-            .filter(k => item.customFields[k]?.trim());
-          if (effectKeys.length === 0) return null;
-          return (
+          {effectKeys.length > 0 && (
             <div className="mb-4">
               <div className="text-[11px] mb-2" style={{ color: "#C4A0FF", fontWeight: 600 }}>
                 <Sparkles size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
@@ -1529,14 +1508,31 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 ))}
               </div>
             </div>
-          );
-        })()}
+          )}
 
-        {/* Custom Fields */}
-        {renderCustomFields(item.customFields)}
+          {secondaryFacts.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[11px] mb-2" style={{ color: "#6A86C8", fontWeight: 600 }}>
+                ITEM DETAILS
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {secondaryFacts.map((fact) => (
+                  <div
+                    key={fact.key}
+                    className={`${retro.raised} px-2.5 py-1.5`}
+                    style={{ background: "#0E0E35", border: `1px solid ${bc(theme.panelBorder)}` }}
+                  >
+                    <span className="text-[9px]" style={S_MUTED}>{fact.label}:</span>{" "}
+                    <span className="text-[10px]" style={{ color: theme.textColor }}>{fact.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ── Use Card (use-able tag) ──
   const [useCardFlash, setUseCardFlash] = useState<string | null>(null);
@@ -1547,18 +1543,34 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     const isBuff = card.tags.some((t) => t.toLowerCase() === "buff");
     const isTimedEffect = card.tags.some((t) => t.toLowerCase() === "timed effect");
-    const builtInTrackerBucket = getBuiltInCardTrackerBucket(card);
 
-    if (hasBuiltInCardTracker(card) && builtInTrackerBucket) {
-      const effectName = card.customFields[CARD_TRACKER_NAME_KEY] || card.name;
-      const duration = card.customFields[CARD_TRACKER_DURATION_KEY] || "1";
-      const potency = card.customFields[CARD_TRACKER_POTENCY_KEY] || "";
-      const damage = card.customFields[CARD_TRACKER_DAMAGE_KEY] || "";
-      const description =
-        card.customFields[CARD_TRACKER_DESCRIPTION_KEY]
-        || card.customFields[CARD_DESCRIPTION_KEY]?.replace(/<[^>]*>/g, "")
-        || card.effect.replace(/<[^>]*>/g, "");
+    if (isBuff) {
+      // Extract Buff fields from customFields
+      const duration = card.customFields["Buff::Duration"] || "1";
+      const stat = card.customFields["Buff::Stat"] || card.name;
+      const amount = card.customFields["Buff::Amount"] || "";
 
+      const newEffect: StatusEffectRow = {
+        id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: stat || card.name,
+        potency: amount,
+        duration: duration,
+        damage: "",
+        effect: `From card: ${card.name}`,
+      };
+
+      setStatusEffects((prev) => [...prev, newEffect]);
+    }
+
+    if (isTimedEffect) {
+      // Extract Timed Effect fields from customFields
+      const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
+      const duration = card.customFields["Timed Effect::Duration"] || "1";
+      const potency = card.customFields["Timed Effect::Potency"] || "";
+      const damage = card.customFields["Timed Effect::Damage"] || "";
+      const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
+
+      // Auto-roll damage on use if it contains dice notation
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
         const diceGroups = parseDiceGroups(damage, potency);
@@ -1567,94 +1579,37 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         const result = rollDiceExpression(damage, potency);
         if (result) {
           triggerDiceAnimation(parseDiceGroups(damage, potency));
-          initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
+          initialRoll = result.breakdown
+            ? `⚔ ${result.total} (${result.breakdown})`
+            : `⚔ ${result.total}`;
         }
       } else {
         playSuccessChime();
       }
 
-      const buffType = (card.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || "") as StatusEffectRow["buffType"];
-      const buffTarget = card.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || "";
-      const buffValue = card.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || "";
+      // Extract optional buff configuration from card
+      const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
+      const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
+      const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
+
+      let targetType: StatusEffectRow["targetType"];
+      if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
+      else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
 
       const newEffect: StatusEffectRow = {
         id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: effectName,
-        potency,
-        duration,
-        damage,
+        potency: potency,
+        duration: duration,
+        damage: damage,
         effect: description || `From card: ${card.name}`,
         lastRoll: initialRoll,
-        ...(builtInTrackerBucket === "status" && buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-        targetType: builtInTrackerBucket === "ability" ? "enemy" : "self",
+        ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+        ...(targetType ? { targetType } : {}),
       };
 
       setStatusEffects((prev) => [...prev, newEffect]);
       setLastAddedStatusEffect(effectName);
-    } else {
-      if (isBuff) {
-        const duration = card.customFields["Buff::Duration"] || "1";
-        const stat = card.customFields["Buff::Stat"] || card.name;
-        const amount = card.customFields["Buff::Amount"] || "";
-
-        const newEffect: StatusEffectRow = {
-          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: stat || card.name,
-          potency: amount,
-          duration: duration,
-          damage: "",
-          effect: `From card: ${card.name}`,
-        };
-
-        setStatusEffects((prev) => [...prev, newEffect]);
-      }
-
-      if (isTimedEffect) {
-        const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
-        const duration = card.customFields["Timed Effect::Duration"] || "1";
-        const potency = card.customFields["Timed Effect::Potency"] || "";
-        const damage = card.customFields["Timed Effect::Damage"] || "";
-        const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
-
-        let initialRoll: string | undefined;
-        if (damage && hasDiceNotation(damage)) {
-          const diceGroups = parseDiceGroups(damage, potency);
-          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
-          playDiceRoll(totalDice);
-          const result = rollDiceExpression(damage, potency);
-          if (result) {
-            triggerDiceAnimation(parseDiceGroups(damage, potency));
-            initialRoll = result.breakdown
-              ? `⚔ ${result.total} (${result.breakdown})`
-              : `⚔ ${result.total}`;
-          }
-        } else {
-          playSuccessChime();
-        }
-
-        const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
-        const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
-        const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
-
-        let targetType: StatusEffectRow["targetType"];
-        if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
-        else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
-
-        const newEffect: StatusEffectRow = {
-          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: effectName,
-          potency: potency,
-          duration: duration,
-          damage: damage,
-          effect: description || `From card: ${card.name}`,
-          lastRoll: initialRoll,
-          ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-          ...(targetType ? { targetType } : {}),
-        };
-
-        setStatusEffects((prev) => [...prev, newEffect]);
-        setLastAddedStatusEffect(effectName);
-      }
     }
 
     // ── Source usage tracking ──
@@ -1682,119 +1637,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setTimeout(() => setUseCardFlash(null), 800);
   };
 
-
-  const stripCardHtml = (value: string) => value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-
-  const getCardBrowseSummary = (card: ManagedCard, clamp = 140) => {
-    const description = stripCardHtml(card.customFields?.[CARD_DESCRIPTION_KEY] || "");
-    const effect = stripCardHtml(card.effect || "");
-    const summary = description || effect || "No summary available yet.";
-    return summary.length > clamp ? `${summary.slice(0, Math.max(0, clamp - 3)).trim()}...` : summary;
-  };
-
-  const getCardBrowseFacts = (card: ManagedCard, limit = 4) => {
-    const facts = [
-      card.type?.trim(),
-      card.actionCost?.trim(),
-      card.customFields?.["Level"] ? `Lv. ${card.customFields["Level"]}` : "",
-      card.customFields?.["Source Type"]?.trim(),
-      card.customFields?.["Range"]?.trim(),
-      card.customFields?.["Duration"]?.trim(),
-    ].filter(Boolean) as string[];
-
-    const uniqueFacts: string[] = [];
-    facts.forEach((fact) => {
-      if (!uniqueFacts.includes(fact)) uniqueFacts.push(fact);
-    });
-    return uniqueFacts.slice(0, limit);
-  };
-
-  const renderCardBrowseTile = (
-    card: ManagedCard,
-    onClick: () => void,
-    opts?: { compact?: boolean; summaryClamp?: number; factLimit?: number; showOpenHint?: boolean },
-  ) => {
-    const compact = !!opts?.compact;
-    const summary = getCardBrowseSummary(card, opts?.summaryClamp ?? (compact ? 90 : 140));
-    const facts = getCardBrowseFacts(card, opts?.factLimit ?? (compact ? 2 : 4));
-    const visibleTags = card.tags.filter((tag) => !tag.startsWith("__")).slice(0, compact ? 3 : 5);
-    const hiddenTagCount = Math.max(0, card.tags.filter((tag) => !tag.startsWith("__")).length - visibleTags.length);
-
-    return (
-      <button
-        key={card.id}
-        onClick={onClick}
-        className={`${retro.raised} w-full text-left p-0 overflow-hidden transition-all hover:brightness-110`}
-        style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}
-      >
-        <div
-          className="px-3 py-2.5"
-          style={{
-            background: `linear-gradient(180deg, ${firstColor(theme.accentColor)}12 0%, transparent 100%)`,
-            borderBottom: `1px solid ${bc(theme.panelBorder)}`,
-          }}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-[13px] leading-tight truncate" style={{ ...ts(theme.accentColor), fontWeight: 700 }}>
-                {card.name || "Untitled Card"}
-              </div>
-              <div className="text-[10px] mt-1 flex flex-wrap items-center gap-1.5" style={S_MUTED}>
-                {facts.length > 0 ? facts.map((fact) => (
-                  <span
-                    key={fact}
-                    className="px-1.5 py-0.5"
-                    style={{ background: "#0B0B2E", border: `1px solid ${bc(theme.panelBorder)}`, color: theme.labelColor }}
-                  >
-                    {fact}
-                  </span>
-                )) : <span>No quick facts yet</span>}
-              </div>
-            </div>
-            {opts?.showOpenHint !== false && (
-              <div className="shrink-0 text-[9px] px-2 py-0.5" style={{ color: firstColor(theme.accentColor), border: `1px solid ${firstColor(theme.accentColor)}33`, background: `${firstColor(theme.accentColor)}10` }}>
-                Open
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className={`px-3 ${compact ? "py-2.5" : "py-3"}`}>
-          <div className="text-[11px] leading-5 min-h-[44px]" style={{ color: theme.textColor }}>
-            {summary}
-          </div>
-
-          {(visibleTags.length > 0 || hiddenTagCount > 0) && (
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {visibleTags.map((tag) => (
-                <span
-                  key={tag}
-                  className="text-[9px] px-1.5 py-0.5"
-                  style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                >
-                  {tag}
-                </span>
-              ))}
-              {hiddenTagCount > 0 && (
-                <span
-                  className="text-[9px] px-1.5 py-0.5"
-                  style={{ background: "#0B0B2E", color: theme.labelColor, border: `1px solid ${bc(theme.panelBorder)}` }}
-                >
-                  +{hiddenTagCount} more
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </button>
-    );
-  };
-
   // --- Card Detail Screen ---
   const renderCardDetail = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
-    const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
 
     return (
       <div className="space-y-4">
@@ -1854,57 +1700,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
 
-          {/* Description */}
-          {descriptionText && (
-            <div className="mb-4">
-              <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-                DESCRIPTION
-              </div>
-              <div className={`${retro.sunken} p-4`} style={{ background: theme.inputBg }}>
-                <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
-              </div>
-            </div>
-          )}
-
           {/* Effect */}
           <div className="mb-4">
             <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
               EFFECT
             </div>
-            <div className={`${retro.sunken} p-4`} style={{ background: theme.inputBg }}>
-              <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
-            </div>
+            <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
           </div>
 
-          {/* Built-in tracker indicator */}
-          {hasBuiltInCardTracker(card) && card.tags.some((t) => t.toLowerCase() === "use-able") ? (
-            <div
-              className="mb-4 p-3 flex items-start gap-2 text-[11px]"
-              style={{
-                background: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A12" : "#4ADE8012",
-                border: `1px solid ${getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A33" : "#4ADE8033"}`,
-                color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80",
-              }}
-            >
-              <Zap size={13} className="shrink-0 mt-0.5" />
-              <div>
-                <div style={{ fontWeight: 600 }}>
-                  {getBuiltInCardTrackerBucket(card) === "ability" ? "ABILITY / CARD EFFECT TRACKER" : "STATUS EFFECT TRACKER"}
-                </div>
-                <div style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5AAA" : "#4ADE80AA", marginTop: 2 }}>
-                  Using this card adds{" "}
-                  <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>
-                    {card.customFields[CARD_TRACKER_NAME_KEY] || card.name}
-                  </span>
-                  {" "}to {getBuiltInCardTrackerBucket(card) === "ability" ? "Abilities / Card Effects" : "Status Effects"}
-                  {card.customFields[CARD_TRACKER_DURATION_KEY] && (
-                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>{card.customFields[CARD_TRACKER_DURATION_KEY]}</span> turn(s)</div>
-                  )}
-                  .
-                </div>
-              </div>
-            </div>
-          ) : card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
+          {/* Timed Effect indicator */}
+          {card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
             <div
               className="mb-4 p-3 flex items-start gap-2 text-[11px]"
               style={{ background: "#4ADE8012", border: "1px solid #4ADE8033", color: "#4ADE80" }}
@@ -1928,7 +1733,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           )}
 
           {/* Custom Fields */}
-          {renderCustomFields(card.customFields, { compact: true, omitKeys: [CARD_DESCRIPTION_KEY] })}
+          {renderCustomFields(card.customFields)}
         </div>
       </div>
     );
@@ -1943,21 +1748,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     onToggleTag: (tag: string) => void,
     placeholder: string
   ) => (
-    <div className={`${retro.raised} p-3 mb-4 space-y-3`} style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-[10px] uppercase tracking-[0.08em]" style={S_MUTED}>
-          Browse Filters
-        </div>
-        {(searchValue || activeTags.length > 0) && (
-          <div className="text-[9px]" style={S_MUTED}>
-            {searchValue ? "Search active" : ""}
-            {searchValue && activeTags.length > 0 ? " • " : ""}
-            {activeTags.length > 0 ? `${activeTags.length} tag filter${activeTags.length !== 1 ? "s" : ""}` : ""}
-          </div>
-        )}
-      </div>
-
-      <div className={`${retro.sunken} bg-[#0C0C2E] flex items-center`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
+    <div className="space-y-3 mb-4">
+      {/* Search Input */}
+      <div className={`${retro.sunken} bg-[#0C0C2E] flex items-center`}>
         <Search size={14} className="ml-3 shrink-0" style={{ color: "#3A5A9B" }} />
         <input
           type="text"
@@ -1974,24 +1767,22 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         )}
       </div>
 
+      {/* Tag Filters */}
       {allTags.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-[10px]" style={S_MUTED}>
-            <Tag size={11} />
-            Quick Tag Filters
-            {activeTags.length > 0 && (
-              <button
-                onClick={() => activeTags.forEach((t) => onToggleTag(t))}
-                className="text-[9px] hover:opacity-80 px-1.5 py-0.5 ml-1"
-                style={{ ...S_RED, border: "1px solid rgba(255,90,90,0.18)" }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
+        <div className="flex items-start gap-2">
+          <Tag size={12} className="shrink-0 mt-1" style={S_MUTED} />
           <div className="flex flex-wrap gap-1.5">
             {allTags.map((tag) => renderTagPill(tag, activeTags.includes(tag), () => onToggleTag(tag)))}
           </div>
+          {activeTags.length > 0 && (
+            <button
+              onClick={() => activeTags.forEach((t) => onToggleTag(t))}
+              className="text-[9px] shrink-0 hover:opacity-80 px-1"
+              style={S_RED}
+            >
+              Clear
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -2942,73 +2733,109 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             const ActiveIcon = active.icon;
 
             // ── Render an item row (reusable) ──
-            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => (
-              <div key={item.id} className="flex items-center border-b border-[#1A1A4B] last:border-b-0">
-                <button
-                  onClick={onClick}
-                  className="flex-1 text-left py-2.5 px-3 hover:bg-[#0E0E35] transition-colors cursor-pointer"
+            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => {
+              const facts = getItemDisplayFacts(item).slice(0, 3);
+              const summaryText = getItemSummaryText(item);
+              return (
+                <div
+                  key={item.id}
+                  className={`${retro.raised} p-3 mb-2 last:mb-0`}
+                  style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[13px] inline-flex items-center gap-1.5" style={{ color: theme.textColor }}>
-                      {item.name}
-                      {item.id.startsWith("pi-") && (
-                        <span className="text-[8px] px-1 py-px" style={{ background: "rgba(74,192,255,0.1)", color: "#4AC0FF", border: "1px solid rgba(74,192,255,0.25)" }}>PLAYER</span>
+                  <div className="flex items-start gap-3">
+                    <button
+                      onClick={onClick}
+                      className="flex-1 text-left min-w-0"
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                            <span className="text-[13px]" style={{ color: theme.textColor, fontWeight: 600 }}>
+                              {item.name}
+                            </span>
+                            {item.id.startsWith("pi-") && (
+                              <span className="text-[8px] px-1 py-px" style={{ background: "rgba(74,192,255,0.1)", color: "#4AC0FF", border: "1px solid rgba(74,192,255,0.25)" }}>PLAYER</span>
+                            )}
+                            {item.locked && (
+                              <span className="text-[8px] px-1 py-px inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
+                                <Lock size={7} /> LOCKED
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px]" style={{ color: theme.labelColor }}>
+                            {item.type || "No type"} • {item.assignedTo.includes("all") ? "Shared" : "Owned"}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {item.rarity && (
+                            <span
+                              className="text-[9px] px-1.5 py-0.5"
+                              style={{
+                                background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
+                                color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
+                              }}
+                            >
+                              {item.rarity}
+                            </span>
+                          )}
+                          <ChevronLeft size={12} className="rotate-180" style={S_DIM} />
+                        </div>
+                      </div>
+
+                      {facts.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {facts.map((fact) => (
+                            <span
+                              key={fact.key}
+                              className="text-[9px] px-1.5 py-0.5"
+                              style={{ background: "#0F1030", color: theme.textColor, border: `1px solid ${bc(theme.panelBorder)}` }}
+                            >
+                              <span style={S_MUTED}>{fact.label}:</span> {fact.value}
+                            </span>
+                          ))}
+                        </div>
                       )}
-                      {item.locked && (
-                        <span className="text-[8px] px-1 py-px inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
-                          <Lock size={7} /> LOCKED
-                        </span>
+
+                      {summaryText && (
+                        <div className="text-[10px] mb-2 leading-relaxed" style={{ color: theme.labelColor }}>
+                          {summaryText.length > 140 ? `${summaryText.slice(0, 137)}...` : summaryText}
+                        </div>
                       )}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {item.rarity && (
-                        <span
-                          className="text-[9px] px-1.5 py-0.5"
-                          style={{
-                            background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                            color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                          }}
-                        >
-                          {item.rarity}
-                        </span>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {item.tags.slice(0, 4).map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[9px] px-1.5 py-0.5"
+                            style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {item.tags.length > 4 && (
+                          <span className="text-[9px]" style={S_MUTED}>
+                            +{item.tags.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      {opts?.onEdit && (
+                        <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
+                          <Edit size={13} style={{ color: "#5A9AFF" }} />
+                        </button>
                       )}
-                      <span className="text-[11px]" style={{ color: theme.labelColor }}>
-                        {item.type}
-                      </span>
-                      <ChevronLeft size={12} className="rotate-180" style={S_DIM} />
+                      {opts?.onDelete && (
+                        <button onClick={opts.onDelete} className="px-2 py-1 hover:opacity-80" title="Delete this item">
+                          <Trash2 size={13} style={S_RED} />
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {item.tags.slice(0, 3).map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-[9px] px-1.5 py-0.5"
-                        style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                    {item.tags.length > 3 && (
-                      <span className="text-[9px]" style={S_MUTED}>
-                        +{item.tags.length - 3}
-                      </span>
-                    )}
-                  </div>
-                </button>
-                <div className="flex items-center gap-0.5 shrink-0 pr-1">
-                  {opts?.onEdit && (
-                    <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
-                      <Edit size={13} style={{ color: "#5A9AFF" }} />
-                    </button>
-                  )}
-                  {opts?.onDelete && (
-                    <button onClick={opts.onDelete} className="px-2 py-1 hover:opacity-80" title="Delete this item">
-                      <Trash2 size={13} style={S_RED} />
-                    </button>
-                  )}
                 </div>
-              </div>
-            );
+              );
+            };
 
             return (
               <div className="space-y-4">
@@ -4235,12 +4062,37 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {filteredCards.map((card) => renderCardBrowseTile(card, () => setSelectedCard(card), {
-                            compact: false,
-                            summaryClamp: 140,
-                            factLimit: 4,
-                            showOpenHint: true,
-                          }))}
+                          {filteredCards.map((card) => (
+                            <button
+                              key={card.id}
+                              onClick={() => setSelectedCard(card)}
+                              className={`${retro.raised} p-4 text-left hover:brightness-110 transition-colors cursor-pointer`}
+                              style={{ background: theme.cardBg }}
+                            >
+                              <div className="text-[14px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+                                {card.name}
+                              </div>
+                              <div className="text-[11px] mb-1" style={{ color: theme.labelColor }}>
+                                {card.type} · {card.actionCost}
+                                {card.customFields["Level"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></span>}
+                                {card.customFields["Source Type"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span></span>}
+                              </div>
+                              <div className="text-[12px] mb-3" style={{ color: theme.textColor }}>
+                                {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 100 ? plain.slice(0, 100) + "..." : plain; })()}
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {card.tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="text-[9px] px-1.5 py-0.5"
+                                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -4411,16 +4263,27 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 ) : (
                                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                     {levelCards.map(card => (
-                                      <div key={card.id} className="relative">
-                                        {renderCardBrowseTile(card, () => setLaSelectedCard(card), {
-                                          compact: true,
-                                          summaryClamp: 90,
-                                          factLimit: 2,
-                                          showOpenHint: false,
-                                        })}
+                                      <button
+                                        key={card.id}
+                                        onClick={() => setLaSelectedCard(card)}
+                                        className={`${retro.raised} p-3 text-left hover:brightness-110 transition-colors cursor-pointer`}
+                                        style={{ background: theme.cardBg }}
+                                      >
+                                        <div className="text-[13px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</div>
+                                        <div className="text-[10px] mb-1" style={{ color: theme.labelColor }}>
+                                          {card.type} · {card.actionCost}
+                                        </div>
+                                        <div className="text-[11px] mb-2" style={{ color: theme.textColor }}>
+                                          {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 80 ? plain.slice(0, 80) + "..." : plain; })()}
+                                        </div>
+                                        <div className="flex flex-wrap gap-1">
+                                          {card.tags.map(tag => (
+                                            <span key={tag} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}>{tag}</span>
+                                          ))}
+                                        </div>
                                         {isDM && (
                                           <button
-                                            className="mt-2 text-[9px] px-1.5 py-0.5 hover:brightness-150 absolute right-3 bottom-3"
+                                            className="mt-2 text-[9px] px-1.5 py-0.5 hover:brightness-150"
                                             style={{ color: "#FF5A5A", background: "#1A080822" }}
                                             onClick={e => {
                                               e.stopPropagation();
@@ -4429,7 +4292,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                             }}
                                           >Remove</button>
                                         )}
-                                      </div>
+                                      </button>
                                     ))}
                                   </div>
                                 )}

@@ -1,14 +1,12 @@
 import React, { useMemo, useRef, useState } from "react";
 import { retro } from "./retro-styles";
 import { RichTextEditor } from "./rich-text-editor";
-import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
-import type { ManagedItem, PlayerData, TagDefinition, TagField } from "./types";
+import type { ManagedItem, PlayerData, TagDefinition } from "./types";
 import {
   DM_DIVIDER,
   DM_EFFECT_HDR,
   DM_EFFECT_LABEL,
   DM_LOCKED_BADGE,
-  DM_PANEL,
   DM_PANEL_ALT,
   DM_PURPLE,
   DM_TAG_BADGE,
@@ -39,7 +37,6 @@ import {
   Sparkles,
   Users,
   Tags,
-  FileText,
   Eye,
   Layers3,
   WandSparkles,
@@ -53,8 +50,9 @@ interface DMItemManagerSectionProps {
   onPersistItems: (next: ManagedItem[]) => Promise<void>;
 }
 
-type ItemEditorPanel = "basics" | "assignment" | "tags" | "fields" | "effects" | "preview";
+type ItemEditorPanel = "basics" | "assignment" | "tags" | "details" | "effects" | "preview";
 type ItemTemplateId = "blank" | "weapon" | "armor" | "consumable" | "source" | "tool" | "effect";
+type ItemDataSection = "equipment" | "attributeBuff" | "skillBuff" | "resourceBuff" | "disadvantage" | "statusEffect" | "source" | "custom";
 
 interface ItemTemplateDef {
   id: ItemTemplateId;
@@ -65,12 +63,12 @@ interface ItemTemplateDef {
   rarity: string;
   tags: string[];
   starterDescription: string;
+  starterEffects?: number;
 }
 
 const inputClass = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`;
 const inputStyle = { color: "#C0D0F0" } as const;
 const labelStyle = { color: "#5A6A8A" } as const;
-const cfKey = (tagName: string, fieldName: string) => `${tagName}::${fieldName}`;
 
 const ITEM_TEMPLATES: ItemTemplateDef[] = [
   {
@@ -142,6 +140,7 @@ const ITEM_TEMPLATES: ItemTemplateDef[] = [
     rarity: "Rare",
     tags: ["Effect"],
     starterDescription: "<p>An item whose most important value is the effect it applies or grants.</p>",
+    starterEffects: 1,
   },
 ];
 
@@ -149,14 +148,50 @@ const EDITOR_PANELS: Array<{ id: ItemEditorPanel; label: string; icon: React.Com
   { id: "basics", label: "Basics", icon: WandSparkles },
   { id: "assignment", label: "Assignment", icon: Users },
   { id: "tags", label: "Tags", icon: Tags },
-  { id: "fields", label: "Fields", icon: Layers3 },
+  { id: "details", label: "Item Data", icon: Layers3 },
   { id: "effects", label: "Effects", icon: Sparkles },
   { id: "preview", label: "Preview", icon: Eye },
 ];
 
 const rarities = ["Common", "Uncommon", "Rare", "Very Rare", "Legendary"];
+const ATTRS = ["STR", "AGI", "CON", "KNOW", "WIS", "WILL"];
+const ALL_SKILLS = ["Athletics", "Grappling", "Acrobatics", "Sleight of Hand", "Stealth", "Endurance", "Shock", "History", "Investigation", "Arcana", "Religion", "Medicine", "Nature", "Technology/Tinkering", "Perception", "Insight", "Survival", "Persuasion", "Charm", "Control", "Clear Mind"];
+const ALL_RESOURCES = ["Max HP", "Armor Class", "Speed", "Movement", "Damage Reduction", "Temp HP", "Max Weight", "Total Wounds", "Max Exhaustion"];
+const EQUIP_SLOTS = [
+  { id: "head", label: "Head" },
+  { id: "face", label: "Face" },
+  { id: "neck", label: "Neck" },
+  { id: "jacket", label: "Jacket / Cloak" },
+  { id: "armor", label: "Armor" },
+  { id: "shirt", label: "Shirt" },
+  { id: "armguards", label: "Armguards" },
+  { id: "gloves", label: "Gloves" },
+  { id: "weapon_l", label: "Weapon (L)" },
+  { id: "weapon_r", label: "Weapon (R)" },
+  { id: "belt", label: "Belt" },
+  { id: "belt_slot", label: "Belt Slot" },
+  { id: "leggings", label: "Leggings" },
+  { id: "shoes", label: "Shoes" },
+  { id: "ring", label: "Ring (any)" },
+];
 
-const rarityColor = (r: string) => {
+const FIELD_KEYS = {
+  equipmentSlot: "Equipment::Slot",
+  attributeName: "Attribute Buff::Attribute",
+  attributeAmount: "Attribute Buff::Amount",
+  skillName: "Skill Buff::Skill",
+  skillAmount: "Skill Buff::Amount",
+  resourceName: "Resources Buff::Resource",
+  resourceAmount: "Resources Buff::Amount",
+  disadvantageSkill: "Disadvantageous::Skill",
+  statusEffectName: "Status Effect::Effect Name",
+  sourcePoints: "Source::Source Points",
+} as const;
+
+const CUSTOM_PREFIX = "Custom::";
+const EFFECT_PREFIX = "Effect::";
+
+function rarityColor(r: string) {
   switch (r) {
     case "Uncommon": return "#7ACA8A";
     case "Rare": return "#4A9AFF";
@@ -164,25 +199,12 @@ const rarityColor = (r: string) => {
     case "Legendary": return "#FFAA4A";
     default: return "#9AAACC";
   }
-};
+}
 
 function formatOwners(assignedTo: string[], players: { id: string; name: string }[]) {
   if (assignedTo.includes("all")) return "All Players";
   if (assignedTo.length === 0) return "Unassigned";
   return assignedTo.map((id) => players.find((p) => p.id === id)?.name || "Unknown").join(", ");
-}
-
-function getActiveCustomFields(entity: { tags: string[] }, tagList: TagDefinition[]): { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] {
-  const fields: { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] = [];
-  entity.tags.forEach((tagName) => {
-    const tagDef = tagList.find((t) => t.name === tagName);
-    if (tagDef && tagDef.fields.length > 0) {
-      tagDef.fields.forEach((f) => {
-        fields.push({ tagName, fieldName: f.name, key: cfKey(tagName, f.name), fieldDef: f });
-      });
-    }
-  });
-  return fields;
 }
 
 function stripHtml(value: string) {
@@ -191,16 +213,22 @@ function stripHtml(value: string) {
 
 function countItemEffects(item: ManagedItem | null) {
   if (!item) return 0;
-  return Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && (item.customFields[key] || "").trim()).length;
+  return Object.keys(item.customFields || {}).filter((key) => key.startsWith(EFFECT_PREFIX) && (item.customFields[key] || "").trim()).length;
 }
 
 function makeItemFromTemplate(template: ItemTemplateDef, itemTags: TagDefinition[]): ManagedItem {
   const existingTagNames = new Set(itemTags.map((tag) => tag.name));
   const tags = template.tags.filter((tag) => existingTagNames.has(tag));
   const customFields: Record<string, string> = {};
-  if (tags.includes("Effect")) {
-    customFields["Effect::0"] = "";
+
+  if (template.id === "weapon" || template.id === "armor") customFields[FIELD_KEYS.equipmentSlot] = "";
+  if (template.id === "source") customFields[FIELD_KEYS.sourcePoints] = "";
+  if (template.starterEffects) {
+    for (let index = 0; index < template.starterEffects; index += 1) {
+      customFields[`${EFFECT_PREFIX}${index}`] = "";
+    }
   }
+
   return {
     id: `mi-${Date.now()}`,
     name: template.name,
@@ -230,6 +258,90 @@ function getSuggestedTags(editingItem: ManagedItem | null, itemTags: TagDefiniti
   }).slice(0, 8);
 }
 
+function hasKey(customFields: Record<string, string>, key: string) {
+  return Object.prototype.hasOwnProperty.call(customFields, key);
+}
+
+function getCustomDetailKeys(customFields: Record<string, string>) {
+  return Object.keys(customFields)
+    .filter((key) => key.startsWith(CUSTOM_PREFIX))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function makeCustomDetailKey(label: string, customFields: Record<string, string>) {
+  const base = (label || "Detail").trim() || "Detail";
+  let key = `${CUSTOM_PREFIX}${base}`;
+  let counter = 2;
+  while (hasKey(customFields, key)) {
+    key = `${CUSTOM_PREFIX}${base} ${counter}`;
+    counter += 1;
+  }
+  return key;
+}
+
+function renameCustomDetailKey(item: ManagedItem, oldKey: string, nextLabel: string): ManagedItem {
+  const trimmedLabel = (nextLabel || "").trim() || "Detail";
+  const desiredKey = `${CUSTOM_PREFIX}${trimmedLabel}`;
+  const currentValue = item.customFields[oldKey] || "";
+  const nextCustomFields = { ...item.customFields };
+  delete nextCustomFields[oldKey];
+
+  let finalKey = desiredKey;
+  let counter = 2;
+  while (hasKey(nextCustomFields, finalKey)) {
+    finalKey = `${CUSTOM_PREFIX}${trimmedLabel} ${counter}`;
+    counter += 1;
+  }
+
+  nextCustomFields[finalKey] = currentValue;
+  return { ...item, customFields: nextCustomFields };
+}
+
+function deleteKeys(item: ManagedItem, keys: string[]) {
+  const nextCustomFields = { ...item.customFields };
+  keys.forEach((key) => delete nextCustomFields[key]);
+  return { ...item, customFields: nextCustomFields };
+}
+
+function buildDisplayFacts(item: ManagedItem) {
+  const slotLabels = Object.fromEntries(EQUIP_SLOTS.map((slot) => [slot.id, slot.label])) as Record<string, string>;
+  return Object.entries(item.customFields || {})
+    .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith(EFFECT_PREFIX))
+    .map(([key, value]) => {
+      const [group, ...rest] = key.split("::");
+      let label = rest.join("::") || group;
+      let displayValue = String(value);
+
+      if (key === FIELD_KEYS.equipmentSlot) {
+        label = "Slot";
+        displayValue = slotLabels[String(value)] || String(value);
+      }
+
+      if (key === FIELD_KEYS.attributeAmount || key === FIELD_KEYS.skillAmount || key === FIELD_KEYS.resourceAmount) {
+        const numeric = Number(value);
+        if (!Number.isNaN(numeric) && numeric > 0) displayValue = `+${numeric}`;
+      }
+
+      if (group === "Custom") label = rest.join("::") || "Detail";
+
+      return { key, label, value: displayValue };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function stripUnusedCustomFields(item: ManagedItem) {
+  const nextCustomFields: Record<string, string> = {};
+  Object.entries(item.customFields || {}).forEach(([key, value]) => {
+    const trimmedValue = String(value || "").trim();
+    if (trimmedValue) nextCustomFields[key] = String(value);
+  });
+  return {
+    ...item,
+    customFields: nextCustomFields,
+    tags: Array.from(new Set(item.tags)),
+  };
+}
+
 export function DMItemManagerSection({ players, managedItems, itemTags, statusTags, onPersistItems }: DMItemManagerSectionProps) {
   const [itemFilterTab, setItemFilterTab] = useState<string>("all");
   const [itemSearch, setItemSearch] = useState("");
@@ -248,30 +360,65 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
     setEditingItem({ ...editingItem, customFields: { ...editingItem.customFields, [key]: value } });
   };
 
+  const addItemDataSection = (section: ItemDataSection) => {
+    if (!editingItem) return;
+    const nextCustomFields = { ...editingItem.customFields };
+
+    if (section === "equipment" && !hasKey(nextCustomFields, FIELD_KEYS.equipmentSlot)) nextCustomFields[FIELD_KEYS.equipmentSlot] = "";
+    if (section === "attributeBuff") {
+      if (!hasKey(nextCustomFields, FIELD_KEYS.attributeName)) nextCustomFields[FIELD_KEYS.attributeName] = "";
+      if (!hasKey(nextCustomFields, FIELD_KEYS.attributeAmount)) nextCustomFields[FIELD_KEYS.attributeAmount] = "";
+    }
+    if (section === "skillBuff") {
+      if (!hasKey(nextCustomFields, FIELD_KEYS.skillName)) nextCustomFields[FIELD_KEYS.skillName] = "";
+      if (!hasKey(nextCustomFields, FIELD_KEYS.skillAmount)) nextCustomFields[FIELD_KEYS.skillAmount] = "";
+    }
+    if (section === "resourceBuff") {
+      if (!hasKey(nextCustomFields, FIELD_KEYS.resourceName)) nextCustomFields[FIELD_KEYS.resourceName] = "";
+      if (!hasKey(nextCustomFields, FIELD_KEYS.resourceAmount)) nextCustomFields[FIELD_KEYS.resourceAmount] = "";
+    }
+    if (section === "disadvantage" && !hasKey(nextCustomFields, FIELD_KEYS.disadvantageSkill)) nextCustomFields[FIELD_KEYS.disadvantageSkill] = "";
+    if (section === "statusEffect" && !hasKey(nextCustomFields, FIELD_KEYS.statusEffectName)) nextCustomFields[FIELD_KEYS.statusEffectName] = "";
+    if (section === "source" && !hasKey(nextCustomFields, FIELD_KEYS.sourcePoints)) nextCustomFields[FIELD_KEYS.sourcePoints] = "";
+    if (section === "custom") nextCustomFields[makeCustomDetailKey("Detail", nextCustomFields)] = "";
+
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
+  };
+
+  const removeItemDataSection = (section: ItemDataSection) => {
+    if (!editingItem) return;
+    const keyGroups: Record<ItemDataSection, string[]> = {
+      equipment: [FIELD_KEYS.equipmentSlot],
+      attributeBuff: [FIELD_KEYS.attributeName, FIELD_KEYS.attributeAmount],
+      skillBuff: [FIELD_KEYS.skillName, FIELD_KEYS.skillAmount],
+      resourceBuff: [FIELD_KEYS.resourceName, FIELD_KEYS.resourceAmount],
+      disadvantage: [FIELD_KEYS.disadvantageSkill],
+      statusEffect: [FIELD_KEYS.statusEffectName],
+      source: [FIELD_KEYS.sourcePoints],
+      custom: getCustomDetailKeys(editingItem.customFields),
+    };
+    setEditingItem(deleteKeys(editingItem, keyGroups[section]));
+  };
+
+  const addEffectBlock = () => {
+    if (!editingItem) return;
+    const nextIndex = Object.keys(editingItem.customFields || {})
+      .filter((key) => key.startsWith(EFFECT_PREFIX))
+      .map((key) => parseInt(key.split("::")[1] || "0", 10))
+      .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), -1) + 1;
+    updateItemCustomField(`${EFFECT_PREFIX}${nextIndex}`, "");
+  };
+
+  const removeEffectBlock = (key: string) => {
+    if (!editingItem) return;
+    setEditingItem(deleteKeys(editingItem, [key]));
+  };
+
   const toggleItemTag = (tagName: string) => {
     if (!editingItem) return;
     const has = editingItem.tags.includes(tagName);
-    const nextTags = has ? editingItem.tags.filter((t) => t !== tagName) : [...editingItem.tags, tagName];
-    const nextCustomFields = { ...editingItem.customFields };
-
-    if (has) {
-      Object.keys(nextCustomFields).forEach((key) => {
-        if (key.startsWith(`${tagName}::`)) delete nextCustomFields[key];
-      });
-    }
-
-    if (!has && tagName === "Effect") {
-      const effectKeys = Object.keys(nextCustomFields).filter((key) => key.startsWith("Effect::"));
-      if (effectKeys.length === 0) nextCustomFields["Effect::0"] = "";
-    }
-
-    if (has && tagName === "Effect") {
-      Object.keys(nextCustomFields).forEach((key) => {
-        if (key.startsWith("Effect::")) delete nextCustomFields[key];
-      });
-    }
-
-    setEditingItem({ ...editingItem, tags: nextTags, customFields: nextCustomFields });
+    const nextTags = has ? editingItem.tags.filter((tag) => tag !== tagName) : [...editingItem.tags, tagName];
+    setEditingItem({ ...editingItem, tags: nextTags });
   };
 
   const startEditingItem = (item: ManagedItem) => {
@@ -315,19 +462,19 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
   const handleSaveItem = async () => {
     if (!editingItem || !editingItem.name.trim()) return;
 
-    const trimmedItem: ManagedItem = {
+    const trimmedItem = stripUnusedCustomFields({
       ...editingItem,
       name: editingItem.name.trim(),
       type: editingItem.type.trim(),
       description: editingItem.description,
       tags: Array.from(new Set(editingItem.tags)),
-    };
+    });
 
     if (isAddingNewItem) {
       await onPersistItems([...managedItems, trimmedItem]);
     } else {
       const originalPlayers = originalAssignedToRef.current;
-      const resolveIds = (arr: string[]) => arr.includes("all") ? players.map((p) => p.id) : arr;
+      const resolveIds = (arr: string[]) => arr.includes("all") ? players.map((player) => player.id) : arr;
       const oldIds = new Set(resolveIds(originalPlayers));
       const newIds = resolveIds(trimmedItem.assignedTo);
       const newlyAdded = newIds.filter((id) => !oldIds.has(id));
@@ -373,19 +520,19 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
     }
   };
 
-  const activeCustomFields = useMemo(
-    () => editingItem ? getActiveCustomFields(editingItem, itemTags) : [],
-    [editingItem, itemTags],
-  );
-
   const effectKeys = useMemo(() => {
     if (!editingItem) return [] as string[];
-    const keys = Object.keys(editingItem.customFields || {})
-      .filter((key) => key.startsWith("Effect::"))
-      .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
-    if (editingItem.tags.includes("Effect") && keys.length === 0) return ["Effect::0"];
-    return keys;
+    return Object.keys(editingItem.customFields || {})
+      .filter((key) => key.startsWith(EFFECT_PREFIX))
+      .sort((a, b) => parseInt(a.split("::")[1] || "0", 10) - parseInt(b.split("::")[1] || "0", 10));
   }, [editingItem]);
+
+  const customDetailKeys = useMemo(
+    () => editingItem ? getCustomDetailKeys(editingItem.customFields) : [],
+    [editingItem],
+  );
+
+  const displayFacts = useMemo(() => editingItem ? buildDisplayFacts(editingItem) : [], [editingItem]);
 
   const filteredItems = useMemo(() => {
     const base = itemFilterTab === "all"
@@ -416,138 +563,24 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
   }, [itemTags, tagSearch]);
 
   const suggestedTags = useMemo(() => getSuggestedTags(editingItem, itemTags), [editingItem, itemTags]);
+
   const editorSummary = useMemo(() => {
     if (!editingItem) return null;
     return {
       tagCount: editingItem.tags.length,
-      fieldCount: activeCustomFields.length,
-      effectCount: effectKeys.filter((key) => (editingItem.customFields[key] || "").trim()).length,
+      detailCount: buildDisplayFacts(editingItem).length,
+      effectCount: countItemEffects(editingItem),
       ownerCount: editingItem.assignedTo.includes("all") ? players.length : editingItem.assignedTo.length,
     };
-  }, [editingItem, activeCustomFields.length, effectKeys, players.length]);
+  }, [editingItem, players.length]);
 
-  const renderTypedField = (
-    key: string,
-    fieldDef: TagField,
-    value: string,
-    onChange: (key: string, val: string) => void,
-    labelEl: React.ReactNode,
-  ) => renderTypedFieldShared(key, fieldDef, value, onChange, labelEl, inputClass, inputStyle, retro.button);
-
-  const renderCustomFieldEditor = (cf: { tagName: string; fieldName: string; key: string; fieldDef: TagField }) => {
-    if (!editingItem) return null;
-
-    const labelEl = (
-      <label className="text-[10px] block mb-1" style={S_ACCENT}>
-        <span style={S_MUTED}>{cf.tagName} ›</span> {cf.fieldName}:
-      </label>
-    );
-
-    if (cf.tagName === "Equipment" && cf.fieldName === "Slot") {
-      const equipSlots = [
-        { id: "head", label: "Head" },
-        { id: "face", label: "Face" },
-        { id: "neck", label: "Neck" },
-        { id: "jacket", label: "Jacket / Cloak" },
-        { id: "armor", label: "Armor" },
-        { id: "shirt", label: "Shirt" },
-        { id: "armguards", label: "Armguards" },
-        { id: "gloves", label: "Gloves" },
-        { id: "weapon_l", label: "Weapon (L)" },
-        { id: "weapon_r", label: "Weapon (R)" },
-        { id: "belt", label: "Belt" },
-        { id: "belt_slot", label: "Belt Slot" },
-        { id: "leggings", label: "Leggings" },
-        { id: "shoes", label: "Shoes" },
-        { id: "ring", label: "Ring (any)" },
-      ];
-      return (
-        <div key={cf.key}>
-          {labelEl}
-          <select value={editingItem.customFields[cf.key] || ""} onChange={(e) => updateItemCustomField(cf.key, e.target.value)} className={inputClass} style={inputStyle}>
-            <option value="">Select slot</option>
-            {equipSlots.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}
-          </select>
-        </div>
-      );
-    }
-
-    if (cf.tagName === "Attribute Buff" && cf.fieldName === "Attribute") {
-      const attrs = ["STR", "AGI", "CON", "KNOW", "WIS", "WILL"];
-      return (
-        <div key={cf.key}>
-          {labelEl}
-          <select value={editingItem.customFields[cf.key] || ""} onChange={(e) => updateItemCustomField(cf.key, e.target.value)} className={inputClass} style={inputStyle}>
-            <option value="">Select attribute</option>
-            {attrs.map((attr) => <option key={attr} value={attr}>{attr}</option>)}
-          </select>
-        </div>
-      );
-    }
-
-    if ((cf.tagName === "Attribute Buff" || cf.tagName === "Skill Buff" || cf.tagName === "Resources Buff") && cf.fieldName === "Amount") {
-      return (
-        <div key={cf.key}>
-          {labelEl}
-          <input type="number" value={editingItem.customFields[cf.key] || ""} onChange={(e) => updateItemCustomField(cf.key, e.target.value)} placeholder="e.g. +2 or -1" className={inputClass} style={inputStyle} />
-        </div>
-      );
-    }
-
-    if ((cf.tagName === "Skill Buff" || cf.tagName === "Disadvantageous") && cf.fieldName === "Skill") {
-      const allSkills = ["Athletics", "Grappling", "Acrobatics", "Sleight of Hand", "Stealth", "Endurance", "Shock", "History", "Investigation", "Arcana", "Religion", "Medicine", "Nature", "Technology/Tinkering", "Perception", "Insight", "Survival", "Persuasion", "Charm", "Control", "Clear Mind"];
-      return (
-        <div key={cf.key}>
-          {labelEl}
-          <select value={editingItem.customFields[cf.key] || ""} onChange={(e) => updateItemCustomField(cf.key, e.target.value)} className={inputClass} style={inputStyle}>
-            <option value="">Select skill</option>
-            {allSkills.map((skill) => <option key={skill} value={skill}>{skill}</option>)}
-          </select>
-        </div>
-      );
-    }
-
-    if (cf.tagName === "Resources Buff" && cf.fieldName === "Resource") {
-      const allResources = ["Max HP", "Armor Class", "Speed", "Movement", "Damage Reduction", "Temp HP", "Max Weight", "Total Wounds", "Max Exhaustion"];
-      return (
-        <div key={cf.key}>
-          {labelEl}
-          <select value={editingItem.customFields[cf.key] || ""} onChange={(e) => updateItemCustomField(cf.key, e.target.value)} className={inputClass} style={inputStyle}>
-            <option value="">Select resource</option>
-            {allResources.map((resource) => <option key={resource} value={resource}>{resource}</option>)}
-          </select>
-        </div>
-      );
-    }
-
-    if (cf.tagName === "Status Effect" && cf.fieldName === "Effect Name") {
-      const existingEffects = statusTags.map((tag) => tag.name);
-      const currentVal = editingItem.customFields[cf.key] || "";
-      const isCustom = currentVal !== "" && !existingEffects.includes(currentVal);
-      const showTextInput = isCustom || currentVal === "";
-      return (
-        <div key={cf.key}>
-          {labelEl}
-          <select value={isCustom ? "__custom__" : currentVal} onChange={(e) => updateItemCustomField(cf.key, e.target.value === "__custom__" ? "" : e.target.value)} className={inputClass} style={inputStyle}>
-            <option value="">Select status effect</option>
-            {existingEffects.map((effect) => <option key={effect} value={effect}>{effect}</option>)}
-            <option value="__custom__">Custom name</option>
-          </select>
-          {showTextInput && (
-            <input type="text" value={isCustom ? currentVal : ""} onChange={(e) => updateItemCustomField(cf.key, e.target.value)} placeholder="Or type a new status effect name..." className={`${inputClass} mt-1`} style={inputStyle} />
-          )}
-        </div>
-      );
-    }
-
-    return renderTypedField(
-      cf.key,
-      cf.fieldDef,
-      editingItem.customFields[cf.key] || cf.fieldDef.defaultValue || "",
-      updateItemCustomField,
-      labelEl,
-    );
-  };
+  const showEquipment = !!editingItem && hasKey(editingItem.customFields, FIELD_KEYS.equipmentSlot);
+  const showAttributeBuff = !!editingItem && (hasKey(editingItem.customFields, FIELD_KEYS.attributeName) || hasKey(editingItem.customFields, FIELD_KEYS.attributeAmount));
+  const showSkillBuff = !!editingItem && (hasKey(editingItem.customFields, FIELD_KEYS.skillName) || hasKey(editingItem.customFields, FIELD_KEYS.skillAmount));
+  const showResourceBuff = !!editingItem && (hasKey(editingItem.customFields, FIELD_KEYS.resourceName) || hasKey(editingItem.customFields, FIELD_KEYS.resourceAmount));
+  const showDisadvantage = !!editingItem && hasKey(editingItem.customFields, FIELD_KEYS.disadvantageSkill);
+  const showStatusEffect = !!editingItem && hasKey(editingItem.customFields, FIELD_KEYS.statusEffectName);
+  const showSource = !!editingItem && hasKey(editingItem.customFields, FIELD_KEYS.sourcePoints);
 
   return (
     <div className="space-y-4">
@@ -555,7 +588,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
         <div>
           <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Items</h2>
           <div className="text-[11px] mt-1" style={S_MUTED}>
-            Use templates, tags, custom fields, and effect blocks to build items faster and with less manual setup.
+            Tags now act like descriptors. Structured item data is created directly in the item editor.
           </div>
         </div>
         <button onClick={() => handleAddItem("blank")} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
@@ -601,7 +634,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
               {editorSummary && (
                 <div className="text-[10px] mt-1 flex flex-wrap gap-3" style={S_MUTED}>
                   <span>{editorSummary.tagCount} tag{editorSummary.tagCount === 1 ? "" : "s"}</span>
-                  <span>{editorSummary.fieldCount} custom field{editorSummary.fieldCount === 1 ? "" : "s"}</span>
+                  <span>{editorSummary.detailCount} detail{editorSummary.detailCount === 1 ? "" : "s"}</span>
                   <span>{editorSummary.effectCount} effect block{editorSummary.effectCount === 1 ? "" : "s"}</span>
                   <span>{editorSummary.ownerCount} owner{editorSummary.ownerCount === 1 ? "" : "s"}</span>
                 </div>
@@ -621,8 +654,6 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
             {EDITOR_PANELS.map((panel) => {
               const Icon = panel.icon;
               const active = editorPanel === panel.id;
-              const hiddenForNoEffects = panel.id === "effects" && !editingItem.tags.includes("Effect") && effectKeys.length === 0;
-              if (hiddenForNoEffects) return null;
               return (
                 <button
                   key={panel.id}
@@ -659,20 +690,6 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
               <div>
                 <label className="text-[10px] block mb-1" style={labelStyle}>Description</label>
                 <RichTextEditor value={editingItem.description} onChange={(html) => updateItemField("description", html)} placeholder="Describe the item, its appearance, and what makes it notable..." minHeight={120} />
-              </div>
-
-              <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                <div className="text-[10px] mb-2" style={S_SECTION_HDR}>STARTER TEMPLATES</div>
-                <div className="text-[10px] mb-3" style={S_MUTED}>
-                  Swap the current draft to a different starting template. This replaces the current unsaved draft contents.
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {ITEM_TEMPLATES.map((template) => (
-                    <button key={template.id} onClick={() => handleAddItem(template.id)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>
-                      {template.label}
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
           )}
@@ -735,15 +752,12 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                   <div className="flex flex-wrap gap-1.5">
                     {filteredEditorTags.map((tag) => {
                       const active = editingItem.tags.includes(tag.name);
-                      const hasFields = tag.fields.length > 0;
                       return (
                         <button key={tag.id} onClick={() => toggleItemTag(tag.name)} className="text-[10px] px-2.5 py-1 transition-colors flex items-center gap-1" style={dmActiveBtn(active)}>
                           {tag.name}
-                          {hasFields && <span className="text-[8px] opacity-70">+{tag.fields.length}</span>}
                         </button>
                       );
                     })}
-                    {itemTags.length === 0 && <span className="text-[11px]" style={S_MUTED}>No item tags exist yet. Create them in Manage Tags first.</span>}
                   </div>
                 </div>
 
@@ -774,20 +788,175 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
             </div>
           )}
 
-          {editorPanel === "fields" && (
+          {editorPanel === "details" && (
             <div className="space-y-4">
-              {activeCustomFields.length === 0 ? (
-                <div className={`${retro.raised} bg-[#0E0E35] p-4 text-[11px]`} style={S_MUTED}>
-                  This item does not currently have any active tag-driven custom fields. Add a tag with fields to unlock more structured item data.
+              <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                <div className="text-[10px] mb-2" style={S_SECTION_HDR}>ITEM DATA BUILDER</div>
+                <div className="text-[10px] mb-3" style={S_MUTED}>
+                  Add structured item data directly here. Tags no longer decide which extra fields appear.
                 </div>
-              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {!showEquipment && <button onClick={() => addItemDataSection("equipment")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Equipment Data</button>}
+                  {!showAttributeBuff && <button onClick={() => addItemDataSection("attributeBuff")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Attribute Buff</button>}
+                  {!showSkillBuff && <button onClick={() => addItemDataSection("skillBuff")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Skill Buff</button>}
+                  {!showResourceBuff && <button onClick={() => addItemDataSection("resourceBuff")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Resource Buff</button>}
+                  {!showDisadvantage && <button onClick={() => addItemDataSection("disadvantage")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Disadvantage</button>}
+                  {!showStatusEffect && <button onClick={() => addItemDataSection("statusEffect")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Status Effect</button>}
+                  {!showSource && <button onClick={() => addItemDataSection("source")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Source Data</button>}
+                  <button onClick={() => addItemDataSection("custom")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Add Custom Detail</button>
+                </div>
+              </div>
+
+              {showEquipment && (
                 <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                  <div className="text-[10px] mb-3" style={S_SECTION_HDR}>TAG FIELDS</div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {activeCustomFields.map((cf) => renderCustomFieldEditor(cf))}
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>EQUIPMENT</div>
+                    <button onClick={() => removeItemDataSection("equipment")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Slot</label>
+                  <select value={editingItem.customFields[FIELD_KEYS.equipmentSlot] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.equipmentSlot, e.target.value)} className={inputClass} style={inputStyle}>
+                    <option value="">Select slot</option>
+                    {EQUIP_SLOTS.map((slot) => <option key={slot.id} value={slot.id}>{slot.label}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {showAttributeBuff && (
+                <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>ATTRIBUTE BUFF</div>
+                    <button onClick={() => removeItemDataSection("attributeBuff")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Attribute</label>
+                      <select value={editingItem.customFields[FIELD_KEYS.attributeName] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.attributeName, e.target.value)} className={inputClass} style={inputStyle}>
+                        <option value="">Select attribute</option>
+                        {ATTRS.map((attr) => <option key={attr} value={attr}>{attr}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Amount</label>
+                      <input type="number" value={editingItem.customFields[FIELD_KEYS.attributeAmount] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.attributeAmount, e.target.value)} placeholder="e.g. 2 or -1" className={inputClass} style={inputStyle} />
+                    </div>
                   </div>
                 </div>
               )}
+
+              {showSkillBuff && (
+                <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>SKILL BUFF</div>
+                    <button onClick={() => removeItemDataSection("skillBuff")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Skill</label>
+                      <select value={editingItem.customFields[FIELD_KEYS.skillName] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.skillName, e.target.value)} className={inputClass} style={inputStyle}>
+                        <option value="">Select skill</option>
+                        {ALL_SKILLS.map((skill) => <option key={skill} value={skill}>{skill}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Amount</label>
+                      <input type="number" value={editingItem.customFields[FIELD_KEYS.skillAmount] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.skillAmount, e.target.value)} placeholder="e.g. 2 or -1" className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showResourceBuff && (
+                <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>RESOURCE BUFF</div>
+                    <button onClick={() => removeItemDataSection("resourceBuff")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Resource</label>
+                      <select value={editingItem.customFields[FIELD_KEYS.resourceName] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.resourceName, e.target.value)} className={inputClass} style={inputStyle}>
+                        <option value="">Select resource</option>
+                        {ALL_RESOURCES.map((resource) => <option key={resource} value={resource}>{resource}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Amount</label>
+                      <input type="number" value={editingItem.customFields[FIELD_KEYS.resourceAmount] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.resourceAmount, e.target.value)} placeholder="e.g. 2 or -1" className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showDisadvantage && (
+                <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>DISADVANTAGE</div>
+                    <button onClick={() => removeItemDataSection("disadvantage")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Skill</label>
+                  <select value={editingItem.customFields[FIELD_KEYS.disadvantageSkill] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.disadvantageSkill, e.target.value)} className={inputClass} style={inputStyle}>
+                    <option value="">Select skill</option>
+                    {ALL_SKILLS.map((skill) => <option key={skill} value={skill}>{skill}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {showStatusEffect && (
+                <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>STATUS EFFECT</div>
+                    <button onClick={() => removeItemDataSection("statusEffect")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Effect Name</label>
+                  <select value={editingItem.customFields[FIELD_KEYS.statusEffectName] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.statusEffectName, e.target.value)} className={inputClass} style={inputStyle}>
+                    <option value="">Select status effect</option>
+                    {statusTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
+                  </select>
+                  <div className="text-[10px] mt-2" style={S_MUTED}>This links the item to an existing status effect name without needing a tag-defined field.</div>
+                </div>
+              )}
+
+              {showSource && (
+                <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>SOURCE DATA</div>
+                    <button onClick={() => removeItemDataSection("source")} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                  </div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Source Points</label>
+                  <input type="number" value={editingItem.customFields[FIELD_KEYS.sourcePoints] || ""} onChange={(e) => updateItemCustomField(FIELD_KEYS.sourcePoints, e.target.value)} placeholder="e.g. 3" className={inputClass} style={inputStyle} />
+                </div>
+              )}
+
+              <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="text-[10px]" style={S_SECTION_HDR}>CUSTOM DETAILS</div>
+                  <button onClick={() => addItemDataSection("custom")} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={S_ACCENT}>
+                    <Plus size={10} /> Add Detail
+                  </button>
+                </div>
+
+                {customDetailKeys.length === 0 ? (
+                  <div className="text-[11px]" style={S_MUTED}>No custom details yet.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {customDetailKeys.map((key) => (
+                      <div key={key} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_auto] gap-2 items-end">
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Label</label>
+                            <input type="text" value={key.replace(CUSTOM_PREFIX, "")} onChange={(e) => setEditingItem((prev) => prev ? renameCustomDetailKey(prev, key, e.target.value) : prev)} className={inputClass} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Value</label>
+                            <input type="text" value={editingItem.customFields[key] || ""} onChange={(e) => updateItemCustomField(key, e.target.value)} className={inputClass} style={inputStyle} />
+                          </div>
+                          <button onClick={() => setEditingItem((prev) => prev ? deleteKeys(prev, [key]) : prev)} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_RED}>Remove</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -797,21 +966,9 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                 <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
                   <div>
                     <div className="text-[10px]" style={DM_EFFECT_HDR}>EFFECT DESCRIPTIONS</div>
-                    <div className="text-[10px] mt-1" style={S_MUTED}>
-                      Use multiple effect blocks when an item grants more than one player-facing rule or benefit.
-                    </div>
+                    <div className="text-[10px] mt-1" style={S_MUTED}>Use multiple effect blocks when an item grants more than one player-facing rule or benefit.</div>
                   </div>
-                  <button
-                    onClick={() => {
-                      const nextIdx = effectKeys.length > 0 ? Math.max(...effectKeys.map((key) => parseInt(key.split("::")[1]))) + 1 : 0;
-                      updateItemCustomField(`Effect::${nextIdx}`, "");
-                      if (!editingItem.tags.includes("Effect")) toggleItemTag("Effect");
-                    }}
-                    className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`}
-                    style={DM_PURPLE}
-                  >
-                    <Plus size={10} /> Add Effect
-                  </button>
+                  <button onClick={addEffectBlock} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={DM_PURPLE}><Plus size={10} /> Add Effect</button>
                 </div>
 
                 {effectKeys.length === 0 ? (
@@ -822,19 +979,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                       <div key={key} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <label className="text-[9px]" style={DM_EFFECT_LABEL}>Effect #{index + 1}</label>
-                          {effectKeys.length > 1 && (
-                            <button
-                              onClick={() => {
-                                if (!editingItem) return;
-                                const customFields = { ...editingItem.customFields };
-                                delete customFields[key];
-                                setEditingItem({ ...editingItem, customFields });
-                              }}
-                              className="hover:opacity-80"
-                            >
-                              <X size={12} style={S_RED} />
-                            </button>
-                          )}
+                          <button onClick={() => removeEffectBlock(key)} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
                         </div>
                         <RichTextEditor value={editingItem.customFields[key] || ""} onChange={(html) => updateItemCustomField(key, html)} placeholder="Describe the effect this item grants..." minHeight={80} />
                       </div>
@@ -868,21 +1013,19 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                 {stripHtml(editingItem.description || "") ? (
                   <div className={`${retro.sunken} bg-[#0A0A28] p-3 mb-3`}>
                     <div className="text-[9px] mb-1" style={S_SECTION_HDR}>DESCRIPTION</div>
-                    <RichTextEditor value={editingItem.description} onChange={(html) => updateItemField("description", html)} minHeight={100} />
+                    <div className="text-[11px]" style={S_TEXT}>{stripHtml(editingItem.description)}</div>
                   </div>
                 ) : (
                   <div className="text-[11px] mb-3" style={S_MUTED}>No description written yet.</div>
                 )}
 
-                {activeCustomFields.length > 0 && (
+                {displayFacts.length > 0 && (
                   <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3">
-                    {activeCustomFields
-                      .filter((cf) => (editingItem.customFields[cf.key] || "").trim())
-                      .map((cf) => (
-                        <span key={cf.key} className="text-[10px]">
-                          <span style={S_MUTED}>{cf.fieldName}:</span> <span style={S_TEXT}>{editingItem.customFields[cf.key]}</span>
-                        </span>
-                      ))}
+                    {displayFacts.map((fact) => (
+                      <span key={fact.key} className="text-[10px]">
+                        <span style={S_MUTED}>{fact.label}:</span> <span style={S_TEXT}>{fact.value}</span>
+                      </span>
+                    ))}
                   </div>
                 )}
 
@@ -942,8 +1085,8 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
           <div className="space-y-2">
             {filteredItems.map((item) => {
               const ownerStr = formatOwners(item.assignedTo, players);
-              const itemCustomFields = getActiveCustomFields(item, itemTags).filter((cf) => (item.customFields[cf.key] || "").trim());
               const previewText = stripHtml(item.description || "");
+              const facts = buildDisplayFacts(item);
               return (
                 <div key={item.id} className={`${retro.raised} bg-[#0E0E35] p-3`}>
                   <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
@@ -994,11 +1137,11 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
 
                   {previewText && <div className="text-[10px] mb-2" style={S_SUBTLE}>{previewText.length > 180 ? `${previewText.slice(0, 177)}...` : previewText}</div>}
 
-                  {itemCustomFields.length > 0 && (
+                  {facts.length > 0 && (
                     <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1">
-                      {itemCustomFields.map((cf) => (
-                        <span key={cf.key} className="text-[10px]">
-                          <span style={S_MUTED}>{cf.fieldName}:</span> <span style={S_TEXT}>{item.customFields[cf.key]}</span>
+                      {facts.map((fact) => (
+                        <span key={fact.key} className="text-[10px]">
+                          <span style={S_MUTED}>{fact.label}:</span> <span style={S_TEXT}>{fact.value}</span>
                         </span>
                       ))}
                     </div>
