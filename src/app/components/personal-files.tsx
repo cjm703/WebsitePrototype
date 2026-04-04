@@ -15,7 +15,6 @@ import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
-import { buildVisibleCardTagBadges, buildCardTagFilterGroups, cardMatchesTagFilterGroup } from "./tag-profile-integration";
 import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, ManagedInfo, TagDefinition } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
 import PersonalFilesInformationPanel from "./personal-files-information-panel";
@@ -49,6 +48,17 @@ interface QuickItem { id: string; name: string; qty: number; description?: strin
 interface SourceUsageEntry { id: string; cardName: string; sourceType: string; amount: number; timestamp: number; }
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
+
+const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
+const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
+const CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
+const CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
+const CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
+const CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
+const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
+const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
+const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
+const CARD_DESCRIPTION_KEY = "Description";
 
 
 
@@ -192,6 +202,22 @@ function stepTE(potency: string): string {
   const next = sign === "+" ? num + step : num - step;
   const stepStr = step !== 1 ? String(step) : "";
   return `${next}${sign}TE${stepStr}`;
+}
+
+function getBuiltInCardTrackerBucket(card: ManagedCard): "status" | "ability" | "" {
+  const bucket = (card.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
+  return bucket === "status" || bucket === "ability" ? bucket : "";
+}
+
+function hasBuiltInCardTracker(card: ManagedCard): boolean {
+  return !!(
+    getBuiltInCardTrackerBucket(card)
+    || (card.customFields?.[CARD_TRACKER_NAME_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DURATION_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || "").trim()
+  );
 }
 
 type StatusTag = TagDefinition;
@@ -369,7 +395,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [allCards, setAllCards] = useState<ManagedCard[]>([]);
   const [allInfos, setAllInfos] = useState<ManagedInfo[]>([]);
   const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
-  const [cardTags, setCardTags] = useState<TagDefinition[]>([]);
   const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
   const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
 
@@ -386,7 +411,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         cards,
         infos,
         itemTagRows,
-        cardTagRows,
         statusTagRows,
         infoSubTabRows,
         playerState,
@@ -395,7 +419,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         appStore.listCards<ManagedCard>(),
         appStore.listInfos<ManagedInfo>(),
         appStore.listTags<TagDefinition>("item"),
-        appStore.listTags<TagDefinition>("card"),
         appStore.listTags<TagDefinition>("status"),
         appStore.listInfoSubTabs<InfoSubTab>(),
         loadPlayerState(),
@@ -409,7 +432,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setAllCards(cards);
       setAllInfos(normalizedInfos);
       setItemTags(itemTagRows);
-      setCardTags(cardTagRows);
       setStatusTags(statusTagRows);
       setInfoSubTabs(normalizedInfoSubTabs);
 
@@ -894,8 +916,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   }, [player?.stats]);
 
   const allInvTags = useMemo(() => getAllTags(playerItems), [playerItems]);
-  const getCardDisplayBadges = useCallback((card: ManagedCard) => buildVisibleCardTagBadges(card, cardTags, { includeDmOnly: isDM }), [cardTags, isDM]);
-  const allCardTags = useMemo(() => buildCardTagFilterGroups(playerCards, cardTags), [playerCards, cardTags]);
+  const allCardTags = useMemo(() => getAllTags(playerCards), [playerCards]);
 
   const filteredItems = useMemo(() => {
     return playerItems.filter((item) => {
@@ -1290,15 +1311,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const filteredCards = useMemo(() => {
     return playerCards.filter((card) => {
-      const badgeText = getCardDisplayBadges(card).flatMap((badge) => [badge.label, badge.filterGroup]).join(" ").toLowerCase();
       const matchesSearch =
         cardSearch === "" ||
         card.name.toLowerCase().includes(cardSearch.toLowerCase()) ||
         card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(cardSearch.toLowerCase()) ||
-        badgeText.includes(cardSearch.toLowerCase()) ||
         card.tags.some((t) => t.toLowerCase().includes(cardSearch.toLowerCase()));
       const matchesTags =
-        cardActiveTags.length === 0 || cardActiveTags.every((t) => cardMatchesTagFilterGroup(card, cardTags, t));
+        cardActiveTags.length === 0 || cardActiveTags.every((t) => card.tags.includes(t));
       const matchesTree = !cardTreeFilter || card.nodeTreeId === cardTreeFilter;
       const matchesNode = !cardNodeFilter || card.nodeId === cardNodeFilter;
       return matchesSearch && matchesTags && matchesTree && matchesNode;
@@ -1312,7 +1331,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       if (cardSortBy === "sourceType") return (a.customFields["Source Type"] || a.type || "").localeCompare(b.customFields["Source Type"] || b.type || "");
       return 0;
     });
-  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy, cardTags, getCardDisplayBadges]);
+  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy]);
 
   const toggleInvTag = (tag: string) => {
     setInvActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -1351,8 +1370,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
   SLOT_LABELS["ring"] = "Ring (any)";
 
+  const isPlayerHiddenCustomFieldKey = (key: string) => {
+    return key.startsWith("__editor_")
+      || key === "__editor_mechanics_builder"
+      || key === "__editor_section_blocks";
+  };
+
   const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::"));
+    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k));
     if (entries.length === 0) return null;
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
@@ -1381,72 +1406,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         })}
       </div>
     );
-  };
-
-  const getCardFactEntries = (card: ManagedCard) => {
-    const preferredEntries: Array<[string, string]> = [
-      ["Card Type", card.type || ""],
-      ["Action", card.actionCost || ""],
-      ["Level", card.customFields["Level"] ? `Lv. ${card.customFields["Level"]}` : ""],
-      ["Source Type", card.customFields["Source Type"] || ""],
-      ["Primary Cost", card.customFields["Use Profile::Primary Cost"] || ""],
-      ["Uses", card.customFields["Use Profile::Uses Per Long Rest"] || ""],
-      ["Range", card.customFields["Use Profile::Range"] || ""],
-      ["Duration", card.customFields["Use Profile::Duration"] || ""],
-      ["Requirements", card.customFields["Use Profile::Requirements"] || ""],
-      ["Components", card.customFields["Use Profile::Components"] || ""],
-    ].filter(([, value]) => value.trim());
-
-    const usedKeys = new Set([
-      "Description",
-      "Level",
-      "Source Type",
-      "Use Profile::Primary Cost",
-      "Use Profile::Uses Per Long Rest",
-      "Use Profile::Range",
-      "Use Profile::Duration",
-      "Use Profile::Requirements",
-      "Use Profile::Components",
-    ]);
-
-    const extraEntries = Object.entries(card.customFields)
-      .filter(([key, value]) => value && !key.startsWith("Effect::") && !usedKeys.has(key))
-      .map(([key, value]) => {
-        const parts = key.split("::");
-        return [parts.length > 1 ? parts[1] : parts[0], value] as [string, string];
-      });
-
-    return { preferredEntries, extraEntries };
-  };
-
-  const renderCardFactChips = (entries: Array<[string, string]>, compact = false) => {
-    if (entries.length === 0) return null;
-    return (
-      <div className={`grid ${compact ? "grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2" : "grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5"}`}>
-        {entries.map(([label, value]) => (
-          <div
-            key={`${label}-${value}`}
-            className={`${retro.raised} px-2.5 py-2`}
-            style={{ background: compact ? "#0E0E35" : "#10103A", border: `1px solid ${bc(theme.panelBorder)}` }}
-          >
-            <div className="text-[9px] uppercase tracking-[0.08em] mb-0.5" style={S_MUTED}>
-              {label}
-            </div>
-            <div className={compact ? "text-[11px] leading-snug" : "text-[12px] leading-snug"} style={{ color: theme.textColor, fontWeight: 600 }}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  const renderCardPreviewSummary = (card: ManagedCard, clamp = 120) => {
-    const description = (card.customFields["Description"] || "").replace(/<[^>]*>/g, "").trim();
-    const effect = (card.effect || "").replace(/<[^>]*>/g, "").trim();
-    const combined = description || effect;
-    if (!combined) return "No summary yet.";
-    return combined.length > clamp ? `${combined.slice(0, clamp).trim()}...` : combined;
   };
 
   // --- Item Detail Screen ---
@@ -1571,34 +1530,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     const isBuff = card.tags.some((t) => t.toLowerCase() === "buff");
     const isTimedEffect = card.tags.some((t) => t.toLowerCase() === "timed effect");
+    const builtInTrackerBucket = getBuiltInCardTrackerBucket(card);
 
-    if (isBuff) {
-      // Extract Buff fields from customFields
-      const duration = card.customFields["Buff::Duration"] || "1";
-      const stat = card.customFields["Buff::Stat"] || card.name;
-      const amount = card.customFields["Buff::Amount"] || "";
+    if (hasBuiltInCardTracker(card) && builtInTrackerBucket) {
+      const effectName = card.customFields[CARD_TRACKER_NAME_KEY] || card.name;
+      const duration = card.customFields[CARD_TRACKER_DURATION_KEY] || "1";
+      const potency = card.customFields[CARD_TRACKER_POTENCY_KEY] || "";
+      const damage = card.customFields[CARD_TRACKER_DAMAGE_KEY] || "";
+      const description =
+        card.customFields[CARD_TRACKER_DESCRIPTION_KEY]
+        || card.customFields[CARD_DESCRIPTION_KEY]?.replace(/<[^>]*>/g, "")
+        || card.effect.replace(/<[^>]*>/g, "");
 
-      const newEffect: StatusEffectRow = {
-        id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: stat || card.name,
-        potency: amount,
-        duration: duration,
-        damage: "",
-        effect: `From card: ${card.name}`,
-      };
-
-      setStatusEffects((prev) => [...prev, newEffect]);
-    }
-
-    if (isTimedEffect) {
-      // Extract Timed Effect fields from customFields
-      const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
-      const duration = card.customFields["Timed Effect::Duration"] || "1";
-      const potency = card.customFields["Timed Effect::Potency"] || "";
-      const damage = card.customFields["Timed Effect::Damage"] || "";
-      const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
-
-      // Auto-roll damage on use if it contains dice notation
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
         const diceGroups = parseDiceGroups(damage, potency);
@@ -1607,37 +1550,94 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         const result = rollDiceExpression(damage, potency);
         if (result) {
           triggerDiceAnimation(parseDiceGroups(damage, potency));
-          initialRoll = result.breakdown
-            ? `⚔ ${result.total} (${result.breakdown})`
-            : `⚔ ${result.total}`;
+          initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
         }
       } else {
         playSuccessChime();
       }
 
-      // Extract optional buff configuration from card
-      const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
-      const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
-      const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
-
-      let targetType: StatusEffectRow["targetType"];
-      if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
-      else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
+      const buffType = (card.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || "") as StatusEffectRow["buffType"];
+      const buffTarget = card.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || "";
+      const buffValue = card.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || "";
 
       const newEffect: StatusEffectRow = {
         id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: effectName,
-        potency: potency,
-        duration: duration,
-        damage: damage,
+        potency,
+        duration,
+        damage,
         effect: description || `From card: ${card.name}`,
         lastRoll: initialRoll,
-        ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-        ...(targetType ? { targetType } : {}),
+        ...(builtInTrackerBucket === "status" && buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+        targetType: builtInTrackerBucket === "ability" ? "enemy" : "self",
       };
 
       setStatusEffects((prev) => [...prev, newEffect]);
       setLastAddedStatusEffect(effectName);
+    } else {
+      if (isBuff) {
+        const duration = card.customFields["Buff::Duration"] || "1";
+        const stat = card.customFields["Buff::Stat"] || card.name;
+        const amount = card.customFields["Buff::Amount"] || "";
+
+        const newEffect: StatusEffectRow = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: stat || card.name,
+          potency: amount,
+          duration: duration,
+          damage: "",
+          effect: `From card: ${card.name}`,
+        };
+
+        setStatusEffects((prev) => [...prev, newEffect]);
+      }
+
+      if (isTimedEffect) {
+        const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
+        const duration = card.customFields["Timed Effect::Duration"] || "1";
+        const potency = card.customFields["Timed Effect::Potency"] || "";
+        const damage = card.customFields["Timed Effect::Damage"] || "";
+        const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
+
+        let initialRoll: string | undefined;
+        if (damage && hasDiceNotation(damage)) {
+          const diceGroups = parseDiceGroups(damage, potency);
+          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+          playDiceRoll(totalDice);
+          const result = rollDiceExpression(damage, potency);
+          if (result) {
+            triggerDiceAnimation(parseDiceGroups(damage, potency));
+            initialRoll = result.breakdown
+              ? `⚔ ${result.total} (${result.breakdown})`
+              : `⚔ ${result.total}`;
+          }
+        } else {
+          playSuccessChime();
+        }
+
+        const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
+        const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
+        const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
+
+        let targetType: StatusEffectRow["targetType"];
+        if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
+        else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
+
+        const newEffect: StatusEffectRow = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: effectName,
+          potency: potency,
+          duration: duration,
+          damage: damage,
+          effect: description || `From card: ${card.name}`,
+          lastRoll: initialRoll,
+          ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+          ...(targetType ? { targetType } : {}),
+        };
+
+        setStatusEffects((prev) => [...prev, newEffect]);
+        setLastAddedStatusEffect(effectName);
+      }
     }
 
     // ── Source usage tracking ──
@@ -1669,8 +1669,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const renderCardDetail = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
-    const descriptionText = (card.customFields["Description"] || "").trim();
-    const { preferredEntries, extraEntries } = getCardFactEntries(card);
 
     return (
       <div className="space-y-4">
@@ -1684,32 +1682,20 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         </button>
 
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <h2 className="text-[20px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                  {card.name}
-                </h2>
-                {getCardDisplayBadges(card).map((badge) => (
-                  <span
-                    key={`${card.id}-${badge.tagName}`}
-                    className="text-[9px] px-2 py-0.5 inline-flex items-center gap-1 rounded-sm"
-                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                    title={badge.filterGroup}
-                  >
-                    <Tag size={8} />
-                    {badge.label}
-                  </span>
-                ))}
-              </div>
-              <div className="text-[12px]" style={{ color: theme.labelColor }}>
-                {card.type || "Uncategorized"} · {card.actionCost || "No action cost"}
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+                {card.name}
+              </h2>
+              <div className="text-[12px]" style={S_LABEL}>
+                {card.type} · {card.actionCost}
+                {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
               </div>
             </div>
             {isUseable && (
               <button
                 onClick={() => handleUseCard(card)}
-                className={`${retro.button} px-4 py-2 text-[13px] flex items-center gap-2 font-semibold transition-all shrink-0`}
+                className={`${retro.button} px-4 py-2 text-[13px] flex items-center gap-2 font-semibold transition-all`}
                 style={{
                   color: justUsed ? "#FFF" : "#4ADE80",
                   background: justUsed ? "#4ADE8033" : "#0A0A28",
@@ -1722,34 +1708,63 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             )}
           </div>
 
-          {preferredEntries.length > 0 && (
-            <div className="mb-4">
-              {renderCardFactChips(preferredEntries)}
-            </div>
-          )}
+          {/* Tags */}
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {card.tags.map((tag) => (
+              <span
+                key={tag}
+                className="text-[10px] px-2 py-0.5 flex items-center gap-1"
+                style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+              >
+                <Tag size={8} />
+                {tag}
+              </span>
+            ))}
+          </div>
 
+          {/* Divider */}
           <div
             className="h-[1px] w-full mb-4"
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
 
-          {descriptionText && (
-            <div className={`${retro.raised} bg-[#10103A] p-4 mb-4`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
-              <div className="text-[11px] mb-2 uppercase tracking-[0.08em]" style={{ color: "#7DA1FF", fontWeight: 700 }}>
-                Description
-              </div>
-              <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={13} />
-            </div>
-          )}
-
-          <div className={`${retro.raised} bg-[#0E0E35] p-4 mb-4`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
-            <div className="text-[11px] mb-2 uppercase tracking-[0.08em]" style={{ color: "#5A7ABB", fontWeight: 700 }}>
-              Effect
+          {/* Effect */}
+          <div className="mb-4">
+            <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
+              EFFECT
             </div>
             <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
           </div>
 
-          {card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
+          {/* Built-in tracker indicator */}
+          {hasBuiltInCardTracker(card) && card.tags.some((t) => t.toLowerCase() === "use-able") ? (
+            <div
+              className="mb-4 p-3 flex items-start gap-2 text-[11px]"
+              style={{
+                background: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A12" : "#4ADE8012",
+                border: `1px solid ${getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A33" : "#4ADE8033"}`,
+                color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80",
+              }}
+            >
+              <Zap size={13} className="shrink-0 mt-0.5" />
+              <div>
+                <div style={{ fontWeight: 600 }}>
+                  {getBuiltInCardTrackerBucket(card) === "ability" ? "ABILITY / CARD EFFECT TRACKER" : "STATUS EFFECT TRACKER"}
+                </div>
+                <div style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5AAA" : "#4ADE80AA", marginTop: 2 }}>
+                  Using this card adds{" "}
+                  <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>
+                    {card.customFields[CARD_TRACKER_NAME_KEY] || card.name}
+                  </span>
+                  {" "}to {getBuiltInCardTrackerBucket(card) === "ability" ? "Abilities / Card Effects" : "Status Effects"}
+                  {card.customFields[CARD_TRACKER_DURATION_KEY] && (
+                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80" }}>{card.customFields[CARD_TRACKER_DURATION_KEY]}</span> turn(s)</div>
+                  )}
+                  .
+                </div>
+              </div>
+            </div>
+          ) : card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
             <div
               className="mb-4 p-3 flex items-start gap-2 text-[11px]"
               style={{ background: "#4ADE8012", border: "1px solid #4ADE8033", color: "#4ADE80" }}
@@ -1764,7 +1779,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   </span>
                   {" "}to your Status Effects
                   {card.customFields["Timed Effect::Duration"] && (
-                    <span> for <span style={{ color: "#4ADE80" }}>{card.customFields["Timed Effect::Duration"]}</span> turn(s)</span>
+                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: "#4ADE80" }}>{card.customFields["Timed Effect::Duration"]}</span> turn(s)</div>
                   )}
                   .
                 </div>
@@ -1772,14 +1787,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </div>
           )}
 
-          {extraEntries.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[10px] uppercase tracking-[0.08em]" style={S_MUTED}>
-                Additional Info
-              </div>
-              {renderCardFactChips(extraEntries, true)}
-            </div>
-          )}
+          {/* Custom Fields */}
+          {renderCustomFields(card.customFields)}
         </div>
       </div>
     );
@@ -1794,9 +1803,21 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     onToggleTag: (tag: string) => void,
     placeholder: string
   ) => (
-    <div className="space-y-3 mb-4">
-      {/* Search Input */}
-      <div className={`${retro.sunken} bg-[#0C0C2E] flex items-center`}>
+    <div className={`${retro.raised} p-3 mb-4 space-y-3`} style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[10px] uppercase tracking-[0.08em]" style={S_MUTED}>
+          Browse Filters
+        </div>
+        {(searchValue || activeTags.length > 0) && (
+          <div className="text-[9px]" style={S_MUTED}>
+            {searchValue ? "Search active" : ""}
+            {searchValue && activeTags.length > 0 ? " • " : ""}
+            {activeTags.length > 0 ? `${activeTags.length} tag filter${activeTags.length !== 1 ? "s" : ""}` : ""}
+          </div>
+        )}
+      </div>
+
+      <div className={`${retro.sunken} bg-[#0C0C2E] flex items-center`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
         <Search size={14} className="ml-3 shrink-0" style={{ color: "#3A5A9B" }} />
         <input
           type="text"
@@ -1813,22 +1834,24 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         )}
       </div>
 
-      {/* Tag Filters */}
       {allTags.length > 0 && (
-        <div className="flex items-start gap-2">
-          <Tag size={12} className="shrink-0 mt-1" style={S_MUTED} />
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-[10px]" style={S_MUTED}>
+            <Tag size={11} />
+            Quick Tag Filters
+            {activeTags.length > 0 && (
+              <button
+                onClick={() => activeTags.forEach((t) => onToggleTag(t))}
+                className="text-[9px] hover:opacity-80 px-1.5 py-0.5 ml-1"
+                style={{ ...S_RED, border: "1px solid rgba(255,90,90,0.18)" }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {allTags.map((tag) => renderTagPill(tag, activeTags.includes(tag), () => onToggleTag(tag)))}
           </div>
-          {activeTags.length > 0 && (
-            <button
-              onClick={() => activeTags.forEach((t) => onToggleTag(t))}
-              className="text-[9px] shrink-0 hover:opacity-80 px-1"
-              style={S_RED}
-            >
-              Clear
-            </button>
-          )}
         </div>
       )}
     </div>
@@ -4072,67 +4095,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {filteredCards.map((card) => {
-                            const factEntries = getCardFactEntries(card).preferredEntries.slice(0, 4);
-                            return (
-                            <button
-                              key={card.id}
-                              onClick={() => setSelectedCard(card)}
-                              className={`${retro.raised} p-4 text-left hover:brightness-110 transition-colors cursor-pointer`}
-                              style={{ background: theme.cardBg }}
-                            >
-                              <div className="flex items-start justify-between gap-3 mb-2">
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-[15px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                                    {card.name}
-                                  </div>
-                                  <div className="text-[10px]" style={{ color: theme.labelColor }}>
-                                    {card.type || "Uncategorized"} · {card.actionCost || "No action cost"}
-                                  </div>
-                                </div>
-                                <div className="flex flex-col items-end gap-1 shrink-0">
-                                  {card.customFields["Level"] && (
-                                    <span className="text-[9px] px-2 py-0.5" style={{ background: "#2A2038", color: "#FFD700", border: "1px solid #FFD70033" }}>
-                                      Lv.{card.customFields["Level"]}
-                                    </span>
-                                  )}
-                                  {card.customFields["Source Type"] && (
-                                    <span className="text-[9px] px-2 py-0.5" style={{ background: "#211C38", color: "#B99AFF", border: "1px solid #9A7ABB33" }}>
-                                      {card.customFields["Source Type"]}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-
-                              {factEntries.length > 0 && (
-                                <div className="grid grid-cols-2 gap-1.5 mb-3">
-                                  {factEntries.map(([label, value]) => (
-                                    <div key={`${card.id}-${label}`} className={`${retro.sunken} px-2 py-1`} style={{ background: "#0C0C2E" }}>
-                                      <div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>{label}</div>
-                                      <div className="text-[10px] leading-snug" style={{ color: theme.textColor, fontWeight: 600 }}>{value}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className="text-[12px] leading-[1.45] mb-3" style={{ color: theme.textColor }}>
-                                {renderCardPreviewSummary(card, 140)}
-                              </div>
-
-                              <div className="flex flex-wrap gap-1">
-                                {getCardDisplayBadges(card).map((badge) => (
-                                  <span
-                                    key={`${card.id}-${badge.tagName}`}
-                                    className="text-[9px] px-1.5 py-0.5"
-                                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                                    title={badge.filterGroup}
-                                  >
-                                    {badge.label}
-                                  </span>
-                                ))}
-                              </div>
-                            </button>
-                          )})}
+                          {filteredCards.map((card) => renderCardBrowseTile(card, () => setSelectedCard(card), {
+                            compact: false,
+                            summaryClamp: 140,
+                            factLimit: 4,
+                            showOpenHint: true,
+                          }))}
                         </div>
                       )}
                     </div>
@@ -4144,13 +4112,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               {/* ═══ LEVEL ABILITIES SUB-TAB ═══ */}
               {cardsSubTab === "levelabilities" && (() => {
                 const laFilteredCards = playerCards.filter((card) => {
-                  const badgeText = getCardDisplayBadges(card).flatMap((badge) => [badge.label, badge.filterGroup]).join(" ").toLowerCase();
                   const matchesSearch = laSearch === "" ||
                     card.name.toLowerCase().includes(laSearch.toLowerCase()) ||
                     card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(laSearch.toLowerCase()) ||
-                    badgeText.includes(laSearch.toLowerCase()) ||
                     card.tags.some((t) => t.toLowerCase().includes(laSearch.toLowerCase()));
-                  const matchesTags = laActiveTags.length === 0 || laActiveTags.every((t) => cardMatchesTagFilterGroup(card, cardTags, t));
+                  const matchesTags = laActiveTags.length === 0 || laActiveTags.every((t) => card.tags.includes(t));
                   return matchesSearch && matchesTags;
                 });
 
@@ -4304,49 +4270,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                   <div className="text-[10px] py-2" style={S_MUTED}>No cards assigned to this level yet.</div>
                                 ) : (
                                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {levelCards.map(card => {
-                                      const factEntries = getCardFactEntries(card).preferredEntries.slice(0, 2);
-                                      return (
-                                      <button
-                                        key={card.id}
-                                        onClick={() => setLaSelectedCard(card)}
-                                        className={`${retro.raised} p-3 text-left hover:brightness-110 transition-colors cursor-pointer`}
-                                        style={{ background: theme.cardBg }}
-                                      >
-                                        <div className="flex items-start justify-between gap-2 mb-1.5">
-                                          <div className="min-w-0 flex-1">
-                                            <div className="text-[13px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</div>
-                                            <div className="text-[10px]" style={{ color: theme.labelColor }}>
-                                              {card.type || "Uncategorized"} · {card.actionCost || "No action cost"}
-                                            </div>
-                                          </div>
-                                          {card.customFields["Level"] && (
-                                            <span className="text-[8px] px-1.5 py-0.5 shrink-0" style={{ background: "#2A2038", color: "#FFD700", border: "1px solid #FFD70033" }}>
-                                              Lv.{card.customFields["Level"]}
-                                            </span>
-                                          )}
-                                        </div>
-                                        {factEntries.length > 0 && (
-                                          <div className="grid grid-cols-2 gap-1 mb-2">
-                                            {factEntries.map(([label, value]) => (
-                                              <div key={`${card.id}-${label}`} className={`${retro.sunken} px-1.5 py-1`} style={{ background: "#0C0C2E" }}>
-                                                <div className="text-[7px] uppercase tracking-[0.06em]" style={S_MUTED}>{label}</div>
-                                                <div className="text-[9px] leading-snug" style={{ color: theme.textColor, fontWeight: 600 }}>{value}</div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-                                        <div className="text-[11px] leading-[1.4] mb-2.5" style={{ color: theme.textColor }}>
-                                          {renderCardPreviewSummary(card, 90)}
-                                        </div>
-                                        <div className="flex flex-wrap gap-1">
-                                          {getCardDisplayBadges(card).map((badge) => (
-                                            <span key={`${card.id}-${badge.tagName}`} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }} title={badge.filterGroup}>{badge.label}</span>
-                                          ))}
-                                        </div>
+                                    {levelCards.map(card => (
+                                      <div key={card.id} className="relative">
+                                        {renderCardBrowseTile(card, () => setLaSelectedCard(card), {
+                                          compact: true,
+                                          summaryClamp: 90,
+                                          factLimit: 2,
+                                          showOpenHint: false,
+                                        })}
                                         {isDM && (
                                           <button
-                                            className="mt-2 text-[9px] px-1.5 py-0.5 hover:brightness-150"
+                                            className="mt-2 text-[9px] px-1.5 py-0.5 hover:brightness-150 absolute right-3 bottom-3"
                                             style={{ color: "#FF5A5A", background: "#1A080822" }}
                                             onClick={e => {
                                               e.stopPropagation();
@@ -4355,8 +4289,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                             }}
                                           >Remove</button>
                                         )}
-                                      </button>
-                                    )})}
+                                      </div>
+                                    ))}
                                   </div>
                                 )}
                                 {/* DM: Assign card dropdown */}
