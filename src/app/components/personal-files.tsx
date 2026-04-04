@@ -1376,11 +1376,28 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       || key === "__editor_section_blocks";
   };
 
-  const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k));
+  const renderCustomFields = (
+    customFields: Record<string, string>,
+    options?: { compact?: boolean; omitKeys?: string[] },
+  ) => {
+    const omitted = new Set(options?.omitKeys || []);
+    const entries = Object.entries(customFields).filter(
+      ([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k) && !omitted.has(k),
+    );
     if (entries.length === 0) return null;
+
+    const compact = !!options?.compact;
+    const gridClass = compact
+      ? "grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-2 mt-3"
+      : "grid grid-cols-2 md:grid-cols-3 gap-3 mt-3";
+    const boxClass = compact
+      ? `${retro.raised} bg-[#0E0E35] px-2.5 py-2`
+      : `${retro.raised} bg-[#0E0E35] p-3`;
+    const labelClass = compact ? "text-[8px] mb-0.5 leading-tight" : "text-[9px] mb-1";
+    const valueClass = compact ? "text-[11px] leading-tight break-words" : "text-[13px]";
+
     return (
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+      <div className={gridClass}>
         {entries.map(([key, value]) => {
           const [tagName, fieldName] = key.split("::");
           let displayValue = value;
@@ -1394,11 +1411,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             if (!isNaN(n) && n > 0) displayValue = `+${n}`;
           }
           return (
-            <div key={key} className={`${retro.raised} bg-[#0E0E35] p-3`}>
-              <div className="text-[9px] mb-1" style={S_MUTED}>
+            <div key={key} className={boxClass}>
+              <div className={labelClass} style={S_MUTED}>
                 {fieldName || tagName}
               </div>
-              <div className="text-[13px]" style={{ color: theme.textColor }}>
+              <div className={valueClass} style={{ color: theme.textColor }}>
                 {displayValue}
               </div>
             </div>
@@ -1777,6 +1794,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const renderCardDetail = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
+    const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
 
     return (
       <div className="space-y-4">
@@ -1835,6 +1853,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             className="h-[1px] w-full mb-4"
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
+
+          {/* Description */}
+          {descriptionText && (
+            <div className="mb-4">
+              <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
+                DESCRIPTION
+              </div>
+              <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
+            </div>
+          )}
 
           {/* Effect */}
           <div className="mb-4">
@@ -1896,7 +1924,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           )}
 
           {/* Custom Fields */}
-          {renderCustomFields(card.customFields)}
+          {renderCustomFields(card.customFields, { compact: true, omitKeys: [CARD_DESCRIPTION_KEY] })}
         </div>
       </div>
     );
