@@ -1343,8 +1343,57 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
   SLOT_LABELS["ring"] = "Ring (any)";
 
+  const isPlayerHiddenCustomFieldKey = (key: string) => {
+    return key.startsWith("__editor_")
+      || key === "__editor_mechanics_builder"
+      || key === "__editor_section_blocks";
+  };
+
+  const getItemDisplayFacts = (item: ManagedItem) => {
+    return Object.entries(item.customFields || {})
+      .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(key))
+      .map(([key, value]) => {
+        const [tagName, fieldName] = key.split("::");
+        let label = fieldName || tagName;
+        let displayValue = String(value);
+
+        if (tagName === "Equipment" && fieldName === "Slot") {
+          label = "Slot";
+          displayValue = SLOT_LABELS[String(value)] || String(value);
+        }
+
+        if ((tagName === "Attribute Buff" || tagName === "Skill Buff" || tagName === "Resources Buff") && fieldName === "Amount") {
+          const n = Number(value);
+          if (!Number.isNaN(n) && n > 0) displayValue = `+${n}`;
+        }
+
+        if (tagName === "Custom") {
+          label = fieldName || "Detail";
+        }
+
+        return { key, label, value: displayValue };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  };
+
+  const getItemSummaryText = (item: ManagedItem) => {
+    const descriptionText = item.description.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    if (descriptionText) return descriptionText;
+
+    const firstEffectKey = Object.keys(item.customFields || {})
+      .filter((key) => key.startsWith("Effect::") && String(item.customFields[key] || "").trim())
+      .sort((a, b) => parseInt((a.split("::")[1] || "0"), 10) - parseInt((b.split("::")[1] || "0"), 10))[0];
+
+    if (firstEffectKey) {
+      return String(item.customFields[firstEffectKey] || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    }
+
+    const firstFact = getItemDisplayFacts(item)[0];
+    return firstFact ? `${firstFact.label}: ${firstFact.value}` : "";
+  };
+
   const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::"));
+    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k));
     if (entries.length === 0) return null;
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
