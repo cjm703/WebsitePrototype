@@ -334,6 +334,24 @@ function getAllTags(items: { tags: string[] }[]): string[] {
   return Array.from(tagSet).sort();
 }
 
+function stripHtml(value: string): string {
+  return value.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
+}
+
+function extractDiceExpressions(value: string): string[] {
+  const plain = stripHtml(value);
+  const matches = plain.match(/(?:(?:\d*d\d+|P)(?:\s*(?:[+\-*/]\s*)(?:\d*d\d+|\d+|P))*)/gi) || [];
+  const unique: string[] = [];
+
+  matches.forEach((match) => {
+    const cleaned = match.replace(/\s+/g, " ").trim();
+    if (!cleaned || !hasDiceNotation(cleaned) || unique.includes(cleaned)) return;
+    unique.push(cleaned);
+  });
+
+  return unique;
+}
+
 function isPlayerHiddenCustomFieldKey(key: string): boolean {
   return key.startsWith("__editor_")
     || key === "__editor_mechanics_builder"
@@ -1401,6 +1419,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               <div className="text-[13px]" style={{ color: theme.textColor }}>
                 {displayValue}
               </div>
+              {renderDiceRollControls(`custom-field:${key}`, String(displayValue), "", true)}
             </div>
           );
         })}
@@ -1484,6 +1503,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             DESCRIPTION
           </div>
           <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
+          {renderDiceRollControls(`item:${item.id}:description`, item.description, "")}
         </div>
 
         {/* Effect areas */}
@@ -1508,6 +1528,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     <div className="text-[12px]" style={{ color: theme.textColor }}>
                       <RenderFormattedText text={item.customFields[key]} color={theme.textColor} baseSize={12} />
                     </div>
+                    {renderDiceRollControls(`item:${item.id}:effect:${key}`, item.customFields[key] || "", "")}
                   </div>
                 ))}
               </div>
@@ -1523,6 +1544,63 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   // ── Use Card (use-able tag) ──
   const [useCardFlash, setUseCardFlash] = useState<string | null>(null);
+  const [inlineDiceRollResults, setInlineDiceRollResults] = useState<Record<string, string>>({});
+
+  const handleInlineDiceRoll = useCallback((rollKey: string, expression: string, potencyRaw = "") => {
+    if (!hasDiceNotation(expression)) return;
+
+    const diceGroups = parseDiceGroups(expression, potencyRaw);
+    const totalDice = diceGroups.reduce((sum, group) => sum + group.count, 0);
+    if (totalDice > 0) {
+      playDiceRoll(totalDice);
+    }
+
+    const result = rollDiceExpression(expression, potencyRaw);
+    if (!result) return;
+
+    if (diceGroups.length > 0) {
+      triggerDiceAnimation(diceGroups);
+    }
+
+    setInlineDiceRollResults((prev) => ({
+      ...prev,
+      [rollKey]: result.breakdown ? `${result.total} (${result.breakdown})` : `${result.total}`,
+    }));
+  }, []);
+
+  const renderDiceRollControls = useCallback((sourceKey: string, value: string, potencyRaw = "", compact = false) => {
+    const expressions = extractDiceExpressions(value);
+    if (expressions.length === 0) return null;
+
+    return (
+      <div className={compact ? "mt-1 flex flex-wrap gap-1.5" : "mt-2 flex flex-wrap gap-2"}>
+        {expressions.map((expression) => {
+          const rollKey = `${sourceKey}:${expression}`;
+          const result = inlineDiceRollResults[rollKey];
+          return (
+            <div key={rollKey} className="inline-flex items-center gap-1.5">
+              <button
+                onClick={() => handleInlineDiceRoll(rollKey, expression, potencyRaw)}
+                className={`${retro.button} px-2 py-0.5 inline-flex items-center gap-1`}
+                style={{
+                  color: compact ? "#FFD166" : theme.accentColor,
+                  fontSize: compact ? "10px" : "11px",
+                }}
+              >
+                <Dices size={compact ? 10 : 11} />
+                {expression}
+              </button>
+              {result && (
+                <span className={compact ? "text-[10px]" : "text-[11px]"} style={{ color: "#FF6A6A", fontWeight: 700 }}>
+                  {result}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
 
   const handleUseCard = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
@@ -1707,6 +1785,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
     const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
+    const detailRollPotency = (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || card.customFields?.["Timed Effect::Potency"] || "").trim();
     const familyLabel = getPlayerCardFamilyLabel(card);
     const componentValue = getPlayerCardComponentsDisplay(card);
     const requirementsValue = (card.customFields?.["Use Profile::Requirements"] || "").trim();
@@ -1855,6 +1934,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     Description
                   </div>
                   <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
+                  {renderDiceRollControls(`card:${card.id}:description`, descriptionText, detailRollPotency)}
                 </div>
               )}
 
@@ -1866,6 +1946,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   Effect
                 </div>
                 <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
+                {renderDiceRollControls(`card:${card.id}:effect`, card.effect, detailRollPotency)}
               </div>
             </div>
 
@@ -1884,6 +1965,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       <div key={field.key} className="pb-1.5 last:pb-0 border-b last:border-b-0" style={{ borderColor: `${section.accent}18` }}>
                         <div className="text-[7px] uppercase tracking-[0.05em] mb-0.5" style={S_MUTED}>{field.label}</div>
                         <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor }}>{field.value}</div>
+                        {renderDiceRollControls(`card:${card.id}:sidebar:${field.key}`, field.value, detailRollPotency, true)}
                       </div>
                     ))}
                   </div>
