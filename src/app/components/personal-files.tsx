@@ -1499,7 +1499,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 <Sparkles size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
                 EFFECTS
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {effectKeys.map((key, i) => (
                   <div key={key} className={`${retro.sunken} p-3`} style={{ background: theme.inputBg }}>
                     {effectKeys.length > 1 && (
@@ -1825,15 +1825,15 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           </div>
 
           {primaryFacts.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
               {primaryFacts.map((fact) => (
                 <div
                   key={fact.label}
-                  className={`${retro.raised} px-3 py-2.5 min-h-[54px]`}
+                  className={`${retro.raised} px-2.5 py-2 min-h-[46px]`}
                   style={{ background: "rgba(12,18,46,0.94)", border: `1px solid ${bc(theme.panelBorder)}` }}
                 >
-                  <div className="text-[9px] uppercase tracking-[0.08em] mb-1" style={S_MUTED}>{fact.label}</div>
-                  <div className="text-[11px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
+                  <div className="text-[8px] uppercase tracking-[0.07em] mb-0.5" style={S_MUTED}>{fact.label}</div>
+                  <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
                 </div>
               ))}
             </div>
@@ -1844,7 +1844,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
 
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(250px,0.95fr)] gap-4 items-start">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2.08fr)_minmax(210px,0.72fr)] gap-4 items-start">
             <div className="space-y-4 min-w-0">
               {descriptionText && (
                 <div
@@ -1873,17 +1873,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               {sidebarSections.map((section) => (
                 <div
                   key={section.title}
-                  className={`${retro.raised} p-3`}
+                  className={`${retro.raised} p-2.5`}
                   style={{ background: "rgba(11,14,40,0.92)", border: `1px solid ${section.accent}33` }}
                 >
-                  <div className="text-[10px] uppercase tracking-[0.08em] mb-2" style={{ color: section.accent, fontWeight: 700 }}>
+                  <div className="text-[9px] uppercase tracking-[0.07em] mb-1.5" style={{ color: section.accent, fontWeight: 700 }}>
                     {section.title}
                   </div>
                   <div className="space-y-2">
                     {section.fields.map((field) => (
-                      <div key={field.key} className="pb-2 last:pb-0 border-b last:border-b-0" style={{ borderColor: `${section.accent}18` }}>
-                        <div className="text-[8px] uppercase tracking-[0.06em] mb-0.5" style={S_MUTED}>{field.label}</div>
-                        <div className="text-[11px] leading-snug break-words" style={{ color: theme.textColor }}>{field.value}</div>
+                      <div key={field.key} className="pb-1.5 last:pb-0 border-b last:border-b-0" style={{ borderColor: `${section.accent}18` }}>
+                        <div className="text-[7px] uppercase tracking-[0.05em] mb-0.5" style={S_MUTED}>{field.label}</div>
+                        <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor }}>{field.value}</div>
                       </div>
                     ))}
                   </div>
