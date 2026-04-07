@@ -334,6 +334,12 @@ function getAllTags(items: { tags: string[] }[]): string[] {
   return Array.from(tagSet).sort();
 }
 
+function isPlayerHiddenCustomFieldKey(key: string): boolean {
+  return key.startsWith("__editor_")
+    || key === "__editor_mechanics_builder"
+    || key === "__editor_section_blocks";
+}
+
 export function PersonalFiles() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"character" | "inventory" | "cards" | "information">("character");
