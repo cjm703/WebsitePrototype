@@ -49,6 +49,17 @@ interface SourceUsageEntry { id: string; cardName: string; sourceType: string; a
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
 
+const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
+const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
+const CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
+const CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
+const CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
+const CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
+const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
+const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
+const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
+const CARD_DESCRIPTION_KEY = "Description";
+
 
 
 // ========================
@@ -191,6 +202,22 @@ function stepTE(potency: string): string {
   const next = sign === "+" ? num + step : num - step;
   const stepStr = step !== 1 ? String(step) : "";
   return `${next}${sign}TE${stepStr}`;
+}
+
+function getBuiltInCardTrackerBucket(card: ManagedCard): "status" | "ability" | "" {
+  const bucket = (card.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
+  return bucket === "status" || bucket === "ability" ? bucket : "";
+}
+
+function hasBuiltInCardTracker(card: ManagedCard): boolean {
+  return !!(
+    getBuiltInCardTrackerBucket(card)
+    || (card.customFields?.[CARD_TRACKER_NAME_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DURATION_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || "").trim()
+    || (card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || "").trim()
+  );
 }
 
 type StatusTag = TagDefinition;
@@ -1343,60 +1370,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
   SLOT_LABELS["ring"] = "Ring (any)";
 
-  const isPlayerHiddenCustomFieldKey = (key: string) => {
-    return key.startsWith("__editor_")
-      || key === "__editor_mechanics_builder"
-      || key === "__editor_section_blocks";
-  };
-
-  const stripHtml = (value: string) =>
-    String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-
-  const getItemDisplayFacts = (item: ManagedItem) => {
-    return Object.entries(item.customFields || {})
-      .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(key))
-      .map(([key, value]) => {
-        const [tagName, fieldName] = key.split("::");
-        let label = fieldName || tagName;
-        let displayValue = String(value);
-
-        if (tagName === "Equipment" && fieldName === "Slot") {
-          label = "Slot";
-          displayValue = SLOT_LABELS[String(value)] || String(value);
-        }
-
-        if ((tagName === "Attribute Buff" || tagName === "Skill Buff" || tagName === "Resources Buff") && fieldName === "Amount") {
-          const n = Number(value);
-          if (!Number.isNaN(n) && n > 0) displayValue = `+${n}`;
-        }
-
-        if (tagName === "Custom") {
-          label = fieldName || "Detail";
-        }
-
-        return { key, label, value: displayValue };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  };
-
-  const getItemSummaryText = (item: ManagedItem) => {
-    const descriptionText = stripHtml(item.description || "");
-    if (descriptionText) return descriptionText;
-
-    const firstEffectKey = Object.keys(item.customFields || {})
-      .filter((key) => key.startsWith("Effect::") && String(item.customFields[key] || "").trim())
-      .sort((a, b) => parseInt((a.split("::")[1] || "0"), 10) - parseInt((b.split("::")[1] || "0"), 10))[0];
-
-    if (firstEffectKey) {
-      return stripHtml(String(item.customFields[firstEffectKey] || ""));
-    }
-
-    const firstFact = getItemDisplayFacts(item)[0];
-    return firstFact ? `${firstFact.label}: ${firstFact.value}` : "";
-  };
-
   const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k));
+    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::"));
     if (entries.length === 0) return null;
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
@@ -1428,120 +1403,91 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   };
 
   // --- Item Detail Screen ---
-  const renderItemDetail = (item: ManagedItem) => {
-    const descriptionText = stripHtml(item.description || "");
-    const effectKeys = Object.keys(item.customFields ?? {})
-      .filter((key) => key.startsWith("Effect::"))
-      .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-      .filter((key) => item.customFields[key]?.trim());
-    const facts = getItemDisplayFacts(item);
-    const primaryFacts = facts.slice(0, 6);
-    const secondaryFacts = facts.slice(6);
+  const renderItemDetail = (item: ManagedItem) => (
+    <div className="space-y-4">
+      <button
+        onClick={() => setSelectedItem(null)}
+        className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
+        style={ts(theme.accentColor)}
+      >
+        <ArrowLeft size={14} />
+        BACK TO INVENTORY
+      </button>
 
-    return (
-      <div className="space-y-4">
-        <button
-          onClick={() => setSelectedItem(null)}
-          className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
-          style={ts(theme.accentColor)}
-        >
-          <ArrowLeft size={14} />
-          BACK TO INVENTORY
-        </button>
-
-        <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-          <div className="mb-4">
-            <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
-              <div>
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <h2 className="text-[20px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-                    {item.name}
-                  </h2>
-                  {item.rarity && (
-                    <span
-                      className="px-2 py-0.5 text-[10px]"
-                      style={{
-                        background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                        color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                        border: `1px solid ${item.rarity === "Rare" ? "#6A3A9B" : item.rarity === "Uncommon" ? "#3A7A4B" : "#3A3A6B"}`,
-                      }}
-                    >
-                      {item.rarity}
-                    </span>
-                  )}
-                  {item.locked && (
-                    <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
-                      <Lock size={8} /> DM LOCKED
-                    </span>
-                  )}
-                </div>
-                <div className="text-[12px]" style={S_LABEL}>
-                  {item.type || "No type"} • {item.assignedTo.includes("all") ? "Shared item" : "Owned item"}
-                </div>
-              </div>
-              {canPlayerEdit(item) && (
-                <button
-                  onClick={() => { setSelectedItem(null); setInventorySubTab("general"); startEditItem(item); }}
-                  className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5 shrink-0`}
-                  style={{ color: "#5A9AFF" }}
+      <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+              {item.name}
+            </h2>
+            <div className="text-[12px] flex items-center gap-2" style={S_LABEL}>
+              {item.type}
+              {item.rarity && (
+                <span
+                  className="px-2 py-0.5 text-[10px]"
+                  style={{
+                    background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
+                    color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
+                    border: `1px solid ${item.rarity === "Rare" ? "#6A3A9B" : item.rarity === "Uncommon" ? "#3A7A4B" : "#3A3A6B"}`,
+                  }}
                 >
-                  <Edit size={12} /> Edit Item
-                </button>
+                  {item.rarity}
+                </span>
+              )}
+              {item.locked && (
+                <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
+                  <Lock size={8} /> DM LOCKED
+                </span>
               )}
             </div>
-
-            {item.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {item.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="text-[10px] px-2 py-0.5 flex items-center gap-1"
-                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                  >
-                    <Tag size={8} />
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {primaryFacts.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-3">
-                {primaryFacts.map((fact) => (
-                  <div
-                    key={fact.key}
-                    className={`${retro.raised} px-2.5 py-2`}
-                    style={{ background: "#10103A", border: `1px solid ${bc(theme.panelBorder)}` }}
-                  >
-                    <div className="text-[8px] mb-1 uppercase tracking-[0.06em]" style={S_MUTED}>
-                      {fact.label}
-                    </div>
-                    <div className="text-[11px] leading-tight break-words" style={{ color: theme.textColor }}>
-                      {fact.value}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
-
-          <div
-            className="h-[1px] w-full mb-4"
-            style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
-          />
-
-          {descriptionText && (
-            <div className="mb-4">
-              <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-                DESCRIPTION
-              </div>
-              <div className={`${retro.sunken} p-4`} style={{ background: theme.inputBg }}>
-                <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
-              </div>
-            </div>
+          {canPlayerEdit(item) && (
+            <button
+              onClick={() => { setSelectedItem(null); setInventorySubTab("general"); startEditItem(item); }}
+              className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5 shrink-0`}
+              style={{ color: "#5A9AFF" }}
+            >
+              <Edit size={12} /> Edit Item
+            </button>
           )}
+        </div>
 
-          {effectKeys.length > 0 && (
+        {/* Tags */}
+        <div className="flex flex-wrap gap-1.5 mb-4">
+          {item.tags.map((tag) => (
+            <span
+              key={tag}
+              className="text-[10px] px-2 py-0.5 flex items-center gap-1"
+              style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+            >
+              <Tag size={8} />
+              {tag}
+            </span>
+          ))}
+        </div>
+
+        {/* Divider */}
+        <div
+          className="h-[1px] w-full mb-4"
+          style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
+        />
+
+        {/* Description */}
+        <div className="mb-4">
+          <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
+            DESCRIPTION
+          </div>
+          <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
+        </div>
+
+        {/* Effect areas */}
+        {item.tags.includes("Effect") && (() => {
+          const effectKeys = Object.keys(item.customFields ?? {})
+            .filter(k => k.startsWith("Effect::"))
+            .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
+            .filter(k => item.customFields[k]?.trim());
+          if (effectKeys.length === 0) return null;
+          return (
             <div className="mb-4">
               <div className="text-[11px] mb-2" style={{ color: "#C4A0FF", fontWeight: 600 }}>
                 <Sparkles size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
@@ -1560,31 +1506,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 ))}
               </div>
             </div>
-          )}
+          );
+        })()}
 
-          {secondaryFacts.length > 0 && (
-            <div className="mb-2">
-              <div className="text-[11px] mb-2" style={{ color: "#6A86C8", fontWeight: 600 }}>
-                ITEM DETAILS
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {secondaryFacts.map((fact) => (
-                  <div
-                    key={fact.key}
-                    className={`${retro.raised} px-2.5 py-1.5`}
-                    style={{ background: "#0E0E35", border: `1px solid ${bc(theme.panelBorder)}` }}
-                  >
-                    <span className="text-[9px]" style={S_MUTED}>{fact.label}:</span>{" "}
-                    <span className="text-[10px]" style={{ color: theme.textColor }}>{fact.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Custom Fields */}
+        {renderCustomFields(item.customFields)}
       </div>
-    );
-  };
+    </div>
+  );
 
   // ── Use Card (use-able tag) ──
   const [useCardFlash, setUseCardFlash] = useState<string | null>(null);
@@ -1595,34 +1524,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     const isBuff = card.tags.some((t) => t.toLowerCase() === "buff");
     const isTimedEffect = card.tags.some((t) => t.toLowerCase() === "timed effect");
+    const builtInTrackerBucket = getBuiltInCardTrackerBucket(card);
 
-    if (isBuff) {
-      // Extract Buff fields from customFields
-      const duration = card.customFields["Buff::Duration"] || "1";
-      const stat = card.customFields["Buff::Stat"] || card.name;
-      const amount = card.customFields["Buff::Amount"] || "";
+    if (hasBuiltInCardTracker(card) && builtInTrackerBucket) {
+      const effectName = card.customFields[CARD_TRACKER_NAME_KEY] || card.name;
+      const duration = card.customFields[CARD_TRACKER_DURATION_KEY] || "1";
+      const potency = card.customFields[CARD_TRACKER_POTENCY_KEY] || "";
+      const damage = card.customFields[CARD_TRACKER_DAMAGE_KEY] || "";
+      const description =
+        card.customFields[CARD_TRACKER_DESCRIPTION_KEY]
+        || card.customFields[CARD_DESCRIPTION_KEY]?.replace(/<[^>]*>/g, "")
+        || card.effect.replace(/<[^>]*>/g, "");
 
-      const newEffect: StatusEffectRow = {
-        id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: stat || card.name,
-        potency: amount,
-        duration: duration,
-        damage: "",
-        effect: `From card: ${card.name}`,
-      };
-
-      setStatusEffects((prev) => [...prev, newEffect]);
-    }
-
-    if (isTimedEffect) {
-      // Extract Timed Effect fields from customFields
-      const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
-      const duration = card.customFields["Timed Effect::Duration"] || "1";
-      const potency = card.customFields["Timed Effect::Potency"] || "";
-      const damage = card.customFields["Timed Effect::Damage"] || "";
-      const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
-
-      // Auto-roll damage on use if it contains dice notation
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
         const diceGroups = parseDiceGroups(damage, potency);
@@ -1631,37 +1544,94 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         const result = rollDiceExpression(damage, potency);
         if (result) {
           triggerDiceAnimation(parseDiceGroups(damage, potency));
-          initialRoll = result.breakdown
-            ? `⚔ ${result.total} (${result.breakdown})`
-            : `⚔ ${result.total}`;
+          initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
         }
       } else {
         playSuccessChime();
       }
 
-      // Extract optional buff configuration from card
-      const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
-      const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
-      const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
-
-      let targetType: StatusEffectRow["targetType"];
-      if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
-      else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
+      const buffType = (card.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || "") as StatusEffectRow["buffType"];
+      const buffTarget = card.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || "";
+      const buffValue = card.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || "";
 
       const newEffect: StatusEffectRow = {
         id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: effectName,
-        potency: potency,
-        duration: duration,
-        damage: damage,
+        potency,
+        duration,
+        damage,
         effect: description || `From card: ${card.name}`,
         lastRoll: initialRoll,
-        ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
-        ...(targetType ? { targetType } : {}),
+        ...(builtInTrackerBucket === "status" && buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+        targetType: builtInTrackerBucket === "ability" ? "enemy" : "self",
       };
 
       setStatusEffects((prev) => [...prev, newEffect]);
       setLastAddedStatusEffect(effectName);
+    } else {
+      if (isBuff) {
+        const duration = card.customFields["Buff::Duration"] || "1";
+        const stat = card.customFields["Buff::Stat"] || card.name;
+        const amount = card.customFields["Buff::Amount"] || "";
+
+        const newEffect: StatusEffectRow = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: stat || card.name,
+          potency: amount,
+          duration: duration,
+          damage: "",
+          effect: `From card: ${card.name}`,
+        };
+
+        setStatusEffects((prev) => [...prev, newEffect]);
+      }
+
+      if (isTimedEffect) {
+        const effectName = card.customFields["Timed Effect::Effect Name"] || card.name;
+        const duration = card.customFields["Timed Effect::Duration"] || "1";
+        const potency = card.customFields["Timed Effect::Potency"] || "";
+        const damage = card.customFields["Timed Effect::Damage"] || "";
+        const description = card.customFields["Timed Effect::Description"] || card.effect.replace(/<[^>]*>/g, "");
+
+        let initialRoll: string | undefined;
+        if (damage && hasDiceNotation(damage)) {
+          const diceGroups = parseDiceGroups(damage, potency);
+          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+          playDiceRoll(totalDice);
+          const result = rollDiceExpression(damage, potency);
+          if (result) {
+            triggerDiceAnimation(parseDiceGroups(damage, potency));
+            initialRoll = result.breakdown
+              ? `⚔ ${result.total} (${result.breakdown})`
+              : `⚔ ${result.total}`;
+          }
+        } else {
+          playSuccessChime();
+        }
+
+        const buffType = (card.customFields["Timed Effect::Buff Type"] || "") as StatusEffectRow["buffType"];
+        const buffTarget = card.customFields["Timed Effect::Buff Target"] || "";
+        const buffValue = card.customFields["Timed Effect::Buff Value"] || "";
+
+        let targetType: StatusEffectRow["targetType"];
+        if (card.tags.some(t => /^Target:\s*Enemy$/i.test(t))) targetType = "enemy";
+        else if (card.tags.some(t => /^Target:\s*Self$/i.test(t))) targetType = "self";
+
+        const newEffect: StatusEffectRow = {
+          id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: effectName,
+          potency: potency,
+          duration: duration,
+          damage: damage,
+          effect: description || `From card: ${card.name}`,
+          lastRoll: initialRoll,
+          ...(buffType && buffTarget ? { buffType, buffTarget, buffValue } : {}),
+          ...(targetType ? { targetType } : {}),
+        };
+
+        setStatusEffects((prev) => [...prev, newEffect]);
+        setLastAddedStatusEffect(effectName);
+      }
     }
 
     // ── Source usage tracking ──
@@ -1689,10 +1659,113 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setTimeout(() => setUseCardFlash(null), 800);
   };
 
-  // --- Card Detail Screen ---
+  const getPlayerCardFamilyLabel = (card: ManagedCard) => {
+    const stored = (card.customFields?.["Card Family"] || "").trim().toLowerCase();
+    if (stored === "spell" || stored === "skill" || stored === "ability") return stored[0].toUpperCase() + stored.slice(1);
+    const blob = `${card.type || ""} ${card.effect || ""} ${card.tags.join(" ")}`.toLowerCase();
+    if (/(magical \(spell\)|spell|source magic)/.test(blob)) return "Spell";
+    if (/(ability|passive|innate|granted|lineage|blood)/.test(blob)) return "Ability";
+    if (/(skill|martial|technique|learned)/.test(blob)) return "Skill";
+    return "";
+  };
+
+  const getPlayerCardComponentsDisplay = (card: ManagedCard) => {
+    const base = (card.customFields?.["Use Profile::Components"] || "").trim();
+    const detail = (card.customFields?.["Use Profile::Component Details"] || "").trim();
+    if (base && detail) return `${base} (${detail})`;
+    return base || detail || "";
+  };
+
+  const formatCardDetailField = (key: string, value: string) => {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) return null;
+    const [group, fieldNameRaw = ""] = key.split("::");
+    const fieldName = fieldNameRaw || group;
+    let label = fieldName;
+    let displayValue = trimmed;
+
+    if (group === "Use Profile") {
+      label = fieldName;
+    } else if (group === "Timed Effect") {
+      label = fieldName === "Effect Name" ? "Effect Name" : fieldName;
+    } else if (group === "Tracker") {
+      label = fieldName;
+    } else {
+      label = fieldName || group;
+    }
+
+    return { key, label, value: displayValue };
+  };
+
   const renderCardDetail = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
+    const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
+    const familyLabel = getPlayerCardFamilyLabel(card);
+    const componentValue = getPlayerCardComponentsDisplay(card);
+    const requirementsValue = (card.customFields?.["Use Profile::Requirements"] || "").trim();
+    const componentsOrRequirementsLabel = componentValue ? "Components" : requirementsValue ? "Requirements" : "";
+    const componentsOrRequirementsValue = componentValue || requirementsValue;
+
+    const primaryFacts = [
+      card.customFields["Level"] ? { label: "Level", value: `Lv. ${card.customFields["Level"]}` } : null,
+      familyLabel ? { label: "Type", value: familyLabel } : null,
+      (card.customFields?.["Use Profile::Range"] || "").trim() ? { label: "Range", value: card.customFields["Use Profile::Range"].trim() } : null,
+      componentsOrRequirementsLabel && componentsOrRequirementsValue ? { label: componentsOrRequirementsLabel, value: componentsOrRequirementsValue } : null,
+      (card.customFields?.["Use Profile::Duration"] || "").trim() ? { label: "Duration", value: card.customFields["Use Profile::Duration"].trim() } : null,
+    ].filter(Boolean) as Array<{ label: string; value: string }>;
+
+    const hiddenKeys = new Set<string>([
+      CARD_DESCRIPTION_KEY,
+      "Level",
+      "Use Profile::Range",
+      "Use Profile::Duration",
+      "Use Profile::Requirements",
+      "Use Profile::Components",
+      "Use Profile::Component Details",
+      "Card Family",
+    ]);
+
+    const useProfileFields = Object.entries(card.customFields || {})
+      .filter(([key, value]) => String(value || "").trim() && key.startsWith("Use Profile::") && !hiddenKeys.has(key) && !isPlayerHiddenCustomFieldKey(key))
+      .map(([key, value]) => formatCardDetailField(key, String(value)))
+      .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
+
+    const trackerFields = [
+      formatCardDetailField(CARD_TRACKER_NAME_KEY, card.customFields?.[CARD_TRACKER_NAME_KEY] || card.name || ""),
+      formatCardDetailField(CARD_TRACKER_DURATION_KEY, card.customFields?.[CARD_TRACKER_DURATION_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_POTENCY_KEY, card.customFields?.[CARD_TRACKER_POTENCY_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_DAMAGE_KEY, card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_BUFF_TYPE_KEY, card.customFields?.[CARD_TRACKER_BUFF_TYPE_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_BUFF_TARGET_KEY, card.customFields?.[CARD_TRACKER_BUFF_TARGET_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_BUFF_VALUE_KEY, card.customFields?.[CARD_TRACKER_BUFF_VALUE_KEY] || ""),
+    ].filter(Boolean) as Array<{ key: string; label: string; value: string }>;
+
+    const timedEffectFields = Object.entries(card.customFields || {})
+      .filter(([key, value]) => String(value || "").trim() && key.startsWith("Timed Effect::") && !isPlayerHiddenCustomFieldKey(key))
+      .map(([key, value]) => formatCardDetailField(key, String(value)))
+      .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
+
+    const otherDetailFields = Object.entries(card.customFields || {})
+      .filter(([key, value]) => {
+        if (!String(value || "").trim()) return false;
+        if (key.startsWith("Effect::")) return false;
+        if (isPlayerHiddenCustomFieldKey(key)) return false;
+        if (hiddenKeys.has(key)) return false;
+        if (key.startsWith("Use Profile::")) return false;
+        if (key.startsWith("Timed Effect::")) return false;
+        if (key.startsWith("Tracker::")) return false;
+        return true;
+      })
+      .map(([key, value]) => formatCardDetailField(key, String(value)))
+      .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
+
+    const sidebarSections = [
+      useProfileFields.length > 0 ? { title: "Use Details", accent: "#6AA8FF", fields: useProfileFields } : null,
+      trackerFields.length > 0 ? { title: getBuiltInCardTrackerBucket(card) === "ability" ? "Tracker" : "Status Tracker", accent: getBuiltInCardTrackerBucket(card) === "ability" ? "#FF8A5A" : "#4ADE80", fields: trackerFields } : null,
+      timedEffectFields.length > 0 ? { title: "Timed Effect", accent: "#4ADE80", fields: timedEffectFields } : null,
+      otherDetailFields.length > 0 ? { title: "More Details", accent: "#9A8CFF", fields: otherDetailFields } : null,
+    ].filter(Boolean) as Array<{ title: string; accent: string; fields: Array<{ key: string; label: string; value: string }> }>;
 
     return (
       <div className="space-y-4">
@@ -1706,13 +1779,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         </button>
 
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-          <div className="flex items-start justify-between mb-4">
+          <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
             <div>
               <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
                 {card.name}
               </h2>
               <div className="text-[12px]" style={S_LABEL}>
-                {card.type} · {card.actionCost}
+                {card.type || "No type"} · {card.actionCost || "No action cost"}
                 {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
               </div>
             </div>
@@ -1732,7 +1805,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             )}
           </div>
 
-          {/* Tags */}
           <div className="flex flex-wrap gap-1.5 mb-4">
             {card.tags.map((tag) => (
               <span
@@ -1746,46 +1818,73 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             ))}
           </div>
 
-          {/* Divider */}
+          {primaryFacts.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 mb-4">
+              {primaryFacts.map((fact) => (
+                <div
+                  key={fact.label}
+                  className={`${retro.raised} px-3 py-2.5 min-h-[54px]`}
+                  style={{ background: "rgba(12,18,46,0.94)", border: `1px solid ${bc(theme.panelBorder)}` }}
+                >
+                  <div className="text-[9px] uppercase tracking-[0.08em] mb-1" style={S_MUTED}>{fact.label}</div>
+                  <div className="text-[11px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div
             className="h-[1px] w-full mb-4"
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
 
-          {/* Effect */}
-          <div className="mb-4">
-            <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-              EFFECT
-            </div>
-            <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
-          </div>
-
-          {/* Timed Effect indicator */}
-          {card.tags.some((t) => t.toLowerCase() === "timed effect") && card.tags.some((t) => t.toLowerCase() === "use-able") && (
-            <div
-              className="mb-4 p-3 flex items-start gap-2 text-[11px]"
-              style={{ background: "#4ADE8012", border: "1px solid #4ADE8033", color: "#4ADE80" }}
-            >
-              <Zap size={13} className="shrink-0 mt-0.5" />
-              <div>
-                <div style={{ fontWeight: 600 }}>TIMED EFFECT</div>
-                <div style={{ color: "#4ADE80AA", marginTop: 2 }}>
-                  Using this card adds{" "}
-                  <span style={{ color: "#4ADE80" }}>
-                    {card.customFields["Timed Effect::Effect Name"] || card.name}
-                  </span>
-                  {" "}to your Status Effects
-                  {card.customFields["Timed Effect::Duration"] && (
-                    <div style={DISPLAY_CONTENTS}> for <span style={{ color: "#4ADE80" }}>{card.customFields["Timed Effect::Duration"]}</span> turn(s)</div>
-                  )}
-                  .
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(250px,0.95fr)] gap-4 items-start">
+            <div className="space-y-4 min-w-0">
+              {descriptionText && (
+                <div
+                  className={`${retro.sunken} p-4`}
+                  style={{ background: "linear-gradient(180deg, rgba(13,18,43,0.96) 0%, rgba(10,10,40,0.96) 100%)", border: `1px solid ${bc(theme.panelBorder)}` }}
+                >
+                  <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: "#7FA6FF", fontWeight: 700 }}>
+                    Description
+                  </div>
+                  <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
                 </div>
+              )}
+
+              <div
+                className={`${retro.sunken} p-4`}
+                style={{ background: "linear-gradient(180deg, rgba(14,17,48,0.98) 0%, rgba(10,10,40,0.98) 100%)", border: `1px solid ${bc(theme.panelBorder)}` }}
+              >
+                <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: "#8AB8FF", fontWeight: 700 }}>
+                  Effect
+                </div>
+                <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
               </div>
             </div>
-          )}
 
-          {/* Custom Fields */}
-          {renderCustomFields(card.customFields)}
+            <div className="space-y-3 min-w-0">
+              {sidebarSections.map((section) => (
+                <div
+                  key={section.title}
+                  className={`${retro.raised} p-3`}
+                  style={{ background: "rgba(11,14,40,0.92)", border: `1px solid ${section.accent}33` }}
+                >
+                  <div className="text-[10px] uppercase tracking-[0.08em] mb-2" style={{ color: section.accent, fontWeight: 700 }}>
+                    {section.title}
+                  </div>
+                  <div className="space-y-2">
+                    {section.fields.map((field) => (
+                      <div key={field.key} className="pb-2 last:pb-0 border-b last:border-b-0" style={{ borderColor: `${section.accent}18` }}>
+                        <div className="text-[8px] uppercase tracking-[0.06em] mb-0.5" style={S_MUTED}>{field.label}</div>
+                        <div className="text-[11px] leading-snug break-words" style={{ color: theme.textColor }}>{field.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -2785,109 +2884,73 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             const ActiveIcon = active.icon;
 
             // ── Render an item row (reusable) ──
-            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => {
-              const facts = getItemDisplayFacts(item).slice(0, 3);
-              const summaryText = getItemSummaryText(item);
-              return (
-                <div
-                  key={item.id}
-                  className={`${retro.raised} p-3 mb-2 last:mb-0`}
-                  style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}
+            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => (
+              <div key={item.id} className="flex items-center border-b border-[#1A1A4B] last:border-b-0">
+                <button
+                  onClick={onClick}
+                  className="flex-1 text-left py-2.5 px-3 hover:bg-[#0E0E35] transition-colors cursor-pointer"
                 >
-                  <div className="flex items-start gap-3">
-                    <button
-                      onClick={onClick}
-                      className="flex-1 text-left min-w-0"
-                    >
-                      <div className="flex items-start justify-between gap-3 mb-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                            <span className="text-[13px]" style={{ color: theme.textColor, fontWeight: 600 }}>
-                              {item.name}
-                            </span>
-                            {item.id.startsWith("pi-") && (
-                              <span className="text-[8px] px-1 py-px" style={{ background: "rgba(74,192,255,0.1)", color: "#4AC0FF", border: "1px solid rgba(74,192,255,0.25)" }}>PLAYER</span>
-                            )}
-                            {item.locked && (
-                              <span className="text-[8px] px-1 py-px inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
-                                <Lock size={7} /> LOCKED
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px]" style={{ color: theme.labelColor }}>
-                            {item.type || "No type"} • {item.assignedTo.includes("all") ? "Shared" : "Owned"}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {item.rarity && (
-                            <span
-                              className="text-[9px] px-1.5 py-0.5"
-                              style={{
-                                background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                                color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                              }}
-                            >
-                              {item.rarity}
-                            </span>
-                          )}
-                          <ChevronLeft size={12} className="rotate-180" style={S_DIM} />
-                        </div>
-                      </div>
-
-                      {facts.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                          {facts.map((fact) => (
-                            <span
-                              key={fact.key}
-                              className="text-[9px] px-1.5 py-0.5"
-                              style={{ background: "#0F1030", color: theme.textColor, border: `1px solid ${bc(theme.panelBorder)}` }}
-                            >
-                              <span style={S_MUTED}>{fact.label}:</span> {fact.value}
-                            </span>
-                          ))}
-                        </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[13px] inline-flex items-center gap-1.5" style={{ color: theme.textColor }}>
+                      {item.name}
+                      {item.id.startsWith("pi-") && (
+                        <span className="text-[8px] px-1 py-px" style={{ background: "rgba(74,192,255,0.1)", color: "#4AC0FF", border: "1px solid rgba(74,192,255,0.25)" }}>PLAYER</span>
                       )}
-
-                      {summaryText && (
-                        <div className="text-[10px] mb-2 leading-relaxed" style={{ color: theme.labelColor }}>
-                          {summaryText.length > 140 ? `${summaryText.slice(0, 137)}...` : summaryText}
-                        </div>
+                      {item.locked && (
+                        <span className="text-[8px] px-1 py-px inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
+                          <Lock size={7} /> LOCKED
+                        </span>
                       )}
-
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {item.tags.slice(0, 4).map((tag) => (
-                          <span
-                            key={tag}
-                            className="text-[9px] px-1.5 py-0.5"
-                            style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                        {item.tags.length > 4 && (
-                          <span className="text-[9px]" style={S_MUTED}>
-                            +{item.tags.length - 4}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-
-                    <div className="flex flex-col items-center gap-1 shrink-0">
-                      {opts?.onEdit && (
-                        <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
-                          <Edit size={13} style={{ color: "#5A9AFF" }} />
-                        </button>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {item.rarity && (
+                        <span
+                          className="text-[9px] px-1.5 py-0.5"
+                          style={{
+                            background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
+                            color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
+                          }}
+                        >
+                          {item.rarity}
+                        </span>
                       )}
-                      {opts?.onDelete && (
-                        <button onClick={opts.onDelete} className="px-2 py-1 hover:opacity-80" title="Delete this item">
-                          <Trash2 size={13} style={S_RED} />
-                        </button>
-                      )}
+                      <span className="text-[11px]" style={{ color: theme.labelColor }}>
+                        {item.type}
+                      </span>
+                      <ChevronLeft size={12} className="rotate-180" style={S_DIM} />
                     </div>
                   </div>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {item.tags.slice(0, 3).map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[9px] px-1.5 py-0.5"
+                        style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                    {item.tags.length > 3 && (
+                      <span className="text-[9px]" style={S_MUTED}>
+                        +{item.tags.length - 3}
+                      </span>
+                    )}
+                  </div>
+                </button>
+                <div className="flex items-center gap-0.5 shrink-0 pr-1">
+                  {opts?.onEdit && (
+                    <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
+                      <Edit size={13} style={{ color: "#5A9AFF" }} />
+                    </button>
+                  )}
+                  {opts?.onDelete && (
+                    <button onClick={opts.onDelete} className="px-2 py-1 hover:opacity-80" title="Delete this item">
+                      <Trash2 size={13} style={S_RED} />
+                    </button>
+                  )}
                 </div>
-              );
-            };
+              </div>
+            );
 
             return (
               <div className="space-y-4">
