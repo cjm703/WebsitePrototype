@@ -203,6 +203,7 @@ interface QuickRollSlot {
   potency: string;
 }
 
+
 function rarityColor(r: string) {
   switch (r) {
     case "Uncommon": return "#7ACA8A";
@@ -315,32 +316,6 @@ function deleteKeys(item: ManagedItem, keys: string[]) {
   return { ...item, customFields: nextCustomFields };
 }
 
-function buildDisplayFacts(item: ManagedItem) {
-  const slotLabels = Object.fromEntries(EQUIP_SLOTS.map((slot) => [slot.id, slot.label])) as Record<string, string>;
-  return Object.entries(item.customFields || {})
-    .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith(EFFECT_PREFIX) && !key.startsWith(QUICK_ROLL_PREFIX))
-    .map(([key, value]) => {
-      const [group, ...rest] = key.split("::");
-      let label = rest.join("::") || group;
-      let displayValue = String(value);
-
-      if (key === FIELD_KEYS.equipmentSlot) {
-        label = "Slot";
-        displayValue = slotLabels[String(value)] || String(value);
-      }
-
-      if (key === FIELD_KEYS.attributeAmount || key === FIELD_KEYS.skillAmount || key === FIELD_KEYS.resourceAmount) {
-        const numeric = Number(value);
-        if (!Number.isNaN(numeric) && numeric > 0) displayValue = `+${numeric}`;
-      }
-
-      if (group === "Custom") label = rest.join("::") || "Detail";
-
-      return { key, label, value: displayValue };
-    })
-    .sort((a, b) => a.label.localeCompare(b.label));
-}
-
 function getQuickRollFieldKey(slotId: string, field: string) {
   return `${QUICK_ROLL_PREFIX}${slotId}::${field}`;
 }
@@ -368,6 +343,32 @@ function makeQuickRollSlotId(customFields: Record<string, string>) {
     .map((slotId) => parseInt(slotId, 10))
     .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), 0) + 1;
   return String(nextIndex);
+}
+
+function buildDisplayFacts(item: ManagedItem) {
+  const slotLabels = Object.fromEntries(EQUIP_SLOTS.map((slot) => [slot.id, slot.label])) as Record<string, string>;
+  return Object.entries(item.customFields || {})
+    .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith(EFFECT_PREFIX))
+    .map(([key, value]) => {
+      const [group, ...rest] = key.split("::");
+      let label = rest.join("::") || group;
+      let displayValue = String(value);
+
+      if (key === FIELD_KEYS.equipmentSlot) {
+        label = "Slot";
+        displayValue = slotLabels[String(value)] || String(value);
+      }
+
+      if (key === FIELD_KEYS.attributeAmount || key === FIELD_KEYS.skillAmount || key === FIELD_KEYS.resourceAmount) {
+        const numeric = Number(value);
+        if (!Number.isNaN(numeric) && numeric > 0) displayValue = `+${numeric}`;
+      }
+
+      if (group === "Custom") label = rest.join("::") || "Detail";
+
+      return { key, label, value: displayValue };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function stripUnusedCustomFields(item: ManagedItem) {
@@ -457,20 +458,13 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
 
   const addQuickRollSlot = () => {
     if (!editingItem) return;
-    const slotId = makeQuickRollSlotId(editingItem.customFields || {});
-    setEditingItem({
-      ...editingItem,
-      customFields: {
-        ...editingItem.customFields,
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)]: "",
-      },
-    });
-  };
-
-  const updateQuickRollSlot = (slotId: string, field: string, value: string) => {
-    updateItemCustomField(getQuickRollFieldKey(slotId, field), value);
+    const nextCustomFields = { ...editingItem.customFields };
+    const slotId = makeQuickRollSlotId(nextCustomFields);
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] = "Damage";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
+    setEditorPanel("effects");
   };
 
   const removeQuickRollSlot = (slotId: string) => {
@@ -480,23 +474,6 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
       getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY),
       getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY),
     ]));
-  };
-
-  const openQuickRollEditor = () => {
-    if (!editingItem) return;
-    const currentSlots = buildQuickRollSlots(editingItem.customFields || {});
-    setEditorPanel("effects");
-    if (currentSlots.length > 0) return;
-    const slotId = makeQuickRollSlotId(editingItem.customFields || {});
-    setEditingItem({
-      ...editingItem,
-      customFields: {
-        ...editingItem.customFields,
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)]: "",
-      },
-    });
   };
 
   const toggleItemTag = (tagName: string) => {
@@ -612,13 +589,13 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
       .sort((a, b) => parseInt(a.split("::")[1] || "0", 10) - parseInt(b.split("::")[1] || "0", 10));
   }, [editingItem]);
 
-  const quickRollSlots = useMemo(
-    () => editingItem ? buildQuickRollSlots(editingItem.customFields || {}) : [],
+  const customDetailKeys = useMemo(
+    () => editingItem ? getCustomDetailKeys(editingItem.customFields) : [],
     [editingItem],
   );
 
-  const customDetailKeys = useMemo(
-    () => editingItem ? getCustomDetailKeys(editingItem.customFields) : [],
+  const quickRollSlots = useMemo(
+    () => editingItem ? buildQuickRollSlots(editingItem.customFields || {}) : [],
     [editingItem],
   );
 
@@ -660,10 +637,10 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
       tagCount: editingItem.tags.length,
       detailCount: buildDisplayFacts(editingItem).length,
       effectCount: countItemEffects(editingItem),
-      quickRollCount: buildQuickRollSlots(editingItem.customFields || {}).filter((slot) => slot.expression.trim()).length,
+      quickRollCount: quickRollSlots.filter((slot) => slot.expression.trim()).length,
       ownerCount: editingItem.assignedTo.includes("all") ? players.length : editingItem.assignedTo.length,
     };
-  }, [editingItem, players.length]);
+  }, [editingItem, players.length, quickRollSlots]);
 
   const showEquipment = !!editingItem && hasKey(editingItem.customFields, FIELD_KEYS.equipmentSlot);
   const showAttributeBuff = !!editingItem && (hasKey(editingItem.customFields, FIELD_KEYS.attributeName) || hasKey(editingItem.customFields, FIELD_KEYS.attributeAmount));
@@ -727,14 +704,13 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                   <span>{editorSummary.tagCount} tag{editorSummary.tagCount === 1 ? "" : "s"}</span>
                   <span>{editorSummary.detailCount} detail{editorSummary.detailCount === 1 ? "" : "s"}</span>
                   <span>{editorSummary.effectCount} effect block{editorSummary.effectCount === 1 ? "" : "s"}</span>
-                  <span>{editorSummary.quickRollCount} quick roll{editorSummary.quickRollCount === 1 ? "" : "s"}</span>
                   <span>{editorSummary.ownerCount} owner{editorSummary.ownerCount === 1 ? "" : "s"}</span>
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <button onClick={openQuickRollEditor} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
-                <Dices size={12} /> {editorSummary?.quickRollCount ? "Edit Quick Rolls" : "Add Quick Roll"}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else setEditorPanel("effects"); }} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                <Dices size={12} /> {quickRollSlots.some((slot) => slot.expression.trim()) ? "Edit Quick Rolls" : "Add Quick Roll"}
               </button>
               {!isAddingNewItem && (
                 <button onClick={duplicateAsNew} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={{ color: "#C4A0FF" }}>
@@ -745,12 +721,9 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
             </div>
           </div>
 
-          <div className={`${retro.raised} bg-[#0E0E35] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-3`}>
-            <div>
-              <div className="text-[10px]" style={S_SECTION_HDR}>ADDING ITEM ROLL BUTTONS</div>
-              <div className="text-[10px] mt-1" style={S_MUTED}>Open <strong>Effects</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
-            </div>
-            <button onClick={openQuickRollEditor} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+          <div className={`${retro.raised} bg-[#10103A] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-2`} style={DM_PANEL_ALT}>
+            <div className="text-[10px]" style={S_MUTED}>Open <strong>Effects</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
+            <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else setEditorPanel("effects"); }} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
               <Dices size={11} /> Jump to Quick Rolls
             </button>
           </div>
@@ -1115,15 +1088,15 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Button Label</label>
-                            <input type="text" value={slot.label} onChange={(e) => updateQuickRollSlot(slot.slotId, QUICK_ROLL_LABEL_KEY, e.target.value)} placeholder="e.g. Damage, Heal, 2H Swing" className={inputClass} style={inputStyle} />
+                            <input type="text" value={slot.label} onChange={(e) => updateItemCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_LABEL_KEY), e.target.value)} placeholder="Damage" className={inputClass} style={inputStyle} />
                           </div>
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression</label>
-                            <input type="text" value={slot.expression} onChange={(e) => updateQuickRollSlot(slot.slotId, QUICK_ROLL_EXPRESSION_KEY, e.target.value)} placeholder="e.g. 1d8+2, 2d6+P" className={inputClass} style={inputStyle} />
+                            <input type="text" value={slot.expression} onChange={(e) => updateItemCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_EXPRESSION_KEY), e.target.value)} placeholder="2d6+P" className={inputClass} style={inputStyle} />
                           </div>
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Potency Override</label>
-                            <input type="text" value={slot.potency} onChange={(e) => updateQuickRollSlot(slot.slotId, QUICK_ROLL_POTENCY_KEY, e.target.value)} placeholder="Optional, e.g. 3 or P" className={inputClass} style={inputStyle} />
+                            <input type="text" value={slot.potency} onChange={(e) => updateItemCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_POTENCY_KEY), e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
                           </div>
                         </div>
                       </div>
@@ -1174,14 +1147,12 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                 )}
 
                 {quickRollSlots.filter((slot) => slot.expression.trim()).length > 0 && (
-                  <div className={`${retro.sunken} bg-[#0A0A28] p-3 mb-3`}>
+                  <div className="mb-3">
                     <div className="text-[9px] mb-2" style={S_SECTION_HDR}>QUICK ROLL BUTTONS</div>
                     <div className="flex flex-wrap gap-2">
                       {quickRollSlots.filter((slot) => slot.expression.trim()).map((slot) => (
-                        <span key={slot.slotId} className="text-[10px] px-2 py-1" style={{ border: "1px solid rgba(122,154,255,0.35)", color: "#FFD166", background: "rgba(12,18,46,0.92)" }}>
-                          {(slot.label || slot.expression).trim()}
-                          <span style={S_MUTED}> · {slot.expression.trim()}</span>
-                          {slot.potency.trim() ? <span style={S_MUTED}> · Potency {slot.potency.trim()}</span> : null}
+                        <span key={slot.slotId} className={`${retro.button} px-3 py-1 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+                          <Dices size={10} /> {slot.label.trim() || slot.expression.trim()}
                         </span>
                       ))}
                     </div>

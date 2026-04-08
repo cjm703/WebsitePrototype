@@ -153,6 +153,7 @@ interface QuickRollSlot {
   potency: string;
 }
 
+
 type CardTrackerBucket = "" | "status" | "ability";
 
 const CARD_FAMILY_OPTIONS: CardFamilyDef[] = [
@@ -322,35 +323,6 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
   },
 ];
 
-function getQuickRollFieldKey(slotId: string, field: string) {
-  return `${QUICK_ROLL_PREFIX}${slotId}::${field}`;
-}
-
-function getQuickRollSlotIds(customFields: Record<string, string>) {
-  return Array.from(new Set(
-    Object.keys(customFields || {})
-      .filter((key) => key.startsWith(QUICK_ROLL_PREFIX))
-      .map((key) => key.replace(QUICK_ROLL_PREFIX, "").split("::")[0])
-      .filter(Boolean),
-  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-}
-
-function buildQuickRollSlots(customFields: Record<string, string>): QuickRollSlot[] {
-  return getQuickRollSlotIds(customFields).map((slotId) => ({
-    slotId,
-    label: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] || "",
-    expression: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] || "",
-    potency: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] || "",
-  }));
-}
-
-function makeQuickRollSlotId(customFields: Record<string, string>) {
-  const nextIndex = getQuickRollSlotIds(customFields)
-    .map((slotId) => parseInt(slotId, 10))
-    .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), 0) + 1;
-  return String(nextIndex);
-}
-
 const cfKey = (tagName: string, fieldName: string) => `${tagName}::${fieldName}`;
 const inputClass = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`;
 const inputStyle = S_TEXT;
@@ -417,6 +389,35 @@ function trackerBucketAccent(bucket: CardTrackerBucket) {
   if (bucket === "status") return "#4ACA6A";
   if (bucket === "ability") return "#FF8A5A";
   return "#7A8AAA";
+}
+
+function getQuickRollFieldKey(slotId: string, field: string) {
+  return `${QUICK_ROLL_PREFIX}${slotId}::${field}`;
+}
+
+function getQuickRollSlotIds(customFields: Record<string, string>) {
+  return Array.from(new Set(
+    Object.keys(customFields || {})
+      .filter((key) => key.startsWith(QUICK_ROLL_PREFIX))
+      .map((key) => key.replace(QUICK_ROLL_PREFIX, "").split("::")[0])
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function buildQuickRollSlots(customFields: Record<string, string>): QuickRollSlot[] {
+  return getQuickRollSlotIds(customFields).map((slotId) => ({
+    slotId,
+    label: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] || "",
+    expression: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] || "",
+    potency: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] || "",
+  }));
+}
+
+function makeQuickRollSlotId(customFields: Record<string, string>) {
+  const nextIndex = getQuickRollSlotIds(customFields)
+    .map((slotId) => parseInt(slotId, 10))
+    .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), 0) + 1;
+  return String(nextIndex);
 }
 
 
@@ -949,7 +950,6 @@ export function DMCardManagerSection({
   const [pendingTemplate, setPendingTemplate] = useState<CardTemplateDef | null>(null);
   const [mechanicsBuilder, setMechanicsBuilder] = useState<MechanicsBuilderState>(EMPTY_MECHANICS_BUILDER);
   const [cardSectionBlocks, setCardSectionBlocks] = useState<CardSectionBlock[]>([]);
-  const quickRollSlots = useMemo(() => editingCard ? buildQuickRollSlots(editingCard.customFields || {}) : [], [editingCard]);
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newSectionTone, setNewSectionTone] = useState<CardSectionTone>("rules");
   const [tagSearch, setTagSearch] = useState("");
@@ -994,6 +994,8 @@ export function DMCardManagerSection({
     setNewSectionTone("rules");
     setShowRequirementsField(!!(editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
   }, [editingCard?.id]);
+
+  const quickRollSlots = useMemo(() => editingCard ? buildQuickRollSlots(editingCard.customFields || {}) : [], [editingCard]);
 
   const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
     if (!laSelectedPlayerId) return;
@@ -1179,46 +1181,22 @@ export function DMCardManagerSection({
 
   const addQuickRollSlot = () => {
     if (!editingCard) return;
-    const slotId = makeQuickRollSlotId(editingCard.customFields || {});
-    setEditingCard({
-      ...editingCard,
-      customFields: {
-        ...editingCard.customFields,
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)]: "",
-      },
-    });
-  };
-
-  const updateQuickRollSlot = (slotId: string, field: string, value: string) => {
-    updateCardCustomField(getQuickRollFieldKey(slotId, field), value);
+    const nextCustomFields = { ...editingCard.customFields };
+    const slotId = makeQuickRollSlotId(nextCustomFields);
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] = "Damage";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
+    setEditingCard({ ...editingCard, customFields: nextCustomFields });
+    setEditorPanel("mechanics");
   };
 
   const removeQuickRollSlot = (slotId: string) => {
     if (!editingCard) return;
-    const nextCustomFields = { ...(editingCard.customFields || {}) };
+    const nextCustomFields = { ...editingCard.customFields };
     delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)];
     delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)];
     delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)];
     setEditingCard({ ...editingCard, customFields: nextCustomFields });
-  };
-
-  const openQuickRollEditor = () => {
-    if (!editingCard) return;
-    const currentSlots = buildQuickRollSlots(editingCard.customFields || {});
-    setEditorPanel("mechanics");
-    if (currentSlots.length > 0) return;
-    const slotId = makeQuickRollSlotId(editingCard.customFields || {});
-    setEditingCard({
-      ...editingCard,
-      customFields: {
-        ...editingCard.customFields,
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)]: "",
-        [getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)]: "",
-      },
-    });
   };
 
   const toggleComponentFlag = (flag: ComponentFlag) => {
@@ -1765,7 +1743,7 @@ export function DMCardManagerSection({
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={openQuickRollEditor} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
+                        <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else setEditorPanel("mechanics"); }} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
                           <Dices size={14} /> {quickRollSlots.some((slot) => slot.expression.trim()) ? "Edit Quick Rolls" : "Add Quick Roll"}
                         </button>
                         <button onClick={handleSaveCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
@@ -1777,12 +1755,9 @@ export function DMCardManagerSection({
                       </div>
                     </div>
 
-                    <div className={`${retro.raised} bg-[#0E0E35] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-3`}>
-                      <div>
-                        <div className="text-[10px]" style={S_SECTION_HDR}>ADDING CARD ROLL BUTTONS</div>
-                        <div className="text-[10px] mt-1" style={S_SUBTLE}>Open <strong>Mechanics</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
-                      </div>
-                      <button onClick={openQuickRollEditor} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+                    <div className={`${retro.raised} bg-[#10103A] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-2`} style={{ border: "1px solid #2B3B6B" }}>
+                      <div className="text-[10px]" style={S_SUBTLE}>Open <strong>Mechanics</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
+                      <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else setEditorPanel("mechanics"); }} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
                         <Dices size={11} /> Jump to Quick Rolls
                       </button>
                     </div>
@@ -2223,15 +2198,15 @@ export function DMCardManagerSection({
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Button Label:</label>
-                                        <input type="text" value={slot.label} onChange={(e) => updateQuickRollSlot(slot.slotId, QUICK_ROLL_LABEL_KEY, e.target.value)} placeholder="e.g. Damage, Healing, Save DC" className={inputClass} style={inputStyle} />
+                                        <input type="text" value={slot.label} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_LABEL_KEY), e.target.value)} placeholder="Damage" className={inputClass} style={inputStyle} />
                                       </div>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression:</label>
-                                        <input type="text" value={slot.expression} onChange={(e) => updateQuickRollSlot(slot.slotId, QUICK_ROLL_EXPRESSION_KEY, e.target.value)} placeholder="e.g. 2d6+P, 1d8+3" className={inputClass} style={inputStyle} />
+                                        <input type="text" value={slot.expression} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_EXPRESSION_KEY), e.target.value)} placeholder="2d6+P" className={inputClass} style={inputStyle} />
                                       </div>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Potency Override:</label>
-                                        <input type="text" value={slot.potency} onChange={(e) => updateQuickRollSlot(slot.slotId, QUICK_ROLL_POTENCY_KEY, e.target.value)} placeholder="Optional, e.g. 4 or P" className={inputClass} style={inputStyle} />
+                                        <input type="text" value={slot.potency} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_POTENCY_KEY), e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
                                       </div>
                                     </div>
                                   </div>

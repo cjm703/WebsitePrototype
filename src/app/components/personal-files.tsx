@@ -59,6 +59,9 @@ const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
 const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
 const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
 const CARD_DESCRIPTION_KEY = "Description";
+
+
+
 const QUICK_ROLL_PREFIX = "Quick Roll::";
 const QUICK_ROLL_LABEL_KEY = "Label";
 const QUICK_ROLL_EXPRESSION_KEY = "Expression";
@@ -70,8 +73,6 @@ interface QuickRollSlot {
   expression: string;
   potency: string;
 }
-
-
 
 // ========================
 // Dice Expression Parser — supports NdM dice, P (potency), (), and full PEMDAS
@@ -363,10 +364,6 @@ function extractDiceExpressions(value: string): string[] {
   return unique;
 }
 
-function isTrackerCustomFieldKey(key: string): boolean {
-  return key.startsWith("Card Tracker::") || key.startsWith("Tracker::");
-}
-
 function getQuickRollSlots(customFields: Record<string, string> | null | undefined): QuickRollSlot[] {
   const entries = customFields || {};
   const slotIds = Array.from(new Set(
@@ -388,7 +385,6 @@ function isPlayerHiddenCustomFieldKey(key: string): boolean {
   return key.startsWith("__editor_")
     || key === "__editor_mechanics_builder"
     || key === "__editor_section_blocks"
-    || isTrackerCustomFieldKey(key)
     || key.startsWith(QUICK_ROLL_PREFIX);
 }
 
@@ -1538,6 +1534,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           </div>
           <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
           {renderDiceRollControls(`item:${item.id}:description`, item.description, "")}
+          {renderQuickRollButtons(`item:${item.id}`, item.customFields, "")}
         </div>
 
         {/* Effect areas */}
@@ -1636,46 +1633,36 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     );
   }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
 
-  const renderConfiguredQuickRolls = useCallback((sourceKey: string, customFields: Record<string, string> | null | undefined, fallbackPotency = "") => {
-    const slots = getQuickRollSlots(customFields).filter((slot) => slot.expression.trim());
-    if (slots.length === 0) return null;
+  const renderQuickRollButtons = useCallback((sourceKey: string, customFields: Record<string, string> | null | undefined, fallbackPotency = "") => {
+    const quickRollSlots = getQuickRollSlots(customFields).filter((slot) => slot.expression.trim());
+    if (quickRollSlots.length === 0) return null;
 
     return (
       <div className="mt-3">
-        <div className="text-[11px] mb-2" style={{ color: "#FFD166", fontWeight: 600 }}>
-          <Dices size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
-          QUICK ROLLS
-        </div>
+        <div className="text-[10px] mb-2" style={{ color: theme.accentColor, fontWeight: 700 }}>QUICK ROLL BUTTONS</div>
         <div className="flex flex-wrap gap-2">
-          {slots.map((slot) => {
-            const expression = slot.expression.trim();
-            const rollLabel = (slot.label || expression).trim();
-            const potency = (slot.potency || fallbackPotency || "").trim();
+          {quickRollSlots.map((slot) => {
             const rollKey = `${sourceKey}:quick-roll:${slot.slotId}`;
             const result = inlineDiceRollResults[rollKey];
+            const potency = slot.potency.trim() || fallbackPotency;
             return (
-              <div key={slot.slotId} className="inline-flex items-center gap-1.5">
-                <button
-                  onClick={() => handleInlineDiceRoll(rollKey, expression, potency)}
-                  className={`${retro.button} px-2 py-1 inline-flex items-center gap-1.5`}
-                  style={{ color: "#FFD166", fontSize: "11px" }}
-                >
-                  <Dices size={11} />
-                  {rollLabel}
-                  <span style={S_MUTED}>{expression}</span>
-                </button>
-                {result && (
-                  <span className="text-[11px]" style={{ color: "#FF6A6A", fontWeight: 700 }}>
-                    {result}
-                  </span>
-                )}
-              </div>
+              <button
+                key={rollKey}
+                onClick={() => handleInlineDiceRoll(rollKey, slot.expression, potency)}
+                className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+                style={{ color: theme.accentColor, border: `1px solid ${bc(theme.accentColor)}`, background: theme.buttonBg }}
+                title={`${slot.expression}${potency ? ` • Potency ${potency}` : ""}`}
+              >
+                <Dices size={11} />
+                <span>{slot.label.trim() || slot.expression.trim()}</span>
+                {result && <span style={{ color: "#FF6A6A", fontWeight: 700 }}>{result}</span>}
+              </button>
             );
           })}
         </div>
       </div>
     );
-  }, [handleInlineDiceRoll, inlineDiceRollResults]);
+  }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor, theme.buttonBg]);
 
   const handleUseCard = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
@@ -2022,7 +2009,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
                 <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
                 {renderDiceRollControls(`card:${card.id}:effect`, card.effect, detailRollPotency)}
-                {renderConfiguredQuickRolls(`card:${card.id}`, card.customFields, detailRollPotency)}
+                {renderQuickRollButtons(`card:${card.id}`, card.customFields, detailRollPotency)}
               </div>
             </div>
 

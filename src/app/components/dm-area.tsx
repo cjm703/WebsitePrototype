@@ -7,7 +7,7 @@ import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp,
+  Newspaper, Copy, Zap, ChevronUp, Dices,
 } from "lucide-react";
 import { DMNodeTreeBuilder, type NodeTree } from "./node-trees";
 import {
@@ -60,7 +60,6 @@ import {
 import { DISPLAY_CONTENTS } from "./shared-styles";
 import {
   sanitizeInfoDocumentsForLoad,
-  sanitizeInfoSubTabsForLoad,
   normalizeInfoDocumentsForSave,
   type InfoSubTab as SharedInfoSubTab,
 } from "./personal-files-information-utils";
@@ -95,6 +94,47 @@ function formatOwners(assignedTo: string[], players: { id: string; name: string 
 
 function getSaveError(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback;
+}
+
+const QUICK_ROLL_PREFIX = "Quick Roll::";
+const QUICK_ROLL_LABEL_KEY = "Label";
+const QUICK_ROLL_EXPRESSION_KEY = "Expression";
+const QUICK_ROLL_POTENCY_KEY = "Potency";
+
+interface QuickRollSlot {
+  slotId: string;
+  label: string;
+  expression: string;
+  potency: string;
+}
+
+function getQuickRollFieldKey(slotId: string, field: string) {
+  return `${QUICK_ROLL_PREFIX}${slotId}::${field}`;
+}
+
+function getQuickRollSlotIds(customFields: Record<string, string>) {
+  return Array.from(new Set(
+    Object.keys(customFields || {})
+      .filter((key) => key.startsWith(QUICK_ROLL_PREFIX))
+      .map((key) => key.replace(QUICK_ROLL_PREFIX, "").split("::")[0])
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function buildQuickRollSlots(customFields: Record<string, string>): QuickRollSlot[] {
+  return getQuickRollSlotIds(customFields).map((slotId) => ({
+    slotId,
+    label: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] || "",
+    expression: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] || "",
+    potency: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] || "",
+  }));
+}
+
+function makeQuickRollSlotId(customFields: Record<string, string>) {
+  const nextIndex = getQuickRollSlotIds(customFields)
+    .map((slotId) => parseInt(slotId, 10))
+    .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), 0) + 1;
+  return String(nextIndex);
 }
 
 const PLAYER_REPORT_PREFIX = "[Player Report]";
@@ -171,6 +211,55 @@ type InfoSubTab = SharedInfoSubTab & {
   showEmpty?: boolean;
 };
 
+function sanitizeInfoSubTabRecord(raw: Partial<InfoSubTab> | null | undefined, index: number): InfoSubTab {
+  const sortMode = raw?.sortMode;
+  return {
+    id: typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : `ist-recovered-${index}`,
+    name: typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim() : `Sub-Tab ${index + 1}`,
+    order: Number.isFinite(raw?.order as number) ? Number(raw?.order) : index,
+    description: typeof raw?.description === "string" ? raw.description.trim() : "",
+    icon: typeof raw?.icon === "string" ? raw.icon.trim() : "",
+    color: typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color) ? raw.color.trim() : "",
+    parentId: typeof raw?.parentId === "string" ? raw.parentId.trim() : "",
+    assignedTo: Array.isArray(raw?.assignedTo) ? raw.assignedTo.map((value) => String(value)).filter(Boolean) : [],
+    defaultDisplayMode:
+      raw?.defaultDisplayMode === "paper" || raw?.defaultDisplayMode === "item:stone_tablet"
+        ? raw.defaultDisplayMode
+        : "digital",
+    autoAssignToOwners: typeof raw?.autoAssignToOwners === "boolean" ? raw.autoAssignToOwners : true,
+    isDefault: !!raw?.isDefault,
+    sortMode: sortMode === "title" || sortMode === "category" || sortMode === "newest" || sortMode === "oldest" ? sortMode : "custom",
+    showEmpty: !!raw?.showEmpty,
+  };
+}
+
+function sanitizeInfoSubTabsForLoad(rawTabs: Partial<InfoSubTab>[] | null | undefined) {
+  const seenIds = new Set<string>();
+  const sanitized = (Array.isArray(rawTabs) ? rawTabs : []).map((tab, index) => sanitizeInfoSubTabRecord(tab, index)).filter((tab) => {
+    if (seenIds.has(tab.id)) return false;
+    seenIds.add(tab.id);
+    return true;
+  });
+
+  const normalized = sanitized
+    .sort((a, b) => a.order - b.order)
+    .map((tab, index) => ({ ...tab, order: index }));
+
+  let foundDefault = false;
+  const withSingleDefault = normalized.map((tab, index) => {
+    if (tab.isDefault && !foundDefault) {
+      foundDefault = true;
+      return { ...tab, order: index, isDefault: true };
+    }
+    return { ...tab, order: index, isDefault: false };
+  });
+
+  if (withSingleDefault.length > 0 && !withSingleDefault.some((tab) => tab.isDefault)) {
+    withSingleDefault[0] = { ...withSingleDefault[0], isDefault: true };
+  }
+
+  return withSingleDefault;
+}
 
 const BUILTIN_EMOJI_PREVIEW = [
   { emoji: "👍", label: "Thumbs Up" },
@@ -655,11 +744,8 @@ async function persistNotifications(next: DMNotification[]) {
 async function persistInfoSubTabs(next: InfoSubTab[]) {
   try {
     setDmError(null);
-    const normalizedNext = sanitizeInfoSubTabsForLoad(
-      next as unknown as Partial<InfoSubTab>[],
-    ) as InfoSubTab[];
-    await saveDMInfoSubTabs(normalizedNext as unknown as Record<string, unknown>[]);
-    setInfoSubTabs(normalizedNext);
+    await saveDMInfoSubTabs(next as unknown as Record<string, unknown>[]);
+    setInfoSubTabs(next);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save info sub-tabs"));
     throw err;
@@ -676,9 +762,24 @@ function normalizeInfoSubTabs(next: InfoSubTab[]) {
 }
 
 function ensureSingleDefaultInfoSubTab(next: InfoSubTab[]) {
-  return sanitizeInfoSubTabsForLoad(
-    normalizeInfoSubTabs(next) as unknown as Partial<InfoSubTab>[],
-  ) as InfoSubTab[];
+  const sorted = normalizeInfoSubTabs(next);
+  if (sorted.length === 0) return sorted;
+
+  let foundDefault = false;
+  const normalized = sorted.map((tab, index) => {
+    if (tab.isDefault && !foundDefault) {
+      foundDefault = true;
+      return { ...tab, order: index, isDefault: true };
+    }
+
+    return { ...tab, order: index, isDefault: false };
+  });
+
+  if (!normalized.some((tab) => tab.isDefault)) {
+    normalized[0] = { ...normalized[0], isDefault: true };
+  }
+
+  return normalized;
 }
 
 function getInfoSubTabNameError(name: string, currentId?: string | null) {
@@ -1189,6 +1290,25 @@ const handleSaveItem = async () => {
   const updateItemCustomField = (key: string, value: string) => {
     if (!editingItem) return;
     setEditingItem({ ...editingItem, customFields: { ...editingItem.customFields, [key]: value } });
+  };
+
+  const addItemQuickRollSlot = () => {
+    if (!editingItem) return;
+    const nextCustomFields = { ...editingItem.customFields };
+    const slotId = makeQuickRollSlotId(nextCustomFields);
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] = "Damage";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
+  };
+
+  const removeItemQuickRollSlot = (slotId: string) => {
+    if (!editingItem) return;
+    const nextCustomFields = { ...editingItem.customFields };
+    delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)];
+    delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)];
+    delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)];
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
   };
 
   // Collect active custom fields based on tags for any entity with tags+customFields
@@ -1726,6 +1846,7 @@ const handleSaveItem = async () => {
           {/* ======================================================= */}
           {activeSection === "items" && (() => {
             const activeCustomFields = editingItem ? getActiveCustomFields(editingItem, itemTags) : [];
+            const quickRollSlots = editingItem ? buildQuickRollSlots(editingItem.customFields || {}) : [];
 
             return (
               <div className="space-y-4">
@@ -1739,11 +1860,23 @@ const handleSaveItem = async () => {
                 {/* Item Edit Form */}
                 {editingItem && (
                   <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-                    <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
                       <div className="text-[12px]" style={S_SECTION_HDR}>
                         {isAddingNewItem ? "ADD NEW ITEM" : `EDITING: ${editingItem.name || "(unnamed)"}`}
                       </div>
-                      <button onClick={handleCancelItemEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button onClick={() => { if (quickRollSlots.length === 0) addItemQuickRollSlot(); }} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+                          <Dices size={11} /> {quickRollSlots.some((slot) => slot.expression.trim()) ? "Edit Quick Rolls" : "Add Quick Roll"}
+                        </button>
+                        <button onClick={handleCancelItemEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
+                      </div>
+                    </div>
+
+                    <div className={`${retro.raised} bg-[#10103A] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-2`}>
+                      <div className="text-[10px]" style={S_MUTED}>Quick rolls appear as dedicated dice buttons in Personal Files. Add one below and save the item.</div>
+                      <button onClick={() => { if (quickRollSlots.length === 0) addItemQuickRollSlot(); }} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+                        <Dices size={11} /> Jump to Quick Rolls
+                      </button>
                     </div>
 
                     {/* Row 1: Name, Type, Rarity */}
@@ -1975,6 +2108,44 @@ const handleSaveItem = async () => {
                         </div>
                       );
                     })()}
+
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-[10px]" style={DM_EFFECT_HDR}>QUICK ROLL BUTTONS</div>
+                        <button onClick={addItemQuickRollSlot} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={S_ACCENT}>
+                          <Plus size={10} /> Add Quick Roll
+                        </button>
+                      </div>
+                      <div className="text-[10px] mb-2" style={S_MUTED}>Each quick roll becomes a clickable dice button on this item in Personal Files.</div>
+                      {quickRollSlots.length === 0 ? (
+                        <div className={`${retro.raised} bg-[#0E0E35] p-3 text-[11px]`} style={S_MUTED}>No quick roll buttons yet.</div>
+                      ) : (
+                        <div className="space-y-3">
+                          {quickRollSlots.map((slot, index) => (
+                            <div key={slot.slotId} className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <label className="text-[9px]" style={DM_EFFECT_LABEL}>Quick Roll #{index + 1}</label>
+                                <button onClick={() => removeItemQuickRollSlot(slot.slotId)} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div>
+                                  <label className="text-[10px] block mb-1" style={labelStyle}>Button Label:</label>
+                                  <input type="text" value={slot.label} onChange={(e) => updateItemCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_LABEL_KEY), e.target.value)} placeholder="Damage" className={inputClass} style={inputStyle} />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression:</label>
+                                  <input type="text" value={slot.expression} onChange={(e) => updateItemCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_EXPRESSION_KEY), e.target.value)} placeholder="2d6+P" className={inputClass} style={inputStyle} />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] block mb-1" style={labelStyle}>Potency Override:</label>
+                                  <input type="text" value={slot.potency} onChange={(e) => updateItemCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_POTENCY_KEY), e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
                     <div className="flex gap-2">
                       <button onClick={handleSaveItem} className={`${retro.button} px-6 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
