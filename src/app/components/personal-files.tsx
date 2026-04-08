@@ -59,9 +59,17 @@ const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
 const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
 const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
 const CARD_DESCRIPTION_KEY = "Description";
-const QUICK_ROLL_LABEL_PREFIX = "Quick Roll Label::";
-const QUICK_ROLL_EXPR_PREFIX = "Quick Roll Expression::";
-const QUICK_ROLL_POTENCY_PREFIX = "Quick Roll Potency::";
+const QUICK_ROLL_PREFIX = "Quick Roll::";
+const QUICK_ROLL_LABEL_KEY = "Label";
+const QUICK_ROLL_EXPRESSION_KEY = "Expression";
+const QUICK_ROLL_POTENCY_KEY = "Potency";
+
+interface QuickRollSlot {
+  slotId: string;
+  label: string;
+  expression: string;
+  potency: string;
+}
 
 
 
@@ -355,10 +363,33 @@ function extractDiceExpressions(value: string): string[] {
   return unique;
 }
 
+function isTrackerCustomFieldKey(key: string): boolean {
+  return key.startsWith("Card Tracker::") || key.startsWith("Tracker::");
+}
+
+function getQuickRollSlots(customFields: Record<string, string> | null | undefined): QuickRollSlot[] {
+  const entries = customFields || {};
+  const slotIds = Array.from(new Set(
+    Object.keys(entries)
+      .filter((key) => key.startsWith(QUICK_ROLL_PREFIX))
+      .map((key) => key.replace(QUICK_ROLL_PREFIX, "").split("::")[0])
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+
+  return slotIds.map((slotId) => ({
+    slotId,
+    label: entries[`${QUICK_ROLL_PREFIX}${slotId}::${QUICK_ROLL_LABEL_KEY}`] || "",
+    expression: entries[`${QUICK_ROLL_PREFIX}${slotId}::${QUICK_ROLL_EXPRESSION_KEY}`] || "",
+    potency: entries[`${QUICK_ROLL_PREFIX}${slotId}::${QUICK_ROLL_POTENCY_KEY}`] || "",
+  }));
+}
+
 function isPlayerHiddenCustomFieldKey(key: string): boolean {
   return key.startsWith("__editor_")
     || key === "__editor_mechanics_builder"
-    || key === "__editor_section_blocks";
+    || key === "__editor_section_blocks"
+    || isTrackerCustomFieldKey(key)
+    || key.startsWith(QUICK_ROLL_PREFIX);
 }
 
 export function PersonalFiles() {
@@ -753,24 +784,27 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const row = statusEffects.find((r) => r.id === rowId);
     if (!row || !row.damage) return;
 
+    // Trigger animation
     setRollAnimatingId(rowId);
     setTimeout(() => setRollAnimatingId(null), 600);
 
+    // Parse dice groups for multi-dice animation
+    const diceGroups = parseDiceGroups(row.damage, row.potency);
+    const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+    playDiceRoll(totalDice);
+
     const result = rollDiceExpression(row.damage, row.potency);
-    if (!result) return;
-
-    const totalDice = result.diceGroups.reduce((sum, group) => sum + group.count, 0);
-    if (totalDice > 0) {
-      playDiceRoll(totalDice);
-      triggerDiceAnimation(result.diceGroups);
+    if (result) {
+      // Use actual rolled values from the result breakdown to populate dice animation
+      const animGroups = parseDiceGroups(row.damage, row.potency);
+      triggerDiceAnimation(animGroups);
+      const rollText = result.breakdown
+        ? `⚔ ${result.total} (${result.breakdown})`
+        : `⚔ ${result.total}`;
+      setStatusEffects((prev) =>
+        prev.map((r) => (r.id === rowId ? { ...r, lastRoll: rollText } : r))
+      );
     }
-
-    const rollText = result.breakdown
-      ? `⚔ ${result.total} (${result.breakdown})`
-      : `⚔ ${result.total}`;
-    setStatusEffects((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, lastRoll: rollText } : r))
-    );
   };
 
   // ── Turn End: decrement duration & TE potency ──
@@ -1395,7 +1429,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   SLOT_LABELS["ring"] = "Ring (any)";
 
   const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !isPlayerHiddenCustomFieldKey(k));
+    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::"));
     if (entries.length === 0) return null;
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
@@ -1506,20 +1540,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           {renderDiceRollControls(`item:${item.id}:description`, item.description, "")}
         </div>
 
-        {(() => {
-          const quickRollButtons = getQuickRollButtons(item.customFields);
-          if (quickRollButtons.length === 0) return null;
-          return (
-            <div className="mb-4">
-              <div className="text-[11px] mb-2" style={{ color: "#FFD166", fontWeight: 600 }}>
-                <Dices size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
-                ROLL BUTTONS
-              </div>
-              {renderQuickRollButtons(`item:${item.id}:quick-roll`, quickRollButtons, "")}
-            </div>
-          );
-        })()}
-
         {/* Effect areas */}
         {item.tags.includes("Effect") && (() => {
           const effectKeys = Object.keys(item.customFields ?? {})
@@ -1563,13 +1583,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const handleInlineDiceRoll = useCallback((rollKey: string, expression: string, potencyRaw = "") => {
     if (!hasDiceNotation(expression)) return;
 
+    const diceGroups = parseDiceGroups(expression, potencyRaw);
+    const totalDice = diceGroups.reduce((sum, group) => sum + group.count, 0);
+    if (totalDice > 0) {
+      playDiceRoll(totalDice);
+    }
+
     const result = rollDiceExpression(expression, potencyRaw);
     if (!result) return;
 
-    const totalDice = result.diceGroups.reduce((sum, group) => sum + group.count, 0);
-    if (totalDice > 0) {
-      playDiceRoll(totalDice);
-      triggerDiceAnimation(result.diceGroups);
+    if (diceGroups.length > 0) {
+      triggerDiceAnimation(diceGroups);
     }
 
     setInlineDiceRollResults((prev) => ({
@@ -1612,42 +1636,46 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     );
   }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
 
-  const renderQuickRollButtons = useCallback((sourceKey: string, buttons: QuickRollButton[], fallbackPotency = "", compact = false) => {
-    if (buttons.length === 0) return null;
+  const renderConfiguredQuickRolls = useCallback((sourceKey: string, customFields: Record<string, string> | null | undefined, fallbackPotency = "") => {
+    const slots = getQuickRollSlots(customFields).filter((slot) => slot.expression.trim());
+    if (slots.length === 0) return null;
 
     return (
-      <div className={compact ? "mt-1 flex flex-wrap gap-1.5" : "mt-2 flex flex-wrap gap-2"}>
-        {buttons.map((button) => {
-          const expression = button.expression.trim();
-          if (!expression) return null;
-          const rollKey = `${sourceKey}:${button.id}`;
-          const result = inlineDiceRollResults[rollKey];
-          const potencyRaw = button.potency.trim() || fallbackPotency;
-          return (
-            <div key={rollKey} className="inline-flex items-center gap-1.5">
-              <button
-                onClick={() => handleInlineDiceRoll(rollKey, expression, potencyRaw)}
-                className={`${retro.button} px-2 py-0.5 inline-flex items-center gap-1`}
-                style={{
-                  color: compact ? "#FFD166" : theme.accentColor,
-                  fontSize: compact ? "10px" : "11px",
-                }}
-                title={expression}
-              >
-                <Dices size={compact ? 10 : 11} />
-                {button.label}
-              </button>
-              {result && (
-                <span className={compact ? "text-[10px]" : "text-[11px]"} style={{ color: "#FF6A6A", fontWeight: 700 }}>
-                  {result}
-                </span>
-              )}
-            </div>
-          );
-        })}
+      <div className="mt-3">
+        <div className="text-[11px] mb-2" style={{ color: "#FFD166", fontWeight: 600 }}>
+          <Dices size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
+          QUICK ROLLS
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {slots.map((slot) => {
+            const expression = slot.expression.trim();
+            const rollLabel = (slot.label || expression).trim();
+            const potency = (slot.potency || fallbackPotency || "").trim();
+            const rollKey = `${sourceKey}:quick-roll:${slot.slotId}`;
+            const result = inlineDiceRollResults[rollKey];
+            return (
+              <div key={slot.slotId} className="inline-flex items-center gap-1.5">
+                <button
+                  onClick={() => handleInlineDiceRoll(rollKey, expression, potency)}
+                  className={`${retro.button} px-2 py-1 inline-flex items-center gap-1.5`}
+                  style={{ color: "#FFD166", fontSize: "11px" }}
+                >
+                  <Dices size={11} />
+                  {rollLabel}
+                  <span style={S_MUTED}>{expression}</span>
+                </button>
+                {result && (
+                  <span className="text-[11px]" style={{ color: "#FF6A6A", fontWeight: 700 }}>
+                    {result}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
-  }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
+  }, [handleInlineDiceRoll, inlineDiceRollResults]);
 
   const handleUseCard = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
@@ -1669,13 +1697,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
+        const diceGroups = parseDiceGroups(damage, potency);
+        const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+        playDiceRoll(totalDice);
         const result = rollDiceExpression(damage, potency);
         if (result) {
-          const totalDice = result.diceGroups.reduce((sum, group) => sum + group.count, 0);
-          if (totalDice > 0) {
-            playDiceRoll(totalDice);
-            triggerDiceAnimation(result.diceGroups);
-          }
+          triggerDiceAnimation(parseDiceGroups(damage, potency));
           initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
         }
       } else {
@@ -1727,13 +1754,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
         let initialRoll: string | undefined;
         if (damage && hasDiceNotation(damage)) {
+          const diceGroups = parseDiceGroups(damage, potency);
+          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+          playDiceRoll(totalDice);
           const result = rollDiceExpression(damage, potency);
           if (result) {
-            const totalDice = result.diceGroups.reduce((sum, group) => sum + group.count, 0);
-            if (totalDice > 0) {
-              playDiceRoll(totalDice);
-              triggerDiceAnimation(result.diceGroups);
-            }
+            triggerDiceAnimation(parseDiceGroups(damage, potency));
             initialRoll = result.breakdown
               ? `⚔ ${result.total} (${result.breakdown})`
               : `⚔ ${result.total}`;
@@ -1952,19 +1978,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             ))}
           </div>
 
-          {(() => {
-            const quickRollButtons = getQuickRollButtons(card.customFields);
-            if (quickRollButtons.length === 0) return null;
-            return (
-              <div className={`${retro.raised} px-3 py-3 mb-4`} style={{ background: "rgba(12,18,46,0.94)", border: `1px solid ${bc(theme.panelBorder)}` }}>
-                <div className="text-[10px] uppercase tracking-[0.08em] mb-2" style={{ color: "#FFD166", fontWeight: 700 }}>
-                  Direct Rolls
-                </div>
-                {renderQuickRollButtons(`card:${card.id}:quick-roll`, quickRollButtons, detailRollPotency)}
-              </div>
-            );
-          })()}
-
           {primaryFacts.length > 0 && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
               {primaryFacts.map((fact) => (
@@ -2009,6 +2022,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
                 <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
                 {renderDiceRollControls(`card:${card.id}:effect`, card.effect, detailRollPotency)}
+                {renderConfiguredQuickRolls(`card:${card.id}`, card.customFields, detailRollPotency)}
               </div>
             </div>
 
