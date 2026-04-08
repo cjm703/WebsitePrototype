@@ -140,15 +140,6 @@ const CARD_TRACKER_DESCRIPTION_KEY = "Card Tracker::Effect";
 const CARD_TRACKER_BUFF_TYPE_KEY = "Card Tracker::Buff Type";
 const CARD_TRACKER_BUFF_TARGET_KEY = "Card Tracker::Buff Target";
 const CARD_TRACKER_BUFF_VALUE_KEY = "Card Tracker::Buff Value";
-const LEGACY_CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
-const LEGACY_CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
-const LEGACY_CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
-const LEGACY_CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
-const LEGACY_CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
-const LEGACY_CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
-const LEGACY_CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
-const LEGACY_CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
-const LEGACY_CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
 
 type CardTrackerBucket = "" | "status" | "ability";
 
@@ -357,40 +348,6 @@ function getCardSummary(card: ManagedCard) {
   return plain.length > 180 ? `${plain.slice(0, 177)}...` : plain;
 }
 
-function getCardTrackerValue(card: ManagedCard | null, currentKey: string, legacyKey: string): string {
-  if (!card?.customFields) return "";
-  const currentValue = card.customFields[currentKey];
-  if (typeof currentValue === "string" && currentValue.trim()) return currentValue;
-  const legacyValue = card.customFields[legacyKey];
-  return typeof legacyValue === "string" ? legacyValue : "";
-}
-
-function normalizeCardTrackerCustomFields(customFields: Record<string, string> | undefined): Record<string, string> {
-  const next = { ...(customFields || {}) };
-  const trackerPairs: Array<[string, string]> = [
-    [CARD_TRACKER_BUCKET_KEY, LEGACY_CARD_TRACKER_BUCKET_KEY],
-    [CARD_TRACKER_NAME_KEY, LEGACY_CARD_TRACKER_NAME_KEY],
-    [CARD_TRACKER_DURATION_KEY, LEGACY_CARD_TRACKER_DURATION_KEY],
-    [CARD_TRACKER_POTENCY_KEY, LEGACY_CARD_TRACKER_POTENCY_KEY],
-    [CARD_TRACKER_DAMAGE_KEY, LEGACY_CARD_TRACKER_DAMAGE_KEY],
-    [CARD_TRACKER_DESCRIPTION_KEY, LEGACY_CARD_TRACKER_DESCRIPTION_KEY],
-    [CARD_TRACKER_BUFF_TYPE_KEY, LEGACY_CARD_TRACKER_BUFF_TYPE_KEY],
-    [CARD_TRACKER_BUFF_TARGET_KEY, LEGACY_CARD_TRACKER_BUFF_TARGET_KEY],
-    [CARD_TRACKER_BUFF_VALUE_KEY, LEGACY_CARD_TRACKER_BUFF_VALUE_KEY],
-  ];
-
-  trackerPairs.forEach(([currentKey, legacyKey]) => {
-    const currentValue = typeof next[currentKey] === "string" ? next[currentKey] : "";
-    const legacyValue = typeof next[legacyKey] === "string" ? next[legacyKey] : "";
-    if (!currentValue.trim() && legacyValue.trim()) {
-      next[currentKey] = legacyValue;
-    }
-    delete next[legacyKey];
-  });
-
-  return next;
-}
-
 function getNodeAssignmentLabel(card: ManagedCard, nodeTrees: NodeTree[]) {
   if (!card.nodeTreeId) return "Not assigned to a node tree";
   const tree = nodeTrees.find((t) => t.id === card.nodeTreeId);
@@ -400,8 +357,22 @@ function getNodeAssignmentLabel(card: ManagedCard, nodeTrees: NodeTree[]) {
 }
 
 
+function getQuickRollConfig(customFields: Record<string, string> | undefined, slot: number) {
+  return {
+    label: String(customFields?.[`${QUICK_ROLL_LABEL_PREFIX}${slot}`] || ""),
+    expression: String(customFields?.[`${QUICK_ROLL_EXPR_PREFIX}${slot}`] || ""),
+    potency: String(customFields?.[`${QUICK_ROLL_POTENCY_PREFIX}${slot}`] || ""),
+  };
+}
+
+function getConfiguredQuickRolls(customFields: Record<string, string> | undefined) {
+  return QUICK_ROLL_SLOTS
+    .map((slot) => ({ slot, ...getQuickRollConfig(customFields, slot) }))
+    .filter((entry) => entry.expression.trim());
+}
+
 function getCardTrackerBucket(card: ManagedCard | null): CardTrackerBucket {
-  const raw = getCardTrackerValue(card, CARD_TRACKER_BUCKET_KEY, LEGACY_CARD_TRACKER_BUCKET_KEY).trim().toLowerCase();
+  const raw = (card?.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
   return raw === "status" || raw === "ability" ? raw : "";
 }
 
@@ -799,11 +770,11 @@ function buildComponentsDisplay(components: string, detail?: string) {
 function withPersistedEditorStructure(card: ManagedCard, builder: MechanicsBuilderState, blocks: CardSectionBlock[]): ManagedCard {
   return {
     ...card,
-    customFields: normalizeCardTrackerCustomFields({
+    customFields: {
       ...card.customFields,
       [EDITOR_MECHANICS_KEY]: JSON.stringify(builder),
       [EDITOR_SECTION_BLOCKS_KEY]: JSON.stringify(blocks.map((block, index) => sanitizeSectionBlock(block, index))),
-    }),
+    },
   };
 }
 
@@ -864,6 +835,17 @@ function CardPreviewPanel({
             <span key={tag} className="text-[9px] px-2 py-1" style={DM_TAG_BADGE}>{tag}</span>
           ))}
         </div>
+
+        {getConfiguredQuickRolls(card.customFields).length > 0 && (
+          <div className={`${retro.raised} bg-[#0E0E35] p-3 mb-4`} style={editorSurfaceStyle("#FFD166")}>
+            <div className="text-[10px] mb-2" style={S_SECTION_HDR}>DIRECT ROLL BUTTONS</div>
+            <div className="flex flex-wrap gap-2">
+              {getConfiguredQuickRolls(card.customFields).map((roll) => (
+                <span key={roll.slot} className="text-[9px] px-2 py-1" style={sectionBadgeStyle("#FFD166")}>{roll.label.trim() || roll.expression.trim()} · {roll.expression.trim()}{roll.potency.trim() ? ` · Potency ${roll.potency.trim()}` : ""}</span>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)] gap-4">
           <div className="space-y-3">
@@ -989,20 +971,11 @@ export function DMCardManagerSection({
       return;
     }
 
-    const normalizedCard = {
-      ...editingCard,
-      customFields: normalizeCardTrackerCustomFields(editingCard.customFields),
-    };
-
-    if (normalizedCard.customFields !== editingCard.customFields) {
-      setEditingCard(normalizedCard);
-    }
-
-    setMechanicsBuilder(parseStoredMechanicsBuilder(normalizedCard));
-    setCardSectionBlocks(parseStoredSectionBlocks(normalizedCard));
+    setMechanicsBuilder(parseStoredMechanicsBuilder(editingCard));
+    setCardSectionBlocks(parseStoredSectionBlocks(editingCard));
     setNewSectionTitle("");
     setNewSectionTone("rules");
-    setShowRequirementsField(!!(normalizedCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
+    setShowRequirementsField(!!(editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
   }, [editingCard?.id]);
 
   const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
@@ -1101,17 +1074,6 @@ export function DMCardManagerSection({
     try {
       setDmError(null);
       const cardToSave = withPersistedEditorStructure(editingCard, mechanicsBuilder, cardSectionBlocks);
-
-      if (cardToSave.nodeTreeId && cardToSave.nodeId) {
-        const selectedTree = nodeTrees.find((tree) => tree.id === cardToSave.nodeTreeId);
-        const selectedNode = selectedTree?.nodes.find((node) => node.id === cardToSave.nodeId);
-        const alreadyAssigned = !!selectedNode?.cardIds.includes(cardToSave.id);
-        if (selectedNode && !alreadyAssigned && selectedNode.cardIds.length >= 3) {
-          setDmError("Selected node already has 3 cards. Remove one or choose a different node before saving.");
-          return;
-        }
-      }
-
       const nextCards = isAddingNewCard
         ? [...managedCards, cardToSave]
         : managedCards.map((c) => (c.id === cardToSave.id ? cardToSave : c));
@@ -1195,26 +1157,7 @@ export function DMCardManagerSection({
 
   const updateCardCustomField = (key: string, value: string) => {
     if (!editingCard) return;
-
-    const legacyKeyMap: Record<string, string> = {
-      [CARD_TRACKER_BUCKET_KEY]: LEGACY_CARD_TRACKER_BUCKET_KEY,
-      [CARD_TRACKER_NAME_KEY]: LEGACY_CARD_TRACKER_NAME_KEY,
-      [CARD_TRACKER_DURATION_KEY]: LEGACY_CARD_TRACKER_DURATION_KEY,
-      [CARD_TRACKER_POTENCY_KEY]: LEGACY_CARD_TRACKER_POTENCY_KEY,
-      [CARD_TRACKER_DAMAGE_KEY]: LEGACY_CARD_TRACKER_DAMAGE_KEY,
-      [CARD_TRACKER_DESCRIPTION_KEY]: LEGACY_CARD_TRACKER_DESCRIPTION_KEY,
-      [CARD_TRACKER_BUFF_TYPE_KEY]: LEGACY_CARD_TRACKER_BUFF_TYPE_KEY,
-      [CARD_TRACKER_BUFF_TARGET_KEY]: LEGACY_CARD_TRACKER_BUFF_TARGET_KEY,
-      [CARD_TRACKER_BUFF_VALUE_KEY]: LEGACY_CARD_TRACKER_BUFF_VALUE_KEY,
-    };
-
-    const nextCustomFields = { ...editingCard.customFields, [key]: value };
-    const legacyKey = legacyKeyMap[key];
-    if (legacyKey) {
-      delete nextCustomFields[legacyKey];
-    }
-
-    setEditingCard({ ...editingCard, customFields: nextCustomFields });
+    setEditingCard({ ...editingCard, customFields: { ...editingCard.customFields, [key]: value } });
   };
 
   const toggleComponentFlag = (flag: ComponentFlag) => {
@@ -2127,30 +2070,30 @@ export function DMCardManagerSection({
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                                   <div>
                                     <label className="text-[10px] block mb-1" style={labelStyle}>Tracker Name:</label>
-                                    <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_NAME_KEY, LEGACY_CARD_TRACKER_NAME_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_NAME_KEY, e.target.value)} placeholder="Defaults to the card name" className={inputClass} style={inputStyle} />
+                                    <input type="text" value={editingCard.customFields[CARD_TRACKER_NAME_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_NAME_KEY, e.target.value)} placeholder="Defaults to the card name" className={inputClass} style={inputStyle} />
                                   </div>
                                   <div>
                                     <label className="text-[10px] block mb-1" style={labelStyle}>Duration:</label>
-                                    <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_DURATION_KEY, LEGACY_CARD_TRACKER_DURATION_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DURATION_KEY, e.target.value)} placeholder="e.g. 1, 3 rounds, 1 minute" className={inputClass} style={inputStyle} />
+                                    <input type="text" value={editingCard.customFields[CARD_TRACKER_DURATION_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DURATION_KEY, e.target.value)} placeholder="e.g. 1, 3 rounds, 1 minute" className={inputClass} style={inputStyle} />
                                   </div>
                                   <div>
                                     <label className="text-[10px] block mb-1" style={labelStyle}>Potency:</label>
-                                    <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_POTENCY_KEY, LEGACY_CARD_TRACKER_POTENCY_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_POTENCY_KEY, e.target.value)} placeholder="e.g. 2, P, 5-TE" className={inputClass} style={inputStyle} />
+                                    <input type="text" value={editingCard.customFields[CARD_TRACKER_POTENCY_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_POTENCY_KEY, e.target.value)} placeholder="e.g. 2, P, 5-TE" className={inputClass} style={inputStyle} />
                                   </div>
                                   <div>
                                     <label className="text-[10px] block mb-1" style={labelStyle}>Damage / Roll:</label>
-                                    <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_DAMAGE_KEY, LEGACY_CARD_TRACKER_DAMAGE_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DAMAGE_KEY, e.target.value)} placeholder="e.g. 1d8, P, 2d6+P" className={inputClass} style={inputStyle} />
+                                    <input type="text" value={editingCard.customFields[CARD_TRACKER_DAMAGE_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DAMAGE_KEY, e.target.value)} placeholder="e.g. 1d8, P, 2d6+P" className={inputClass} style={inputStyle} />
                                   </div>
                                   <div className="md:col-span-2">
                                     <label className="text-[10px] block mb-1" style={labelStyle}>Tracked Effect Text:</label>
-                                    <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_DESCRIPTION_KEY, LEGACY_CARD_TRACKER_DESCRIPTION_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DESCRIPTION_KEY, e.target.value)} placeholder="Short text shown in Personal Files" className={inputClass} style={inputStyle} />
+                                    <input type="text" value={editingCard.customFields[CARD_TRACKER_DESCRIPTION_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DESCRIPTION_KEY, e.target.value)} placeholder="Short text shown in Personal Files" className={inputClass} style={inputStyle} />
                                   </div>
 
                                   {getCardTrackerBucket(editingCard) === "status" && (
                                     <>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Buff Type:</label>
-                                        <select value={getCardTrackerValue(editingCard, CARD_TRACKER_BUFF_TYPE_KEY, LEGACY_CARD_TRACKER_BUFF_TYPE_KEY) || ""} onChange={(e) => {
+                                        <select value={editingCard.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || ""} onChange={(e) => {
                                           updateCardCustomField(CARD_TRACKER_BUFF_TYPE_KEY, e.target.value);
                                           if (!e.target.value) {
                                             updateCardCustomField(CARD_TRACKER_BUFF_TARGET_KEY, "");
@@ -2165,11 +2108,11 @@ export function DMCardManagerSection({
                                       </div>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Buff Target:</label>
-                                        <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_BUFF_TARGET_KEY, LEGACY_CARD_TRACKER_BUFF_TARGET_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_BUFF_TARGET_KEY, e.target.value)} placeholder="e.g. STR, Athletics, Armor Class" className={inputClass} style={inputStyle} />
+                                        <input type="text" value={editingCard.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_BUFF_TARGET_KEY, e.target.value)} placeholder="e.g. STR, Athletics, Armor Class" className={inputClass} style={inputStyle} />
                                       </div>
                                       <div>
                                         <label className="text-[10px] block mb-1" style={labelStyle}>Buff Value:</label>
-                                        <input type="text" value={getCardTrackerValue(editingCard, CARD_TRACKER_BUFF_VALUE_KEY, LEGACY_CARD_TRACKER_BUFF_VALUE_KEY) || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_BUFF_VALUE_KEY, e.target.value)} placeholder="e.g. +2, P, -1" className={inputClass} style={inputStyle} />
+                                        <input type="text" value={editingCard.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_BUFF_VALUE_KEY, e.target.value)} placeholder="e.g. +2, P, -1" className={inputClass} style={inputStyle} />
                                       </div>
                                     </>
                                   )}
@@ -2179,6 +2122,42 @@ export function DMCardManagerSection({
                               <div className="text-[10px]" style={S_SUBTLE}>
                                 Status Effect adds the row to the green Status Effects bucket. Ability / Card Effect adds it to the red Abilities / Cards bucket. Old timed-effect tags still work as fallback for older cards.
                               </div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                              <div>
+                                <div className="text-[12px]" style={S_SECTION_HDR}>DIRECT ROLL BUTTONS</div>
+                                <div className="text-[10px] mt-1" style={S_SUBTLE}>
+                                  These show up as clickable roll buttons in Personal Files without needing the dice expression to live inside the description text.
+                                </div>
+                              </div>
+                              <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD166")}>Up to 3 buttons</span>
+                            </div>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD166")}>
+                              {QUICK_ROLL_SLOTS.map((slot) => {
+                                const config = getQuickRollConfig(editingCard.customFields, slot);
+                                return (
+                                  <div key={slot} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                    <div className="text-[10px] mb-2" style={S_SECTION_HDR}>Button {slot + 1}</div>
+                                    <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,0.8fr)] gap-3">
+                                      <div>
+                                        <label className="text-[10px] block mb-1" style={labelStyle}>Label</label>
+                                        <input type="text" value={config.label} onChange={(e) => updateCardCustomField(`${QUICK_ROLL_LABEL_PREFIX}${slot}`, e.target.value)} placeholder="e.g. Slash, Smite, Save DC" className={inputClass} style={inputStyle} />
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression</label>
+                                        <input type="text" value={config.expression} onChange={(e) => updateCardCustomField(`${QUICK_ROLL_EXPR_PREFIX}${slot}`, e.target.value)} placeholder="e.g. 1d8+3, 2d6+P, 1d20+5" className={inputClass} style={inputStyle} />
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] block mb-1" style={labelStyle}>Potency Override</label>
+                                        <input type="text" value={config.potency} onChange={(e) => updateCardCustomField(`${QUICK_ROLL_POTENCY_PREFIX}${slot}`, e.target.value)} placeholder="Optional. Blank uses the card potency" className={inputClass} style={inputStyle} />
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
 

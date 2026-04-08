@@ -190,6 +190,10 @@ const FIELD_KEYS = {
 
 const CUSTOM_PREFIX = "Custom::";
 const EFFECT_PREFIX = "Effect::";
+const QUICK_ROLL_LABEL_PREFIX = "Quick Roll Label::";
+const QUICK_ROLL_EXPR_PREFIX = "Quick Roll Expression::";
+const QUICK_ROLL_POTENCY_PREFIX = "Quick Roll Potency::";
+const QUICK_ROLL_SLOTS = [0, 1, 2] as const;
 
 function rarityColor(r: string) {
   switch (r) {
@@ -303,10 +307,24 @@ function deleteKeys(item: ManagedItem, keys: string[]) {
   return { ...item, customFields: nextCustomFields };
 }
 
+function getQuickRollConfig(customFields: Record<string, string> | undefined, slot: number) {
+  return {
+    label: String(customFields?.[`${QUICK_ROLL_LABEL_PREFIX}${slot}`] || ""),
+    expression: String(customFields?.[`${QUICK_ROLL_EXPR_PREFIX}${slot}`] || ""),
+    potency: String(customFields?.[`${QUICK_ROLL_POTENCY_PREFIX}${slot}`] || ""),
+  };
+}
+
+function getConfiguredQuickRolls(customFields: Record<string, string> | undefined) {
+  return QUICK_ROLL_SLOTS
+    .map((slot) => ({ slot, ...getQuickRollConfig(customFields, slot) }))
+    .filter((entry) => entry.expression.trim());
+}
+
 function buildDisplayFacts(item: ManagedItem) {
   const slotLabels = Object.fromEntries(EQUIP_SLOTS.map((slot) => [slot.id, slot.label])) as Record<string, string>;
   return Object.entries(item.customFields || {})
-    .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith(EFFECT_PREFIX))
+    .filter(([key, value]) => !!String(value || "").trim() && !key.startsWith(EFFECT_PREFIX) && !key.startsWith(QUICK_ROLL_LABEL_PREFIX) && !key.startsWith(QUICK_ROLL_EXPR_PREFIX) && !key.startsWith(QUICK_ROLL_POTENCY_PREFIX))
     .map(([key, value]) => {
       const [group, ...rest] = key.split("::");
       let label = rest.join("::") || group;
@@ -987,6 +1005,40 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                   </div>
                 )}
               </div>
+
+              <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                  <div>
+                    <div className="text-[10px]" style={DM_EFFECT_HDR}>DIRECT ROLL BUTTONS</div>
+                    <div className="text-[10px] mt-1" style={S_MUTED}>These become dedicated clickable roll buttons in Personal Files, separate from the effect text.</div>
+                  </div>
+                  <span className="text-[9px] px-2 py-1" style={dmRarityBadge("#FFD166")}>Up to 3 buttons</span>
+                </div>
+                <div className="space-y-3">
+                  {QUICK_ROLL_SLOTS.map((slot) => {
+                    const config = getQuickRollConfig(editingItem.customFields, slot);
+                    return (
+                      <div key={slot} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                        <div className="text-[9px] mb-2" style={DM_EFFECT_LABEL}>Button #{slot + 1}</div>
+                        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,0.8fr)] gap-3">
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Label</label>
+                            <input type="text" value={config.label} onChange={(e) => updateItemCustomField(`${QUICK_ROLL_LABEL_PREFIX}${slot}`, e.target.value)} placeholder="e.g. Attack, Heal, Save" className={inputClass} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression</label>
+                            <input type="text" value={config.expression} onChange={(e) => updateItemCustomField(`${QUICK_ROLL_EXPR_PREFIX}${slot}`, e.target.value)} placeholder="e.g. 1d8+3, 2d6, 1d20+5" className={inputClass} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Potency</label>
+                            <input type="text" value={config.potency} onChange={(e) => updateItemCustomField(`${QUICK_ROLL_POTENCY_PREFIX}${slot}`, e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1017,6 +1069,17 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                   </div>
                 ) : (
                   <div className="text-[11px] mb-3" style={S_MUTED}>No description written yet.</div>
+                )}
+
+                {getConfiguredQuickRolls(editingItem.customFields).length > 0 && (
+                  <div className={`${retro.sunken} bg-[#0A0A28] p-3 mb-3`}>
+                    <div className="text-[9px] mb-1" style={S_SECTION_HDR}>DIRECT ROLL BUTTONS</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {getConfiguredQuickRolls(editingItem.customFields).map((roll) => (
+                        <span key={roll.slot} className="text-[9px] px-2 py-1" style={dmRarityBadge("#FFD166")}>{roll.label.trim() || roll.expression.trim()} · {roll.expression.trim()}{roll.potency.trim() ? ` · Potency ${roll.potency.trim()}` : ""}</span>
+                      ))}
+                    </div>
+                  </div>
                 )}
 
                 {displayFacts.length > 0 && (
