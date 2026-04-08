@@ -140,6 +140,17 @@ const CARD_TRACKER_DESCRIPTION_KEY = "Card Tracker::Effect";
 const CARD_TRACKER_BUFF_TYPE_KEY = "Card Tracker::Buff Type";
 const CARD_TRACKER_BUFF_TARGET_KEY = "Card Tracker::Buff Target";
 const CARD_TRACKER_BUFF_VALUE_KEY = "Card Tracker::Buff Value";
+const QUICK_ROLL_PREFIX = "Quick Roll::";
+const QUICK_ROLL_LABEL_KEY = "Label";
+const QUICK_ROLL_EXPRESSION_KEY = "Expression";
+const QUICK_ROLL_POTENCY_KEY = "Potency";
+
+interface QuickRollSlot {
+  slotId: string;
+  label: string;
+  expression: string;
+  potency: string;
+}
 
 type CardTrackerBucket = "" | "status" | "ability";
 
