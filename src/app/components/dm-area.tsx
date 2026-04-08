@@ -60,6 +60,7 @@ import {
 import { DISPLAY_CONTENTS } from "./shared-styles";
 import {
   sanitizeInfoDocumentsForLoad,
+  sanitizeInfoSubTabsForLoad,
   normalizeInfoDocumentsForSave,
   type InfoSubTab as SharedInfoSubTab,
 } from "./personal-files-information-utils";
@@ -170,55 +171,6 @@ type InfoSubTab = SharedInfoSubTab & {
   showEmpty?: boolean;
 };
 
-function sanitizeInfoSubTabRecord(raw: Partial<InfoSubTab> | null | undefined, index: number): InfoSubTab {
-  const sortMode = raw?.sortMode;
-  return {
-    id: typeof raw?.id === "string" && raw.id.trim() ? raw.id.trim() : `ist-recovered-${index}`,
-    name: typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim() : `Sub-Tab ${index + 1}`,
-    order: Number.isFinite(raw?.order as number) ? Number(raw?.order) : index,
-    description: typeof raw?.description === "string" ? raw.description.trim() : "",
-    icon: typeof raw?.icon === "string" ? raw.icon.trim() : "",
-    color: typeof raw?.color === "string" && isValidInfoSubTabColor(raw.color) ? raw.color.trim() : "",
-    parentId: typeof raw?.parentId === "string" ? raw.parentId.trim() : "",
-    assignedTo: Array.isArray(raw?.assignedTo) ? raw.assignedTo.map((value) => String(value)).filter(Boolean) : [],
-    defaultDisplayMode:
-      raw?.defaultDisplayMode === "paper" || raw?.defaultDisplayMode === "item:stone_tablet"
-        ? raw.defaultDisplayMode
-        : "digital",
-    autoAssignToOwners: typeof raw?.autoAssignToOwners === "boolean" ? raw.autoAssignToOwners : true,
-    isDefault: !!raw?.isDefault,
-    sortMode: sortMode === "title" || sortMode === "category" || sortMode === "newest" || sortMode === "oldest" ? sortMode : "custom",
-    showEmpty: !!raw?.showEmpty,
-  };
-}
-
-function sanitizeInfoSubTabsForLoad(rawTabs: Partial<InfoSubTab>[] | null | undefined) {
-  const seenIds = new Set<string>();
-  const sanitized = (Array.isArray(rawTabs) ? rawTabs : []).map((tab, index) => sanitizeInfoSubTabRecord(tab, index)).filter((tab) => {
-    if (seenIds.has(tab.id)) return false;
-    seenIds.add(tab.id);
-    return true;
-  });
-
-  const normalized = sanitized
-    .sort((a, b) => a.order - b.order)
-    .map((tab, index) => ({ ...tab, order: index }));
-
-  let foundDefault = false;
-  const withSingleDefault = normalized.map((tab, index) => {
-    if (tab.isDefault && !foundDefault) {
-      foundDefault = true;
-      return { ...tab, order: index, isDefault: true };
-    }
-    return { ...tab, order: index, isDefault: false };
-  });
-
-  if (withSingleDefault.length > 0 && !withSingleDefault.some((tab) => tab.isDefault)) {
-    withSingleDefault[0] = { ...withSingleDefault[0], isDefault: true };
-  }
-
-  return withSingleDefault;
-}
 
 const BUILTIN_EMOJI_PREVIEW = [
   { emoji: "👍", label: "Thumbs Up" },
@@ -703,8 +655,11 @@ async function persistNotifications(next: DMNotification[]) {
 async function persistInfoSubTabs(next: InfoSubTab[]) {
   try {
     setDmError(null);
-    await saveDMInfoSubTabs(next as unknown as Record<string, unknown>[]);
-    setInfoSubTabs(next);
+    const normalizedNext = sanitizeInfoSubTabsForLoad(
+      next as unknown as Partial<InfoSubTab>[],
+    ) as InfoSubTab[];
+    await saveDMInfoSubTabs(normalizedNext as unknown as Record<string, unknown>[]);
+    setInfoSubTabs(normalizedNext);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save info sub-tabs"));
     throw err;
@@ -721,24 +676,9 @@ function normalizeInfoSubTabs(next: InfoSubTab[]) {
 }
 
 function ensureSingleDefaultInfoSubTab(next: InfoSubTab[]) {
-  const sorted = normalizeInfoSubTabs(next);
-  if (sorted.length === 0) return sorted;
-
-  let foundDefault = false;
-  const normalized = sorted.map((tab, index) => {
-    if (tab.isDefault && !foundDefault) {
-      foundDefault = true;
-      return { ...tab, order: index, isDefault: true };
-    }
-
-    return { ...tab, order: index, isDefault: false };
-  });
-
-  if (!normalized.some((tab) => tab.isDefault)) {
-    normalized[0] = { ...normalized[0], isDefault: true };
-  }
-
-  return normalized;
+  return sanitizeInfoSubTabsForLoad(
+    normalizeInfoSubTabs(next) as unknown as Partial<InfoSubTab>[],
+  ) as InfoSubTab[];
 }
 
 function getInfoSubTabNameError(name: string, currentId?: string | null) {

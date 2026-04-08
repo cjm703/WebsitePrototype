@@ -11,6 +11,7 @@ import { getOwnedStickers } from "./game-leaderboard";
 import { playDiceRoll, playTabClick, playSuccessChime } from "./sound-effects";
 import { safeGetItem } from "./safe-storage";
 import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
+import type { DiceInfo } from "./dice-animation";
 import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
@@ -49,15 +50,24 @@ interface SourceUsageEntry { id: string; cardName: string; sourceType: string; a
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
 
-const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
-const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
-const CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
-const CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
-const CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
-const CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
-const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
-const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
-const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
+const CARD_TRACKER_BUCKET_KEY = "Card Tracker::Bucket";
+const CARD_TRACKER_NAME_KEY = "Card Tracker::Name";
+const CARD_TRACKER_DURATION_KEY = "Card Tracker::Duration";
+const CARD_TRACKER_POTENCY_KEY = "Card Tracker::Potency";
+const CARD_TRACKER_DAMAGE_KEY = "Card Tracker::Damage";
+const CARD_TRACKER_DESCRIPTION_KEY = "Card Tracker::Effect";
+const CARD_TRACKER_BUFF_TYPE_KEY = "Card Tracker::Buff Type";
+const CARD_TRACKER_BUFF_TARGET_KEY = "Card Tracker::Buff Target";
+const CARD_TRACKER_BUFF_VALUE_KEY = "Card Tracker::Buff Value";
+const LEGACY_CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
+const LEGACY_CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
+const LEGACY_CARD_TRACKER_DURATION_KEY = "Tracker::Duration";
+const LEGACY_CARD_TRACKER_POTENCY_KEY = "Tracker::Potency";
+const LEGACY_CARD_TRACKER_DAMAGE_KEY = "Tracker::Damage";
+const LEGACY_CARD_TRACKER_DESCRIPTION_KEY = "Tracker::Description";
+const LEGACY_CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
+const LEGACY_CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
+const LEGACY_CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
 const CARD_DESCRIPTION_KEY = "Description";
 
 
@@ -65,7 +75,7 @@ const CARD_DESCRIPTION_KEY = "Description";
 // ========================
 // Dice Expression Parser — supports NdM dice, P (potency), (), and full PEMDAS
 // ========================
-function rollDiceExpression(expr: string, potencyRaw: string): { total: number; breakdown: string } | null {
+function rollDiceExpression(expr: string, potencyRaw: string): { total: number; breakdown: string; diceGroups: DiceInfo[] } | null {
   // Strip TE suffix (and optional sign/step like "-TE3") from potency before using it
   const potencyClean = potencyRaw.replace(/\s*[+-]?\s*TE\s*\d*\s*$/i, "").trim();
   const potencyVal = parseFloat(potencyClean) || 0;
@@ -82,6 +92,7 @@ function rollDiceExpression(expr: string, potencyRaw: string): { total: number; 
   type Token = { type: "num"; value: number } | { type: "dice"; count: number; sides: number; rolls: number[] } | { type: "op"; value: string } | { type: "lparen" } | { type: "rparen" };
   const tokens: Token[] = [];
   const breakdownParts: string[] = [];
+  const rolledDiceGroups: DiceInfo[] = [];
   let i = 0;
   const s = processed.replace(/\s+/g, "");
 
@@ -101,6 +112,7 @@ function rollDiceExpression(expr: string, potencyRaw: string): { total: number; 
         const sides = parseInt(sidesStr, 10) || 6;
         const rolls: number[] = [];
         for (let r = 0; r < count; r++) rolls.push(Math.floor(Math.random() * sides) + 1);
+        rolledDiceGroups.push({ count, sides, rolls: [...rolls] });
         tokens.push({ type: "dice", count, sides, rolls });
       } else {
         tokens.push({ type: "num", value: parseFloat(numStr) || 0 });
@@ -115,6 +127,7 @@ function rollDiceExpression(expr: string, potencyRaw: string): { total: number; 
       while (i < s.length && /[0-9]/.test(s[i])) { sidesStr += s[i]; i++; }
       const sides = parseInt(sidesStr, 10) || 6;
       const rolls = [Math.floor(Math.random() * sides) + 1];
+      rolledDiceGroups.push({ count: 1, sides, rolls: [...rolls] });
       tokens.push({ type: "dice", count: 1, sides, rolls });
       continue;
     }
@@ -171,7 +184,7 @@ function rollDiceExpression(expr: string, potencyRaw: string): { total: number; 
 
   const total = Math.floor(parseExpr());
   const breakdown = breakdownParts.length > 0 ? breakdownParts.join(" + ") : "";
-  return { total, breakdown };
+  return { total, breakdown, diceGroups: rolledDiceGroups };
 }
 
 /** Check if a damage string contains rollable dice notation */
@@ -205,18 +218,18 @@ function stepTE(potency: string): string {
 }
 
 function getBuiltInCardTrackerBucket(card: ManagedCard): "status" | "ability" | "" {
-  const bucket = (card.customFields?.[CARD_TRACKER_BUCKET_KEY] || "").trim().toLowerCase();
+  const bucket = getCardTrackerValue(card, CARD_TRACKER_BUCKET_KEY, LEGACY_CARD_TRACKER_BUCKET_KEY).trim().toLowerCase();
   return bucket === "status" || bucket === "ability" ? bucket : "";
 }
 
 function hasBuiltInCardTracker(card: ManagedCard): boolean {
   return !!(
     getBuiltInCardTrackerBucket(card)
-    || (card.customFields?.[CARD_TRACKER_NAME_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DURATION_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || "").trim()
-    || (card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || "").trim()
+    || getCardTrackerValue(card, CARD_TRACKER_NAME_KEY, LEGACY_CARD_TRACKER_NAME_KEY).trim()
+    || getCardTrackerValue(card, CARD_TRACKER_DURATION_KEY, LEGACY_CARD_TRACKER_DURATION_KEY).trim()
+    || getCardTrackerValue(card, CARD_TRACKER_POTENCY_KEY, LEGACY_CARD_TRACKER_POTENCY_KEY).trim()
+    || getCardTrackerValue(card, CARD_TRACKER_DAMAGE_KEY, LEGACY_CARD_TRACKER_DAMAGE_KEY).trim()
+    || getCardTrackerValue(card, CARD_TRACKER_DESCRIPTION_KEY, LEGACY_CARD_TRACKER_DESCRIPTION_KEY).trim()
   );
 }
 
@@ -352,10 +365,23 @@ function extractDiceExpressions(value: string): string[] {
   return unique;
 }
 
+function getCardTrackerValue(card: ManagedCard | null | undefined, currentKey: string, legacyKey: string): string {
+  if (!card?.customFields) return "";
+  const currentValue = card.customFields[currentKey];
+  if (typeof currentValue === "string" && currentValue.trim()) return currentValue;
+  const legacyValue = card.customFields[legacyKey];
+  return typeof legacyValue === "string" ? legacyValue : "";
+}
+
+function isTrackerCustomFieldKey(key: string): boolean {
+  return key.startsWith("Card Tracker::") || key.startsWith("Tracker::");
+}
+
 function isPlayerHiddenCustomFieldKey(key: string): boolean {
   return key.startsWith("__editor_")
     || key === "__editor_mechanics_builder"
-    || key === "__editor_section_blocks";
+    || key === "__editor_section_blocks"
+    || isTrackerCustomFieldKey(key);
 }
 
 export function PersonalFiles() {
@@ -750,27 +776,29 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const row = statusEffects.find((r) => r.id === rowId);
     if (!row || !row.damage) return;
 
-    // Trigger animation
     setRollAnimatingId(rowId);
     setTimeout(() => setRollAnimatingId(null), 600);
 
-    // Parse dice groups for multi-dice animation
-    const diceGroups = parseDiceGroups(row.damage, row.potency);
-    const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
-    playDiceRoll(totalDice);
-
     const result = rollDiceExpression(row.damage, row.potency);
-    if (result) {
-      // Use actual rolled values from the result breakdown to populate dice animation
-      const animGroups = parseDiceGroups(row.damage, row.potency);
+    if (!result) return;
+
+    const animGroups = parseDiceGroups(
+      row.damage,
+      row.potency,
+      result.diceGroups.map((group) => group.rolls),
+    );
+    const totalDice = animGroups.reduce((sum, group) => sum + group.count, 0);
+    if (totalDice > 0) {
+      playDiceRoll(totalDice);
       triggerDiceAnimation(animGroups);
-      const rollText = result.breakdown
-        ? `⚔ ${result.total} (${result.breakdown})`
-        : `⚔ ${result.total}`;
-      setStatusEffects((prev) =>
-        prev.map((r) => (r.id === rowId ? { ...r, lastRoll: rollText } : r))
-      );
     }
+
+    const rollText = result.breakdown
+      ? `⚔ ${result.total} (${result.breakdown})`
+      : `⚔ ${result.total}`;
+    setStatusEffects((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, lastRoll: rollText } : r))
+    );
   };
 
   // ── Turn End: decrement duration & TE potency ──
@@ -1549,16 +1577,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const handleInlineDiceRoll = useCallback((rollKey: string, expression: string, potencyRaw = "") => {
     if (!hasDiceNotation(expression)) return;
 
-    const diceGroups = parseDiceGroups(expression, potencyRaw);
-    const totalDice = diceGroups.reduce((sum, group) => sum + group.count, 0);
-    if (totalDice > 0) {
-      playDiceRoll(totalDice);
-    }
-
     const result = rollDiceExpression(expression, potencyRaw);
     if (!result) return;
 
-    if (diceGroups.length > 0) {
+    const diceGroups = parseDiceGroups(
+      expression,
+      potencyRaw,
+      result.diceGroups.map((group) => group.rolls),
+    );
+    const totalDice = diceGroups.reduce((sum, group) => sum + group.count, 0);
+    if (totalDice > 0) {
+      playDiceRoll(totalDice);
       triggerDiceAnimation(diceGroups);
     }
 
@@ -1611,32 +1640,38 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const builtInTrackerBucket = getBuiltInCardTrackerBucket(card);
 
     if (hasBuiltInCardTracker(card) && builtInTrackerBucket) {
-      const effectName = card.customFields[CARD_TRACKER_NAME_KEY] || card.name;
-      const duration = card.customFields[CARD_TRACKER_DURATION_KEY] || "1";
-      const potency = card.customFields[CARD_TRACKER_POTENCY_KEY] || "";
-      const damage = card.customFields[CARD_TRACKER_DAMAGE_KEY] || "";
+      const effectName = getCardTrackerValue(card, CARD_TRACKER_NAME_KEY, LEGACY_CARD_TRACKER_NAME_KEY) || card.name;
+      const duration = getCardTrackerValue(card, CARD_TRACKER_DURATION_KEY, LEGACY_CARD_TRACKER_DURATION_KEY) || "1";
+      const potency = getCardTrackerValue(card, CARD_TRACKER_POTENCY_KEY, LEGACY_CARD_TRACKER_POTENCY_KEY) || "";
+      const damage = getCardTrackerValue(card, CARD_TRACKER_DAMAGE_KEY, LEGACY_CARD_TRACKER_DAMAGE_KEY) || "";
       const description =
-        card.customFields[CARD_TRACKER_DESCRIPTION_KEY]
+        getCardTrackerValue(card, CARD_TRACKER_DESCRIPTION_KEY, LEGACY_CARD_TRACKER_DESCRIPTION_KEY)
         || card.customFields[CARD_DESCRIPTION_KEY]?.replace(/<[^>]*>/g, "")
         || card.effect.replace(/<[^>]*>/g, "");
 
       let initialRoll: string | undefined;
       if (damage && hasDiceNotation(damage)) {
-        const diceGroups = parseDiceGroups(damage, potency);
-        const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
-        playDiceRoll(totalDice);
         const result = rollDiceExpression(damage, potency);
         if (result) {
-          triggerDiceAnimation(parseDiceGroups(damage, potency));
+          const diceGroups = parseDiceGroups(
+            damage,
+            potency,
+            result.diceGroups.map((group) => group.rolls),
+          );
+          const totalDice = diceGroups.reduce((sum, group) => sum + group.count, 0);
+          if (totalDice > 0) {
+            playDiceRoll(totalDice);
+            triggerDiceAnimation(diceGroups);
+          }
           initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
         }
       } else {
         playSuccessChime();
       }
 
-      const buffType = (card.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || "") as StatusEffectRow["buffType"];
-      const buffTarget = card.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || "";
-      const buffValue = card.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || "";
+      const buffType = (getCardTrackerValue(card, CARD_TRACKER_BUFF_TYPE_KEY, LEGACY_CARD_TRACKER_BUFF_TYPE_KEY) || "") as StatusEffectRow["buffType"];
+      const buffTarget = getCardTrackerValue(card, CARD_TRACKER_BUFF_TARGET_KEY, LEGACY_CARD_TRACKER_BUFF_TARGET_KEY) || "";
+      const buffValue = getCardTrackerValue(card, CARD_TRACKER_BUFF_VALUE_KEY, LEGACY_CARD_TRACKER_BUFF_VALUE_KEY) || "";
 
       const newEffect: StatusEffectRow = {
         id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1679,12 +1714,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
         let initialRoll: string | undefined;
         if (damage && hasDiceNotation(damage)) {
-          const diceGroups = parseDiceGroups(damage, potency);
-          const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
-          playDiceRoll(totalDice);
           const result = rollDiceExpression(damage, potency);
           if (result) {
-            triggerDiceAnimation(parseDiceGroups(damage, potency));
+            const diceGroups = parseDiceGroups(
+              damage,
+              potency,
+              result.diceGroups.map((group) => group.rolls),
+            );
+            const totalDice = diceGroups.reduce((sum, group) => sum + group.count, 0);
+            if (totalDice > 0) {
+              playDiceRoll(totalDice);
+              triggerDiceAnimation(diceGroups);
+            }
             initialRoll = result.breakdown
               ? `⚔ ${result.total} (${result.breakdown})`
               : `⚔ ${result.total}`;
@@ -1785,7 +1826,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
     const justUsed = useCardFlash === card.id;
     const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
-    const detailRollPotency = (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || card.customFields?.["Timed Effect::Potency"] || "").trim();
+    const detailRollPotency = (getCardTrackerValue(card, CARD_TRACKER_POTENCY_KEY, LEGACY_CARD_TRACKER_POTENCY_KEY) || card.customFields?.["Timed Effect::Potency"] || "").trim();
     const familyLabel = getPlayerCardFamilyLabel(card);
     const componentValue = getPlayerCardComponentsDisplay(card);
     const requirementsValue = (card.customFields?.["Use Profile::Requirements"] || "").trim();
@@ -1817,13 +1858,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
 
     const trackerFields = [
-      formatCardDetailField(CARD_TRACKER_NAME_KEY, card.customFields?.[CARD_TRACKER_NAME_KEY] || card.name || ""),
-      formatCardDetailField(CARD_TRACKER_DURATION_KEY, card.customFields?.[CARD_TRACKER_DURATION_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_POTENCY_KEY, card.customFields?.[CARD_TRACKER_POTENCY_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_DAMAGE_KEY, card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_BUFF_TYPE_KEY, card.customFields?.[CARD_TRACKER_BUFF_TYPE_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_BUFF_TARGET_KEY, card.customFields?.[CARD_TRACKER_BUFF_TARGET_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_BUFF_VALUE_KEY, card.customFields?.[CARD_TRACKER_BUFF_VALUE_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_NAME_KEY, getCardTrackerValue(card, CARD_TRACKER_NAME_KEY, LEGACY_CARD_TRACKER_NAME_KEY) || card.name || ""),
+      formatCardDetailField(CARD_TRACKER_DURATION_KEY, getCardTrackerValue(card, CARD_TRACKER_DURATION_KEY, LEGACY_CARD_TRACKER_DURATION_KEY) || ""),
+      formatCardDetailField(CARD_TRACKER_POTENCY_KEY, getCardTrackerValue(card, CARD_TRACKER_POTENCY_KEY, LEGACY_CARD_TRACKER_POTENCY_KEY) || ""),
+      formatCardDetailField(CARD_TRACKER_DAMAGE_KEY, getCardTrackerValue(card, CARD_TRACKER_DAMAGE_KEY, LEGACY_CARD_TRACKER_DAMAGE_KEY) || ""),
+      formatCardDetailField(CARD_TRACKER_BUFF_TYPE_KEY, getCardTrackerValue(card, CARD_TRACKER_BUFF_TYPE_KEY, LEGACY_CARD_TRACKER_BUFF_TYPE_KEY) || ""),
+      formatCardDetailField(CARD_TRACKER_BUFF_TARGET_KEY, getCardTrackerValue(card, CARD_TRACKER_BUFF_TARGET_KEY, LEGACY_CARD_TRACKER_BUFF_TARGET_KEY) || ""),
+      formatCardDetailField(CARD_TRACKER_BUFF_VALUE_KEY, getCardTrackerValue(card, CARD_TRACKER_BUFF_VALUE_KEY, LEGACY_CARD_TRACKER_BUFF_VALUE_KEY) || ""),
     ].filter(Boolean) as Array<{ key: string; label: string; value: string }>;
 
     const timedEffectFields = Object.entries(card.customFields || {})
@@ -1839,7 +1880,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         if (hiddenKeys.has(key)) return false;
         if (key.startsWith("Use Profile::")) return false;
         if (key.startsWith("Timed Effect::")) return false;
-        if (key.startsWith("Tracker::")) return false;
+        if (isTrackerCustomFieldKey(key)) return false;
         return true;
       })
       .map(([key, value]) => formatCardDetailField(key, String(value)))

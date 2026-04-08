@@ -140,19 +140,36 @@ export function triggerDiceAnimation(dice: DiceInfo[]) {
   listeners.forEach((fn) => fn(dice));
 }
 
-export function parseDiceGroups(expr: string, potencyRaw: string): DiceInfo[] {
+export function parseDiceGroups(expr: string, potencyRaw: string, presetRolls?: number[][]): DiceInfo[] {
   const potencyClean = potencyRaw.replace(/\s*[+-]?\s*TE\s*\d*\s*$/i, "").trim();
   const potencyVal = parseFloat(potencyClean) || 0;
   const processed = expr.replace(/(?<![a-zA-Z])P(?![a-ce-zA-CE-Z])/g, String(Math.floor(potencyVal)));
   const groups: DiceInfo[] = [];
   const regex = /(\d+)?[dD](\d+)/g;
   let match;
+  let presetIndex = 0;
   while ((match = regex.exec(processed)) !== null) {
     const count = parseInt(match[1], 10) || 1;
     const sides = parseInt(match[2], 10) || 6;
+    const providedRolls = Array.isArray(presetRolls?.[presetIndex]) ? presetRolls![presetIndex] : null;
     const rolls: number[] = [];
-    for (let i = 0; i < count; i++) rolls.push(Math.floor(Math.random() * sides) + 1);
+
+    if (providedRolls && providedRolls.length > 0) {
+      for (let i = 0; i < count; i++) {
+        const raw = providedRolls[i];
+        if (typeof raw === "number" && Number.isFinite(raw)) {
+          const bounded = Math.max(1, Math.min(sides, Math.floor(raw)));
+          rolls.push(bounded);
+        } else {
+          rolls.push(Math.floor(Math.random() * sides) + 1);
+        }
+      }
+    } else {
+      for (let i = 0; i < count; i++) rolls.push(Math.floor(Math.random() * sides) + 1);
+    }
+
     groups.push({ count, sides, rolls });
+    presetIndex += 1;
   }
   return groups;
 }
