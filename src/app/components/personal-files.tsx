@@ -59,6 +59,57 @@ const CARD_TRACKER_BUFF_TYPE_KEY = "Tracker::Buff Type";
 const CARD_TRACKER_BUFF_TARGET_KEY = "Tracker::Buff Target";
 const CARD_TRACKER_BUFF_VALUE_KEY = "Tracker::Buff Value";
 const CARD_DESCRIPTION_KEY = "Description";
+const QUICK_ROLL_PREFIX = "Quick Roll::";
+const QUICK_ROLL_LABEL_KEY = "Label";
+const QUICK_ROLL_EXPRESSION_KEY = "Expression";
+const QUICK_ROLL_POTENCY_KEY = "Potency";
+const EQUIPMENT_SLOTS_KEY = "Equipment::Slots";
+const ITEM_INFO_PREFIX = "Info Field::";
+const ITEM_INFO_LABEL_KEY = "Label";
+const ITEM_INFO_CONTENT_KEY = "Content";
+const ITEM_INFO_PLACEMENT_KEY = "Placement";
+const ITEM_INFO_ROLL_LABEL_KEY = "Roll Label";
+const ITEM_INFO_ROLL_EXPRESSION_KEY = "Roll Expression";
+const ITEM_INFO_ROLL_POTENCY_KEY = "Roll Potency";
+const ITEM_INFO_EQUIPPED_EFFECT_KEY = "Equipped Effect";
+const ITEM_INFO_EQUIPPED_EFFECT_TEXT_KEY = "Equipped Effect Text";
+const ITEM_INFO_TRACKER_MODE_KEY = "Tracker Mode";
+const ITEM_INFO_TRACKER_NAME_KEY = "Tracker Name";
+const ITEM_INFO_TRACKER_DURATION_KEY = "Tracker Duration";
+const ITEM_INFO_TRACKER_POTENCY_KEY = "Tracker Potency";
+const ITEM_INFO_TRACKER_DAMAGE_KEY = "Tracker Damage";
+const ITEM_INFO_TRACKER_DESCRIPTION_KEY = "Tracker Description";
+const ITEM_INFO_TRACKER_BUFF_TYPE_KEY = "Tracker Buff Type";
+const ITEM_INFO_TRACKER_BUFF_TARGET_KEY = "Tracker Buff Target";
+const ITEM_INFO_TRACKER_BUFF_VALUE_KEY = "Tracker Buff Value";
+
+interface QuickRollSlot {
+  slotId: string;
+  label: string;
+  expression: string;
+  potency: string;
+}
+
+interface ItemInfoField {
+  fieldId: string;
+  label: string;
+  content: string;
+  placement: "above" | "below";
+  rollLabel: string;
+  rollExpression: string;
+  rollPotency: string;
+  equippedEffect: boolean;
+  equippedEffectText: string;
+  trackerMode: "" | "status" | "ability";
+  trackerName: string;
+  trackerDuration: string;
+  trackerPotency: string;
+  trackerDamage: string;
+  trackerDescription: string;
+  trackerBuffType: "attribute" | "skill" | "resource" | "";
+  trackerBuffTarget: string;
+  trackerBuffValue: string;
+}
 
 
 
@@ -352,10 +403,78 @@ function extractDiceExpressions(value: string): string[] {
   return unique;
 }
 
+
+function getQuickRollSlots(customFields: Record<string, string> | null | undefined): QuickRollSlot[] {
+  const entries = customFields || {};
+  const slotIds = Array.from(new Set(
+    Object.keys(entries)
+      .filter((key) => key.startsWith(QUICK_ROLL_PREFIX))
+      .map((key) => key.replace(QUICK_ROLL_PREFIX, "").split("::")[0])
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+
+  return slotIds.map((slotId) => ({
+    slotId,
+    label: entries[`${QUICK_ROLL_PREFIX}${slotId}::${QUICK_ROLL_LABEL_KEY}`] || "",
+    expression: entries[`${QUICK_ROLL_PREFIX}${slotId}::${QUICK_ROLL_EXPRESSION_KEY}`] || "",
+    potency: entries[`${QUICK_ROLL_PREFIX}${slotId}::${QUICK_ROLL_POTENCY_KEY}`] || "",
+  }));
+}
+
+function getItemInfoFieldKey(fieldId: string, fieldName: string) {
+  return `${ITEM_INFO_PREFIX}${fieldId}::${fieldName}`;
+}
+
+function getItemInfoFields(customFields: Record<string, string> | null | undefined): ItemInfoField[] {
+  const entries = customFields || {};
+  const fieldIds = Array.from(new Set(
+    Object.keys(entries)
+      .filter((key) => key.startsWith(ITEM_INFO_PREFIX))
+      .map((key) => key.replace(ITEM_INFO_PREFIX, "").split("::")[0])
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+
+  return fieldIds.map((fieldId) => ({
+    fieldId,
+    label: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_LABEL_KEY)] || "",
+    content: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_CONTENT_KEY)] || "",
+    placement: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_PLACEMENT_KEY)] === "below" ? "below" : "above",
+    rollLabel: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_ROLL_LABEL_KEY)] || "",
+    rollExpression: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_ROLL_EXPRESSION_KEY)] || "",
+    rollPotency: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_ROLL_POTENCY_KEY)] || "",
+    equippedEffect: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_EQUIPPED_EFFECT_KEY)] === "1",
+    equippedEffectText: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_EQUIPPED_EFFECT_TEXT_KEY)] || "",
+    trackerMode: (entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_MODE_KEY)] || "") as "" | "status" | "ability",
+    trackerName: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_NAME_KEY)] || "",
+    trackerDuration: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_DURATION_KEY)] || "",
+    trackerPotency: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_POTENCY_KEY)] || "",
+    trackerDamage: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_DAMAGE_KEY)] || "",
+    trackerDescription: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_DESCRIPTION_KEY)] || "",
+    trackerBuffType: (entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_TYPE_KEY)] || "") as "attribute" | "skill" | "resource" | "",
+    trackerBuffTarget: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_TARGET_KEY)] || "",
+    trackerBuffValue: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_VALUE_KEY)] || "",
+  }));
+}
+
+function getAllowedEquipSlots(customFields: Record<string, string> | null | undefined): string[] {
+  const entries = customFields || {};
+  const multi = (entries[EQUIPMENT_SLOTS_KEY] || "").split(",").map((part) => part.trim()).filter(Boolean);
+  if (multi.length > 0) return Array.from(new Set(multi));
+  const legacy = (entries["Equipment::Slot"] || "").trim();
+  return legacy ? [legacy] : [];
+}
+
+function isEquippableInSlot(customFields: Record<string, string> | null | undefined, slotId: string): boolean {
+  const allowed = getAllowedEquipSlots(customFields);
+  if (allowed.length === 0) return false;
+  return allowed.includes(slotId) || (allowed.includes("ring") && slotId.startsWith("ring"));
+}
 function isPlayerHiddenCustomFieldKey(key: string): boolean {
   return key.startsWith("__editor_")
     || key === "__editor_mechanics_builder"
-    || key === "__editor_section_blocks";
+    || key === "__editor_section_blocks"
+    || key.startsWith(QUICK_ROLL_PREFIX)
+    || key.startsWith(ITEM_INFO_PREFIX);
 }
 
 export function PersonalFiles() {
@@ -1282,13 +1401,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     // If actively assigning to a specific slot, filter by Equipment tag's Slot field
     if (assigningSlot) {
-      items = items.filter(i => {
-        const slotField = i.customFields["Equipment::Slot"];
-        if (!slotField) return false; // No Equipment slot tag → cannot be equipped in any specific slot
-        // "ring" matches any ring1–ring8 slot
-        if (slotField === "ring") return assigningSlot.startsWith("ring");
-        return slotField === assigningSlot;
-      });
+      items = items.filter((i) => isEquippableInSlot(i.customFields, assigningSlot));
     }
 
     if (equipSearch) {
@@ -1395,7 +1508,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   SLOT_LABELS["ring"] = "Ring (any)";
 
   const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::"));
+    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !k.startsWith(QUICK_ROLL_PREFIX) && !k.startsWith(ITEM_INFO_PREFIX));
     if (entries.length === 0) return null;
     return (
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
@@ -1497,6 +1610,27 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
         />
 
+        {(() => {
+          const allowedSlots = getAllowedEquipSlots(item.customFields || {});
+          const infoFields = getItemInfoFields(item.customFields || {});
+          const quickRollCount = getQuickRollSlots(item.customFields || {}).filter((slot) => slot.expression.trim()).length + infoFields.filter((field) => field.rollExpression.trim()).length;
+          const trackerCount = infoFields.filter((field) => field.trackerMode).length;
+          const equippedEffectCount = infoFields.filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()).length;
+          const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
+          return (
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
+              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Type</div><div className="text-[11px]" style={{ color: theme.textColor }}>{item.type || "None"}</div></div>
+              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Rarity</div><div className="text-[11px]" style={{ color: theme.textColor }}>{item.rarity || "Common"}</div></div>
+              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Allowed Slots</div><div className="text-[11px]" style={{ color: theme.textColor }}>{allowedSlots.length > 0 ? allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", ") : "Not equippable"}</div></div>
+              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Information Fields</div><div className="text-[11px]" style={{ color: theme.textColor }}>{infoFields.length}</div></div>
+              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Quick Rolls</div><div className="text-[11px]" style={{ color: theme.textColor }}>{quickRollCount}</div></div>
+              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Effects / Trackers</div><div className="text-[11px]" style={{ color: theme.textColor }}>{effectCount + equippedEffectCount + trackerCount}</div></div>
+            </div>
+          );
+        })()}
+
+        {renderItemInfoFields(item, "above")}
+
         {/* Description */}
         <div className="mb-4">
           <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
@@ -1504,7 +1638,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           </div>
           <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
           {renderDiceRollControls(`item:${item.id}:description`, item.description, "")}
+          {renderStoredQuickRollButtons(item.customFields || {}, `item:${item.id}:quick`, "")}
         </div>
+
+        {renderItemInfoFields(item, "below")}
 
         {/* Effect areas */}
         {item.tags.includes("Effect") && (() => {
@@ -1583,7 +1720,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 onClick={() => handleInlineDiceRoll(rollKey, expression, potencyRaw)}
                 className={`${retro.button} px-2 py-0.5 inline-flex items-center gap-1`}
                 style={{
-                  color: theme.textColor,
+                  color: compact ? "#FFD166" : theme.accentColor,
                   fontSize: compact ? "10px" : "11px",
                 }}
               >
@@ -1600,7 +1737,130 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         })}
       </div>
     );
-  }, [handleInlineDiceRoll, inlineDiceRollResults, theme.textColor]);
+  }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
+
+  const renderStoredQuickRollButtons = useCallback((customFields: Record<string, string> | null | undefined, baseKey: string, defaultPotencyRaw = "") => {
+    const slots = getQuickRollSlots(customFields).filter((slot) => slot.expression.trim());
+    if (slots.length === 0) return null;
+    return (
+      <div className="flex flex-wrap items-center gap-2 mt-3">
+        {slots.map((slot) => {
+          const buttonLabel = slot.label.trim() || slot.expression.trim();
+          const potencyRaw = slot.potency.trim() || defaultPotencyRaw;
+          const result = inlineDiceRollResults[`${baseKey}:${slot.slotId}`];
+          return (
+            <div key={slot.slotId} className="flex items-center gap-1.5">
+              <button
+                onClick={() => handleInlineDiceRoll(`${baseKey}:${slot.slotId}`, slot.expression, potencyRaw)}
+                className={`${retro.button} px-2.5 py-1.5 text-[11px] flex items-center gap-1.5`}
+                style={{ color: theme.textColor, borderColor: bc(theme.panelBorder), background: "rgba(10,10,40,0.92)" }}
+                title={slot.expression}
+              >
+                <Dices size={11} />
+                {buttonLabel}
+              </button>
+              {result && (
+                <span className="text-[11px]" style={{ color: "#FF6A6A", fontWeight: 700 }}>
+                  {result}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }, [handleInlineDiceRoll, inlineDiceRollResults, theme.panelBorder, theme.textColor]);
+
+  const applyItemInfoTracker = useCallback((item: ManagedItem, field: ItemInfoField) => {
+    if (!field.trackerMode) return;
+
+    const effectName = field.trackerName.trim() || field.label.trim() || item.name || "Item Effect";
+    const duration = field.trackerDuration.trim() || "1";
+    const potency = field.trackerPotency.trim() || field.rollPotency.trim();
+    const damage = field.trackerDamage.trim() || field.rollExpression.trim();
+    const description = field.trackerDescription.trim() || stripHtml(field.content || field.equippedEffectText || item.description || "") || `From item: ${item.name}`;
+
+    let initialRoll: string | undefined;
+    if (damage && hasDiceNotation(damage)) {
+      const diceGroups = parseDiceGroups(damage, potency);
+      const totalDice = diceGroups.reduce((s, g) => s + g.count, 0);
+      if (totalDice > 0) playDiceRoll(totalDice);
+      const result = rollDiceExpression(damage, potency);
+      if (result) {
+        if (diceGroups.length > 0) triggerDiceAnimation(diceGroups);
+        initialRoll = result.breakdown ? `⚔ ${result.total} (${result.breakdown})` : `⚔ ${result.total}`;
+      }
+    } else {
+      playSuccessChime();
+    }
+
+    const nextEffect: StatusEffectRow = {
+      id: `item-se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: effectName,
+      potency,
+      duration,
+      damage,
+      effect: description,
+      lastRoll: initialRoll,
+      ...(field.trackerMode === "status" && field.trackerBuffType && field.trackerBuffTarget ? {
+        buffType: field.trackerBuffType,
+        buffTarget: field.trackerBuffTarget,
+        buffValue: field.trackerBuffValue,
+      } : {}),
+      targetType: field.trackerMode === "ability" ? "enemy" : "self",
+    };
+
+    setStatusEffects((prev) => [...prev, nextEffect]);
+    setLastAddedStatusEffect(effectName);
+  }, []);
+
+  const renderItemInfoFields = useCallback((item: ManagedItem, placement: "above" | "below") => {
+    const infoFields = getItemInfoFields(item.customFields || {}).filter((field) => {
+      const hasVisibleContent = stripHtml(field.content || "").trim();
+      const hasUtility = field.rollExpression.trim() || field.equippedEffect || field.trackerMode;
+      return field.placement === placement && (field.label.trim() || hasVisibleContent || hasUtility);
+    });
+
+    if (infoFields.length === 0) return null;
+
+    return (
+      <div className="space-y-3 mb-4">
+        {infoFields.map((field) => {
+          const visibleContent = stripHtml(field.content || "").trim();
+          const rollExpression = field.rollExpression.trim();
+          const rollPotency = field.rollPotency.trim();
+          const canApplyTracker = !!field.trackerMode;
+          return (
+            <div key={field.fieldId} className={`${retro.sunken} p-3`} style={{ background: theme.inputBg }}>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <div className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "#8AB8FF", fontWeight: 700 }}>
+                  {field.label.trim() || "Field"}
+                </div>
+                {canApplyTracker && (
+                  <button
+                    onClick={() => applyItemInfoTracker(item, field)}
+                    className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`}
+                    style={{ color: field.trackerMode === "ability" ? "#FF8A5A" : "#4ADE80" }}
+                  >
+                    <Play size={10} />
+                    {field.trackerMode === "ability" ? "Add Card Effect" : "Add Status Effect"}
+                  </button>
+                )}
+              </div>
+              {visibleContent && (
+                <RenderFormattedText text={field.content} color={theme.textColor} baseSize={12} />
+              )}
+              {rollExpression && (
+                <div className="mt-2">
+                  {renderDiceRollControls(`item:${item.id}:info-field:${field.fieldId}`, rollExpression, rollPotency || "")}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }, [applyItemInfoTracker, renderDiceRollControls, theme.inputBg, theme.textColor]);
 
   const handleUseCard = (card: ManagedCard) => {
     const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
@@ -1947,6 +2207,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
                 <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
                 {renderDiceRollControls(`card:${card.id}:effect`, card.effect, detailRollPotency)}
+                {renderStoredQuickRollButtons(card.customFields || {}, `card:${card.id}:quick`, detailRollPotency)}
               </div>
             </div>
 
@@ -2972,73 +3233,101 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             const ActiveIcon = active.icon;
 
             // ── Render an item row (reusable) ──
-            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => (
-              <div key={item.id} className="flex items-center border-b border-[#1A1A4B] last:border-b-0">
-                <button
-                  onClick={onClick}
-                  className="flex-1 text-left py-2.5 px-3 hover:bg-[#0E0E35] transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[13px] inline-flex items-center gap-1.5" style={{ color: theme.textColor }}>
-                      {item.name}
-                      {item.id.startsWith("pi-") && (
-                        <span className="text-[8px] px-1 py-px" style={{ background: "rgba(74,192,255,0.1)", color: "#4AC0FF", border: "1px solid rgba(74,192,255,0.25)" }}>PLAYER</span>
+            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => {
+              const infoFields = getItemInfoFields(item.customFields || {});
+              const allowedSlots = getAllowedEquipSlots(item.customFields || {});
+              const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
+              const quickRollCount = getQuickRollSlots(item.customFields || {}).filter((slot) => slot.expression.trim()).length + infoFields.filter((field) => field.rollExpression.trim()).length;
+              const trackerCount = infoFields.filter((field) => field.trackerMode).length;
+              const equippedEffectCount = infoFields.filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()).length;
+              const previewText = [
+                stripHtml(item.description || ""),
+                ...infoFields.map((field) => stripHtml(field.content || "")).filter(Boolean),
+              ].find(Boolean) || "";
+              const summaryBadges = [
+                ...(allowedSlots.length > 0 ? [{ label: allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", "), accent: "#8AB8FF" }] : []),
+                ...(quickRollCount > 0 ? [{ label: `${quickRollCount} Roll${quickRollCount === 1 ? "" : "s"}`, accent: "#FFD166" }] : []),
+                ...(trackerCount > 0 ? [{ label: `${trackerCount} Tracker`, accent: "#FF8A5A" }] : []),
+                ...(equippedEffectCount > 0 ? [{ label: `${equippedEffectCount} Equipped`, accent: "#C4A0FF" }] : []),
+                ...(effectCount > 0 ? [{ label: `${effectCount} Effect${effectCount === 1 ? "" : "s"}`, accent: "#7DD3FC" }] : []),
+              ];
+              return (
+                <div key={item.id} className={`${retro.raised} bg-[#0E0E35] p-3`} style={{ border: `1px solid ${bc(theme.panelBorder)}` }}>
+                  <div className="flex items-start gap-3">
+                    <button
+                      onClick={onClick}
+                      className="flex-1 text-left hover:opacity-95 transition-opacity cursor-pointer"
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+                        <div>
+                          <div className="text-[14px] inline-flex items-center gap-1.5 flex-wrap" style={{ color: theme.textColor, fontWeight: 600 }}>
+                            {item.name}
+                            {item.id.startsWith("pi-") && (
+                              <span className="text-[8px] px-1 py-px" style={{ background: "rgba(74,192,255,0.1)", color: "#4AC0FF", border: "1px solid rgba(74,192,255,0.25)" }}>PLAYER</span>
+                            )}
+                            {item.locked && (
+                              <span className="text-[8px] px-1 py-px inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
+                                <Lock size={7} /> LOCKED
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] mt-0.5" style={{ color: theme.labelColor }}>
+                            {item.type || "No type"}
+                            {item.rarity && <span style={DISPLAY_CONTENTS}> · <span style={{ color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon }}>{item.rarity}</span></span>}
+                          </div>
+                        </div>
+                        <ChevronLeft size={12} className="rotate-180 shrink-0 mt-1" style={S_DIM} />
+                      </div>
+
+                      {previewText && (
+                        <div className="text-[11px] mb-2 line-clamp-2" style={{ color: theme.textColor }}>
+                          {previewText}
+                        </div>
                       )}
-                      {item.locked && (
-                        <span className="text-[8px] px-1 py-px inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
-                          <Lock size={7} /> LOCKED
-                        </span>
+
+                      {summaryBadges.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {summaryBadges.map((badge) => (
+                            <span key={badge.label} className="text-[8px] px-1.5 py-0.5" style={{ background: `${badge.accent}18`, color: badge.accent, border: `1px solid ${badge.accent}40` }}>
+                              {badge.label}
+                            </span>
+                          ))}
+                        </div>
                       )}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {item.rarity && (
-                        <span
-                          className="text-[9px] px-1.5 py-0.5"
-                          style={{
-                            background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                            color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                          }}
-                        >
-                          {item.rarity}
-                        </span>
+
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {item.tags.slice(0, 4).map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[9px] px-1.5 py-0.5"
+                            style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {item.tags.length > 4 && (
+                          <span className="text-[9px]" style={S_MUTED}>
+                            +{item.tags.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0 pt-1">
+                      {opts?.onEdit && (
+                        <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
+                          <Edit size={13} style={{ color: "#5A9AFF" }} />
+                        </button>
                       )}
-                      <span className="text-[11px]" style={{ color: theme.labelColor }}>
-                        {item.type}
-                      </span>
-                      <ChevronLeft size={12} className="rotate-180" style={S_DIM} />
+                      {opts?.onDelete && (
+                        <button onClick={opts.onDelete} className="px-2 py-1 hover:opacity-80" title="Delete this item">
+                          <Trash2 size={13} style={S_RED} />
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {item.tags.slice(0, 3).map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-[9px] px-1.5 py-0.5"
-                        style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                    {item.tags.length > 3 && (
-                      <span className="text-[9px]" style={S_MUTED}>
-                        +{item.tags.length - 3}
-                      </span>
-                    )}
-                  </div>
-                </button>
-                <div className="flex items-center gap-0.5 shrink-0 pr-1">
-                  {opts?.onEdit && (
-                    <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
-                      <Edit size={13} style={{ color: "#5A9AFF" }} />
-                    </button>
-                  )}
-                  {opts?.onDelete && (
-                    <button onClick={opts.onDelete} className="px-2 py-1 hover:opacity-80" title="Delete this item">
-                      <Trash2 size={13} style={S_RED} />
-                    </button>
-                  )}
                 </div>
-              </div>
-            );
+              );
+            };
 
             return (
               <div className="space-y-4">
@@ -3067,7 +3356,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                     {/* ═══ PLAYER ITEM EDITOR (Create / Edit) ═══ */}
                     {inventorySubTab === "general" && editingPlayerItem && (() => {
-                      const editorCustomFields = getActiveCustomFields(editingPlayerItem, itemTags);
+                      const editorCustomFields: Array<{ tagName: string; fieldName: string; key: string; fieldDef: TagFieldDef }> = [];
                       const inputClass = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full`;
                       const inputStyle: React.CSSProperties = { color: "#C0D0F0", fontFamily: "'Tahoma', sans-serif" };
                       const labelStyle: React.CSSProperties = { color: "#5A7ABB", fontWeight: 600 };
@@ -3593,9 +3882,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                             Equipped in: {slottedIn.join(", ")}
                                           </div>
                                         )}
-                                        {item.customFields["Equipment::Slot"] && (
+                                        {getAllowedEquipSlots(item.customFields).length > 0 && (
                                           <div className="text-[9px] mt-0.5" style={{ color: "#7A7ABA" }}>
-                                            Slot: {SLOT_LABELS[item.customFields["Equipment::Slot"]] || item.customFields["Equipment::Slot"]}
+                                            Slots: {getAllowedEquipSlots(item.customFields).map((slot) => SLOT_LABELS[slot] || slot).join(", ")}
                                           </div>
                                         )}
                                         {/* ── Buff pills on item cards ── */}
@@ -3668,7 +3957,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                     {/* ═══ EQUIPPED ITEM EFFECTS ═══ */}
                     {inventorySubTab === "effects" && (() => {
-                      // Collect equipped items that have the "Effect" tag
+                      // Collect equipped items that have effect blocks or info-field equipped effects
                       const seenIds = new Set<string>();
                       const effectItems: ManagedItem[] = [];
                       for (const slotId of Object.keys(equipSlots) as EquipSlotId[]) {
@@ -3677,7 +3966,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         if (seenIds.has(assignment.itemId)) continue; // de-dup two-handed
                         seenIds.add(assignment.itemId);
                         const item = equippedItems.find(i => i.id === assignment.itemId) || playerItems.find(i => i.id === assignment.itemId);
-                        if (item && item.tags.includes("Effect")) effectItems.push(item);
+                        const infoEquippedFields = item ? getItemInfoFields(item.customFields || {}).filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()) : [];
+                        if (item && (item.tags.includes("Effect") || infoEquippedFields.length > 0)) effectItems.push(item);
                       }
 
                       return (
@@ -3693,6 +3983,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                   .filter(k => k.startsWith("Effect::"))
                                   .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
                                   .filter(k => item.customFields[k]?.trim());
+                                const equippedInfoFields = getItemInfoFields(item.customFields || {}).filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim());
 
                                 return (
                                   <div key={item.id} className={`${retro.raised} p-4`} style={{ background: theme.cardBg }}>
@@ -3703,9 +3994,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                     >
                                       {item.name}
                                     </button>
-                                    {effectKeys.length === 0 ? (
+                                    {(effectKeys.length === 0 && equippedInfoFields.length === 0) ? (
                                       <div className="text-[11px] italic" style={S_MUTED}>
-                                        Effect tag is set but no effect text has been written yet.
+                                        No equipped effects have been written yet.
                                       </div>
                                     ) : (
                                       <div className="space-y-2">
@@ -3719,6 +4010,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                             <div className="text-[12px]" style={{ color: theme.textColor }}>
                                               <RenderFormattedText text={item.customFields[key]} color={theme.textColor} baseSize={12} />
                                             </div>
+                                          </div>
+                                        ))}
+                                        {equippedInfoFields.map((field) => (
+                                          <div key={field.fieldId} className={`${retro.sunken} p-3`} style={{ background: theme.inputBg }}>
+                                            <div className="text-[9px] mb-1" style={{ color: "#8AB8FF", fontWeight: 700 }}>
+                                              {field.label || "Equipped Effect"}
+                                            </div>
+                                            <div className="text-[12px]" style={{ color: theme.textColor }}>
+                                              <RenderFormattedText text={field.equippedEffectText || field.content} color={theme.textColor} baseSize={12} />
+                                            </div>
+                                            {field.rollExpression.trim() && renderDiceRollControls(`equipped:${item.id}:info:${field.fieldId}`, field.rollExpression, field.rollPotency)}
                                           </div>
                                         ))}
                                       </div>
