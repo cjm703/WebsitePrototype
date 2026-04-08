@@ -26,6 +26,7 @@ import {
   Users,
   FileText,
   Sparkles,
+  Dices,
 } from "lucide-react";
 import {
   DM_TAG_BADGE,
@@ -1203,6 +1204,23 @@ export function DMCardManagerSection({
     setEditingCard({ ...editingCard, customFields: nextCustomFields });
   };
 
+  const openQuickRollEditor = () => {
+    if (!editingCard) return;
+    const currentSlots = buildQuickRollSlots(editingCard.customFields || {});
+    setEditorPanel("mechanics");
+    if (currentSlots.length > 0) return;
+    const slotId = makeQuickRollSlotId(editingCard.customFields || {});
+    setEditingCard({
+      ...editingCard,
+      customFields: {
+        ...editingCard.customFields,
+        [getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)]: "",
+        [getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)]: "",
+        [getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)]: "",
+      },
+    });
+  };
+
   const toggleComponentFlag = (flag: ComponentFlag) => {
     if (!editingCard) return;
     const current = parseComponentFlags(editingCard.customFields[USE_PROFILE_COMPONENTS_KEY] || "");
@@ -1747,6 +1765,9 @@ export function DMCardManagerSection({
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
+                        <button onClick={openQuickRollEditor} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
+                          <Dices size={14} /> {quickRollSlots.some((slot) => slot.expression.trim()) ? "Edit Quick Rolls" : "Add Quick Roll"}
+                        </button>
                         <button onClick={handleSaveCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
                           <Save size={14} /> {isAddingNewCard ? "Add Card" : "Save Changes"}
                         </button>
@@ -1754,6 +1775,16 @@ export function DMCardManagerSection({
                           <X size={14} /> Close
                         </button>
                       </div>
+                    </div>
+
+                    <div className={`${retro.raised} bg-[#0E0E35] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-3`}>
+                      <div>
+                        <div className="text-[10px]" style={S_SECTION_HDR}>ADDING CARD ROLL BUTTONS</div>
+                        <div className="text-[10px] mt-1" style={S_SUBTLE}>Open <strong>Mechanics</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
+                      </div>
+                      <button onClick={openQuickRollEditor} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+                        <Dices size={11} /> Jump to Quick Rolls
+                      </button>
                     </div>
 
                     <div className="flex flex-wrap gap-2">

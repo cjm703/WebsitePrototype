@@ -40,6 +40,7 @@ import {
   Eye,
   Layers3,
   WandSparkles,
+  Dices,
 } from "lucide-react";
 
 interface DMItemManagerSectionProps {
@@ -481,6 +482,23 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
     ]));
   };
 
+  const openQuickRollEditor = () => {
+    if (!editingItem) return;
+    const currentSlots = buildQuickRollSlots(editingItem.customFields || {});
+    setEditorPanel("effects");
+    if (currentSlots.length > 0) return;
+    const slotId = makeQuickRollSlotId(editingItem.customFields || {});
+    setEditingItem({
+      ...editingItem,
+      customFields: {
+        ...editingItem.customFields,
+        [getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)]: "",
+        [getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)]: "",
+        [getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)]: "",
+      },
+    });
+  };
+
   const toggleItemTag = (tagName: string) => {
     if (!editingItem) return;
     const has = editingItem.tags.includes(tagName);
@@ -714,7 +732,10 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <button onClick={openQuickRollEditor} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                <Dices size={12} /> {editorSummary?.quickRollCount ? "Edit Quick Rolls" : "Add Quick Roll"}
+              </button>
               {!isAddingNewItem && (
                 <button onClick={duplicateAsNew} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={{ color: "#C4A0FF" }}>
                   <Copy size={12} /> Duplicate as New
@@ -722,6 +743,16 @@ export function DMItemManagerSection({ players, managedItems, itemTags, statusTa
               )}
               <button onClick={handleCancelItemEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
             </div>
+          </div>
+
+          <div className={`${retro.raised} bg-[#0E0E35] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-3`}>
+            <div>
+              <div className="text-[10px]" style={S_SECTION_HDR}>ADDING ITEM ROLL BUTTONS</div>
+              <div className="text-[10px] mt-1" style={S_MUTED}>Open <strong>Effects</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
+            </div>
+            <button onClick={openQuickRollEditor} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+              <Dices size={11} /> Jump to Quick Rolls
+            </button>
           </div>
 
           <div className="flex gap-2 mb-4 flex-wrap">
