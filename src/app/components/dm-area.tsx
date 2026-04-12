@@ -7,7 +7,7 @@ import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp,
+  Newspaper, Copy, Zap, ChevronUp, Dices,
 } from "lucide-react";
 import { DMNodeTreeBuilder, type NodeTree } from "./node-trees";
 import {
@@ -95,6 +95,47 @@ function formatOwners(assignedTo: string[], players: { id: string; name: string 
 
 function getSaveError(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback;
+}
+
+const QUICK_ROLL_PREFIX = "Quick Roll::";
+const QUICK_ROLL_LABEL_KEY = "Label";
+const QUICK_ROLL_EXPRESSION_KEY = "Expression";
+const QUICK_ROLL_POTENCY_KEY = "Potency";
+
+interface QuickRollSlot {
+  slotId: string;
+  label: string;
+  expression: string;
+  potency: string;
+}
+
+function getQuickRollFieldKey(slotId: string, field: string) {
+  return `${QUICK_ROLL_PREFIX}${slotId}::${field}`;
+}
+
+function getQuickRollSlotIds(customFields: Record<string, string>) {
+  return Array.from(new Set(
+    Object.keys(customFields || {})
+      .filter((key) => key.startsWith(QUICK_ROLL_PREFIX))
+      .map((key) => key.replace(QUICK_ROLL_PREFIX, "").split("::")[0])
+      .filter(Boolean),
+  )).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+function buildQuickRollSlots(customFields: Record<string, string>): QuickRollSlot[] {
+  return getQuickRollSlotIds(customFields).map((slotId) => ({
+    slotId,
+    label: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] || "",
+    expression: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] || "",
+    potency: customFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] || "",
+  }));
+}
+
+function makeQuickRollSlotId(customFields: Record<string, string>) {
+  const nextIndex = getQuickRollSlotIds(customFields)
+    .map((slotId) => parseInt(slotId, 10))
+    .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), 0) + 1;
+  return String(nextIndex);
 }
 
 const PLAYER_REPORT_PREFIX = "[Player Report]";
@@ -1252,6 +1293,25 @@ const handleSaveItem = async () => {
     setEditingItem({ ...editingItem, customFields: { ...editingItem.customFields, [key]: value } });
   };
 
+  const addItemQuickRollSlot = () => {
+    if (!editingItem) return;
+    const nextCustomFields = { ...editingItem.customFields };
+    const slotId = makeQuickRollSlotId(nextCustomFields);
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)] = "Damage";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
+    nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
+  };
+
+  const removeItemQuickRollSlot = (slotId: string) => {
+    if (!editingItem) return;
+    const nextCustomFields = { ...editingItem.customFields };
+    delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_LABEL_KEY)];
+    delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)];
+    delete nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)];
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
+  };
+
   // Collect active custom fields based on tags for any entity with tags+customFields
   const getActiveCustomFields = (entity: { tags: string[] }, tagList: TagDefinition[]): { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] => {
     const fields: { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] = [];
@@ -1791,13 +1851,20 @@ const handleSaveItem = async () => {
               managedItems={managedItems}
               itemTags={itemTags}
               statusTags={statusTags}
-              onPersistItems={persistItems}
+              onPersistItems={async (next) => {
+                try {
+                  setDmError(null);
+                  await saveDMItems(next as Record<string, unknown>[]);
+                  setManagedItems(next as ManagedItem[]);
+                  setEditingItem(null);
+                  setIsAddingNewItem(false);
+                } catch (err) {
+                  setDmError(getSaveError(err, "Failed to save items"));
+                }
+              }}
             />
           )}
 
-          {/* ======================================================= */}
-          {/* MANAGE CARDS                                             */}
-          {/* ======================================================= */}
           {activeSection === "cards" && (
             <DMCardManagerSection
               players={players}

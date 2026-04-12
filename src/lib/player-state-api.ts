@@ -1,7 +1,8 @@
 import { safeGetItem, safeRemoveItem } from "@/app/components/safe-storage";
+import { loadPlayerDoc, savePlayerDoc } from "./db-core";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string;
 const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
@@ -39,10 +40,12 @@ async function apiFetch(path: string, init: RequestInit = {}) {
   const body = await res.json().catch(() => ({}));
 
   if (res.status === 401) {
-    safeRemoveItem("inet-session-token");
-    throw new Error(
-      typeof body?.error === "string" ? body.error : "Player session expired",
-    );
+    const message =
+      typeof body?.error === "string" ? body.error : "Player session expired";
+    if (/session|expired|revoked|invalid session|missing session token/i.test(message)) {
+      safeRemoveItem("inet-session-token");
+    }
+    throw new Error(message);
   }
 
   if (!res.ok) {
@@ -151,22 +154,37 @@ export async function saveDMTags(
   });
 }
 
-export async function loadDMPlayerLevelCategories(playerId: string) {
-  const body = await apiFetch(`/dm/player-level-categories/${playerId}`, {
-    method: "GET",
-  });
+function shouldFallbackPlayerLevelCategories(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /404|Unknown DM collection|Invalid API key|Request failed: 404/i.test(message);
+}
 
-  return (body?.levelCategories ?? []) as Record<string, unknown>[];
+export async function loadDMPlayerLevelCategories(playerId: string) {
+  try {
+    const body = await apiFetch(`/dm/player-level-categories/${playerId}`, {
+      method: "GET",
+    });
+
+    return (body?.levelCategories ?? []) as Record<string, unknown>[];
+  } catch (err) {
+    if (!shouldFallbackPlayerLevelCategories(err)) throw err;
+    return await loadPlayerDoc<Record<string, unknown>[]>("player_level_categories", playerId, []);
+  }
 }
 
 export async function saveDMPlayerLevelCategories(
   playerId: string,
   levelCategories: Record<string, unknown>[],
 ) {
-  await apiFetch("/dm/player-level-categories/save", {
-    method: "POST",
-    body: JSON.stringify({ playerId, levelCategories }),
-  });
+  try {
+    await apiFetch("/dm/player-level-categories/save", {
+      method: "POST",
+      body: JSON.stringify({ playerId, levelCategories }),
+    });
+  } catch (err) {
+    if (!shouldFallbackPlayerLevelCategories(err)) throw err;
+    await savePlayerDoc<Record<string, unknown>[]>("player_level_categories", playerId, levelCategories);
+  }
 }
 
 export async function purgeDMDeletedPlayer(playerId: string) {
