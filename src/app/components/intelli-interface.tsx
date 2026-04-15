@@ -15,6 +15,7 @@ import { loadOfficeName } from "./nexus-nomad";
 import { STICKER_IMAGES } from "./sticker-images";
 import type { DMNotification } from "./types";
 import { appStore } from "@/lib/app-store";
+import { buildSupabasePublicHeaders, supabaseFunctionBase } from "@/lib/supabase-env";
 
 export function IntelliInterface() {
   const navigate = useNavigate();
@@ -25,9 +26,7 @@ export function IntelliInterface() {
   // Read user from localStorage, redirect to login if not found
   const currentUser = safeGetItem("inet-user") || "";
   const currentUserId = safeGetItem("inet-user-id") || "";
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
-  const REPORT_API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
+  const REPORT_API_BASE = supabaseFunctionBase;
 
   // Player theme
   const theme = getPlayerTheme();
@@ -237,9 +236,7 @@ export function IntelliInterface() {
       const res = await fetch(`${REPORT_API_BASE}/player/report-notification`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          apikey: SUPABASE_ANON_KEY,
+          ...buildSupabasePublicHeaders(true),
           "X-Session-Token": sessionToken,
         },
         body: JSON.stringify({

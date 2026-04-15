@@ -3,6 +3,7 @@ import { retro } from "./retro-styles";
 import { S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 import { getStorageUsageBytes, getStorageUsageFraction } from "./safe-storage";
 import { readErrorLog, type ErrorLogEntry } from "./error-logger";
+import { buildSupabasePublicHeaders, supabaseFunctionBase } from "@/lib/supabase-env";
 import {
   Activity,
   Database,
@@ -16,7 +17,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
+const API_BASE = supabaseFunctionBase;
 
 interface ServerPing {
   status: "ok" | "error" | "checking";
@@ -65,9 +66,7 @@ const checkServer = async () => {
   try {
     const res = await fetch(`${API_BASE}/health`, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-      },
+      headers: buildSupabasePublicHeaders(false),
     });
 
     const ms = Math.round(performance.now() - start);

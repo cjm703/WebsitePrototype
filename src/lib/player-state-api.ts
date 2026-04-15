@@ -1,9 +1,8 @@
 import { safeGetItem, safeRemoveItem } from "@/app/components/safe-storage";
 import { loadPlayerDoc, savePlayerDoc } from "./db-core";
+import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) as string;
-const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5`;
+const API_BASE = supabaseFunctionBase;
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 
@@ -11,14 +10,9 @@ function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
 
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    apikey: SUPABASE_ANON_KEY,
+    ...buildSupabasePublicHeaders(includeJson),
     "X-Session-Token": sessionToken,
   };
-
-  if (includeJson) {
-    headers["Content-Type"] = "application/json";
-  }
 
   return headers;
 }
