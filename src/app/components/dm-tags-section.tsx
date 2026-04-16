@@ -1460,47 +1460,35 @@ export function DMTagsSection({
 
   if (!isVisible) return null;
 
-  const handleAddTag = async () => {
-    const name = normalizeTagName(newTagName);
-    if (!name) return;
-    if (isDuplicateTag(activeTags, name)) {
-      onError?.(`A ${tagSubPage} tag named "${name}" already exists.`);
-      return;
-    }
+  const createTagId = (suffix = "") => `tag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}${suffix}`;
+  const createCollection = newTagCollection || inferCollectionForGroup(tagSubPage, newTagGroup);
 
-    const fallbackDescription = createIntent === "identifier"
-      ? "Identifier tag."
-      : createIntent === "targeting"
-        ? "Targeting tag."
-        : "Descriptor tag.";
+  const buildCreateTagMeta = ({
+    includeDetails = false,
+  }: {
+    includeDetails?: boolean;
+  } = {}): RichTagMeta => ({
+    roleHint: createIntent,
+    collection: createCollection,
+    group: newTagGroup || undefined,
+    aliases: includeDetails ? parseAliases(newTagAliases) : undefined,
+    color: includeDetails ? getTagColor(newTagColor) : undefined,
+    usageNotes: includeDetails ? newTagUsageNotes.trim() : undefined,
+    isDeprecated: includeDetails ? false : undefined,
+    recommendedCardFamilies: includeDetails && tagSubPage === "cards" ? newTagCardFamilies : undefined,
+    recommendedCardPurposes: includeDetails && tagSubPage === "cards" ? newTagCardPurposes : undefined,
+    starterCardTargeting: includeDetails && tagSubPage === "cards" ? (newTagCardTargeting || undefined) : undefined,
+    starterCardCostModel: includeDetails && tagSubPage === "cards" ? (newTagCardCostModel || undefined) : undefined,
+    cardCreationNote: includeDetails && tagSubPage === "cards" ? newTagCardCreationNote.trim() : undefined,
+    starterCardTemplate: includeDetails && tagSubPage === "cards" ? (newTagCardTemplate || undefined) : undefined,
+    starterCardFocusPanel: includeDetails && tagSubPage === "cards" ? (newTagCardFocusPanel || undefined) : undefined,
+    playerFacingVisibility: includeDetails && tagSubPage === "cards" ? (newTagPlayerVisibility || undefined) : undefined,
+    playerFacingBadgeLabel: includeDetails && tagSubPage === "cards" ? newTagPlayerBadgeLabel.trim() : undefined,
+    playerFacingFilterGroup: includeDetails && tagSubPage === "cards" ? newTagPlayerFilterGroup.trim() : undefined,
+    playerFacingSortOrder: includeDetails && tagSubPage === "cards" ? (newTagPlayerSortOrder || undefined) : undefined,
+  });
 
-    const newTag: RichTagDefinition = normalizeRichTag({
-      id: `tag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      name,
-      description: newTagDesc.trim() || fallbackDescription,
-      fields: [],
-      meta: {
-        roleHint: createIntent,
-        collection: newTagCollection || inferCollectionForGroup(tagSubPage, newTagGroup),
-        group: newTagGroup,
-        aliases: parseAliases(newTagAliases),
-        color: getTagColor(newTagColor),
-        usageNotes: newTagUsageNotes.trim(),
-        isDeprecated: false,
-        recommendedCardFamilies: tagSubPage === 'cards' ? newTagCardFamilies : undefined,
-        recommendedCardPurposes: tagSubPage === 'cards' ? newTagCardPurposes : undefined,
-        starterCardTargeting: tagSubPage === 'cards' ? (newTagCardTargeting || undefined) : undefined,
-        starterCardCostModel: tagSubPage === 'cards' ? (newTagCardCostModel || undefined) : undefined,
-        cardCreationNote: tagSubPage === 'cards' ? newTagCardCreationNote.trim() : undefined,
-        starterCardTemplate: tagSubPage === 'cards' ? (newTagCardTemplate || undefined) : undefined,
-        starterCardFocusPanel: tagSubPage === 'cards' ? (newTagCardFocusPanel || undefined) : undefined,
-        playerFacingVisibility: tagSubPage === 'cards' ? (newTagPlayerVisibility || undefined) : undefined,
-        playerFacingBadgeLabel: tagSubPage === 'cards' ? newTagPlayerBadgeLabel.trim() : undefined,
-        playerFacingFilterGroup: tagSubPage === 'cards' ? newTagPlayerFilterGroup.trim() : undefined,
-        playerFacingSortOrder: tagSubPage === 'cards' ? (newTagPlayerSortOrder || undefined) : undefined,
-      },
-    });
-    await saveActiveTags([...activeTags, newTag]);
+  const resetCreateTagDraft = () => {
     setNewTagName("");
     setNewTagDesc("");
     setNewTagCollection("");
@@ -1519,6 +1507,31 @@ export function DMTagsSection({
     setNewTagPlayerBadgeLabel("");
     setNewTagPlayerFilterGroup("");
     setNewTagPlayerSortOrder("");
+  };
+
+  const handleAddTag = async () => {
+    const name = normalizeTagName(newTagName);
+    if (!name) return;
+    if (isDuplicateTag(activeTags, name)) {
+      onError?.(`A ${tagSubPage} tag named "${name}" already exists.`);
+      return;
+    }
+
+    const fallbackDescription = createIntent === "identifier"
+      ? "Identifier tag."
+      : createIntent === "targeting"
+        ? "Targeting tag."
+        : "Descriptor tag.";
+
+    const newTag: RichTagDefinition = normalizeRichTag({
+      id: createTagId(),
+      name,
+      description: newTagDesc.trim() || fallbackDescription,
+      fields: [],
+      meta: buildCreateTagMeta({ includeDetails: true }),
+    });
+    await saveActiveTags([...activeTags, newTag]);
+    resetCreateTagDraft();
   };
 
   const applyCreateSuggestion = (name: string, description = "") => {
@@ -1548,15 +1561,11 @@ export function DMTagsSection({
       if (existingNames.has(normalized)) continue;
       existingNames.add(normalized);
       nextTags.push(normalizeRichTag({
-        id: `tag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${added}`,
+        id: createTagId(`-${added}`),
         name,
         description: entry.description || "Descriptor tag.",
         fields: [],
-        meta: {
-          roleHint: createIntent,
-          collection: newTagCollection || inferCollectionForGroup(tagSubPage, newTagGroup),
-          group: newTagGroup,
-        },
+        meta: buildCreateTagMeta(),
       }));
       added += 1;
     }
@@ -1578,10 +1587,7 @@ export function DMTagsSection({
         name: normalizeTagName(tag.name),
         description: tag.description,
         fields: [],
-        meta: {
-          collection: newTagCollection || inferCollectionForGroup(tagSubPage, newTagGroup),
-          group: newTagGroup,
-        },
+        meta: buildCreateTagMeta(),
       }))
       .filter((tag) => {
         const normalized = tag.name.toLowerCase();

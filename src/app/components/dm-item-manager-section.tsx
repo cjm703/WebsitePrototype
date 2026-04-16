@@ -46,7 +46,6 @@ interface DMItemManagerSectionProps {
   players: PlayerData[];
   managedItems: ManagedItem[];
   itemTags: TagDefinition[];
-  statusTags: TagDefinition[];
   onPersistItems: (next: ManagedItem[]) => Promise<void>;
 }
 
@@ -455,7 +454,7 @@ function getSuggestedTags(editingItem: ManagedItem | null, itemTags: TagDefiniti
   }).slice(0, 8);
 }
 
-export function DMItemManagerSection({ players, managedItems, itemTags, statusTags, onPersistItems }: DMItemManagerSectionProps) {
+export function DMItemManagerSection({ players, managedItems, itemTags, onPersistItems }: DMItemManagerSectionProps) {
   const [itemFilterTab, setItemFilterTab] = useState<string>("all");
   const [itemSearch, setItemSearch] = useState("");
   const [editingItem, setEditingItem] = useState<ManagedItem | null>(null);

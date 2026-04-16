@@ -1850,7 +1850,6 @@ const handleSaveItem = async () => {
               players={players}
               managedItems={managedItems}
               itemTags={itemTags}
-              statusTags={statusTags}
               onPersistItems={async (next) => {
                 try {
                   setDmError(null);

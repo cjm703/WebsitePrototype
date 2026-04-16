@@ -620,11 +620,17 @@ function getSuggestedTagDefs(
   if (/utility|movement|scout|travel|interact|interaction/.test(textBlob)) {
     wanted.add("utility");
   }
-  if (/enemy|foe|hostile/.test(textBlob)) {
+  if (/\bself\b|\byourself\b|\bpersonal\b/.test(textBlob)) {
+    wanted.add("target self");
+  }
+  if (/\bally\b|\ballies\b|\bfriendly\b|\bteammate\b/.test(textBlob)) {
+    wanted.add("target ally");
+  }
+  if (/\benemy\b|\bfoe\b|\bhostile\b/.test(textBlob)) {
     wanted.add("target enemy");
   }
-  if (/self|ally|friendly/.test(textBlob)) {
-    wanted.add("target self");
+  if (/\barea\b|\bzone\b|\bradius\b|\baoe\b|\bmultiple targets?\b/.test(textBlob)) {
+    wanted.add("target area");
   }
   if ((mechanicsBuilder.duration || "").trim() || /until|for the next|for \d+/.test(textBlob)) {
     wanted.add("timed effect");
