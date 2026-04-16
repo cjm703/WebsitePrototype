@@ -1,5 +1,4 @@
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetJson } from "@/app/components/safe-storage";
-import { loadPlayerDoc, savePlayerDoc } from "./db-core";
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env";
 
 const API_BASE = supabaseFunctionBase;
@@ -160,12 +159,15 @@ export async function saveDMTags(
 
 function shouldFallbackPlayerLevelCategories(err: unknown) {
   const message = err instanceof Error ? err.message : String(err || "");
-  return /404|401|Unknown DM collection|Invalid API key|No API key found|Request failed: 404/i.test(message);
+  return (
+    isDeploymentLevelCategoriesFailure(err) ||
+    /Failed to fetch|NetworkError|Load failed|timed out|timeout/i.test(message)
+  );
 }
 
 function isDeploymentLevelCategoriesFailure(err: unknown) {
   const message = err instanceof Error ? err.message : String(err || "");
-  return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404/i.test(message);
+  return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
 }
 
 function loadLocalDMPlayerLevelCategories(playerId: string) {
@@ -227,24 +229,11 @@ export async function loadDMPlayerLevelCategories(playerId: string) {
     return (body?.levelCategories ?? []) as Record<string, unknown>[];
   } catch (err) {
     if (!shouldFallbackPlayerLevelCategories(err)) throw err;
-    try {
-      const levelCategories = await loadPlayerDoc<Record<string, unknown>[]>(
-        "player_level_categories",
-        playerId,
-        [],
-      );
-      clearLocalLevelCategoriesFallback();
-      return levelCategories;
-    } catch (fallbackErr) {
-      activateLocalLevelCategoriesFallback(
-        isDeploymentLevelCategoriesFailure(err) ||
-          isDeploymentLevelCategoriesFailure(fallbackErr)
-          ? "deployment"
-          : "transient",
-      );
-      console.warn("Falling back to local DM level categories storage", fallbackErr);
-      return loadLocalDMPlayerLevelCategories(playerId);
-    }
+    activateLocalLevelCategoriesFallback(
+      isDeploymentLevelCategoriesFailure(err) ? "deployment" : "transient",
+    );
+    console.warn("Falling back to local DM level categories storage", err);
+    return loadLocalDMPlayerLevelCategories(playerId);
   }
 }
 
@@ -265,19 +254,11 @@ export async function saveDMPlayerLevelCategories(
     clearLocalLevelCategoriesFallback();
   } catch (err) {
     if (!shouldFallbackPlayerLevelCategories(err)) throw err;
-    try {
-      await savePlayerDoc<Record<string, unknown>[]>("player_level_categories", playerId, levelCategories);
-      clearLocalLevelCategoriesFallback();
-    } catch (fallbackErr) {
-      activateLocalLevelCategoriesFallback(
-        isDeploymentLevelCategoriesFailure(err) ||
-          isDeploymentLevelCategoriesFailure(fallbackErr)
-          ? "deployment"
-          : "transient",
-      );
-      console.warn("Saving DM level categories to local storage fallback", fallbackErr);
-      saveLocalDMPlayerLevelCategories(playerId, levelCategories);
-    }
+    activateLocalLevelCategoriesFallback(
+      isDeploymentLevelCategoriesFailure(err) ? "deployment" : "transient",
+    );
+    console.warn("Saving DM level categories to local storage fallback", err);
+    saveLocalDMPlayerLevelCategories(playerId, levelCategories);
   }
 }
 
