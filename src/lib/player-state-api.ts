@@ -4,9 +4,17 @@ import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env
 
 const API_BASE = supabaseFunctionBase;
 const LOCAL_DM_LEVEL_CATEGORIES_KEY = "inet-dm-player-level-categories";
+const LEVEL_CATEGORIES_FALLBACK_STATE_KEY = "inet-dm-player-level-categories-fallback";
+const LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
+const LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 type LocalLevelCategoryMap = Record<string, Record<string, unknown>[]>;
+type LevelCategoriesFallbackState = {
+  mode: "local";
+  reason: "deployment" | "transient";
+  retryAfter: number;
+};
 
 function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
@@ -152,7 +160,12 @@ export async function saveDMTags(
 
 function shouldFallbackPlayerLevelCategories(err: unknown) {
   const message = err instanceof Error ? err.message : String(err || "");
-  return /404|Unknown DM collection|Invalid API key|Request failed: 404/i.test(message);
+  return /404|401|Unknown DM collection|Invalid API key|No API key found|Request failed: 404/i.test(message);
+}
+
+function isDeploymentLevelCategoriesFailure(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404/i.test(message);
 }
 
 function loadLocalDMPlayerLevelCategories(playerId: string) {
@@ -171,18 +184,64 @@ function saveLocalDMPlayerLevelCategories(
   });
 }
 
+function shouldUseLocalLevelCategoriesFallback() {
+  const fallbackState = safeGetJson<LevelCategoriesFallbackState | null>(
+    LEVEL_CATEGORIES_FALLBACK_STATE_KEY,
+    null,
+  );
+
+  return (
+    fallbackState?.mode === "local" &&
+    typeof fallbackState.retryAfter === "number" &&
+    fallbackState.retryAfter > Date.now()
+  );
+}
+
+function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient") {
+  safeSetJson(LEVEL_CATEGORIES_FALLBACK_STATE_KEY, {
+    mode: "local",
+    reason,
+    retryAfter:
+      Date.now() +
+      (reason === "deployment"
+        ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
+        : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
+  } satisfies LevelCategoriesFallbackState);
+}
+
+function clearLocalLevelCategoriesFallback() {
+  safeRemoveItem(LEVEL_CATEGORIES_FALLBACK_STATE_KEY);
+}
+
 export async function loadDMPlayerLevelCategories(playerId: string) {
+  if (shouldUseLocalLevelCategoriesFallback()) {
+    return loadLocalDMPlayerLevelCategories(playerId);
+  }
+
   try {
     const body = await apiFetch(`/dm/player-level-categories/${playerId}`, {
       method: "GET",
     });
 
+    clearLocalLevelCategoriesFallback();
     return (body?.levelCategories ?? []) as Record<string, unknown>[];
   } catch (err) {
     if (!shouldFallbackPlayerLevelCategories(err)) throw err;
     try {
-      return await loadPlayerDoc<Record<string, unknown>[]>("player_level_categories", playerId, []);
+      const levelCategories = await loadPlayerDoc<Record<string, unknown>[]>(
+        "player_level_categories",
+        playerId,
+        [],
+      );
+      clearLocalLevelCategoriesFallback();
+      return levelCategories;
     } catch (fallbackErr) {
+      activateLocalLevelCategoriesFallback(
+        isDeploymentLevelCategoriesFailure(err) ||
+          isDeploymentLevelCategoriesFailure(fallbackErr)
+          ? "deployment"
+          : "transient",
+      );
       console.warn("Falling back to local DM level categories storage", fallbackErr);
       return loadLocalDMPlayerLevelCategories(playerId);
     }
@@ -193,16 +252,29 @@ export async function saveDMPlayerLevelCategories(
   playerId: string,
   levelCategories: Record<string, unknown>[],
 ) {
+  if (shouldUseLocalLevelCategoriesFallback()) {
+    saveLocalDMPlayerLevelCategories(playerId, levelCategories);
+    return;
+  }
+
   try {
     await apiFetch("/dm/player-level-categories/save", {
       method: "POST",
       body: JSON.stringify({ playerId, levelCategories }),
     });
+    clearLocalLevelCategoriesFallback();
   } catch (err) {
     if (!shouldFallbackPlayerLevelCategories(err)) throw err;
     try {
       await savePlayerDoc<Record<string, unknown>[]>("player_level_categories", playerId, levelCategories);
+      clearLocalLevelCategoriesFallback();
     } catch (fallbackErr) {
+      activateLocalLevelCategoriesFallback(
+        isDeploymentLevelCategoriesFailure(err) ||
+          isDeploymentLevelCategoriesFailure(fallbackErr)
+          ? "deployment"
+          : "transient",
+      );
       console.warn("Saving DM level categories to local storage fallback", fallbackErr);
       saveLocalDMPlayerLevelCategories(playerId, levelCategories);
     }
