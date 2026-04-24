@@ -2,6 +2,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { retro } from "./retro-styles";
 import { RichTextEditor } from "./rich-text-editor";
+import { DISPLAY_CONTENTS } from "./shared-styles";
 import type { ManagedItem, PlayerData, TagDefinition } from "./types";
 import {
   DM_DIVIDER,
