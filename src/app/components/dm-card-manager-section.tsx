@@ -156,6 +156,17 @@ const QUICK_ROLL_PREFIX = "Quick Roll::";
 const QUICK_ROLL_LABEL_KEY = "Label";
 const QUICK_ROLL_EXPRESSION_KEY = "Expression";
 const QUICK_ROLL_POTENCY_KEY = "Potency";
+const FAMILY_CONTROLLED_PROFILE_KEYS = [
+  USE_PROFILE_MAGIC_NATURE_KEY,
+  USE_PROFILE_COST_MODEL_KEY,
+  USE_PROFILE_PRIMARY_COST_KEY,
+  USE_PROFILE_USES_KEY,
+  USE_PROFILE_COMPONENTS_KEY,
+  USE_PROFILE_COMPONENT_DETAILS_KEY,
+  USE_PROFILE_UPCAST_KEY,
+  USE_PROFILE_ORIGIN_KEY,
+  USE_PROFILE_PASSIVE_MODE_KEY,
+] as const;
 
 interface QuickRollSlot {
   slotId: string;
@@ -538,11 +549,16 @@ function getCardFamilyDef(family: CardFamily): CardFamilyDef | null {
 
 function withCardFamilyDefaults(card: ManagedCard, family: CardFamily, options?: { overwriteExisting?: boolean }): ManagedCard {
   const overwriteExisting = !!options?.overwriteExisting;
-  const previousUses = (card.customFields?.[USE_PROFILE_USES_KEY] || "").trim();
   const nextCustomFields: Record<string, string> = {
     ...card.customFields,
     [CARD_FAMILY_KEY]: family,
   };
+
+  if (overwriteExisting) {
+    FAMILY_CONTROLLED_PROFILE_KEYS.forEach((key) => {
+      nextCustomFields[key] = "";
+    });
+  }
 
   const setFamilyDefault = (key: string, value: string) => {
     const existing = (nextCustomFields[key] || "").trim();
@@ -564,9 +580,6 @@ function withCardFamilyDefaults(card: ManagedCard, family: CardFamily, options?:
     setFamilyDefault(USE_PROFILE_COST_MODEL_KEY, "Exhaustion / Uses");
     setFamilyDefault(USE_PROFILE_PRIMARY_COST_KEY, "Usually 1-2 exhaustion");
     setFamilyDefault(USE_PROFILE_ORIGIN_KEY, "Learned / Taught");
-    if (overwriteExisting && previousUses === "Usually proficiency-based or fixed uses per long rest") {
-      nextCustomFields[USE_PROFILE_USES_KEY] = "";
-    }
   }
 
   if (family === "ability") {
@@ -1067,7 +1080,7 @@ function CardPreviewPanel({
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.6fr)] gap-4">
           <div className="space-y-3">
             {(card.customFields[CARD_DESCRIPTION_KEY] || "").trim() && (
               <div>
@@ -1893,7 +1906,7 @@ export function DMCardManagerSection({
 
   const applyCardFamily = (family: CardFamily) => {
     if (!editingCard) return;
-    setEditingCard(withCardFamilyDefaults(editingCard, family));
+    setEditingCard(withCardFamilyDefaults(editingCard, family, { overwriteExisting: true }));
   };
 
   const focusValidationIssue = (issue: CardValidationIssue) => {
@@ -2039,7 +2052,7 @@ export function DMCardManagerSection({
             </div>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)] 2xl:grid-cols-[260px_minmax(0,1fr)] gap-4">
             <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
@@ -2266,7 +2279,7 @@ export function DMCardManagerSection({
                         <div>
                           <div className="text-[12px]" style={S_SECTION_HDR}>IDENTITY + USE PROFILE</div>
                           <div className="text-[10px] mt-1" style={S_SUBTLE}>
-                            Start by deciding whether this card is a spell, skill, or ability. The family buttons fill missing profile hints and do not erase values you already wrote.
+                            Start by deciding whether this card is a spell, skill, or ability. Switching family now rewrites the family-managed profile fields for the selected family.
                           </div>
                         </div>
                         {currentFamilyDef && (
@@ -2274,7 +2287,7 @@ export function DMCardManagerSection({
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)] gap-4">
+                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_minmax(240px,0.6fr)] gap-4">
                         <div className="space-y-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                             <div>
@@ -2470,7 +2483,7 @@ export function DMCardManagerSection({
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-4">
                           <div className="space-y-2">
                             <div className="text-[10px]" style={S_SECTION_HDR}>RULES SOURCE</div>
                             <div className="flex flex-wrap gap-2">
@@ -2555,7 +2568,7 @@ export function DMCardManagerSection({
                       </div>
 
                       {mechanicsView === "rules" && (
-                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] gap-4">
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)] gap-4">
                           <div className="space-y-4">
                             <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
                               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2617,7 +2630,7 @@ export function DMCardManagerSection({
                                 })}
                               </div>
                               <div className="text-[10px] mt-2" style={S_SUBTLE}>
-                                Changing family updates the family label and fills empty profile hints. It does not clear values you already entered.
+                                Changing family updates the family label and overwrites the family-managed profile fields to match the selected family.
                               </div>
                             </div>
 
@@ -2940,7 +2953,7 @@ export function DMCardManagerSection({
                       )}
 
                       {mechanicsView === "text" && (
-                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] gap-4">
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)] gap-4">
                           <div className="space-y-4">
                             <div>
                               <div className="text-[12px] mb-2" style={S_SECTION_HDR}>DESCRIPTION</div>
@@ -3330,7 +3343,7 @@ export function DMCardManagerSection({
                   {editorPanel === "assignment" && (
                     <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
                       <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER ASSIGNMENT</div>
-                      <div className={`${retro.sunken} bg-[#0A0A28] p-3 w-full lg:w-2/3`}>
+                      <div className={`${retro.sunken} bg-[#0A0A28] p-3 w-full xl:w-[88%]`}>
                         <label className="flex items-center gap-2 cursor-pointer mb-2">
                           <input type="checkbox" checked={editingCard.assignedTo.includes("all")} onChange={(e) => {
                             if (e.target.checked) updateCardField("assignedTo", ["all"]);
