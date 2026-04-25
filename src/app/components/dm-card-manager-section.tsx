@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { retro } from "./retro-styles";
 import { RichTextEditor } from "./rich-text-editor";
 import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
@@ -60,6 +60,8 @@ interface DMCardManagerSectionProps {
 
 type LevelCategory = { id: string; name: string; order: number; cardIds: string[]; description?: string };
 type CardEditorPanel = "preview" | "core" | "mechanics" | "tags" | "progression" | "assignment";
+type CardRulesMode = "guided" | "manual";
+type MechanicsWorkspaceView = "rules" | "automation" | "text";
 type CardTemplateId = "blank" | "attack" | "heal" | "buff" | "debuff" | "reaction" | "passive" | "utility";
 type TagFilterMode = "all" | "active" | "withFields" | "simple";
 type CardFamily = "" | "spell" | "skill" | "ability";
@@ -116,8 +118,17 @@ interface CardSectionBlock {
   tone: CardSectionTone;
 }
 
+interface CardValidationIssue {
+  id: string;
+  level: "error" | "warning";
+  panel: CardEditorPanel;
+  mechanicsView?: MechanicsWorkspaceView;
+  message: string;
+}
+
 const EDITOR_MECHANICS_KEY = "__editor_mechanics_builder";
 const EDITOR_SECTION_BLOCKS_KEY = "__editor_section_blocks";
+const EDITOR_RULES_MODE_KEY = "__editor_rules_mode";
 const CARD_FAMILY_KEY = "Card Family";
 const USE_PROFILE_MAGIC_NATURE_KEY = "Use Profile::Magic Nature";
 const USE_PROFILE_COST_MODEL_KEY = "Use Profile::Cost Model";
@@ -355,6 +366,83 @@ function stripHtml(value: string) {
   return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function sortStringRecord(record: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(record || {}).sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function hasStructuredRulesContent(builder: MechanicsBuilderState, blocks: CardSectionBlock[]) {
+  return MECHANICS_BLOCKS.some((block) => builder[block.id].trim())
+    || blocks.some((block) => block.title.trim() || block.content.trim());
+}
+
+function getStoredRulesMode(card: ManagedCard | null): CardRulesMode {
+  const stored = (card?.customFields?.[EDITOR_RULES_MODE_KEY] || "").trim().toLowerCase();
+  if (stored === "guided" || stored === "manual") return stored as CardRulesMode;
+  const hasStoredBuilder = !!(card?.customFields?.[EDITOR_MECHANICS_KEY] || "").trim();
+  const hasStoredBlocks = !!(card?.customFields?.[EDITOR_SECTION_BLOCKS_KEY] || "").trim();
+  return hasStoredBuilder || hasStoredBlocks ? "guided" : "manual";
+}
+
+function buildEditorSnapshot(
+  card: ManagedCard | null,
+  builder: MechanicsBuilderState,
+  blocks: CardSectionBlock[],
+  rulesMode: CardRulesMode,
+  isAddingNewCard: boolean,
+) {
+  if (!card) return "";
+  return JSON.stringify({
+    isAddingNewCard,
+    rulesMode,
+    card: {
+      ...card,
+      tags: [...card.tags],
+      assignedTo: [...card.assignedTo],
+      customFields: sortStringRecord(card.customFields || {}),
+    },
+    builder,
+    blocks: blocks.map((block) => ({
+      id: block.id,
+      title: block.title,
+      content: block.content,
+      tone: block.tone,
+    })),
+  });
+}
+
+function getStructuredRulesOutput(builder: MechanicsBuilderState, blocks: CardSectionBlock[]) {
+  return buildCombinedRulesHtml(builder, blocks);
+}
+
+function getResolvedRulesText(card: ManagedCard, builder: MechanicsBuilderState, blocks: CardSectionBlock[], rulesMode: CardRulesMode) {
+  return rulesMode === "guided" ? getStructuredRulesOutput(builder, blocks) : card.effect || "";
+}
+
+function stripInactiveTagCustomFields(customFields: Record<string, string>, activeTags: string[], tagList: TagDefinition[]) {
+  const activeKeys = new Set(getActiveCustomFields({ tags: activeTags }, tagList).map((field) => field.key));
+  return Object.fromEntries(
+    Object.entries(customFields || {}).filter(([key]) => {
+      const owningTag = tagList.find((tag) => key.startsWith(`${tag.name}::`));
+      if (!owningTag) return true;
+      return activeTags.includes(owningTag.name) && activeKeys.has(key);
+    }),
+  );
+}
+
+function getNodeCapacityState(node: NodeTree["nodes"][number], cardId?: string | null) {
+  const includesCurrentCard = !!cardId && node.cardIds.includes(cardId);
+  const filledSlots = node.cardIds.length;
+  const isFullForSelection = !includesCurrentCard && filledSlots >= 3;
+  return {
+    filledSlots,
+    includesCurrentCard,
+    isFullForSelection,
+    remainingSlots: Math.max(0, 3 - filledSlots),
+  };
+}
+
 function getCardSummary(card: ManagedCard) {
   const plain = stripHtml(card.effect || "");
   if (!plain) return "No effect text yet.";
@@ -448,44 +536,46 @@ function getCardFamilyDef(family: CardFamily): CardFamilyDef | null {
   return CARD_FAMILY_OPTIONS.find((option) => option.id === family) || null;
 }
 
-function withCardFamilyDefaults(card: ManagedCard, family: CardFamily): ManagedCard {
+function withCardFamilyDefaults(card: ManagedCard, family: CardFamily, options?: { overwriteExisting?: boolean }): ManagedCard {
+  const overwriteExisting = !!options?.overwriteExisting;
   const previousUses = (card.customFields?.[USE_PROFILE_USES_KEY] || "").trim();
   const nextCustomFields: Record<string, string> = {
     ...card.customFields,
     [CARD_FAMILY_KEY]: family,
-    [USE_PROFILE_MAGIC_NATURE_KEY]: "",
-    [USE_PROFILE_COST_MODEL_KEY]: "",
-    [USE_PROFILE_PRIMARY_COST_KEY]: "",
-    [USE_PROFILE_USES_KEY]: "",
-    [USE_PROFILE_COMPONENTS_KEY]: "",
-    [USE_PROFILE_UPCAST_KEY]: "",
-    [USE_PROFILE_ORIGIN_KEY]: "",
-    [USE_PROFILE_PASSIVE_MODE_KEY]: "",
+  };
+
+  const setFamilyDefault = (key: string, value: string) => {
+    const existing = (nextCustomFields[key] || "").trim();
+    if (overwriteExisting || !existing) {
+      nextCustomFields[key] = value;
+    }
   };
 
   if (family === "spell") {
-    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Magical (Spell)";
-    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Source";
-    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = nextCustomFields["Level"] ? `${nextCustomFields["Level"]} matching source` : "Matching source equal to spell level";
-    nextCustomFields[USE_PROFILE_COMPONENTS_KEY] = "V, S, M";
-    nextCustomFields[USE_PROFILE_UPCAST_KEY] = "Can spend additional matching source to raise the spell's level when allowed.";
+    setFamilyDefault(USE_PROFILE_MAGIC_NATURE_KEY, "Magical (Spell)");
+    setFamilyDefault(USE_PROFILE_COST_MODEL_KEY, "Source");
+    setFamilyDefault(USE_PROFILE_PRIMARY_COST_KEY, nextCustomFields["Level"] ? `${nextCustomFields["Level"]} matching source` : "Matching source equal to spell level");
+    setFamilyDefault(USE_PROFILE_COMPONENTS_KEY, "V, S, M");
+    setFamilyDefault(USE_PROFILE_UPCAST_KEY, "Can spend additional matching source to raise the spell's level when allowed.");
   }
 
   if (family === "skill") {
-    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Non-magical or Magical (Non-spell)";
-    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Exhaustion / Uses";
-    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = "Usually 1-2 exhaustion";
-    nextCustomFields[USE_PROFILE_ORIGIN_KEY] = "Learned / Taught";
-    nextCustomFields[USE_PROFILE_USES_KEY] = previousUses === "Usually proficiency-based or fixed uses per long rest" ? "" : previousUses;
+    setFamilyDefault(USE_PROFILE_MAGIC_NATURE_KEY, "Non-magical or Magical (Non-spell)");
+    setFamilyDefault(USE_PROFILE_COST_MODEL_KEY, "Exhaustion / Uses");
+    setFamilyDefault(USE_PROFILE_PRIMARY_COST_KEY, "Usually 1-2 exhaustion");
+    setFamilyDefault(USE_PROFILE_ORIGIN_KEY, "Learned / Taught");
+    if (overwriteExisting && previousUses === "Usually proficiency-based or fixed uses per long rest") {
+      nextCustomFields[USE_PROFILE_USES_KEY] = "";
+    }
   }
 
   if (family === "ability") {
-    nextCustomFields[USE_PROFILE_MAGIC_NATURE_KEY] = "Inherent or Granted (Non-spell)";
-    nextCustomFields[USE_PROFILE_COST_MODEL_KEY] = "Uses / Exhaustion";
-    nextCustomFields[USE_PROFILE_PRIMARY_COST_KEY] = "Often uses per long rest";
-    nextCustomFields[USE_PROFILE_USES_KEY] = "Usually proficiency-based or fixed uses per long rest";
-    nextCustomFields[USE_PROFILE_ORIGIN_KEY] = "Innate / Granted";
-    nextCustomFields[USE_PROFILE_PASSIVE_MODE_KEY] = "Passive, activatable passive, or triggered ability";
+    setFamilyDefault(USE_PROFILE_MAGIC_NATURE_KEY, "Inherent or Granted (Non-spell)");
+    setFamilyDefault(USE_PROFILE_COST_MODEL_KEY, "Uses / Exhaustion");
+    setFamilyDefault(USE_PROFILE_PRIMARY_COST_KEY, "Often uses per long rest");
+    setFamilyDefault(USE_PROFILE_USES_KEY, "Usually proficiency-based or fixed uses per long rest");
+    setFamilyDefault(USE_PROFILE_ORIGIN_KEY, "Innate / Granted");
+    setFamilyDefault(USE_PROFILE_PASSIVE_MODE_KEY, "Passive, activatable passive, or triggered ability");
   }
 
   return {
@@ -801,15 +891,122 @@ function buildComponentsDisplay(components: string, detail?: string) {
   return base || extra || "";
 }
 
-function withPersistedEditorStructure(card: ManagedCard, builder: MechanicsBuilderState, blocks: CardSectionBlock[]): ManagedCard {
+function withPersistedEditorStructure(
+  card: ManagedCard,
+  builder: MechanicsBuilderState,
+  blocks: CardSectionBlock[],
+  rulesMode: CardRulesMode,
+  tagList: TagDefinition[],
+): ManagedCard {
+  const nextCustomFields = stripInactiveTagCustomFields({
+    ...card.customFields,
+    [EDITOR_MECHANICS_KEY]: JSON.stringify(builder),
+    [EDITOR_SECTION_BLOCKS_KEY]: JSON.stringify(blocks.map((block, index) => sanitizeSectionBlock(block, index))),
+    [EDITOR_RULES_MODE_KEY]: rulesMode,
+  }, card.tags, tagList);
   return {
     ...card,
-    customFields: {
-      ...card.customFields,
-      [EDITOR_MECHANICS_KEY]: JSON.stringify(builder),
-      [EDITOR_SECTION_BLOCKS_KEY]: JSON.stringify(blocks.map((block, index) => sanitizeSectionBlock(block, index))),
-    },
+    effect: getResolvedRulesText(card, builder, blocks, rulesMode),
+    customFields: nextCustomFields,
   };
+}
+
+function collectCardValidationIssues(
+  card: ManagedCard,
+  builder: MechanicsBuilderState,
+  blocks: CardSectionBlock[],
+  rulesMode: CardRulesMode,
+  nodeTrees: NodeTree[],
+  tagList: TagDefinition[],
+): CardValidationIssue[] {
+  const issues: CardValidationIssue[] = [];
+  const pushIssue = (issue: CardValidationIssue) => issues.push(issue);
+  const resolvedRulesText = getResolvedRulesText(card, builder, blocks, rulesMode);
+  const strippedRulesText = stripHtml(resolvedRulesText);
+
+  if (!card.name.trim()) {
+    pushIssue({ id: "card-name", level: "error", panel: "core", message: "Card name is required." });
+  }
+
+  if (!card.type.trim()) {
+    pushIssue({ id: "card-type", level: "warning", panel: "core", message: "Card type is blank. Filling it in makes the card library much easier to search and filter." });
+  }
+
+  if (!getCardFamily(card)) {
+    pushIssue({ id: "card-family", level: "warning", panel: "core", message: "Pick Spell, Skill, or Ability so the card profile can stay consistent." });
+  }
+
+  if (rulesMode === "guided") {
+    if (!hasStructuredRulesContent(builder, blocks) || !strippedRulesText) {
+      pushIssue({ id: "guided-rules", level: "error", panel: "mechanics", mechanicsView: "rules", message: "Guided rules mode needs at least one structured rule or section block before you save." });
+    }
+  } else if (!strippedRulesText) {
+    pushIssue({ id: "manual-rules", level: "error", panel: "mechanics", mechanicsView: "text", message: "Manual rules mode needs effect text before you save." });
+  }
+
+  if (rulesMode === "manual" && hasStructuredRulesContent(builder, blocks)) {
+    pushIssue({ id: "manual-draft", level: "warning", panel: "mechanics", mechanicsView: "rules", message: "This card has a structured draft, but manual rules text is the saved source right now." });
+  }
+
+  getActiveCustomFields(card, tagList)
+    .filter((field) => field.fieldDef.required)
+    .forEach((field) => {
+      const value = (card.customFields[field.key] || "").trim();
+      if (!value) {
+        pushIssue({
+          id: `tag-required-${field.key}`,
+          level: "error",
+          panel: "tags",
+          message: `${field.tagName} requires ${field.fieldName}.`,
+        });
+      }
+    });
+
+  buildQuickRollSlots(card.customFields || {}).forEach((slot, index) => {
+    const hasAnyValue = !!(slot.label.trim() || slot.expression.trim() || slot.potency.trim());
+    if (!hasAnyValue) return;
+    if (!slot.label.trim()) {
+      pushIssue({
+        id: `quick-roll-label-${slot.slotId}`,
+        level: "error",
+        panel: "mechanics",
+        mechanicsView: "automation",
+        message: `Quick Roll #${index + 1} needs a button label.`,
+      });
+    }
+    if (!slot.expression.trim()) {
+      pushIssue({
+        id: `quick-roll-expression-${slot.slotId}`,
+        level: "error",
+        panel: "mechanics",
+        mechanicsView: "automation",
+        message: `Quick Roll #${index + 1} needs a roll expression.`,
+      });
+    }
+  });
+
+  if (card.nodeTreeId) {
+    const tree = nodeTrees.find((entry) => entry.id === card.nodeTreeId);
+    if (!tree) {
+      pushIssue({ id: "missing-node-tree", level: "error", panel: "progression", message: "The selected node tree no longer exists." });
+    } else if (!card.nodeId) {
+      pushIssue({ id: "missing-node", level: "warning", panel: "progression", message: "A node tree is selected, but no node is assigned yet." });
+    } else {
+      const node = tree.nodes.find((entry) => entry.id === card.nodeId);
+      if (!node) {
+        pushIssue({ id: "missing-selected-node", level: "error", panel: "progression", message: "The selected node no longer exists in that tree." });
+      } else if (getNodeCapacityState(node, card.id).isFullForSelection) {
+        pushIssue({
+          id: "full-node",
+          level: "error",
+          panel: "progression",
+          message: `${tree.name} / ${node.label} already has 3 cards. Pick another node or clear this assignment.`,
+        });
+      }
+    }
+  }
+
+  return issues;
 }
 
 function CardPreviewPanel({
@@ -956,6 +1153,8 @@ export function DMCardManagerSection({
   const [pendingTemplate, setPendingTemplate] = useState<CardTemplateDef | null>(null);
   const [mechanicsBuilder, setMechanicsBuilder] = useState<MechanicsBuilderState>(EMPTY_MECHANICS_BUILDER);
   const [cardSectionBlocks, setCardSectionBlocks] = useState<CardSectionBlock[]>([]);
+  const [rulesMode, setRulesMode] = useState<CardRulesMode>("manual");
+  const [mechanicsView, setMechanicsView] = useState<MechanicsWorkspaceView>("rules");
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newSectionTone, setNewSectionTone] = useState<CardSectionTone>("rules");
   const [tagSearch, setTagSearch] = useState("");
@@ -969,6 +1168,7 @@ export function DMCardManagerSection({
   const [laEditingDesc, setLaEditingDesc] = useState<string | null>(null);
   const [laCopyConfirm, setLaCopyConfirm] = useState(false);
   const [showRequirementsField, setShowRequirementsField] = useState(false);
+  const editorBaselineRef = useRef("");
 
   const renderTypedField = useCallback((
     key: string,
@@ -988,20 +1188,33 @@ export function DMCardManagerSection({
     if (!editingCard) {
       setMechanicsBuilder(EMPTY_MECHANICS_BUILDER);
       setCardSectionBlocks([]);
+      setRulesMode("manual");
+      setMechanicsView("rules");
       setNewSectionTitle("");
       setNewSectionTone("rules");
       setShowRequirementsField(false);
+      editorBaselineRef.current = "";
       return;
     }
 
-    setMechanicsBuilder(parseStoredMechanicsBuilder(editingCard));
-    setCardSectionBlocks(parseStoredSectionBlocks(editingCard));
+    const storedBuilder = parseStoredMechanicsBuilder(editingCard);
+    const storedBlocks = parseStoredSectionBlocks(editingCard);
+    const storedRulesMode = getStoredRulesMode(editingCard);
+    setMechanicsBuilder(storedBuilder);
+    setCardSectionBlocks(storedBlocks);
+    setRulesMode(storedRulesMode);
+    setMechanicsView(storedRulesMode === "manual" ? "text" : "rules");
     setNewSectionTitle("");
     setNewSectionTone("rules");
     setShowRequirementsField(!!(editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
   }, [editingCard?.id]);
 
   const quickRollSlots = useMemo(() => editingCard ? buildQuickRollSlots(editingCard.customFields || {}) : [], [editingCard]);
+  const currentEditorSnapshot = useMemo(
+    () => buildEditorSnapshot(editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, isAddingNewCard),
+    [editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, isAddingNewCard],
+  );
+  const hasUnsavedChanges = !!editingCard && currentEditorSnapshot !== editorBaselineRef.current;
 
   const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
     if (!laSelectedPlayerId) return;
@@ -1069,6 +1282,11 @@ export function DMCardManagerSection({
     return () => { cancelled = true; };
   }, [laSelectedPlayerId, players, setDmError]);
 
+  const confirmDiscardUnsavedChanges = useCallback((destination: string) => {
+    if (!hasUnsavedChanges) return true;
+    return window.confirm(`You have unsaved card changes. Are you sure you want to leave for ${destination}?`);
+  }, [hasUnsavedChanges]);
+
   const handleAddCard = () => {
     setShowTemplatePicker((prev) => {
       const next = !prev;
@@ -1082,23 +1300,38 @@ export function DMCardManagerSection({
   };
 
   const handleCreateCardFromTemplate = (template: CardTemplateDef, familyOverride?: Exclude<CardFamily, "">) => {
+    if (!confirmDiscardUnsavedChanges("a new card")) return;
     const preferredFamily = familyOverride || template.defaultFamily || "";
     const nextCard = preferredFamily
       ? withCardFamilyDefaults(createCardFromTemplate({ ...template, defaultFamily: preferredFamily }, cardTags), preferredFamily)
       : createCardFromTemplate(template, cardTags);
+    const nextBuilder = parseStoredMechanicsBuilder(nextCard);
+    const nextBlocks = parseStoredSectionBlocks(nextCard);
+    const nextRulesMode = getStoredRulesMode(nextCard);
 
     setEditingCard(nextCard);
     setIsAddingNewCard(true);
+    setMechanicsBuilder(nextBuilder);
+    setCardSectionBlocks(nextBlocks);
+    setRulesMode(nextRulesMode);
+    setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
     setEditorPanel("core");
     setPendingTemplate(null);
     setShowTemplatePicker(false);
+    editorBaselineRef.current = buildEditorSnapshot(nextCard, nextBuilder, nextBlocks, nextRulesMode, true);
   };
 
   const handleSaveCard = async () => {
     if (!editingCard) return;
+    if (blockingValidationIssues.length > 0) {
+      const firstIssue = blockingValidationIssues[0];
+      focusValidationIssue(firstIssue);
+      setDmError(`Please fix ${blockingValidationIssues.length} card issue${blockingValidationIssues.length === 1 ? "" : "s"} before saving.`);
+      return;
+    }
     try {
       setDmError(null);
-      const cardToSave = withPersistedEditorStructure(editingCard, mechanicsBuilder, cardSectionBlocks);
+      const cardToSave = withPersistedEditorStructure(editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, cardTags);
       const nextCards = isAddingNewCard
         ? [...managedCards, cardToSave]
         : managedCards.map((c) => (c.id === cardToSave.id ? cardToSave : c));
@@ -1110,7 +1343,7 @@ export function DMCardManagerSection({
           const hasCard = node.cardIds.includes(cardToSave.id);
           const shouldHave = cardToSave.nodeTreeId === tree.id && cardToSave.nodeId === node.id;
           if (shouldHave && !hasCard) {
-            if (node.cardIds.length >= 3) return node;
+            if (getNodeCapacityState(node, cardToSave.id).isFullForSelection) return node;
             treesChanged = true;
             return { ...node, cardIds: [...node.cardIds, cardToSave.id] };
           }
@@ -1128,10 +1361,10 @@ export function DMCardManagerSection({
       }
 
       setEditingCard({ ...cardToSave, customFields: { ...cardToSave.customFields } });
+      editorBaselineRef.current = buildEditorSnapshot(cardToSave, mechanicsBuilder, cardSectionBlocks, rulesMode, false);
       setIsAddingNewCard(false);
       setShowTemplatePicker(false);
       setPendingTemplate(null);
-      setEditorPanel("preview");
     } catch (err) {
       setDmError(getSaveError(err, "Failed to save card"));
     }
@@ -1147,6 +1380,7 @@ export function DMCardManagerSection({
         setIsAddingNewCard(false);
         setShowTemplatePicker(false);
         setPendingTemplate(null);
+        editorBaselineRef.current = "";
       }
     } catch (err) {
       setDmError(getSaveError(err, "Failed to delete card"));
@@ -1154,11 +1388,13 @@ export function DMCardManagerSection({
   };
 
   const handleCancelCardEdit = () => {
+    if (!confirmDiscardUnsavedChanges("closing the card editor")) return;
     setEditingCard(null);
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
     setPendingTemplate(null);
     setEditorPanel("preview");
+    editorBaselineRef.current = "";
   };
 
   const updateCardField = <K extends keyof ManagedCard>(key: K, value: ManagedCard[K]) => {
@@ -1166,18 +1402,36 @@ export function DMCardManagerSection({
   };
 
   const openCardEditor = (card: ManagedCard, nextPanel: CardEditorPanel = "preview") => {
-    setEditingCard({ ...card, customFields: { ...card.customFields } });
+    if (!confirmDiscardUnsavedChanges(`opening ${card.name || "another card"}`)) return;
+    const nextCard = { ...card, customFields: { ...card.customFields } };
+    const nextBuilder = parseStoredMechanicsBuilder(nextCard);
+    const nextBlocks = parseStoredSectionBlocks(nextCard);
+    const nextRulesMode = getStoredRulesMode(nextCard);
+    setEditingCard(nextCard);
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
     setPendingTemplate(null);
     setEditorPanel(nextPanel);
+    setMechanicsBuilder(nextBuilder);
+    setCardSectionBlocks(nextBlocks);
+    setRulesMode(nextRulesMode);
+    setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
+    editorBaselineRef.current = buildEditorSnapshot(nextCard, nextBuilder, nextBlocks, nextRulesMode, false);
   };
 
   const toggleCardTag = (tagName: string) => {
     if (!editingCard) return;
     const has = editingCard.tags.includes(tagName);
     const nextTags = has ? editingCard.tags.filter((t) => t !== tagName) : [...editingCard.tags, tagName];
-    setEditingCard(applyStarterProfileToCard({ ...editingCard, tags: nextTags }, buildStarterProfileFromTags(nextTags, cardTags)));
+    const nextCard = applyStarterProfileToCard(
+      {
+        ...editingCard,
+        tags: nextTags,
+        customFields: stripInactiveTagCustomFields(editingCard.customFields || {}, nextTags, cardTags),
+      },
+      buildStarterProfileFromTags(nextTags, cardTags),
+    );
+    setEditingCard(nextCard);
   };
 
   const updateCardCustomField = (key: string, value: string) => {
@@ -1194,6 +1448,7 @@ export function DMCardManagerSection({
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
     setEditingCard({ ...editingCard, customFields: nextCustomFields });
     setEditorPanel("mechanics");
+    setMechanicsView("automation");
   };
 
   const removeQuickRollSlot = (slotId: string) => {
@@ -1436,6 +1691,10 @@ export function DMCardManagerSection({
     () => (editingCard ? cardTags.filter((tag) => editingCard.tags.includes(tag.name)) : []),
     [cardTags, editingCard],
   );
+  const missingRequiredTagFields = useMemo(
+    () => activeCardCustomFields.filter((field) => field.fieldDef.required && !(editingCard?.customFields[field.key] || "").trim()),
+    [activeCardCustomFields, editingCard],
+  );
 
   const suggestedTagDefs = useMemo(
     () => (editingCard ? getSuggestedTagDefs(editingCard, cardTags, mechanicsBuilder).filter((tag) => !editingCard.tags.includes(tag.name)) : []),
@@ -1505,20 +1764,168 @@ export function DMCardManagerSection({
   const currentFamilyDef = useMemo(() => getCardFamilyDef(currentFamily), [currentFamily]);
   const currentProfileBadges = useMemo(() => (editingCard ? getCardProfileBadges(editingCard) : []), [editingCard]);
   const currentTrackerBucket = useMemo(() => getCardTrackerBucket(editingCard), [editingCard]);
+  const selectedNodeCapacity = useMemo(
+    () => (selectedNode ? getNodeCapacityState(selectedNode, editingCard?.id) : null),
+    [selectedNode, editingCard?.id],
+  );
+  const progressionNodes = useMemo(() => {
+    if (!editingCard?.nodeTreeId) return [];
+    const tree = nodeTrees.find((entry) => entry.id === editingCard.nodeTreeId);
+    if (!tree) return [];
+    return tree.nodes.map((node) => ({
+      node,
+      capacity: getNodeCapacityState(node, editingCard.id),
+    }));
+  }, [editingCard?.id, editingCard?.nodeTreeId, nodeTrees]);
+  const validationIssues = useMemo(
+    () => (editingCard ? collectCardValidationIssues(editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, nodeTrees, cardTags) : []),
+    [editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, nodeTrees, cardTags],
+  );
+  const blockingValidationIssues = useMemo(
+    () => validationIssues.filter((issue) => issue.level === "error"),
+    [validationIssues],
+  );
+  const warningValidationIssues = useMemo(
+    () => validationIssues.filter((issue) => issue.level === "warning"),
+    [validationIssues],
+  );
+  const structuredRulesPreview = useMemo(
+    () => getStructuredRulesOutput(mechanicsBuilder, cardSectionBlocks),
+    [mechanicsBuilder, cardSectionBlocks],
+  );
+  const livePreviewCard = useMemo(
+    () => (editingCard ? withPersistedEditorStructure(editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, cardTags) : null),
+    [editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, cardTags],
+  );
+  const workflowSnapshotCards = useMemo(() => {
+    if (!editingCard) return [];
+    return [
+      {
+        id: "core" as CardEditorPanel,
+        accent: currentFamilyDef?.accent || "#4A7BFF",
+        title: "Core",
+        summary: currentFamilyDef ? `${currentFamilyDef.label} profile` : "Choose a family",
+        detail: editingCard.name.trim() ? editingCard.name.trim() : "Name still blank",
+      },
+      {
+        id: "mechanics" as CardEditorPanel,
+        accent: rulesMode === "guided" ? "#6ABAFF" : "#FFD166",
+        title: "Mechanics",
+        summary: rulesMode === "guided" ? "Guided rules save" : "Manual text save",
+        detail: rulesMode === "guided"
+          ? `${getFilledMechanicsCount(mechanicsBuilder)} steps, ${cardSectionBlocks.length} blocks`
+          : (stripHtml(editingCard.effect || "").trim() ? `${stripHtml(editingCard.effect || "").slice(0, 42)}${stripHtml(editingCard.effect || "").length > 42 ? "..." : ""}` : "No manual rules yet"),
+      },
+      {
+        id: "tags" as CardEditorPanel,
+        accent: "#9A7ABB",
+        title: "Tags",
+        summary: selectedTagDefs.length === 0 ? "No tags selected" : `${selectedTagDefs.length} active tag${selectedTagDefs.length === 1 ? "" : "s"}`,
+        detail: missingRequiredTagFields.length > 0 ? `${missingRequiredTagFields.length} required field${missingRequiredTagFields.length === 1 ? "" : "s"} missing` : "Tag fields look clean",
+      },
+      {
+        id: "progression" as CardEditorPanel,
+        accent: "#FFD700",
+        title: "Progression",
+        summary: selectedNodeTree ? selectedNodeTree.name : "No node tree",
+        detail: selectedNode
+          ? `${selectedNode.label}${selectedNodeCapacity?.isFullForSelection ? " (full)" : ""}`
+          : selectedNodeTree ? "Node not picked yet" : "Optional assignment",
+      },
+      {
+        id: "assignment" as CardEditorPanel,
+        accent: "#7ACA8A",
+        title: "Assignment",
+        summary: editingCard.assignedTo.includes("all") ? "All players" : editingCard.assignedTo.length > 0 ? `${editingCard.assignedTo.length} player${editingCard.assignedTo.length === 1 ? "" : "s"}` : "Unassigned",
+        detail: blockingValidationIssues.length > 0 ? "Finish checklist before save" : "Ready for preview",
+      },
+    ];
+  }, [
+    editingCard,
+    currentFamilyDef,
+    rulesMode,
+    mechanicsBuilder,
+    cardSectionBlocks,
+    selectedTagDefs.length,
+    missingRequiredTagFields.length,
+    selectedNodeTree,
+    selectedNode,
+    selectedNodeCapacity?.isFullForSelection,
+    blockingValidationIssues.length,
+  ]);
+  const mechanicsWorkspaceCards = useMemo(() => ([
+    {
+      id: "rules" as MechanicsWorkspaceView,
+      accent: "#6ABAFF",
+      title: "Rules Builder",
+      detail: `${getFilledMechanicsCount(mechanicsBuilder)} steps and ${cardSectionBlocks.length} block${cardSectionBlocks.length === 1 ? "" : "s"}`,
+      helper: "Build the sequence and supporting rule blocks.",
+    },
+    {
+      id: "automation" as MechanicsWorkspaceView,
+      accent: "#4ACA6A",
+      title: "Automation",
+      detail: `${hasBuiltInCardTracker(editingCard) ? trackerBucketLabel(currentTrackerBucket) : "Tracker off"} ﾂｷ ${quickRollSlots.length} quick roll${quickRollSlots.length === 1 ? "" : "s"}`,
+      helper: "Configure status/card tracking and dice buttons.",
+    },
+    {
+      id: "text" as MechanicsWorkspaceView,
+      accent: "#FFD166",
+      title: "Text & Scaling",
+      detail: `${rulesMode === "guided" ? "Guided text preview" : "Manual effect editing"} ﾂｷ ${(editingCard?.customFields[USE_PROFILE_UPCAST_KEY] || "").trim() ? "Scaling set" : "Scaling blank"}`,
+      helper: "Description, saved effect text, and scaling notes.",
+    },
+  ]), [mechanicsBuilder, cardSectionBlocks.length, editingCard, currentTrackerBucket, quickRollSlots.length, rulesMode]);
+  const mechanicsWorkspaceIntro = useMemo(() => {
+    const activeView = mechanicsWorkspaceCards.find((view) => view.id === mechanicsView);
+    return activeView || mechanicsWorkspaceCards[0];
+  }, [mechanicsWorkspaceCards, mechanicsView]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [hasUnsavedChanges]);
 
   const applyCardFamily = (family: CardFamily) => {
     if (!editingCard) return;
     setEditingCard(withCardFamilyDefaults(editingCard, family));
   };
 
-  const editorPanels: { id: CardEditorPanel; label: string; icon: React.ComponentType<{ size?: number }>; accent: string }[] = [
-    { id: "preview", label: "Preview", icon: Eye, accent: "#8AB8FF" },
-    { id: "core", label: "Core", icon: Settings, accent: "#4A7BFF" },
-    { id: "mechanics", label: "Mechanics", icon: FileText, accent: "#6ABAFF" },
-    { id: "tags", label: "Tags", icon: Tags, accent: "#9A7ABB" },
-    { id: "progression", label: "Progression", icon: GitBranch, accent: "#FFD700" },
-    { id: "assignment", label: "Assignment", icon: Users, accent: "#7ACA8A" },
+  const focusValidationIssue = (issue: CardValidationIssue) => {
+    setEditorPanel(issue.panel);
+    if (issue.panel === "mechanics" && issue.mechanicsView) {
+      setMechanicsView(issue.mechanicsView);
+    }
+  };
+
+  const editorPanels: { id: CardEditorPanel; label: string; icon: React.ComponentType<{ size?: number }>; accent: string; step: string }[] = [
+    { id: "core", label: "Core", icon: Settings, accent: "#4A7BFF", step: "1" },
+    { id: "mechanics", label: "Mechanics", icon: FileText, accent: "#6ABAFF", step: "2" },
+    { id: "tags", label: "Tags", icon: Tags, accent: "#9A7ABB", step: "3" },
+    { id: "progression", label: "Progression", icon: GitBranch, accent: "#FFD700", step: "4" },
+    { id: "assignment", label: "Assignment", icon: Users, accent: "#7ACA8A", step: "5" },
+    { id: "preview", label: "Preview", icon: Eye, accent: "#8AB8FF", step: "6" },
   ];
+
+  const editorPanelDescriptions: Record<CardEditorPanel, string> = {
+    core: "Define the card's identity, family, and use profile.",
+    mechanics: "Choose one rules source, then handle automation and supporting text in smaller workspace views.",
+    tags: "Use helper tags and fill any tag-driven fields this card needs.",
+    progression: "Assign the card to a node tree and see node capacity before saving.",
+    assignment: "Choose which players receive the card.",
+    preview: "Review the exact card output that will be saved.",
+  };
+
+  const handleCardsSubTabChange = (nextTab: "cards" | "levelabilities") => {
+    if (nextTab === dmCardsSubTab) return;
+    if (nextTab === "levelabilities" && !confirmDiscardUnsavedChanges("Level Abilities")) return;
+    setDmCardsSubTab(nextTab);
+  };
 
   return (
     <div className="space-y-4">
@@ -1531,7 +1938,7 @@ export function DMCardManagerSection({
         ]).map((sub) => (
           <button
             key={sub.id}
-            onClick={() => setDmCardsSubTab(sub.id)}
+            onClick={() => handleCardsSubTabChange(sub.id)}
             className={`${dmCardsSubTab === sub.id ? retro.sunken + " bg-[#0C0C2E]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-4 py-2 text-[12px] flex items-center gap-1.5 transition-colors`}
             style={{ color: dmCardsSubTab === sub.id ? sub.accent : "#8A9ABB", fontWeight: dmCardsSubTab === sub.id ? 600 : 400 }}
           >
@@ -1604,7 +2011,7 @@ export function DMCardManagerSection({
                     <div>
                       <div className="text-[12px]" style={S_SECTION_HDR}>STEP 2: CHOOSE CARD CORE</div>
                       <div className="text-[11px]" style={S_SUBTLE}>
-                        Template selected: <span style={S_TEXT_BOLD}>{pendingTemplate.label}</span>. Pick whether this new card is a Spell, Skill, or Ability.
+                        Template selected: <span style={S_TEXT_BOLD}>{pendingTemplate.label}</span>. Pick the starting family profile. It fills recommended fields without wiping later edits.
                       </div>
                     </div>
                     <button onClick={() => setPendingTemplate(null)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_TEXT}>
@@ -1740,6 +2147,22 @@ export function DMCardManagerSection({
                           {editingCard.type || "No type"} · {formatOwners(editingCard.assignedTo, players)}
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3">
+                          <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle(rulesMode === "guided" ? "#6ABAFF" : "#FFD166")}>
+                            Rules Source: {rulesMode === "guided" ? "Guided Builder" : "Manual Text"}
+                          </span>
+                          {hasUnsavedChanges && (
+                            <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#FF9A7A")}>Unsaved Changes</span>
+                          )}
+                          {blockingValidationIssues.length > 0 && (
+                            <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#FF7A7A")}>
+                              {blockingValidationIssues.length} blocking issue{blockingValidationIssues.length === 1 ? "" : "s"}
+                            </span>
+                          )}
+                          {warningValidationIssues.length > 0 && (
+                            <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#FFD700")}>
+                              {warningValidationIssues.length} warning{warningValidationIssues.length === 1 ? "" : "s"}
+                            </span>
+                          )}
                           {currentProfileBadges.map((badge, index) => (
                             <span key={`${badge}-${index}`} className="text-[10px] px-2 py-1" style={sectionBadgeStyle(index === 0 && currentFamilyDef ? currentFamilyDef.accent : "#6ABAFF")}>{badge}</span>
                           ))}
@@ -1749,7 +2172,7 @@ export function DMCardManagerSection({
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else setEditorPanel("mechanics"); }} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
+                        <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else { setEditorPanel("mechanics"); setMechanicsView("automation"); } }} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
                           <Dices size={14} /> {quickRollSlots.some((slot) => slot.expression.trim()) ? "Edit Quick Rolls" : "Add Quick Roll"}
                         </button>
                         <button onClick={handleSaveCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
@@ -1761,11 +2184,57 @@ export function DMCardManagerSection({
                       </div>
                     </div>
 
-                    <div className={`${retro.raised} bg-[#10103A] px-3 py-2 mb-4 flex flex-wrap items-center justify-between gap-2`} style={{ border: "1px solid #2B3B6B" }}>
-                      <div className="text-[10px]" style={S_SUBTLE}>Open <strong>Mechanics</strong>, then use <strong>Add Quick Roll</strong>. Each quick roll becomes a clickable dice button in Personal Files.</div>
-                      <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else setEditorPanel("mechanics"); }} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
+                    <div className={`${retro.raised} bg-[#10103A] px-3 py-2 mb-3 flex flex-wrap items-center justify-between gap-2`} style={{ border: "1px solid #2B3B6B" }}>
+                      <div className="text-[10px]" style={S_SUBTLE}>{editorPanelDescriptions[editorPanel]}</div>
+                      <button onClick={() => { if (quickRollSlots.length === 0) addQuickRollSlot(); else { setEditorPanel("mechanics"); setMechanicsView("automation"); } }} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={S_ACCENT}>
                         <Dices size={11} /> Jump to Quick Rolls
                       </button>
+                    </div>
+
+                    {validationIssues.length > 0 && (
+                      <div className={`${retro.raised} bg-[#10103A] px-3 py-3 mb-4 space-y-2`} style={{ border: "1px solid #2B3B6B" }}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-[10px]" style={S_SECTION_HDR}>EDITOR CHECKLIST</div>
+                          <div className="text-[10px]" style={S_SUBTLE}>
+                            {blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} fix before save` : "No blocking save issues"}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {validationIssues.map((issue) => (
+                            <button
+                              key={issue.id}
+                              onClick={() => focusValidationIssue(issue)}
+                              className={`${retro.button} px-3 py-1.5 text-left text-[10px]`}
+                              style={issue.level === "error" ? sectionBadgeStyle("#FF7A7A") : sectionBadgeStyle("#FFD700")}
+                            >
+                              {issue.level === "error" ? "Fix" : "Review"}: {issue.message}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mb-4">
+                      {workflowSnapshotCards.map((card) => {
+                        const active = editorPanel === card.id;
+                        return (
+                          <button
+                            key={card.id}
+                            onClick={() => setEditorPanel(card.id)}
+                            className={`${active ? retro.sunken : retro.raised} bg-[#0E0E35] p-3 text-left transition-colors hover:bg-[#121244]`}
+                            style={editorSurfaceStyle(active ? card.accent : "#273357")}
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-[11px]" style={S_TEXT_BOLD}>{card.title}</span>
+                              <span className="text-[8px] px-2 py-0.5" style={sectionBadgeStyle(card.accent)}>
+                                {editorPanels.find((panel) => panel.id === card.id)?.step}
+                              </span>
+                            </div>
+                            <div className="text-[10px]" style={active ? S_TEXT : S_SUBTLE}>{card.summary}</div>
+                            <div className="text-[10px] mt-2" style={S_MUTED}>{card.detail}</div>
+                          </button>
+                        );
+                      })}
                     </div>
 
                     <div className="flex flex-wrap gap-2">
@@ -1779,6 +2248,7 @@ export function DMCardManagerSection({
                             className={`${active ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
                             style={{ color: active ? panel.accent : "#8A9ABB", fontWeight: active ? 600 : 400 }}
                           >
+                            <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle(active ? panel.accent : "#7A8AAA")}>{panel.step}</span>
                             <Icon size={12} /> {panel.label}
                           </button>
                         );
@@ -1787,7 +2257,7 @@ export function DMCardManagerSection({
                   </div>
 
                   {editorPanel === "preview" && (
-                    <CardPreviewPanel card={editingCard} players={players} nodeTrees={nodeTrees} cardTags={cardTags} />
+                    livePreviewCard && <CardPreviewPanel card={livePreviewCard} players={players} nodeTrees={nodeTrees} cardTags={cardTags} />
                   )}
 
                   {editorPanel === "core" && (
@@ -1796,7 +2266,7 @@ export function DMCardManagerSection({
                         <div>
                           <div className="text-[12px]" style={S_SECTION_HDR}>IDENTITY + USE PROFILE</div>
                           <div className="text-[10px] mt-1" style={S_SUBTLE}>
-                            Start by deciding whether this card is a spell, skill, or ability. The rest of the profile becomes much easier to fill out from there.
+                            Start by deciding whether this card is a spell, skill, or ability. The family buttons fill missing profile hints and do not erase values you already wrote.
                           </div>
                         </div>
                         {currentFamilyDef && (
@@ -1983,93 +2453,339 @@ export function DMCardManagerSection({
 
                   {editorPanel === "mechanics" && (
                     <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
-                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] gap-4">
-                        <div className="space-y-4">
-                          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#6ABAFF")}>
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>MECHANICS WORKSPACE</div>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
-                                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
-                              </div>
+                      <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="text-[12px] mb-1" style={S_SECTION_HDR}>MECHANICS WORKSPACE</div>
+                            <div className="text-[10px]" style={S_SUBTLE}>
+                              Pick one saved rules source, then work in smaller views so the builder, automation, and rich text do not fight each other.
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
+                            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
+                            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle(rulesMode === "guided" ? "#6ABAFF" : "#FFD166")}>
+                              Saving uses {rulesMode === "guided" ? "Guided Builder" : "Manual Text"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-4">
+                          <div className="space-y-2">
+                            <div className="text-[10px]" style={S_SECTION_HDR}>RULES SOURCE</div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => { setRulesMode("guided"); setMechanicsView("rules"); }}
+                                className={`${rulesMode === "guided" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                                style={panelButtonStyle(rulesMode === "guided", "#6ABAFF")}
+                              >
+                                Guided Builder
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setRulesMode("manual"); setMechanicsView("text"); }}
+                                className={`${rulesMode === "manual" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                                style={panelButtonStyle(rulesMode === "manual", "#FFD166")}
+                              >
+                                Manual Text
+                              </button>
                             </div>
                           </div>
 
-                          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
-                                <div className="text-[10px]" style={S_SUBTLE}>Start with the card's actual play sequence. Each block becomes part of the generated rules text.</div>
-                              </div>
-                              <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
-                                Clear Builder
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
-                              {MECHANICS_BLOCKS.map((block) => (
+                          <div className="space-y-2">
+                            <div className="text-[10px]" style={S_SECTION_HDR}>WORKSPACE VIEW</div>
+                            <div className="flex flex-wrap gap-2">
+                              {([
+                                { id: "rules" as MechanicsWorkspaceView, label: "Rules Builder", accent: "#6ABAFF" },
+                                { id: "automation" as MechanicsWorkspaceView, label: "Automation", accent: "#4ACA6A" },
+                                { id: "text" as MechanicsWorkspaceView, label: "Text & Scaling", accent: "#FFD166" },
+                              ]).map((view) => (
                                 <button
-                                  key={block.id}
-                                  onClick={() => addMechanicsStarter(block)}
-                                  className={`${retro.button} w-full justify-center px-3 py-2 text-[10px] flex items-center gap-1.5`}
-                                  style={sectionBadgeStyle("#6ABAFF")}
+                                  key={view.id}
+                                  type="button"
+                                  onClick={() => setMechanicsView(view.id)}
+                                  className={`${mechanicsView === view.id ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                                  style={panelButtonStyle(mechanicsView === view.id, view.accent)}
                                 >
-                                  <Plus size={10} /> Seed {block.label}
+                                  {view.label}
                                 </button>
                               ))}
                             </div>
+                          </div>
+                        </div>
 
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                              {MECHANICS_BLOCKS.map((block, index) => {
-                                const filled = !!mechanicsBuilder[block.id].trim();
-                                const accent = ["#8AB8FF", "#7ACA8A", "#FFD700", "#C4A0FF", "#FF9A7A", "#6ABAFF", "#7A8AAA"][index % 7];
-                                return (
-                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`} style={editorSurfaceStyle(accent)}>
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div>
-                                        <div className="flex items-center gap-2 mb-1">
-                                          <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(accent)}>Step {index + 1}</span>
-                                          <span className="text-[12px]" style={S_TEXT_BOLD}>{block.label}</span>
+                        <div className="text-[10px]" style={S_SUBTLE}>
+                          {rulesMode === "guided"
+                            ? "Guided Builder is the single saved source for effect text. Manual text becomes a read-only reference until you switch sources."
+                            : "Manual Text is the single saved source for effect text. The structured builder stays available as a draft and import tool."}
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {mechanicsWorkspaceCards.map((view) => {
+                            const active = mechanicsView === view.id;
+                            return (
+                              <button
+                                key={view.id}
+                                type="button"
+                                onClick={() => setMechanicsView(view.id)}
+                                className={`${active ? retro.sunken : retro.raised} bg-[#0A0A28] p-3 text-left`}
+                                style={editorSurfaceStyle(active ? view.accent : "#273357")}
+                              >
+                                <div className="flex items-center justify-between gap-2 mb-2">
+                                  <span className="text-[11px]" style={S_TEXT_BOLD}>{view.title}</span>
+                                  <span className="text-[8px] px-2 py-0.5" style={sectionBadgeStyle(view.accent)}>
+                                    {view.id === "rules" ? "A" : view.id === "automation" ? "B" : "C"}
+                                  </span>
+                                </div>
+                                <div className="text-[10px]" style={active ? S_TEXT : S_SUBTLE}>{view.detail}</div>
+                                <div className="text-[10px] mt-2" style={S_MUTED}>{view.helper}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center justify-between gap-3`} style={editorSurfaceStyle(mechanicsWorkspaceIntro.accent)}>
+                          <div>
+                            <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT VIEW</div>
+                            <div className="text-[11px]" style={S_TEXT_BOLD}>{mechanicsWorkspaceIntro.title}</div>
+                          </div>
+                          <div className="text-[10px] max-w-[520px]" style={S_SUBTLE}>{mechanicsWorkspaceIntro.helper}</div>
+                        </div>
+                      </div>
+
+                      {mechanicsView === "rules" && (
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] gap-4">
+                          <div className="space-y-4">
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-[12px] mb-1" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
+                                  <div className="text-[10px]" style={S_SUBTLE}>Lay out the card's play sequence. These steps feed the generated rules output in order.</div>
+                                </div>
+                                <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
+                                  Clear Builder
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+                                {MECHANICS_BLOCKS.map((block) => (
+                                  <button
+                                    key={block.id}
+                                    onClick={() => addMechanicsStarter(block)}
+                                    className={`${retro.button} w-full justify-center px-3 py-2 text-[10px] flex items-center gap-1.5`}
+                                    style={sectionBadgeStyle("#6ABAFF")}
+                                  >
+                                    <Plus size={10} /> Seed {block.label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                {MECHANICS_BLOCKS.map((block, index) => {
+                                  const filled = !!mechanicsBuilder[block.id].trim();
+                                  const accent = ["#8AB8FF", "#7ACA8A", "#FFD700", "#C4A0FF", "#FF9A7A", "#6ABAFF", "#7A8AAA"][index % 7];
+                                  return (
+                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`} style={editorSurfaceStyle(accent)}>
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(accent)}>Step {index + 1}</span>
+                                            <span className="text-[12px]" style={S_TEXT_BOLD}>{block.label}</span>
+                                          </div>
+                                          <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
                                         </div>
-                                        <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
+                                        {!filled && (
+                                          <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} shrink-0 px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
+                                            <Sparkles size={10} /> Seed
+                                          </button>
+                                        )}
                                       </div>
-                                      {!filled && (
-                                        <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} shrink-0 px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
-                                          <Sparkles size={10} /> Seed
-                                        </button>
-                                      )}
+                                      <textarea
+                                        value={mechanicsBuilder[block.id]}
+                                        onChange={(e) => updateMechanicsBuilderField(block.id, e.target.value)}
+                                        placeholder={block.placeholder}
+                                        className={`${inputClass} min-h-[102px] resize-y`}
+                                        style={inputStyle}
+                                      />
+                                      <div className="text-[10px] flex items-center justify-between gap-2" style={S_MUTED}>
+                                        <span>{filled ? "Included in generated output" : "Empty"}</span>
+                                        <span>{mechanicsBuilder[block.id].trim().length} chars</span>
+                                      </div>
                                     </div>
-                                    <textarea
-                                      value={mechanicsBuilder[block.id]}
-                                      onChange={(e) => updateMechanicsBuilderField(block.id, e.target.value)}
-                                      placeholder={block.placeholder}
-                                      className={`${inputClass} min-h-[102px] resize-y`}
-                                      style={inputStyle}
-                                    />
-                                    <div className="text-[10px] flex items-center justify-between gap-2" style={S_MUTED}>
-                                      <span>{filled ? "Included in generated output" : "Empty"}</span>
-                                      <span>{mechanicsBuilder[block.id].trim().length} chars</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
+                              </div>
+                              <div className="text-[10px] mt-2" style={S_SUBTLE}>
+                                Changing family updates the family label and fills empty profile hints. It does not clear values you already entered.
+                              </div>
                             </div>
 
-                            <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center gap-2`}>
-                              <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                <Save size={12} /> Replace Effect(s)
-                              </button>
-                              <button onClick={() => applyMechanicsBuilder("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
-                                <Plus size={12} /> Append to Effect(s)
-                              </button>
-                              <span className="text-[10px] ml-auto" style={S_SUBTLE}>
-                                Use replace for a clean rebuild. Use append when the current rules text already has material you want to keep.
-                              </span>
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-[12px] mb-1" style={S_SECTION_HDR}>CARD SECTION BLOCKS</div>
+                                  <div className="text-[10px]" style={S_SUBTLE}>Use blocks for summaries, reminders, limits, or follow-up text around the main sequence.</div>
+                                </div>
+                                <div className="text-[10px]" style={S_SUBTLE}>{cardSectionBlocks.length} saved section block{cardSectionBlocks.length === 1 ? "" : "s"}</div>
+                              </div>
+
+                              <div className="flex flex-wrap gap-2">
+                                {CARD_SECTION_BLOCK_PRESETS.map((preset) => (
+                                  <button
+                                    key={`${preset.title}-${preset.tone}`}
+                                    onClick={() => addPresetSectionBlock(preset)}
+                                    className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+                                    style={toneChipStyle(preset.tone)}
+                                  >
+                                    <Plus size={10} /> {preset.title}
+                                  </button>
+                                ))}
+                                <button onClick={clearSectionBlocks} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
+                                  Clear All Blocks
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
+                                <div>
+                                  <label className="text-[10px] block mb-1" style={labelStyle}>Custom Block Title:</label>
+                                  <input
+                                    type="text"
+                                    value={newSectionTitle}
+                                    onChange={(e) => setNewSectionTitle(e.target.value)}
+                                    placeholder="e.g. Follow-Up, Combo, Reminder..."
+                                    className={inputClass}
+                                    style={inputStyle}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] block mb-1" style={labelStyle}>Tone:</label>
+                                  <select value={newSectionTone} onChange={(e) => setNewSectionTone(e.target.value as CardSectionTone)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                                    <option value="rules">Rules</option>
+                                    <option value="highlight">Highlight</option>
+                                    <option value="limitation">Limitation</option>
+                                    <option value="reminder">Reminder</option>
+                                  </select>
+                                </div>
+                                <button onClick={addCustomSectionBlock} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                                  <Plus size={12} /> Add Custom Block
+                                </button>
+                              </div>
+
+                              {cardSectionBlocks.length === 0 ? (
+                                <div className="text-[11px]" style={S_MUTED}>No card section blocks yet. Add a preset or create a custom section.</div>
+                              ) : (
+                                <div className="space-y-3">
+                                  {cardSectionBlocks.map((block, index) => (
+                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} style={editorSurfaceStyle(block.tone === "rules" ? "#7ACA8A" : block.tone === "highlight" ? "#8AB8FF" : block.tone === "limitation" ? "#FF9A7A" : "#FFD700")}>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>Section {index + 1}</span>
+                                          <span className="text-[10px]" style={S_SUBTLE}>Reorder or tone-shift this block before it joins the final rules output.</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1 justify-end">
+                                          <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
+                                          <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
+                                          <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
+                                        </div>
+                                      </div>
+                                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
+                                        <div>
+                                          <label className="text-[10px] block mb-1" style={labelStyle}>Section Title:</label>
+                                          <input
+                                            type="text"
+                                            value={block.title}
+                                            onChange={(e) => updateSectionBlock(block.id, { title: e.target.value })}
+                                            className={inputClass}
+                                            style={inputStyle}
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="text-[10px] block mb-1" style={labelStyle}>Tone:</label>
+                                          <select value={block.tone} onChange={(e) => updateSectionBlock(block.id, { tone: e.target.value as CardSectionTone })} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                                            <option value="rules">Rules</option>
+                                            <option value="highlight">Highlight</option>
+                                            <option value="limitation">Limitation</option>
+                                            <option value="reminder">Reminder</option>
+                                          </select>
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <label className="text-[10px] block mb-1" style={labelStyle}>Content:</label>
+                                        <textarea
+                                          value={block.content}
+                                          onChange={(e) => updateSectionBlock(block.id, { content: e.target.value })}
+                                          placeholder="Write this section's content..."
+                                          className={`${inputClass} min-h-[92px] resize-y`}
+                                          style={inputStyle}
+                                        />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           </div>
 
+                          <div className="space-y-4">
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle(rulesMode === "guided" ? "#6ABAFF" : "#FFD166")}>
+                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>SAVED SOURCE</div>
+                              <div className="text-[11px]" style={S_TEXT_BOLD}>{rulesMode === "guided" ? "Guided Builder" : "Manual Text"}</div>
+                              <div className="text-[11px] mt-2" style={S_SUBTLE}>
+                                {rulesMode === "guided"
+                                  ? "Save will write the Full Generated Output below into the card's effect text."
+                                  : "The builder is a draft helper right now. Import the generated output or switch to Guided Builder when you want it to become the saved effect text."}
+                              </div>
+                              {rulesMode === "manual" && (
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                  <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                                    <Save size={12} /> Replace Manual Text with Mechanics Only
+                                  </button>
+                                  <button onClick={() => applySectionBlocks("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={sectionBadgeStyle("#FFD700")}>
+                                    <Plus size={12} /> Append Blocks
+                                  </button>
+                                  <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                                    <Sparkles size={12} /> Replace Manual Text with Full Output
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            <div>
+                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED PREVIEW</div>
+                              <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#6ABAFF")}>
+                                {MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).length === 0 ? (
+                                  <div className="text-[11px]" style={S_MUTED}>No structured mechanics blocks yet. Add a block or seed one from a starter.</div>
+                                ) : (
+                                  MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block, index) => (
+                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
+                                        <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
+                                      </div>
+                                      <div className="text-[11px]" style={S_TEXT}>{mechanicsBuilder[block.id]}</div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>FULL GENERATED OUTPUT</div>
+                              <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[180px] text-[11px]`} style={{ ...editorSurfaceStyle("#8AB8FF"), ...S_TEXT }}>
+                                {structuredRulesPreview ? (
+                                  <div dangerouslySetInnerHTML={{ __html: structuredRulesPreview }} />
+                                ) : (
+                                  <span style={S_MUTED}>No generated output yet. Add mechanics or section blocks to compose the saved guided rules text.</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {mechanicsView === "automation" && (
+                        <div className="space-y-4">
                           <div>
                             <div className="text-[12px] mb-2" style={S_SECTION_HDR}>APPLIED EFFECT TRACKER</div>
                             <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#4ACA6A")}>
@@ -2220,131 +2936,47 @@ export function DMCardManagerSection({
                               </div>
                             )}
                           </div>
+                        </div>
+                      )}
 
-                          <div>
-                            <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-                              <div className="text-[12px]" style={S_SECTION_HDR}>CARD SECTION BLOCKS</div>
-                              <div className="text-[10px]" style={S_SUBTLE}>{cardSectionBlocks.length} saved section block{cardSectionBlocks.length === 1 ? "" : "s"}</div>
-                            </div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
-                              <div className="flex flex-wrap gap-2">
-                                {CARD_SECTION_BLOCK_PRESETS.map((preset) => (
-                                  <button
-                                    key={`${preset.title}-${preset.tone}`}
-                                    onClick={() => addPresetSectionBlock(preset)}
-                                    className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
-                                    style={toneChipStyle(preset.tone)}
-                                  >
-                                    <Plus size={10} /> {preset.title}
-                                  </button>
-                                ))}
-                                <button onClick={clearSectionBlocks} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
-                                  Clear All Blocks
-                                </button>
-                              </div>
-
-                              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
-                                <div>
-                                  <label className="text-[10px] block mb-1" style={labelStyle}>Custom Block Title:</label>
-                                  <input
-                                    type="text"
-                                    value={newSectionTitle}
-                                    onChange={(e) => setNewSectionTitle(e.target.value)}
-                                    placeholder="e.g. Follow-Up, Combo, Reminder..."
-                                    className={inputClass}
-                                    style={inputStyle}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] block mb-1" style={labelStyle}>Tone:</label>
-                                  <select value={newSectionTone} onChange={(e) => setNewSectionTone(e.target.value as CardSectionTone)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
-                                    <option value="rules">Rules</option>
-                                    <option value="highlight">Highlight</option>
-                                    <option value="limitation">Limitation</option>
-                                    <option value="reminder">Reminder</option>
-                                  </select>
-                                </div>
-                                <button onClick={addCustomSectionBlock} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                  <Plus size={12} /> Add Custom Block
-                                </button>
-                              </div>
-
-                              {cardSectionBlocks.length === 0 ? (
-                                <div className="text-[11px]" style={S_MUTED}>No card section blocks yet. Add a preset or create a custom section.</div>
-                              ) : (
-                                <div className="space-y-3">
-                                  {cardSectionBlocks.map((block, index) => (
-                                    <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} style={editorSurfaceStyle(block.tone === "rules" ? "#7ACA8A" : block.tone === "highlight" ? "#8AB8FF" : block.tone === "limitation" ? "#FF9A7A" : "#FFD700")}>
-                                      <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>Section {index + 1}</span>
-                                          <span className="text-[10px]" style={S_SUBTLE}>Reorder or tone-shift this block before sending it into the rules text.</span>
-                                        </div>
-                                        <div className="flex flex-wrap gap-1 justify-end">
-                                          <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
-                                          <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
-                                          <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
-                                        </div>
-                                      </div>
-                                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
-                                        <div>
-                                          <label className="text-[10px] block mb-1" style={labelStyle}>Section Title:</label>
-                                          <input
-                                            type="text"
-                                            value={block.title}
-                                            onChange={(e) => updateSectionBlock(block.id, { title: e.target.value })}
-                                            className={inputClass}
-                                            style={inputStyle}
-                                          />
-                                        </div>
-                                        <div>
-                                          <label className="text-[10px] block mb-1" style={labelStyle}>Tone:</label>
-                                          <select value={block.tone} onChange={(e) => updateSectionBlock(block.id, { tone: e.target.value as CardSectionTone })} className={`${inputClass} cursor-pointer`} style={inputStyle}>
-                                            <option value="rules">Rules</option>
-                                            <option value="highlight">Highlight</option>
-                                            <option value="limitation">Limitation</option>
-                                            <option value="reminder">Reminder</option>
-                                          </select>
-                                        </div>
-                                      </div>
-                                      <div>
-                                        <label className="text-[10px] block mb-1" style={labelStyle}>Content:</label>
-                                        <textarea
-                                          value={block.content}
-                                          onChange={(e) => updateSectionBlock(block.id, { content: e.target.value })}
-                                          placeholder="Write this section's content..."
-                                          className={`${inputClass} min-h-[92px] resize-y`}
-                                          style={inputStyle}
-                                        />
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className={`${retro.sunken} bg-[#0A0A28] p-3 flex flex-wrap items-center gap-2`}>
-                                <button onClick={() => applySectionBlocks("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
-                                  <Save size={12} /> Replace Effect(s) with Blocks
-                                </button>
-                                <button onClick={() => applySectionBlocks("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
-                                  <Plus size={12} /> Append Blocks to Effect(s)
-                                </button>
-                                <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={toneChipStyle("highlight")}>
-                                  <Sparkles size={12} /> Build Full Effect(s)
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
+                      {mechanicsView === "text" && (
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] gap-4">
+                          <div className="space-y-4">
                             <div>
                               <div className="text-[12px] mb-2" style={S_SECTION_HDR}>DESCRIPTION</div>
                               <RichTextEditor value={editingCard.customFields[CARD_DESCRIPTION_KEY] || ""} onChange={(html) => updateCardCustomField(CARD_DESCRIPTION_KEY, html)} placeholder="Enter a short overview or setup text..." minHeight={120} />
                             </div>
-                            <div>
-                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>EFFECT(S)</div>
-                              <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effects..." minHeight={200} />
+
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle(rulesMode === "manual" ? "#FFD166" : "#6ABAFF")}>
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-[12px] mb-1" style={S_SECTION_HDR}>RULES TEXT</div>
+                                  <div className="text-[10px]" style={S_SUBTLE}>
+                                    {rulesMode === "manual"
+                                      ? "Directly edit the saved effect text here."
+                                      : "Guided Builder is the active saved source, so this area shows the guided output instead of a second editable rules source."}
+                                  </div>
+                                </div>
+                                {rulesMode === "guided" && (
+                                  <button onClick={() => setRulesMode("manual")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>
+                                    Switch to Manual Text
+                                  </button>
+                                )}
+                              </div>
+
+                              {rulesMode === "manual" ? (
+                                <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effects..." minHeight={240} />
+                              ) : (
+                                <div className={`${retro.sunken} bg-[#0A0A28] p-4 min-h-[240px] text-[12px]`} style={S_TEXT}>
+                                  {structuredRulesPreview ? (
+                                    <div dangerouslySetInnerHTML={{ __html: structuredRulesPreview }} />
+                                  ) : (
+                                    <span style={S_MUTED}>No guided rules output yet. Go back to Rules Builder to create the saved effect text.</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
+
                             <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-2`} style={editorSurfaceStyle("#FFD700")}>
                               <div className="text-[10px]" style={S_SECTION_HDR}>SCALING / UPCAST</div>
                               <input
@@ -2360,69 +2992,47 @@ export function DMCardManagerSection({
                               )}
                             </div>
                           </div>
+
+                          <div className="space-y-4">
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle(rulesMode === "manual" ? "#FFD166" : "#6ABAFF")}>
+                              <div className="text-[12px] mb-2" style={S_SECTION_HDR}>SOURCE SUMMARY</div>
+                              <div className="text-[11px]" style={S_TEXT_BOLD}>{rulesMode === "manual" ? "Manual Text is active" : "Guided Builder is active"}</div>
+                              <div className="text-[11px] mt-2" style={S_SUBTLE}>
+                                {rulesMode === "manual"
+                                  ? "Use the builder as a structured draft, then import it when you want to replace or append to the manual text."
+                                  : "You still have description and scaling here, but the saved rules text is coming from the builder and section blocks."}
+                              </div>
+                            </div>
+
+                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
+                              <div className="text-[12px]" style={S_SECTION_HDR}>STRUCTURED DRAFT PREVIEW</div>
+                              <div className={`${retro.sunken} bg-[#0A0A28] p-4 min-h-[180px] text-[11px]`} style={S_TEXT}>
+                                {structuredRulesPreview ? (
+                                  <div dangerouslySetInnerHTML={{ __html: structuredRulesPreview }} />
+                                ) : (
+                                  <span style={S_MUTED}>No structured draft yet. Build one in Rules Builder if you want a guided version of this card.</span>
+                                )}
+                              </div>
+                              {rulesMode === "manual" && (
+                                <div className="flex flex-wrap gap-2">
+                                  <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                                    <Save size={12} /> Replace with Mechanics Only
+                                  </button>
+                                  <button onClick={() => applySectionBlocks("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={sectionBadgeStyle("#FFD700")}>
+                                    <Save size={12} /> Replace with Blocks Only
+                                  </button>
+                                  <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                                    <Sparkles size={12} /> Replace with Full Output
+                                  </button>
+                                  <button onClick={() => applyCombinedStructuredOutput("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                                    <Plus size={12} /> Append Full Output
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
-
-                        <div className="space-y-4">
-                          <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle("#8AB8FF")}>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>QUICK READ</div>
-                            <div className="space-y-2 text-[11px]" style={S_SUBTLE}>
-                              <div><span style={S_TEXT_BOLD}>Structured Preview</span> shows the builder output in the order it will read.</div>
-                              <div><span style={S_TEXT_BOLD}>Block Preview</span> helps you polish supporting summaries, follow-ups, and limitations.</div>
-                              <div><span style={S_TEXT_BOLD}>Full Generated Output</span> shows the combined result before you commit it to rules text.</div>
-                            </div>
-                          </div>
-
-                          <div>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED PREVIEW</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#6ABAFF")}>
-                              {MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).length === 0 ? (
-                                <div className="text-[11px]" style={S_MUTED}>No structured mechanics blocks yet. Add a block or load one from the existing rules text.</div>
-                              ) : (
-                                MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block, index) => (
-                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
-                                      <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
-                                    </div>
-                                    <div className="text-[11px]" style={S_TEXT}>{mechanicsBuilder[block.id]}</div>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-
-                          <div>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>BLOCK PREVIEW</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#FFD700")}>
-                              {cardSectionBlocks.length === 0 ? (
-                                <div className="text-[11px]" style={S_MUTED}>No card section blocks yet.</div>
-                              ) : (
-                                cardSectionBlocks.map((block) => (
-                                  <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <div className="text-[10px]" style={S_SECTION_HDR}>{block.title.toUpperCase() || "SECTION"}</div>
-                                      <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>{block.tone}</span>
-                                    </div>
-                                    <div className="text-[11px]" style={S_TEXT}>{block.content || <span style={S_MUTED}>No content yet.</span>}</div>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-
-                          <div>
-                            <div className="text-[12px] mb-2" style={S_SECTION_HDR}>FULL GENERATED OUTPUT</div>
-                            <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[160px] text-[11px]`} style={{ ...editorSurfaceStyle("#8AB8FF"), ...S_TEXT }}>
-                              {buildCombinedRulesHtml(mechanicsBuilder, cardSectionBlocks) ? (
-                                <div dangerouslySetInnerHTML={{ __html: buildCombinedRulesHtml(mechanicsBuilder, cardSectionBlocks) }} />
-                              ) : (
-                                <span style={S_MUTED}>No generated output yet. Add mechanics or section blocks to compose a full rules text preview.</span>
-                              )}
-                            </div>
-                          </div>
-
-                        </div>
-                      </div>
+                      )}
                     </div>
                   )}
 
@@ -2431,8 +3041,22 @@ export function DMCardManagerSection({
                       <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
                         <div className="text-[12px] mb-1" style={S_SECTION_HDR}>TAGS AS HELPERS AND MODIFIERS</div>
                         <div className="text-[11px]" style={S_SUBTLE}>
-                          Use tags to classify the card, add light modifiers, and expose optional helper fields. Keep the main card structure in Core and Mechanics.
+                          Use tags to classify the card, add light modifiers, and expose optional helper fields. Keep the main card structure in Core and Mechanics. Removing a tag now also clears the hidden data that belonged to it.
                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {[
+                          { label: "Active Tags", value: String(selectedTagDefs.length), detail: selectedTagDefs.length === 0 ? "Nothing attached yet" : "Helper tags currently on this card", accent: "#9A7ABB" },
+                          { label: "Suggested Tags", value: String(suggestedTagDefs.length), detail: suggestedTagDefs.length === 0 ? "No strong suggestions" : "Possible helpers based on current rules", accent: "#6ABAFF" },
+                          { label: "Required Fields", value: String(missingRequiredTagFields.length), detail: missingRequiredTagFields.length === 0 ? "No missing required tag data" : "Required helper data still missing", accent: missingRequiredTagFields.length === 0 ? "#7ACA8A" : "#FF7A7A" },
+                        ].map((card) => (
+                          <div key={card.label} className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle(card.accent)}>
+                            <div className="text-[10px]" style={S_SECTION_HDR}>{card.label}</div>
+                            <div className="text-[18px] mt-1" style={S_TEXT_BOLD}>{card.value}</div>
+                            <div className="text-[10px] mt-2" style={S_SUBTLE}>{card.detail}</div>
+                          </div>
+                        ))}
                       </div>
 
                       <div>
@@ -2660,10 +3284,11 @@ export function DMCardManagerSection({
                             disabled={!editingCard.nodeTreeId}
                           >
                             <option value="">-- None --</option>
-                            {editingCard.nodeTreeId &&
-                              nodeTrees.find((t) => t.id === editingCard.nodeTreeId)?.nodes.map((n) => (
-                                <option key={n.id} value={n.id}>{n.label}</option>
-                              ))}
+                            {progressionNodes.map(({ node, capacity }) => (
+                              <option key={node.id} value={node.id} disabled={capacity.isFullForSelection}>
+                                {node.label} ({capacity.filledSlots}/3){capacity.isFullForSelection ? " - Full" : capacity.includesCurrentCard ? " - Current" : ""}
+                              </option>
+                            ))}
                           </select>
                         </div>
                       </div>
@@ -2672,9 +3297,30 @@ export function DMCardManagerSection({
                         <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT ASSIGNMENT</div>
                         <div className="text-[11px]" style={S_TEXT}>{selectedNodeTree ? selectedNodeTree.name : "No node tree selected"}</div>
                         <div className="text-[11px]" style={S_MUTED}>{selectedNode ? `Node: ${selectedNode.label}` : "No node selected"}</div>
-                        {selectedNode && (
+                        {selectedNode && selectedNodeCapacity && (
                           <div className="text-[10px]" style={S_SUBTLE}>
-                            This node currently has {selectedNode.cardIds.length} / 3 card slot{selectedNode.cardIds.length !== 1 ? "s" : ""} filled.
+                            This node currently has {selectedNodeCapacity.filledSlots} / 3 card slot{selectedNodeCapacity.filledSlots !== 1 ? "s" : ""} filled.
+                          </div>
+                        )}
+                        {selectedNodeCapacity?.isFullForSelection && (
+                          <div className="text-[10px]" style={S_RED}>
+                            This node is full. Pick another node before saving.
+                          </div>
+                        )}
+                        {editingCard.nodeTreeId && progressionNodes.length > 0 && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                            {progressionNodes.map(({ node, capacity }) => (
+                              <div
+                                key={node.id}
+                                className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[10px]`}
+                                style={editorSurfaceStyle(capacity.isFullForSelection ? "#FF7A7A" : capacity.includesCurrentCard ? "#FFD700" : "#7ACA8A")}
+                              >
+                                <div style={S_TEXT_BOLD}>{node.label}</div>
+                                <div style={capacity.isFullForSelection ? S_RED : S_SUBTLE}>
+                                  {capacity.filledSlots}/3 filled{capacity.isFullForSelection ? " - Full" : capacity.includesCurrentCard ? " - Current node" : ""}
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
