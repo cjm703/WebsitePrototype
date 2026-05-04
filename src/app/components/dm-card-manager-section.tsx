@@ -1780,6 +1780,7 @@ function InteractiveCardPreview({
   renderTagFieldInput,
   onAddQuickRoll,
   onRemoveQuickRoll,
+  stickyPreview = true,
 }: {
   card: ManagedCard;
   editingCard: ManagedCard;
@@ -1805,6 +1806,7 @@ function InteractiveCardPreview({
   renderTagFieldInput: (cf: ActiveCustomFieldEntry) => React.ReactNode;
   onAddQuickRoll: () => void;
   onRemoveQuickRoll: (slotId: string) => void;
+  stickyPreview?: boolean;
 }) {
   const visibleCustomFieldGroups = groupCustomFieldsByTag(getActiveCustomFields(card, cardTags).filter((cf) => hasFilledFieldValue(card.customFields[cf.key])));
   const trackerBucket = getCardTrackerBucket(editingCard);
@@ -1850,7 +1852,7 @@ function InteractiveCardPreview({
   const stopEditing = () => onPreviewEditFieldChange(null);
 
   return (
-    <div className={`${retro.sunken} bg-[#07101F] p-4 space-y-4 xl:sticky xl:top-2`} style={editorSurfaceStyle(selectedStageAccent)}>
+    <div className={`${retro.sunken} bg-[#07101F] p-5 space-y-4 ${stickyPreview ? "xl:sticky xl:top-2" : ""}`} style={editorSurfaceStyle(selectedStageAccent)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
@@ -4404,31 +4406,57 @@ export function DMCardManagerSection({
                     })}
                   </div>
 
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
-                    {[
-                      {
-                        label: "Current Stage",
-                        value: `${activeStageCard?.title || stageMeta.label}`,
-                        detail: activeStageCard?.summary || stageMeta.helper,
-                        accent: stageMeta.accent,
-                      },
-                      {
-                        label: "Workspace Status",
-                        value: activeStageCard?.detail || "Open a card section to begin editing.",
-                        detail: `${filteredCards.length} card${filteredCards.length === 1 ? "" : "s"} shown in the library`,
-                        accent: "#7ACA8A",
-                      },
-                    ].map((item) => (
-                      <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-1.5`} style={editorSurfaceStyle(item.accent)}>
-                        <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>{item.label}</div>
-                        <div className="text-[12px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
-                        <div className="text-[10px] leading-relaxed break-words" style={S_SUBTLE}>{item.detail}</div>
+                  <div className={liveEditStageActive ? "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,0.42fr)] gap-2" : "grid grid-cols-1 xl:grid-cols-2 gap-2"}>
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+                      {[
+                        {
+                          label: "Current Stage",
+                          value: `${activeStageCard?.title || stageMeta.label}`,
+                          detail: activeStageCard?.summary || stageMeta.helper,
+                          accent: stageMeta.accent,
+                        },
+                        {
+                          label: "Workspace Status",
+                          value: activeStageCard?.detail || "Open a card section to begin editing.",
+                          detail: `${filteredCards.length} card${filteredCards.length === 1 ? "" : "s"} shown in the library`,
+                          accent: "#7ACA8A",
+                        },
+                      ].map((item) => (
+                        <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-1.5`} style={editorSurfaceStyle(item.accent)}>
+                          <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>{item.label}</div>
+                          <div className="text-[12px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
+                          <div className="text-[10px] leading-relaxed break-words" style={S_SUBTLE}>{item.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {liveEditStageActive && (
+                      <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-2`} style={editorSurfaceStyle(validationIssues.length > 0 ? (blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700") : "#7A8AAA")}>
+                        <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>Open Issues</div>
+                        {validationIssues.length === 0 ? (
+                          <div className="text-[10px] leading-relaxed" style={S_SUBTLE}>No open issues. The live preview is ready for direct editing.</div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => focusValidationIssue(validationIssues[0])}
+                            className={`${retro.sunken} w-full bg-[#0B1128] p-3 text-left`}
+                            style={editorSurfaceStyle(validationIssues[0].level === "error" ? "#FF7A7A" : "#FFD700")}
+                          >
+                            <div className="text-[10px]" style={validationIssues[0].level === "error" ? S_RED : { color: "#FFD700" }}>
+                              {validationIssues[0].level === "error" ? "Error" : "Warning"}
+                            </div>
+                            <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{validationIssues[0].message}</div>
+                            {validationIssues.length > 1 && (
+                              <div className="text-[10px] mt-2" style={S_SUBTLE}>+{validationIssues.length - 1} more issue{validationIssues.length - 1 === 1 ? "" : "s"}</div>
+                            )}
+                          </button>
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
-                {validationIssues.length > 0 && (
+                {!liveEditStageActive && validationIssues.length > 0 && (
                   <div className={`${retro.sunken} bg-[#0B1128] p-3 space-y-2`} style={editorSurfaceStyle(blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700")}>
                     <div className="text-[10px]" style={S_SECTION_HDR}>OPEN ISSUES</div>
                     <div className="space-y-2">
@@ -4461,7 +4489,7 @@ export function DMCardManagerSection({
                   </div>
                 )}
 
-                <div className={liveEditStageActive ? "" : "order-1 xl:order-2"}>
+                <div className={liveEditStageActive ? "xl:h-[calc(100vh-15rem)] 2xl:h-[calc(100vh-14rem)] xl:overflow-y-auto xl:pr-1" : "order-1 xl:order-2"}>
                   {livePreviewCard && (
                     <InteractiveCardPreview
                       card={livePreviewCard}
@@ -4488,6 +4516,7 @@ export function DMCardManagerSection({
                       renderTagFieldInput={renderCardTagFieldInput}
                       onAddQuickRoll={addQuickRollSlot}
                       onRemoveQuickRoll={removeQuickRollSlot}
+                      stickyPreview={!liveEditStageActive}
                     />
                   )}
                 </div>
