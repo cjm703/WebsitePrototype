@@ -1530,7 +1530,7 @@ function CardLibraryRail({
 
   if (collapsed) {
     return (
-      <div className={`${railShellClass} hidden xl:flex xl:w-[76px] xl:flex-col xl:items-center xl:gap-3 xl:p-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)]`}>
+      <div className={`${railShellClass} hidden xl:flex xl:w-[76px] xl:flex-col xl:items-center xl:gap-3 xl:p-3`}>
         <button onClick={onToggleCollapsed} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={sectionBadgeStyle("#4A7BFF")}>
           <ChevronRight size={14} className="rotate-180" />
         </button>
@@ -1541,7 +1541,7 @@ function CardLibraryRail({
           <div style={S_TEXT_BOLD}>{filteredCards.length}</div>
           <div>Cards</div>
         </div>
-        <div className="space-y-2 overflow-y-auto w-full pr-0.5">
+        <div className="space-y-2 w-full pr-0.5">
           {filteredCards.slice(0, 10).map((card) => {
             const selected = editingCardId === card.id;
             return (
@@ -1563,7 +1563,7 @@ function CardLibraryRail({
   }
 
   return (
-    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[288px] 2xl:w-[312px] p-4 space-y-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)] xl:overflow-hidden`}>
+    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[288px] 2xl:w-[312px] p-4 space-y-3`}>
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
@@ -1622,7 +1622,7 @@ function CardLibraryRail({
         )}
       </div>
 
-      <div className="space-y-2 xl:flex-1 xl:overflow-y-auto xl:pr-1">
+      <div className="space-y-2">
         {filteredCards.length === 0 ? (
           <div className="text-[11px] text-center py-6" style={S_MUTED}>No matching cards.</div>
         ) : (
@@ -1854,7 +1854,7 @@ function InteractiveCardPreview({
   const stopEditing = () => onPreviewEditFieldChange(null);
 
   return (
-    <div className={`${retro.sunken} bg-[#07101F] p-5 space-y-4 ${stickyPreview ? "xl:sticky xl:top-2" : ""} ${panelClassName}`.trim()} style={editorSurfaceStyle(selectedStageAccent)}>
+    <div className={`${retro.sunken} bg-[#07101F] p-5 space-y-4 ${panelClassName}`.trim()} style={editorSurfaceStyle(selectedStageAccent)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
@@ -4372,7 +4372,7 @@ export function DMCardManagerSection({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="sticky top-2 z-20 space-y-3">
+              <div className="space-y-3">
                 <CardWorkspaceHeader
                   editingCard={editingCard}
                   isAddingNewCard={isAddingNewCard}
@@ -4518,7 +4518,7 @@ export function DMCardManagerSection({
                       renderTagFieldInput={renderCardTagFieldInput}
                       onAddQuickRoll={addQuickRollSlot}
                       onRemoveQuickRoll={removeQuickRollSlot}
-                      stickyPreview={!liveEditStageActive}
+                      stickyPreview={false}
                       panelClassName={liveEditStageActive ? "min-h-[calc(100vh-2rem)] 2xl:min-h-[calc(100vh+2rem)]" : ""}
                     />
                   )}
