@@ -15,6 +15,9 @@ type LevelCategoriesFallbackState = {
   retryAfter: number;
 };
 
+let inMemoryLevelCategoriesFallbackState: LevelCategoriesFallbackState | null = null;
+let hasLoggedLevelCategoriesFallback = false;
+
 function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
 
@@ -175,6 +178,42 @@ function loadLocalDMPlayerLevelCategories(playerId: string) {
   return Array.isArray(stored[playerId]) ? stored[playerId] : [];
 }
 
+function getActiveLevelCategoriesFallbackState() {
+  if (
+    inMemoryLevelCategoriesFallbackState?.mode === "local" &&
+    typeof inMemoryLevelCategoriesFallbackState.retryAfter === "number" &&
+    inMemoryLevelCategoriesFallbackState.retryAfter > Date.now()
+  ) {
+    return inMemoryLevelCategoriesFallbackState;
+  }
+
+  const persisted = safeGetJson<LevelCategoriesFallbackState | null>(
+    LEVEL_CATEGORIES_FALLBACK_STATE_KEY,
+    null,
+  );
+
+  if (
+    persisted?.mode === "local" &&
+    typeof persisted.retryAfter === "number" &&
+    persisted.retryAfter > Date.now()
+  ) {
+    inMemoryLevelCategoriesFallbackState = persisted;
+    return persisted;
+  }
+
+  inMemoryLevelCategoriesFallbackState = null;
+  return null;
+}
+
+function logLevelCategoriesFallback(action: "load" | "save", err: unknown) {
+  if (hasLoggedLevelCategoriesFallback) return;
+  hasLoggedLevelCategoriesFallback = true;
+  const message = err instanceof Error ? err.message : String(err || "Unknown fallback reason");
+  console.warn(
+    `${action === "load" ? "Loading" : "Saving"} DM level categories in local fallback mode (${message}).`,
+  );
+}
+
 function saveLocalDMPlayerLevelCategories(
   playerId: string,
   levelCategories: Record<string, unknown>[],
@@ -187,20 +226,11 @@ function saveLocalDMPlayerLevelCategories(
 }
 
 function shouldUseLocalLevelCategoriesFallback() {
-  const fallbackState = safeGetJson<LevelCategoriesFallbackState | null>(
-    LEVEL_CATEGORIES_FALLBACK_STATE_KEY,
-    null,
-  );
-
-  return (
-    fallbackState?.mode === "local" &&
-    typeof fallbackState.retryAfter === "number" &&
-    fallbackState.retryAfter > Date.now()
-  );
+  return getActiveLevelCategoriesFallbackState() !== null;
 }
 
 function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient") {
-  safeSetJson(LEVEL_CATEGORIES_FALLBACK_STATE_KEY, {
+  const fallbackState = {
     mode: "local",
     reason,
     retryAfter:
@@ -208,10 +238,14 @@ function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient"
       (reason === "deployment"
         ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
         : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
-  } satisfies LevelCategoriesFallbackState);
+  } satisfies LevelCategoriesFallbackState;
+  inMemoryLevelCategoriesFallbackState = fallbackState;
+  safeSetJson(LEVEL_CATEGORIES_FALLBACK_STATE_KEY, fallbackState);
 }
 
 function clearLocalLevelCategoriesFallback() {
+  inMemoryLevelCategoriesFallbackState = null;
+  hasLoggedLevelCategoriesFallback = false;
   safeRemoveItem(LEVEL_CATEGORIES_FALLBACK_STATE_KEY);
 }
 
@@ -232,7 +266,7 @@ export async function loadDMPlayerLevelCategories(playerId: string) {
     activateLocalLevelCategoriesFallback(
       isDeploymentLevelCategoriesFailure(err) ? "deployment" : "transient",
     );
-    console.warn("Falling back to local DM level categories storage", err);
+    logLevelCategoriesFallback("load", err);
     return loadLocalDMPlayerLevelCategories(playerId);
   }
 }
@@ -257,7 +291,7 @@ export async function saveDMPlayerLevelCategories(
     activateLocalLevelCategoriesFallback(
       isDeploymentLevelCategoriesFailure(err) ? "deployment" : "transient",
     );
-    console.warn("Saving DM level categories to local storage fallback", err);
+    logLevelCategoriesFallback("save", err);
     saveLocalDMPlayerLevelCategories(playerId, levelCategories);
   }
 }

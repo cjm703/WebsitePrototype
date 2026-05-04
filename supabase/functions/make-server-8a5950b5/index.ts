@@ -1837,6 +1837,26 @@ function registerRoutes(prefix: string) {
       requireDM(playerId);
 
       const collection = c.req.param("collection") as DMCollectionKey;
+
+      if (collection === "player-level-categories") {
+        const body = await c.req.json();
+        if (!body?.playerId || !Array.isArray(body?.levelCategories)) {
+          return c.json({ error: "playerId and levelCategories are required" }, 400);
+        }
+
+        const supabase = admin();
+        const now = new Date().toISOString();
+        const { error } = await supabase
+          .from("player_level_categories")
+          .upsert(
+            { player_id: body.playerId, data: body.levelCategories, updated_at: now },
+            { onConflict: "player_id" },
+          );
+
+        if (error) return c.json({ error: error.message }, 500);
+        return c.json({ ok: true });
+      }
+
       const meta = DM_COLLECTIONS[collection];
       if (!meta || collection === "players" || collection === "deleted-players") {
         return c.json({ error: "Unknown DM collection" }, 404);
