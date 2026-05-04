@@ -1493,7 +1493,7 @@ const handleSaveItem = async () => {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col px-4 py-6 max-w-[1200px] mx-auto w-full">
+      <div className="flex-1 flex flex-col px-4 py-6 xl:px-6 2xl:px-8 max-w-[1680px] mx-auto w-full">
         {/* Header */}
         <div className="mb-6">
           <div className="flex items-center gap-3 mb-2">

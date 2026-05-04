@@ -60,7 +60,7 @@ interface DMCardManagerSectionProps {
 
 type LevelCategory = { id: string; name: string; order: number; cardIds: string[]; description?: string };
 type CardEditorPanel = "preview" | "core" | "mechanics" | "tags" | "progression" | "assignment";
-type CardWorkspaceStage = "overview" | "rules" | "effects" | "delivery";
+type CardWorkspaceStage = "live" | "overview" | "rules" | "effects" | "delivery";
 type CardRulesMode = "guided" | "manual";
 type MechanicsWorkspaceView = "rules" | "automation" | "text";
 type OverviewSubTab = "identity" | "profile" | "advanced-profile";
@@ -268,6 +268,13 @@ const CARD_SECTION_BLOCK_PRESETS: Array<{ title: string; tone: CardSectionTone; 
 ];
 
 const CARD_WORKSPACE_STAGES: CardWorkspaceStageDef[] = [
+  {
+    id: "live",
+    label: "Live Edit",
+    accent: "#5C8DFF",
+    icon: Eye,
+    helper: "Focus entirely on the live card preview and edit the player-facing content directly.",
+  },
   {
     id: "overview",
     label: "Overview",
@@ -581,6 +588,7 @@ function getCardLibraryOwnerSortKey(card: ManagedCard, players: { id: string; na
 }
 
 function getWorkspaceStageForPanel(panel: CardEditorPanel, mechanicsView?: MechanicsWorkspaceView): CardWorkspaceStage {
+  if (panel === "preview") return "live";
   if (panel === "mechanics") {
     return mechanicsView === "automation" ? "effects" : "rules";
   }
@@ -598,6 +606,7 @@ function getWorkspaceStageAccent(stage: CardWorkspaceStage) {
 }
 
 function getWorkspaceSubTabs(stage: CardWorkspaceStage) {
+  if (stage === "live") return [];
   if (stage === "overview") return OVERVIEW_SUB_TABS;
   if (stage === "rules") return RULES_SUB_TABS;
   if (stage === "effects") return EFFECTS_SUB_TABS;
@@ -605,6 +614,7 @@ function getWorkspaceSubTabs(stage: CardWorkspaceStage) {
 }
 
 function getDefaultStageSubTab(stage: CardWorkspaceStage) {
+  if (stage === "live") return null;
   if (stage === "overview") return OVERVIEW_SUB_TABS[0].id;
   if (stage === "rules") return RULES_SUB_TABS[0].id;
   if (stage === "effects") return EFFECTS_SUB_TABS[0].id;
@@ -781,7 +791,7 @@ function WorkspaceSubTabBar<T extends string>({
   const activeMeta = tabs.find((tab) => tab.id === activeTab) || tabs[0];
 
   return (
-    <div className={`${retro.sunken} bg-[#081022] p-3 space-y-3`} style={editorSurfaceStyle(activeMeta.accent)}>
+    <div className={`${retro.sunken} bg-[#081022] p-4 space-y-3`} style={editorSurfaceStyle(activeMeta.accent)}>
       <div className="flex flex-wrap gap-2">
         {tabs.map((tab) => {
           const active = tab.id === activeTab;
@@ -798,7 +808,7 @@ function WorkspaceSubTabBar<T extends string>({
           );
         })}
       </div>
-      <div className="text-[10px]" style={S_SUBTLE}>
+      <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>
         <span style={S_TEXT_BOLD}>{activeMeta.label}:</span> {activeMeta.helper}
       </div>
     </div>
@@ -1520,7 +1530,7 @@ function CardLibraryRail({
 
   if (collapsed) {
     return (
-      <div className={`${railShellClass} hidden xl:flex xl:w-[72px] xl:flex-col xl:items-center xl:gap-3 xl:p-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)]`}>
+      <div className={`${railShellClass} hidden xl:flex xl:w-[76px] xl:flex-col xl:items-center xl:gap-3 xl:p-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)]`}>
         <button onClick={onToggleCollapsed} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={sectionBadgeStyle("#4A7BFF")}>
           <ChevronRight size={14} className="rotate-180" />
         </button>
@@ -1537,7 +1547,7 @@ function CardLibraryRail({
             return (
               <button
                 key={card.id}
-                onClick={() => onOpenCard(card, "core")}
+                onClick={() => onOpenCard(card, "preview")}
                 className={`${selected ? retro.sunken : retro.raised} w-full px-2 py-2 text-[10px] text-left`}
                 style={panelButtonStyle(selected, "#4A7BFF")}
                 title={card.name || "Untitled Card"}
@@ -1553,7 +1563,7 @@ function CardLibraryRail({
   }
 
   return (
-    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[232px] p-4 space-y-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)] xl:overflow-hidden`}>
+    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[288px] 2xl:w-[312px] p-4 space-y-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)] xl:overflow-hidden`}>
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
@@ -1592,7 +1602,7 @@ function CardLibraryRail({
           <button onClick={onToggleFilters} className={`${retro.button} flex-1 px-3 py-2 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>
             {showFilters ? "Hide Filters" : "Show Filters"}
           </button>
-          <select value={cardLibrarySort} onChange={(e) => onCardLibrarySortChange(e.target.value as CardLibrarySortMode)} className={`${inputClass} w-[122px] cursor-pointer`} style={inputStyle}>
+          <select value={cardLibrarySort} onChange={(e) => onCardLibrarySortChange(e.target.value as CardLibrarySortMode)} className={`${inputClass} w-[138px] cursor-pointer`} style={inputStyle}>
             <option value="manual">Original</option>
             <option value="name">Name A-Z</option>
             <option value="player">By Player</option>
@@ -1619,11 +1629,11 @@ function CardLibraryRail({
           filteredCards.map((card) => {
             const isSelected = editingCardId === card.id;
             return (
-              <div key={card.id} className={`${retro.raised} p-2.5 transition-colors`} style={{ background: isSelected ? "#111B40" : "#0E0E35", border: isSelected ? "1px solid #2A4A8A" : "1px solid #1A1A4B" }}>
+              <div key={card.id} className={`${retro.raised} p-3 transition-colors`} style={{ background: isSelected ? "#111B40" : "#0E0E35", border: isSelected ? "1px solid #2A4A8A" : "1px solid #1A1A4B" }}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                      <span className="text-[11px] leading-snug break-words" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
+                      <span className="text-[12px] leading-snug break-words" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
                       {card.actionCost && <span className="text-[8px] px-1.5 py-0.5" style={DM_ACTION_BADGE}>{card.actionCost}</span>}
                       {card.customFields["Level"] && parseInt(card.customFields["Level"] || "0", 10) > 0 && (
                         <span className="text-[8px] px-1.5 py-0.5" style={DM_LEVEL_BADGE}>Lv.{card.customFields["Level"]}</span>
@@ -1631,10 +1641,10 @@ function CardLibraryRail({
                     </div>
                     <div className="text-[10px] leading-snug mb-1" style={S_MUTED}>{card.type || "No type"}</div>
                     <div className="text-[9px] leading-snug mb-1" style={S_SUBTLE}>Assigned: {formatOwners(card.assignedTo, players)}</div>
-                    <div className="text-[9px] line-clamp-2" style={S_SUBTLE}>{getCardSummary(card)}</div>
+                    <div className="text-[10px] leading-snug line-clamp-3" style={S_SUBTLE}>{getCardSummary(card)}</div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => onOpenCard(card, "core")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><Edit size={10} /></button>
+                    <button onClick={() => onOpenCard(card, "preview")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><Edit size={10} /></button>
                     <button onClick={() => onDeleteCard(card.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
                   </div>
                 </div>
@@ -1718,10 +1728,10 @@ function CardWorkspaceHeader({
               </span>
             ))}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-2">
             {[
               { label: "Rules Source", value: rulesMode === "guided" ? "Guided Builder" : "Manual Text" },
-              { label: "Validation", value: blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} blocking issue${blockingValidationIssues.length === 1 ? "" : "s"}` : warningValidationIssues.length > 0 ? `${warningValidationIssues.length} warning${warningValidationIssues.length === 1 ? "" : "s"}` : "Ready to save" },
+              { label: "Validation", value: blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} blocking issue${blockingValidationIssues.length === 1 ? "" : "s"} to fix` : warningValidationIssues.length > 0 ? `${warningValidationIssues.length} warning${warningValidationIssues.length === 1 ? "" : "s"} to review` : "Ready to save" },
               { label: "Tracker", value: trackerLabel || "Tracker off" },
               { label: "Current Stage", value: stageMeta.label },
             ].map((item) => (
@@ -1733,7 +1743,7 @@ function CardWorkspaceHeader({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0 xl:max-w-[260px] xl:justify-end">
+        <div className="flex flex-wrap items-center gap-2 shrink-0 xl:justify-end">
           <button onClick={onNewCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
             <Plus size={14} /> New Card
           </button>
@@ -1804,6 +1814,7 @@ function InteractiveCardPreview({
   const selectedNodeLabel = getNodeAssignmentLabel(card, nodeTrees);
   const previewMeta = buildPlayerFacingPreviewMeta(card);
   const tagBadgeLabels = playerFacingTagBadges.length > 0 ? playerFacingTagBadges.map((badge) => badge.label) : card.tags;
+  const livePreviewMode = currentStage === "live";
 
   const previewSectionStyle = (accent: string, active: boolean) => ({
     ...editorSurfaceStyle(active ? accent : "#223256"),
@@ -1815,8 +1826,10 @@ function InteractiveCardPreview({
     stage: CardWorkspaceStage,
     region: CardPreviewFocusRegion,
     subTab?: OverviewSubTab | RulesSubTab | EffectsSubTab | DeliverySubTab,
+    forceSupportingStage = false,
   ) => {
-    onStageSelect(stage, region, subTab);
+    const resolvedStage = livePreviewMode && !forceSupportingStage ? "live" : stage;
+    onStageSelect(resolvedStage, region, resolvedStage === "live" ? undefined : subTab);
     onPreviewFocus(region);
     if (previewEditField && region !== previewFocusRegion) {
       onPreviewEditFieldChange(null);
@@ -1828,8 +1841,9 @@ function InteractiveCardPreview({
     region: CardPreviewFocusRegion,
     field: CardPreviewEditField,
     subTab?: OverviewSubTab | RulesSubTab | EffectsSubTab | DeliverySubTab,
+    forceSupportingStage = false,
   ) => {
-    focusStage(stage, region, subTab);
+    focusStage(stage, region, subTab, forceSupportingStage);
     onPreviewEditFieldChange(field);
   };
 
@@ -1840,24 +1854,28 @@ function InteractiveCardPreview({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
-          <div className="text-[10px] mt-1" style={S_SUBTLE}>Click the card like a player would read it. Common edits open directly on the preview.</div>
+          <div className="text-[10px] mt-1" style={S_SUBTLE}>
+            {livePreviewMode
+              ? "Live Edit keeps the preview in focus. Click visible card sections to edit what players will actually see."
+              : "Click the card like a player would read it. Common edits open directly on the preview."}
+          </div>
         </div>
         <span className="text-[9px] px-2 py-1" style={sectionBadgeStyle(selectedStageAccent)}>{getWorkspaceStageMeta(currentStage).label}</span>
       </div>
 
       <div className="flex flex-wrap gap-2">
         {[
-          { label: "Identity", stage: "overview" as CardWorkspaceStage, region: "identity" as CardPreviewFocusRegion, subTab: "identity" as OverviewSubTab },
-          { label: "Description", stage: "overview" as CardWorkspaceStage, region: "description" as CardPreviewFocusRegion, subTab: "identity" as OverviewSubTab },
-          { label: "Effect", stage: "rules" as CardWorkspaceStage, region: "rules" as CardPreviewFocusRegion, subTab: "main-effect" as RulesSubTab },
-          { label: "Tags", stage: "effects" as CardWorkspaceStage, region: "tags" as CardPreviewFocusRegion, subTab: "visible-fields" as EffectsSubTab },
-          { label: "Tracker", stage: "effects" as CardWorkspaceStage, region: "tracking" as CardPreviewFocusRegion, subTab: "tracker" as EffectsSubTab },
-          { label: "Delivery", stage: "delivery" as CardWorkspaceStage, region: "delivery" as CardPreviewFocusRegion, subTab: "players" as DeliverySubTab },
+          { label: "Identity", stage: "overview" as CardWorkspaceStage, region: "identity" as CardPreviewFocusRegion, subTab: "identity" as OverviewSubTab, forceSupportingStage: false },
+          { label: "Description", stage: "overview" as CardWorkspaceStage, region: "description" as CardPreviewFocusRegion, subTab: "identity" as OverviewSubTab, forceSupportingStage: false },
+          { label: "Effect", stage: "rules" as CardWorkspaceStage, region: "rules" as CardPreviewFocusRegion, subTab: "main-effect" as RulesSubTab, forceSupportingStage: false },
+          { label: "Tags", stage: "effects" as CardWorkspaceStage, region: "tags" as CardPreviewFocusRegion, subTab: "visible-fields" as EffectsSubTab, forceSupportingStage: false },
+          { label: "Tracker", stage: "effects" as CardWorkspaceStage, region: "tracking" as CardPreviewFocusRegion, subTab: "tracker" as EffectsSubTab, forceSupportingStage: false },
+          { label: "Delivery", stage: "delivery" as CardWorkspaceStage, region: "delivery" as CardPreviewFocusRegion, subTab: "players" as DeliverySubTab, forceSupportingStage: true },
         ].map((item) => (
           <button
             key={item.label}
             type="button"
-            onClick={() => focusStage(item.stage, item.region, item.subTab)}
+            onClick={() => focusStage(item.stage, item.region, item.subTab, item.forceSupportingStage)}
             className={`${retro.button} px-3 py-1.5 text-[10px]`}
             style={sectionBadgeStyle(getWorkspaceStageAccent(item.stage))}
           >
@@ -1885,7 +1903,7 @@ function InteractiveCardPreview({
             <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("overview", "identity", "identity", "identity"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#4A7BFF")}>
               Edit Identity
             </button>
-            <button type="button" onClick={() => focusStage("delivery", "delivery", "players")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+            <button type="button" onClick={() => focusStage("delivery", "delivery", "players", true)} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
               Delivery
             </button>
           </div>
@@ -1998,7 +2016,7 @@ function InteractiveCardPreview({
                   <div className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} onClick={(e) => e.stopPropagation()}>
                     <div className="text-[11px]" style={S_SUBTLE}>Guided Builder currently owns the saved effect text. Switch to Manual Text if you want to type directly here.</div>
                     <div className="flex flex-wrap gap-2">
-                      <button type="button" onClick={() => { onRulesModeChange("manual"); beginEdit("rules", "rules", "effect", "main-effect"); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Switch to Manual Text</button>
+                    <button type="button" onClick={() => { onRulesModeChange("manual"); beginEdit("rules", "rules", "effect", "main-effect"); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Switch to Manual Text</button>
                       <button type="button" onClick={stopEditing} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_TEXT}>Close</button>
                     </div>
                   </div>
@@ -2096,7 +2114,7 @@ function InteractiveCardPreview({
                   <div className="text-[10px]" style={S_SECTION_HDR}>VISIBLE TAG FIELDS</div>
                   <div className="text-[10px]" style={S_SUBTLE}>{visibleCustomFieldGroups.length > 0 ? `${visibleCustomFieldGroups.length} group${visibleCustomFieldGroups.length === 1 ? "" : "s"} visible` : `${card.tags.length} active tag${card.tags.length === 1 ? "" : "s"}`}</div>
                 </button>
-                <button type="button" onClick={() => focusStage("effects", "tags", visibleCustomFieldGroups.length > 0 ? "visible-fields" : "tags")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
+                <button type="button" onClick={() => focusStage("effects", "tags", visibleCustomFieldGroups.length > 0 ? "visible-fields" : "tags", visibleCustomFieldGroups.length === 0)} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
                   {visibleCustomFieldGroups.length > 0 ? "Manage Fields" : "Add Tags"}
                 </button>
               </div>
@@ -2192,11 +2210,11 @@ function InteractiveCardPreview({
 
       <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#7ACA8A", previewFocusRegion === "delivery" || currentStage === "delivery")}>
         <div className="flex items-center justify-between gap-2">
-          <button type="button" onClick={() => focusStage("delivery", "delivery", "players")} className="text-left">
+          <button type="button" onClick={() => focusStage("delivery", "delivery", "players", true)} className="text-left">
             <div className="text-[10px]" style={S_SECTION_HDR}>DM DELIVERY SNAPSHOT</div>
             <div className="text-[10px]" style={S_SUBTLE}>{formatOwners(card.assignedTo, players)} | {selectedNodeLabel}</div>
           </button>
-          <button type="button" onClick={() => focusStage("delivery", "delivery", "players")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+          <button type="button" onClick={() => focusStage("delivery", "delivery", "players", true)} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
             {card.assignedTo.length === 0 && !card.nodeTreeId ? "Add Assignment" : "Manage Delivery"}
           </button>
         </div>
@@ -2232,7 +2250,7 @@ export function DMCardManagerSection({
   const [cardTypeFilter, setCardTypeFilter] = useState<string>("all");
   const [cardLibrarySort, setCardLibrarySort] = useState<CardLibrarySortMode>("manual");
   const [editorPanel, setEditorPanel] = useState<CardEditorPanel>("preview");
-  const [workspaceStage, setWorkspaceStage] = useState<CardWorkspaceStage>("overview");
+  const [workspaceStage, setWorkspaceStage] = useState<CardWorkspaceStage>("live");
   const [overviewSubTab, setOverviewSubTab] = useState<OverviewSubTab>("identity");
   const [rulesSubTab, setRulesSubTab] = useState<RulesSubTab>("main-effect");
   const [effectsSubTab, setEffectsSubTab] = useState<EffectsSubTab>("tags");
@@ -2286,7 +2304,7 @@ export function DMCardManagerSection({
       setCardSectionBlocks([]);
       setRulesMode("manual");
       setMechanicsView("rules");
-      setWorkspaceStage("overview");
+      setWorkspaceStage("live");
       setOverviewSubTab("identity");
       setRulesSubTab("main-effect");
       setEffectsSubTab("tags");
@@ -2310,7 +2328,7 @@ export function DMCardManagerSection({
     setCardSectionBlocks(storedBlocks);
     setRulesMode(storedRulesMode);
     setMechanicsView(storedRulesMode === "manual" ? "text" : "rules");
-    setWorkspaceStage("overview");
+    setWorkspaceStage("live");
     setOverviewSubTab("identity");
     setRulesSubTab(storedRulesMode === "manual" ? "main-effect" : "builder");
     setEffectsSubTab("tags");
@@ -2404,7 +2422,7 @@ export function DMCardManagerSection({
   }, [hasUnsavedChanges]);
 
   const handleAddCard = () => {
-    selectWorkspaceStage("overview", null, "identity");
+    selectWorkspaceStage("live", null);
     setShowTemplatePicker((prev) => {
       const next = !prev;
       if (!next) setPendingTemplate(null);
@@ -2432,8 +2450,8 @@ export function DMCardManagerSection({
     setCardSectionBlocks(nextBlocks);
     setRulesMode(nextRulesMode);
     setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
-    selectWorkspaceStage("overview", "identity", "identity");
-    setEditorPanel("core");
+    selectWorkspaceStage("live", "identity");
+    setEditorPanel("preview");
     setPendingTemplate(null);
     setShowTemplatePicker(false);
     setIsCardLibraryMobileOpen(false);
@@ -2512,7 +2530,7 @@ export function DMCardManagerSection({
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
     setPendingTemplate(null);
-    selectWorkspaceStage("overview", null, "identity");
+    selectWorkspaceStage("live", null);
     setEditorPanel("preview");
     editorBaselineRef.current = "";
   };
@@ -2544,6 +2562,8 @@ export function DMCardManagerSection({
       selectWorkspaceStage("effects", "tags", "tags");
     } else if (nextPanel === "mechanics") {
       selectWorkspaceStage("rules", "rules", nextRulesMode === "manual" ? "main-effect" : "builder");
+    } else if (nextPanel === "preview") {
+      selectWorkspaceStage("live", "identity");
     } else {
       selectWorkspaceStage("overview", "identity", "identity");
     }
@@ -2579,7 +2599,12 @@ export function DMCardManagerSection({
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
     setEditingCard({ ...editingCard, customFields: nextCustomFields });
-    selectWorkspaceStage("effects", "quick-rolls", "quick-rolls");
+    if (workspaceStage === "live") {
+      selectWorkspaceStage("live", "quick-rolls");
+      setPreviewEditField("quick-rolls");
+    } else {
+      selectWorkspaceStage("effects", "quick-rolls", "quick-rolls");
+    }
     setEditorPanel("mechanics");
     setMechanicsView("automation");
   };
@@ -2951,6 +2976,15 @@ export function DMCardManagerSection({
     if (!editingCard) return [];
     return [
       {
+        id: "live" as CardWorkspaceStage,
+        accent: "#5C8DFF",
+        title: "Live Edit",
+        summary: "Preview-first editing",
+        detail: stripHtml(editingCard.effect || editingCard.customFields[CARD_DESCRIPTION_KEY] || "").trim()
+          ? "Edit the visible card text directly in the live preview"
+          : "Start by clicking into the live preview to fill the visible card text",
+      },
+      {
         id: "overview" as CardWorkspaceStage,
         accent: currentFamilyDef?.accent || "#4A7BFF",
         title: "Overview",
@@ -3077,14 +3111,6 @@ export function DMCardManagerSection({
     const activeView = mechanicsWorkspaceCards.find((view) => view.id === mechanicsView);
     return activeView || mechanicsWorkspaceCards[0];
   }, [mechanicsWorkspaceCards, mechanicsView]);
-  const currentStageSubTabs = useMemo(() => getWorkspaceSubTabs(workspaceStage), [workspaceStage]);
-  const currentStageSubTab = useMemo(() => {
-    if (workspaceStage === "overview") return overviewSubTab;
-    if (workspaceStage === "rules") return rulesSubTab;
-    if (workspaceStage === "effects") return effectsSubTab;
-    return deliverySubTab;
-  }, [workspaceStage, overviewSubTab, rulesSubTab, effectsSubTab, deliverySubTab]);
-
   const setStageSubTab = useCallback((
     stage: CardWorkspaceStage,
     subTab: OverviewSubTab | RulesSubTab | EffectsSubTab | DeliverySubTab,
@@ -3111,6 +3137,7 @@ export function DMCardManagerSection({
     setWorkspaceStage(stage);
     setPreviewFocusRegion(focusRegion);
     setPreviewEditField(null);
+    if (stage === "live") return;
     if (subTab) {
       setStageSubTab(stage, subTab);
       return;
@@ -3191,7 +3218,7 @@ export function DMCardManagerSection({
 
         {overviewSubTab === "identity" && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#4A7BFF")}>
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)] gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)] gap-4">
               <div className="space-y-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle("#4A7BFF")}>
                   <div className="text-[12px] mb-1" style={S_SECTION_HDR}>PREVIEW-FIRST EDITING</div>
@@ -3199,7 +3226,7 @@ export function DMCardManagerSection({
                     Use the live preview for the card's visible text first. This sub-tab keeps the same fields available in a wider supporting layout when you want a full form.
                   </div>
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Card Name:</label>
                     <input type="text" value={editingCard.name} onChange={(e) => updateCardField("name", e.target.value)} placeholder="Enter card name..." className={inputClass} style={inputStyle} />
@@ -3282,8 +3309,8 @@ export function DMCardManagerSection({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)] gap-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Cost Model:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_COST_MODEL_KEY, e.target.value)} placeholder="e.g., Source, Exhaustion / Uses..." className={inputClass} style={inputStyle} />
@@ -3334,9 +3361,9 @@ export function DMCardManagerSection({
 
         {overviewSubTab === "advanced-profile" && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={editorSurfaceStyle("#8AB8FF")}>
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.18fr)_minmax(260px,0.82fr)] gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] gap-4">
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
                   <div className="md:col-span-2 xl:col-span-3">
                     <label className="text-[10px] block mb-2" style={labelStyle}>Components:</label>
                     <div className="flex flex-wrap items-center gap-2">
@@ -3449,7 +3476,7 @@ export function DMCardManagerSection({
           </div>
 
           {rulesSubTab === "main-effect" && (
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)] gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-4">
               <div className="space-y-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle(rulesMode === "manual" ? "#FFD166" : "#6ABAFF")}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3525,7 +3552,7 @@ export function DMCardManagerSection({
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 2xl:grid-cols-4 gap-2">
                 {MECHANICS_BLOCKS.map((block) => (
                   <button
                     key={block.id}
@@ -3600,7 +3627,7 @@ export function DMCardManagerSection({
                   Clear All Blocks
                 </button>
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
+              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Custom Block Title:</label>
                   <input type="text" value={newSectionTitle} onChange={(e) => setNewSectionTitle(e.target.value)} placeholder="e.g. Follow-Up, Combo..." className={inputClass} style={inputStyle} />
@@ -3635,7 +3662,7 @@ export function DMCardManagerSection({
                           <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
+                      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Section Title:</label>
                           <input type="text" value={block.title} onChange={(e) => updateSectionBlock(block.id, { title: e.target.value })} className={inputClass} style={inputStyle} />
@@ -3662,7 +3689,7 @@ export function DMCardManagerSection({
           )}
 
           {rulesSubTab === "scaling" && (
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-4">
+            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-4">
               <div className="space-y-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-2`} style={editorSurfaceStyle("#FFD700")}>
                   <div className="text-[10px]" style={S_SECTION_HDR}>SCALING / UPCAST</div>
@@ -3712,7 +3739,7 @@ export function DMCardManagerSection({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
                 {[
                   { label: "Active Tags", value: String(selectedTagDefs.length), detail: selectedTagDefs.length === 0 ? "Nothing attached yet" : "Helper tags currently on this card", accent: "#9A7ABB" },
                   { label: "Suggested Tags", value: String(suggestedTagDefs.length), detail: suggestedTagDefs.length === 0 ? "No strong suggestions" : "Possible helpers based on current rules", accent: "#6ABAFF" },
@@ -4067,15 +4094,19 @@ export function DMCardManagerSection({
               {validationIssues.length === 0 ? (
                 <div className="text-[11px]" style={S_MUTED}>This card has no validation warnings right now.</div>
               ) : (
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-2">
                   {validationIssues.map((issue) => (
                     <button
                       key={issue.id}
                       onClick={() => focusValidationIssue(issue)}
-                      className={`${retro.button} px-3 py-1.5 text-left text-[10px]`}
-                      style={issue.level === "error" ? sectionBadgeStyle("#FF7A7A") : sectionBadgeStyle("#FFD700")}
+                      className={`${retro.raised} w-full p-3 text-left`}
+                      style={editorSurfaceStyle(issue.level === "error" ? "#FF7A7A" : "#FFD700")}
                     >
-                      {issue.level === "error" ? "Fix" : "Review"}: {issue.message}
+                      <div className="text-[10px]" style={issue.level === "error" ? S_RED : { color: "#FFD700" }}>
+                        {issue.level === "error" ? "Error" : "Warning"}
+                      </div>
+                      <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{issue.message}</div>
+                      <div className="text-[10px] mt-2" style={S_SUBTLE}>Click to jump to the part of the editor that needs attention.</div>
                     </button>
                   ))}
                 </div>
@@ -4193,6 +4224,7 @@ export function DMCardManagerSection({
   const renderCardsWorkspace = () => {
     const stageMeta = getWorkspaceStageMeta(workspaceStage);
     const activeStageCard = workspaceStageCards.find((entry) => entry.id === workspaceStage);
+    const liveEditStageActive = workspaceStage === "live";
 
     return (
       <div className="space-y-4">
@@ -4200,7 +4232,7 @@ export function DMCardManagerSection({
           <div>
             <div className="text-[12px]" style={S_SECTION_HDR}>CARD WORKSPACE</div>
             <div className="text-[10px] mt-1" style={S_SUBTLE}>
-              A preview-first card editor with a narrower library rail, focused stages, and a live player-style preview that stays beside the work.
+              A preview-first card editor with a wider DM workspace, a dedicated live edit mode, and a player-style preview that stays beside the work.
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -4302,20 +4334,20 @@ export function DMCardManagerSection({
           />
 
           {!editingCard ? (
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.8fr)_minmax(500px,1.2fr)] gap-5">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(620px,1.1fr)] gap-5">
               <div className={`${retro.sunken} bg-[#0C0C2E] p-6 space-y-4`}>
                 <div className="flex items-center gap-3 mb-4">
                   <Sparkles size={18} style={S_ACCENT} />
                   <div className="text-[13px]" style={S_TEXT_BOLD}>Card Editor Workspace</div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
                   {CARD_WORKSPACE_STAGES.map((stage) => (
                     <div key={stage.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(stage.accent)}>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <div className="text-[11px]" style={S_TEXT_BOLD}>{stage.label}</div>
-                        <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(stage.accent)}>{stage.label}</span>
+                      <div className="flex items-center gap-2 mb-2">
+                        <stage.icon size={13} style={{ color: stage.accent }} />
+                        <div className="text-[12px]" style={S_TEXT_BOLD}>{stage.label}</div>
                       </div>
-                      <div className="text-[10px]" style={S_SUBTLE}>{stage.helper}</div>
+                      <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>{stage.helper}</div>
                     </div>
                   ))}
                 </div>
@@ -4372,31 +4404,64 @@ export function DMCardManagerSection({
                     })}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
                     {[
-                      { label: "Current Stage", value: activeStageCard?.title || stageMeta.label, accent: stageMeta.accent },
-                      { label: "Stage Focus", value: activeStageCard?.summary || stageMeta.helper, accent: "#6ABAFF" },
-                      { label: "Stage Detail", value: activeStageCard?.detail || "Open a card section to begin editing.", accent: "#FFD166" },
-                      { label: "Library Results", value: `${filteredCards.length} shown`, accent: "#7ACA8A" },
+                      {
+                        label: "Current Stage",
+                        value: `${activeStageCard?.title || stageMeta.label}`,
+                        detail: activeStageCard?.summary || stageMeta.helper,
+                        accent: stageMeta.accent,
+                      },
+                      {
+                        label: "Workspace Status",
+                        value: activeStageCard?.detail || "Open a card section to begin editing.",
+                        detail: `${filteredCards.length} card${filteredCards.length === 1 ? "" : "s"} shown in the library`,
+                        accent: "#7ACA8A",
+                      },
                     ].map((item) => (
-                      <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle(item.accent)}>
-                        <div className="text-[9px] uppercase tracking-[0.06em] mb-1" style={S_SECTION_HDR}>{item.label}</div>
-                        <div className="text-[11px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
+                      <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-1.5`} style={editorSurfaceStyle(item.accent)}>
+                        <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>{item.label}</div>
+                        <div className="text-[12px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
+                        <div className="text-[10px] leading-relaxed break-words" style={S_SUBTLE}>{item.detail}</div>
                       </div>
                     ))}
                   </div>
                 </div>
+
+                {validationIssues.length > 0 && (
+                  <div className={`${retro.sunken} bg-[#0B1128] p-3 space-y-2`} style={editorSurfaceStyle(blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700")}>
+                    <div className="text-[10px]" style={S_SECTION_HDR}>OPEN ISSUES</div>
+                    <div className="space-y-2">
+                      {validationIssues.slice(0, 4).map((issue) => (
+                        <button
+                          key={issue.id}
+                          type="button"
+                          onClick={() => focusValidationIssue(issue)}
+                          className={`${retro.raised} w-full p-3 text-left`}
+                          style={editorSurfaceStyle(issue.level === "error" ? "#FF7A7A" : "#FFD700")}
+                        >
+                          <div className="text-[10px]" style={issue.level === "error" ? S_RED : { color: "#FFD700" }}>
+                            {issue.level === "error" ? "Error" : "Warning"}
+                          </div>
+                          <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{issue.message}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.76fr)_minmax(560px,1.24fr)] gap-5 items-start">
-                <div className="space-y-4 order-2 xl:order-1">
-                  {workspaceStage === "overview" && renderOverviewStage()}
-                  {workspaceStage === "rules" && renderRulesStage()}
-                  {workspaceStage === "effects" && renderEffectsStage()}
-                  {workspaceStage === "delivery" && renderDeliveryStage()}
-                </div>
+              <div className={liveEditStageActive ? "space-y-4" : "grid grid-cols-1 xl:grid-cols-[minmax(440px,0.94fr)_minmax(720px,1.06fr)] gap-6 items-start"}>
+                {!liveEditStageActive && (
+                  <div className="space-y-4 order-2 xl:order-1">
+                    {workspaceStage === "overview" && renderOverviewStage()}
+                    {workspaceStage === "rules" && renderRulesStage()}
+                    {workspaceStage === "effects" && renderEffectsStage()}
+                    {workspaceStage === "delivery" && renderDeliveryStage()}
+                  </div>
+                )}
 
-                <div className="order-1 xl:order-2">
+                <div className={liveEditStageActive ? "" : "order-1 xl:order-2"}>
                   {livePreviewCard && (
                     <InteractiveCardPreview
                       card={livePreviewCard}
