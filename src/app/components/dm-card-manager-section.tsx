@@ -60,12 +60,15 @@ interface DMCardManagerSectionProps {
 
 type LevelCategory = { id: string; name: string; order: number; cardIds: string[]; description?: string };
 type CardEditorPanel = "preview" | "core" | "mechanics" | "tags" | "progression" | "assignment";
+type CardWorkspaceStage = "overview" | "rules" | "effects" | "delivery";
 type CardRulesMode = "guided" | "manual";
 type MechanicsWorkspaceView = "rules" | "automation" | "text";
 type CardTemplateId = "blank" | "attack" | "heal" | "buff" | "debuff" | "reaction" | "passive" | "utility";
 type TagFilterMode = "all" | "active" | "withFields" | "simple";
 type CardFamily = "" | "spell" | "skill" | "ability";
 type CardLibrarySortMode = "manual" | "name" | "player";
+type CardPreviewFocusRegion = "identity" | "description" | "rules" | "scaling" | "tags" | "tracking" | "quick-rolls" | "delivery" | null;
+type CardPreviewEditField = "identity" | "description" | "effect" | "scaling" | `tag:${string}` | null;
 type ActiveCustomFieldEntry = { tagName: string; fieldName: string; key: string; fieldDef: TagField };
 type ActiveCustomFieldGroup = { tagName: string; fields: ActiveCustomFieldEntry[] };
 
@@ -127,6 +130,14 @@ interface CardValidationIssue {
   panel: CardEditorPanel;
   mechanicsView?: MechanicsWorkspaceView;
   message: string;
+}
+
+interface CardWorkspaceStageDef {
+  id: CardWorkspaceStage;
+  label: string;
+  accent: string;
+  icon: React.ComponentType<{ size?: number }>;
+  helper: string;
 }
 
 const EDITOR_MECHANICS_KEY = "__editor_mechanics_builder";
@@ -231,6 +242,37 @@ const CARD_SECTION_BLOCK_PRESETS: Array<{ title: string; tone: CardSectionTone; 
   { title: "Follow-Up", tone: "rules", content: "List any extra steps, secondary effects, or aftermath." },
   { title: "Limitation", tone: "limitation", content: "Explain restrictions, edge cases, or what this card cannot do." },
   { title: "Reminder", tone: "reminder", content: "Add a quick DM/player reminder or shorthand ruling note." },
+];
+
+const CARD_WORKSPACE_STAGES: CardWorkspaceStageDef[] = [
+  {
+    id: "overview",
+    label: "Overview",
+    accent: "#4A7BFF",
+    icon: Settings,
+    helper: "Identity, family, description, and the card's core use profile.",
+  },
+  {
+    id: "rules",
+    label: "Rules",
+    accent: "#6ABAFF",
+    icon: FileText,
+    helper: "Guided builder, rules source, manual text, and scaling.",
+  },
+  {
+    id: "effects",
+    label: "Effects & Tags",
+    accent: "#9A7ABB",
+    icon: Tags,
+    helper: "Tracker, quick rolls, tags, and helper field groups.",
+  },
+  {
+    id: "delivery",
+    label: "Delivery",
+    accent: "#7ACA8A",
+    icon: Users,
+    helper: "Assignments, progression, validation, and final publishing checks.",
+  },
 ];
 
 const CARD_TEMPLATES: CardTemplateDef[] = [
@@ -486,6 +528,27 @@ function getCardLibraryOwnerSortKey(card: ManagedCard, players: { id: string; na
     .join(", ")
     .toLowerCase();
   return `1::${ownerNames}`;
+}
+
+function getWorkspaceStageForPanel(panel: CardEditorPanel, mechanicsView?: MechanicsWorkspaceView): CardWorkspaceStage {
+  if (panel === "mechanics") {
+    return mechanicsView === "automation" ? "effects" : "rules";
+  }
+  if (panel === "tags") return "effects";
+  if (panel === "progression" || panel === "assignment") return "delivery";
+  return "overview";
+}
+
+function getWorkspaceStageMeta(stage: CardWorkspaceStage) {
+  return CARD_WORKSPACE_STAGES.find((entry) => entry.id === stage) || CARD_WORKSPACE_STAGES[0];
+}
+
+function getWorkspaceStageAccent(stage: CardWorkspaceStage) {
+  return getWorkspaceStageMeta(stage).accent;
+}
+
+function hasFilledFieldValue(value?: string | null) {
+  return !!value && value.trim().length > 0;
 }
 
 function getNodeAssignmentLabel(card: ManagedCard, nodeTrees: NodeTree[]) {
@@ -1184,6 +1247,625 @@ function CardPreviewPanel({
   );
 }
 
+function CardLibraryRail({
+  collapsed,
+  mobileOpen,
+  onToggleCollapsed,
+  onCloseMobile,
+  filteredCards,
+  managedCardsCount,
+  editingCardId,
+  players,
+  cardSearch,
+  onCardSearchChange,
+  cardLibrarySort,
+  onCardLibrarySortChange,
+  cardTypeFilter,
+  onCardTypeFilterChange,
+  allCardTypes,
+  cardTagFilter,
+  onCardTagFilterChange,
+  allCardTagNames,
+  onOpenCard,
+  onDeleteCard,
+  onNewCard,
+}: {
+  collapsed: boolean;
+  mobileOpen: boolean;
+  onToggleCollapsed: () => void;
+  onCloseMobile: () => void;
+  filteredCards: ManagedCard[];
+  managedCardsCount: number;
+  editingCardId?: string | null;
+  players: PlayerData[];
+  cardSearch: string;
+  onCardSearchChange: (value: string) => void;
+  cardLibrarySort: CardLibrarySortMode;
+  onCardLibrarySortChange: (value: CardLibrarySortMode) => void;
+  cardTypeFilter: string;
+  onCardTypeFilterChange: (value: string) => void;
+  allCardTypes: string[];
+  cardTagFilter: string;
+  onCardTagFilterChange: (value: string) => void;
+  allCardTagNames: string[];
+  onOpenCard: (card: ManagedCard, panel?: CardEditorPanel) => void;
+  onDeleteCard: (id: string) => void;
+  onNewCard: () => void;
+}) {
+  const railShellClass = `${retro.sunken} bg-[#081022]`;
+
+  if (collapsed) {
+    return (
+      <div className={`${railShellClass} hidden xl:flex xl:flex-col xl:items-center xl:gap-3 xl:p-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)]`}>
+        <button onClick={onToggleCollapsed} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={sectionBadgeStyle("#4A7BFF")}>
+          <ChevronRight size={14} className="rotate-180" />
+        </button>
+        <button onClick={onNewCard} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={S_GREEN_BTN} title="New Card">
+          <Plus size={14} />
+        </button>
+        <div className="text-[9px] text-center" style={S_SUBTLE}>
+          <div style={S_TEXT_BOLD}>{filteredCards.length}</div>
+          <div>Cards</div>
+        </div>
+        <div className="space-y-2 overflow-y-auto w-full pr-0.5">
+          {filteredCards.slice(0, 10).map((card) => {
+            const selected = editingCardId === card.id;
+            return (
+              <button
+                key={card.id}
+                onClick={() => onOpenCard(card, "core")}
+                className={`${selected ? retro.sunken : retro.raised} w-full px-2 py-2 text-[10px] text-left`}
+                style={panelButtonStyle(selected, "#4A7BFF")}
+                title={card.name || "Untitled Card"}
+              >
+                <div className="truncate" style={S_TEXT_BOLD}>{card.name || "Untitled"}</div>
+                <div className="truncate mt-1" style={S_MUTED}>{card.type || "No type"}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block p-4 space-y-3 xl:sticky xl:top-2 xl:h-[calc(100vh-9rem)] xl:overflow-hidden`}>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
+          <div className="text-[10px] mt-1" style={S_SUBTLE}>Browse, sort, and reopen cards without leaving the workspace.</div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[10px] px-2 py-1" style={{ color: "#7A8AAA", border: "1px solid #1A1A4B", background: "#0A0A28" }}>
+            {filteredCards.length}/{managedCardsCount}
+          </span>
+          <button onClick={onToggleCollapsed} className="hidden xl:flex hover:opacity-80" title="Collapse library">
+            <ChevronRight size={14} style={S_SUBTLE} />
+          </button>
+          <button onClick={onCloseMobile} className="xl:hidden hover:opacity-80" title="Close library">
+            <X size={14} style={S_RED} />
+          </button>
+        </div>
+      </div>
+
+      <button onClick={onNewCard} className={`${retro.button} w-full px-4 py-2 text-[12px] flex items-center justify-center gap-2`} style={S_GREEN_BTN}>
+        <Plus size={14} /> New Card
+      </button>
+
+      <div className="space-y-2">
+        <div className="relative">
+          <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2" style={S_MUTED} />
+          <input
+            type="text"
+            value={cardSearch}
+            onChange={(e) => onCardSearchChange(e.target.value)}
+            placeholder="Search cards..."
+            className={`${inputClass} pl-9`}
+            style={inputStyle}
+          />
+        </div>
+        <select value={cardLibrarySort} onChange={(e) => onCardLibrarySortChange(e.target.value as CardLibrarySortMode)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+          <option value="manual">Original Order</option>
+          <option value="name">Name (A-Z)</option>
+          <option value="player">Player Assignment</option>
+        </select>
+        <div className="grid grid-cols-2 gap-2">
+          <select value={cardTypeFilter} onChange={(e) => onCardTypeFilterChange(e.target.value)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+            <option value="all">All Types</option>
+            {allCardTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+          <select value={cardTagFilter} onChange={(e) => onCardTagFilterChange(e.target.value)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+            <option value="all">All Tags</option>
+            {allCardTagNames.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="space-y-2 xl:flex-1 xl:overflow-y-auto xl:pr-1">
+        {filteredCards.length === 0 ? (
+          <div className="text-[11px] text-center py-6" style={S_MUTED}>No matching cards.</div>
+        ) : (
+          filteredCards.map((card) => {
+            const isSelected = editingCardId === card.id;
+            return (
+              <div key={card.id} className={`${retro.raised} p-3 transition-colors`} style={{ background: isSelected ? "#111B40" : "#0E0E35", border: isSelected ? "1px solid #2A4A8A" : "1px solid #1A1A4B" }}>
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                      <span className="text-[12px] truncate" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
+                      {card.actionCost && <span className="text-[8px] px-1.5 py-0.5" style={DM_ACTION_BADGE}>{card.actionCost}</span>}
+                      {card.customFields["Level"] && parseInt(card.customFields["Level"] || "0", 10) > 0 && (
+                        <span className="text-[8px] px-1.5 py-0.5" style={DM_LEVEL_BADGE}>Lv.{card.customFields["Level"]}</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] mb-1" style={S_MUTED}>{card.type || "No type"}</div>
+                    <div className="text-[10px] mb-1" style={S_SUBTLE}>Assigned: {formatOwners(card.assignedTo, players)}</div>
+                    <div className="text-[10px] line-clamp-3" style={S_SUBTLE}>{getCardSummary(card)}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => onOpenCard(card, "core")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><Edit size={10} /></button>
+                    <button onClick={() => onDeleteCard(card.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
+                  </div>
+                </div>
+                {card.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {card.tags.slice(0, 4).map((tag) => (
+                      <span key={tag} className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}>{tag}</span>
+                    ))}
+                    {card.tags.length > 4 && <span className="text-[8px]" style={S_MUTED}>+{card.tags.length - 4}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CardWorkspaceHeader({
+  editingCard,
+  isAddingNewCard,
+  currentFamilyDef,
+  currentProfileBadges,
+  rulesMode,
+  hasUnsavedChanges,
+  blockingValidationIssues,
+  warningValidationIssues,
+  trackerLabel,
+  currentStage,
+  onSave,
+  onClose,
+  onNewCard,
+  onOpenLibrary,
+}: {
+  editingCard: ManagedCard;
+  isAddingNewCard: boolean;
+  currentFamilyDef: CardFamilyDef | undefined | null;
+  currentProfileBadges: string[];
+  rulesMode: CardRulesMode;
+  hasUnsavedChanges: boolean;
+  blockingValidationIssues: CardValidationIssue[];
+  warningValidationIssues: CardValidationIssue[];
+  trackerLabel: string | null;
+  currentStage: CardWorkspaceStage;
+  onSave: () => void;
+  onClose: () => void;
+  onNewCard: () => void;
+  onOpenLibrary: () => void;
+}) {
+  const stageMeta = getWorkspaceStageMeta(currentStage);
+
+  return (
+    <div className={`${retro.sunken} bg-[#081022] p-4 space-y-3`} style={editorSurfaceStyle(stageMeta.accent)}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <button onClick={onOpenLibrary} className="xl:hidden hover:opacity-80" title="Open card library">
+              <CreditCard size={14} style={S_ACCENT} />
+            </button>
+            <span className="text-[10px]" style={S_SECTION_HDR}>{isAddingNewCard ? "NEW CARD WORKSPACE" : "CARD EDITOR WORKSPACE"}</span>
+            <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(stageMeta.accent)}>Stage: {stageMeta.label}</span>
+          </div>
+          <div className="text-[18px] break-words" style={S_TEXT_BOLD}>{editingCard.name || "Untitled Card"}</div>
+          <div className="text-[11px] mt-1" style={S_MUTED}>
+            {editingCard.type || "No type"} ﾂｷ {editingCard.actionCost || "No action cost"} ﾂｷ {rulesMode === "guided" ? "Guided rules source" : "Manual rules source"}
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {currentFamilyDef && (
+              <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle(currentFamilyDef.accent)}>{currentFamilyDef.label}</span>
+            )}
+            {hasUnsavedChanges && (
+              <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#FF9A7A")}>Unsaved Changes</span>
+            )}
+            {blockingValidationIssues.length > 0 && (
+              <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#FF7A7A")}>
+                {blockingValidationIssues.length} blocking issue{blockingValidationIssues.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {warningValidationIssues.length > 0 && (
+              <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#FFD700")}>
+                {warningValidationIssues.length} warning{warningValidationIssues.length === 1 ? "" : "s"}
+              </span>
+            )}
+            {trackerLabel && (
+              <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#4ACA6A")}>{trackerLabel}</span>
+            )}
+            {currentProfileBadges.slice(currentFamilyDef ? 1 : 0, currentFamilyDef ? 4 : 3).map((badge) => (
+              <span key={badge} className="text-[10px] px-2 py-1" style={sectionBadgeStyle("#6ABAFF")}>{badge}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button onClick={onNewCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
+            <Plus size={14} /> New Card
+          </button>
+          <button onClick={onSave} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+            <Save size={14} /> {isAddingNewCard ? "Add Card" : "Save Changes"}
+          </button>
+          <button onClick={onClose} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_TEXT}>
+            <X size={14} /> Close
+          </button>
+        </div>
+      </div>
+
+      <div className={`${retro.raised} bg-[#101B36] px-3 py-2 text-[10px]`} style={{ border: "1px solid #20345C" }}>
+        <span style={S_TEXT_BOLD}>{stageMeta.label}:</span> <span style={S_SUBTLE}>{stageMeta.helper}</span>
+      </div>
+    </div>
+  );
+}
+
+function InteractiveCardPreview({
+  card,
+  editingCard,
+  players,
+  nodeTrees,
+  cardTags,
+  rulesMode,
+  quickRollSlots,
+  currentStage,
+  previewFocusRegion,
+  previewEditField,
+  onStageSelect,
+  onPreviewFocus,
+  onPreviewEditFieldChange,
+  onUpdateCardField,
+  onUpdateCardCustomField,
+  onRulesModeChange,
+  renderTagFieldInput,
+  onAddQuickRoll,
+}: {
+  card: ManagedCard;
+  editingCard: ManagedCard;
+  players: PlayerData[];
+  nodeTrees: NodeTree[];
+  cardTags: TagDefinition[];
+  rulesMode: CardRulesMode;
+  quickRollSlots: QuickRollSlot[];
+  currentStage: CardWorkspaceStage;
+  previewFocusRegion: CardPreviewFocusRegion;
+  previewEditField: CardPreviewEditField;
+  onStageSelect: (stage: CardWorkspaceStage) => void;
+  onPreviewFocus: (region: CardPreviewFocusRegion) => void;
+  onPreviewEditFieldChange: (field: CardPreviewEditField) => void;
+  onUpdateCardField: <K extends keyof ManagedCard>(key: K, value: ManagedCard[K]) => void;
+  onUpdateCardCustomField: (key: string, value: string) => void;
+  onRulesModeChange: (mode: CardRulesMode) => void;
+  renderTagFieldInput: (cf: ActiveCustomFieldEntry) => React.ReactNode;
+  onAddQuickRoll: () => void;
+}) {
+  const visibleCustomFieldGroups = groupCustomFieldsByTag(getActiveCustomFields(card, cardTags).filter((cf) => hasFilledFieldValue(card.customFields[cf.key])));
+  const trackerBucket = getCardTrackerBucket(editingCard);
+  const trackerActive = hasBuiltInCardTracker(editingCard);
+  const trackerName = editingCard.customFields[CARD_TRACKER_NAME_KEY] || editingCard.name || "Untitled Card";
+  const selectedStageAccent = getWorkspaceStageAccent(currentStage);
+  const selectedNodeLabel = getNodeAssignmentLabel(card, nodeTrees);
+
+  const previewSectionStyle = (accent: string, active: boolean) => ({
+    ...editorSurfaceStyle(active ? accent : "#223256"),
+    border: active ? `1px solid ${accent}` : "1px solid #1A1A4B",
+    background: active ? "#111A34" : "#0C0C2E",
+  });
+
+  const focusStage = (stage: CardWorkspaceStage, region: CardPreviewFocusRegion) => {
+    onStageSelect(stage);
+    onPreviewFocus(region);
+    if (previewEditField && region !== previewFocusRegion) {
+      onPreviewEditFieldChange(null);
+    }
+  };
+
+  const beginEdit = (stage: CardWorkspaceStage, region: CardPreviewFocusRegion, field: CardPreviewEditField) => {
+    focusStage(stage, region);
+    onPreviewEditFieldChange(field);
+  };
+
+  const stopEditing = () => onPreviewEditFieldChange(null);
+
+  return (
+    <div className={`${retro.sunken} bg-[#07101F] p-4 space-y-4 xl:sticky xl:top-2`} style={editorSurfaceStyle(selectedStageAccent)}>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
+          <div className="text-[10px] mt-1" style={S_SUBTLE}>Click sections to jump to their stage. Use the small edit buttons for inline changes.</div>
+        </div>
+        <span className="text-[9px] px-2 py-1" style={sectionBadgeStyle(selectedStageAccent)}>{getWorkspaceStageMeta(currentStage).label}</span>
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-4`} style={previewSectionStyle("#4A7BFF", previewFocusRegion === "identity" || currentStage === "overview")}>
+        <div className="flex items-start justify-between gap-3">
+          <button type="button" onClick={() => focusStage("overview", "identity")} className="text-left flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <span className="text-[18px]" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
+              {card.actionCost && <span className="text-[10px] px-2 py-1" style={DM_ACTION_BADGE}>{card.actionCost}</span>}
+              {card.customFields["Level"] && parseInt(card.customFields["Level"] || "0", 10) > 0 && (
+                <span className="text-[10px] px-2 py-1" style={DM_LEVEL_BADGE}>Lv.{card.customFields["Level"]}</span>
+              )}
+              {card.customFields["Source Type"] && <span className="text-[10px] px-2 py-1" style={DM_TAG_BADGE}>{card.customFields["Source Type"]}</span>}
+            </div>
+            <div className="text-[11px]" style={S_MUTED}>
+              {card.type || "No type yet"} ﾂｷ {formatOwners(card.assignedTo, players)}
+            </div>
+          </button>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("overview", "identity", "identity"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#4A7BFF")}>
+              Edit Core
+            </button>
+            <button type="button" onClick={() => focusStage("delivery", "delivery")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+              Delivery
+            </button>
+          </div>
+        </div>
+
+        {previewEditField === "identity" && (
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} onClick={(e) => e.stopPropagation()}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] block mb-1" style={labelStyle}>Card Name</label>
+                <input type="text" value={editingCard.name} onChange={(e) => onUpdateCardField("name", e.target.value)} className={inputClass} style={inputStyle} />
+              </div>
+              <div>
+                <label className="text-[10px] block mb-1" style={labelStyle}>Card Type</label>
+                <input type="text" value={editingCard.type} onChange={(e) => onUpdateCardField("type", e.target.value)} className={inputClass} style={inputStyle} />
+              </div>
+              <div>
+                <label className="text-[10px] block mb-1" style={labelStyle}>Action Cost</label>
+                <input type="text" value={editingCard.actionCost} onChange={(e) => onUpdateCardField("actionCost", e.target.value)} className={inputClass} style={inputStyle} />
+              </div>
+              <div>
+                <label className="text-[10px] block mb-1" style={labelStyle}>Level</label>
+                <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => onUpdateCardCustomField("Level", e.target.value)} className={inputClass} style={inputStyle} />
+              </div>
+            </div>
+            <button type="button" onClick={stopEditing} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Done</button>
+          </div>
+        )}
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#6ABAFF", previewFocusRegion === "description" || currentStage === "overview")}>
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={() => focusStage("overview", "description")} className="text-left">
+            <div className="text-[10px]" style={S_SECTION_HDR}>DESCRIPTION</div>
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("overview", "description", "description"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>
+            {hasFilledFieldValue(card.customFields[CARD_DESCRIPTION_KEY]) ? "Edit" : "Add description"}
+          </button>
+        </div>
+        {previewEditField === "description" ? (
+          <div onClick={(e) => e.stopPropagation()}>
+            <RichTextEditor
+              value={editingCard.customFields[CARD_DESCRIPTION_KEY] || ""}
+              onChange={(html) => onUpdateCardCustomField(CARD_DESCRIPTION_KEY, html)}
+              placeholder="Write the player-facing description..."
+              minHeight={130}
+            />
+            <button type="button" onClick={stopEditing} className={`${retro.button} mt-3 px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Done</button>
+          </div>
+        ) : hasFilledFieldValue(card.customFields[CARD_DESCRIPTION_KEY]) ? (
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3 text-[12px]`} style={S_TEXT}>
+            <div dangerouslySetInnerHTML={{ __html: card.customFields[CARD_DESCRIPTION_KEY] }} />
+          </div>
+        ) : (
+          <button type="button" onClick={() => beginEdit("overview", "description", "description")} className={`${retro.sunken} bg-[#0A0A28] w-full p-3 text-left text-[11px]`} style={S_MUTED}>
+            Add description
+          </button>
+        )}
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#FFD166", previewFocusRegion === "rules" || currentStage === "rules")}>
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={() => focusStage("rules", "rules")} className="text-left">
+            <div className="text-[10px]" style={S_SECTION_HDR}>RULES TEXT</div>
+            <div className="text-[10px]" style={S_SUBTLE}>{rulesMode === "guided" ? "Guided Builder is active" : "Manual Text is active"}</div>
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("rules", "rules", "effect"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#FFD166")}>
+            {hasFilledFieldValue(card.effect) ? "Edit" : "Add effect"}
+          </button>
+        </div>
+        {previewEditField === "effect" ? (
+          rulesMode === "manual" ? (
+            <div onClick={(e) => e.stopPropagation()}>
+              <RichTextEditor value={editingCard.effect} onChange={(html) => onUpdateCardField("effect", html)} placeholder="Write the card's main effect..." minHeight={200} />
+              <button type="button" onClick={stopEditing} className={`${retro.button} mt-3 px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Done</button>
+            </div>
+          ) : (
+            <div className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} onClick={(e) => e.stopPropagation()}>
+              <div className="text-[11px]" style={S_SUBTLE}>Guided Builder currently owns this rules text. Switch to Manual Text if you want to edit it directly here.</div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => onRulesModeChange("manual")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Switch to Manual Text</button>
+                <button type="button" onClick={stopEditing} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_TEXT}>Close</button>
+              </div>
+            </div>
+          )
+        ) : hasFilledFieldValue(card.effect) ? (
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3 min-h-[140px] text-[12px]`} style={S_TEXT}>
+            <div dangerouslySetInnerHTML={{ __html: card.effect }} />
+          </div>
+        ) : (
+          <button type="button" onClick={() => beginEdit("rules", "rules", "effect")} className={`${retro.sunken} bg-[#0A0A28] w-full p-3 text-left text-[11px]`} style={S_MUTED}>
+            Add effect
+          </button>
+        )}
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#FFD700", previewFocusRegion === "scaling" || currentStage === "rules")}>
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={() => focusStage("rules", "scaling")} className="text-left">
+            <div className="text-[10px]" style={S_SECTION_HDR}>SCALING / UPCAST</div>
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("rules", "scaling", "scaling"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#FFD700")}>
+            {hasFilledFieldValue(card.customFields[USE_PROFILE_UPCAST_KEY]) ? "Edit" : "Add scaling"}
+          </button>
+        </div>
+        {previewEditField === "scaling" ? (
+          <div className="space-y-3" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="text"
+              value={editingCard.customFields[USE_PROFILE_UPCAST_KEY] || ""}
+              onChange={(e) => onUpdateCardCustomField(USE_PROFILE_UPCAST_KEY, e.target.value)}
+              placeholder="Describe the scaling or upcast behavior..."
+              className={inputClass}
+              style={inputStyle}
+            />
+            <button type="button" onClick={stopEditing} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Done</button>
+          </div>
+        ) : hasFilledFieldValue(card.customFields[USE_PROFILE_UPCAST_KEY]) ? (
+          <div className="text-[11px]" style={S_TEXT}>{card.customFields[USE_PROFILE_UPCAST_KEY]}</div>
+        ) : (
+          <button type="button" onClick={() => beginEdit("rules", "scaling", "scaling")} className={`${retro.sunken} bg-[#0A0A28] w-full p-3 text-left text-[11px]`} style={S_MUTED}>
+            Add scaling
+          </button>
+        )}
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#9A7ABB", previewFocusRegion === "tags" || currentStage === "effects")}>
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={() => focusStage("effects", "tags")} className="text-left">
+            <div className="text-[10px]" style={S_SECTION_HDR}>TAGS & FIELD GROUPS</div>
+            <div className="text-[10px]" style={S_SUBTLE}>{card.tags.length} active tag{card.tags.length === 1 ? "" : "s"}</div>
+          </button>
+          <button type="button" onClick={() => focusStage("effects", "tags")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
+            {card.tags.length > 0 ? "Manage tags" : "Add tags"}
+          </button>
+        </div>
+
+        {card.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {card.tags.map((tag) => (
+              <span key={tag} className="text-[9px] px-2 py-1" style={DM_TAG_BADGE}>{tag}</span>
+            ))}
+          </div>
+        )}
+
+        {visibleCustomFieldGroups.length === 0 ? (
+          <button type="button" onClick={() => focusStage("effects", "tags")} className={`${retro.sunken} bg-[#0A0A28] w-full p-3 text-left text-[11px]`} style={S_MUTED}>
+            {card.tags.length === 0 ? "Add tags" : "No visible tag field values yet"}
+          </button>
+        ) : (
+          <div className="space-y-3">
+            {visibleCustomFieldGroups.map((group) => (
+              <div key={group.tagName} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] px-2 py-1" style={DM_TAG_BADGE}>{group.tagName}</span>
+                  <span className="text-[9px]" style={S_SUBTLE}>{group.fields.length} field{group.fields.length === 1 ? "" : "s"}</span>
+                </div>
+                {group.fields.map((field) => {
+                  const editKey = `tag:${field.key}` as const;
+                  return (
+                    <div key={field.key} className="space-y-2">
+                      {previewEditField === editKey ? (
+                        <div onClick={(e) => e.stopPropagation()}>
+                          {renderTagFieldInput(field)}
+                          <button type="button" onClick={stopEditing} className={`${retro.button} mt-2 px-3 py-1.5 text-[10px]`} style={S_ACCENT}>Done</button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <button type="button" onClick={() => focusStage("effects", "tags")} className="text-left">
+                            <div className="text-[10px]" style={S_MUTED}>{field.fieldName}</div>
+                            <div className="text-[11px]" style={S_TEXT}>{card.customFields[field.key]}</div>
+                          </button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("effects", "tags", editKey); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
+                            Edit
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#4ACA6A", previewFocusRegion === "tracking" || previewFocusRegion === "quick-rolls" || currentStage === "effects")}>
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={() => focusStage("effects", "tracking")} className="text-left">
+            <div className="text-[10px]" style={S_SECTION_HDR}>AUTOMATION SNAPSHOT</div>
+            <div className="text-[10px]" style={S_SUBTLE}>{trackerActive ? trackerBucketLabel(trackerBucket) : "Tracker off"} ﾂｷ {quickRollSlots.length} quick roll{quickRollSlots.length === 1 ? "" : "s"}</div>
+          </button>
+          <button type="button" onClick={quickRollSlots.length === 0 ? onAddQuickRoll : () => focusStage("effects", "quick-rolls")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#4ACA6A")}>
+            {quickRollSlots.length === 0 ? "Add quick roll" : "Edit automation"}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>TRACKER</div>
+            {trackerActive ? (
+              <div className="space-y-1 text-[11px]">
+                <div><span style={S_MUTED}>Bucket:</span> <span style={S_TEXT}>{trackerBucketLabel(trackerBucket)}</span></div>
+                <div><span style={S_MUTED}>Name:</span> <span style={S_TEXT}>{trackerName}</span></div>
+                {(editingCard.customFields[CARD_TRACKER_DURATION_KEY] || "").trim() && <div><span style={S_MUTED}>Duration:</span> <span style={S_TEXT}>{editingCard.customFields[CARD_TRACKER_DURATION_KEY]}</span></div>}
+              </div>
+            ) : (
+              <button type="button" onClick={() => focusStage("effects", "tracking")} className="text-[11px]" style={S_MUTED}>Add tracker</button>
+            )}
+          </div>
+
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>QUICK ROLLS</div>
+            {quickRollSlots.length > 0 ? (
+              <div className="space-y-1 text-[11px]">
+                {quickRollSlots.map((slot) => (
+                  <div key={slot.slotId}><span style={S_MUTED}>{slot.label || "Roll"}:</span> <span style={S_TEXT}>{slot.expression || "No expression yet"}</span></div>
+                ))}
+              </div>
+            ) : (
+              <button type="button" onClick={onAddQuickRoll} className="text-[11px]" style={S_MUTED}>Add quick roll</button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#7ACA8A", previewFocusRegion === "delivery" || currentStage === "delivery")}>
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={() => focusStage("delivery", "delivery")} className="text-left">
+            <div className="text-[10px]" style={S_SECTION_HDR}>DELIVERY</div>
+            <div className="text-[10px]" style={S_SUBTLE}>{formatOwners(card.assignedTo, players)} ﾂｷ {selectedNodeLabel}</div>
+          </button>
+          <button type="button" onClick={() => focusStage("delivery", "delivery")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+            {card.assignedTo.length === 0 && !card.nodeTreeId ? "Add assignment" : "Manage delivery"}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>PLAYERS</div>
+            <div style={S_TEXT}>{formatOwners(card.assignedTo, players)}</div>
+          </div>
+          <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+            <div className="text-[10px] mb-1" style={S_SECTION_HDR}>NODE TREE</div>
+            <div style={S_TEXT}>{selectedNodeLabel}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DMCardManagerSection({
   players,
   managedCards,
@@ -1201,6 +1883,11 @@ export function DMCardManagerSection({
   const [cardTypeFilter, setCardTypeFilter] = useState<string>("all");
   const [cardLibrarySort, setCardLibrarySort] = useState<CardLibrarySortMode>("manual");
   const [editorPanel, setEditorPanel] = useState<CardEditorPanel>("preview");
+  const [workspaceStage, setWorkspaceStage] = useState<CardWorkspaceStage>("overview");
+  const [previewFocusRegion, setPreviewFocusRegion] = useState<CardPreviewFocusRegion>(null);
+  const [previewEditField, setPreviewEditField] = useState<CardPreviewEditField>(null);
+  const [isCardLibraryCollapsed, setIsCardLibraryCollapsed] = useState(false);
+  const [isCardLibraryMobileOpen, setIsCardLibraryMobileOpen] = useState(false);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<CardTemplateDef | null>(null);
   const [mechanicsBuilder, setMechanicsBuilder] = useState<MechanicsBuilderState>(EMPTY_MECHANICS_BUILDER);
@@ -1211,6 +1898,9 @@ export function DMCardManagerSection({
   const [newSectionTone, setNewSectionTone] = useState<CardSectionTone>("rules");
   const [tagSearch, setTagSearch] = useState("");
   const [tagFilterMode, setTagFilterMode] = useState<TagFilterMode>("all");
+  const [showAdvancedProfile, setShowAdvancedProfile] = useState(false);
+  const [showOptionalTagGroups, setShowOptionalTagGroups] = useState(false);
+  const [showDeliveryDetails, setShowDeliveryDetails] = useState(false);
   const [laSelectedPlayerId, setLaSelectedPlayerId] = useState<string>("");
   const [levelCategories, setLevelCategories] = useState<LevelCategory[]>([]);
   const [laEditingLevel, setLaEditingLevel] = useState<string | null>(null);
@@ -1242,9 +1932,15 @@ export function DMCardManagerSection({
       setCardSectionBlocks([]);
       setRulesMode("manual");
       setMechanicsView("rules");
+      setWorkspaceStage("overview");
+      setPreviewFocusRegion(null);
+      setPreviewEditField(null);
       setNewSectionTitle("");
       setNewSectionTone("rules");
       setShowRequirementsField(false);
+      setShowAdvancedProfile(false);
+      setShowOptionalTagGroups(false);
+      setShowDeliveryDetails(false);
       editorBaselineRef.current = "";
       return;
     }
@@ -1256,9 +1952,15 @@ export function DMCardManagerSection({
     setCardSectionBlocks(storedBlocks);
     setRulesMode(storedRulesMode);
     setMechanicsView(storedRulesMode === "manual" ? "text" : "rules");
+    setWorkspaceStage((prev) => prev);
+    setPreviewFocusRegion(null);
+    setPreviewEditField(null);
     setNewSectionTitle("");
     setNewSectionTone("rules");
     setShowRequirementsField(!!(editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
+    setShowAdvancedProfile(false);
+    setShowOptionalTagGroups(false);
+    setShowDeliveryDetails(false);
   }, [editingCard?.id]);
 
   const quickRollSlots = useMemo(() => editingCard ? buildQuickRollSlots(editingCard.customFields || {}) : [], [editingCard]);
@@ -1340,6 +2042,9 @@ export function DMCardManagerSection({
   }, [hasUnsavedChanges]);
 
   const handleAddCard = () => {
+    setWorkspaceStage("overview");
+    setPreviewFocusRegion(null);
+    setPreviewEditField(null);
     setShowTemplatePicker((prev) => {
       const next = !prev;
       if (!next) setPendingTemplate(null);
@@ -1367,9 +2072,13 @@ export function DMCardManagerSection({
     setCardSectionBlocks(nextBlocks);
     setRulesMode(nextRulesMode);
     setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
+    setWorkspaceStage("overview");
+    setPreviewFocusRegion("identity");
+    setPreviewEditField(null);
     setEditorPanel("core");
     setPendingTemplate(null);
     setShowTemplatePicker(false);
+    setIsCardLibraryMobileOpen(false);
     editorBaselineRef.current = buildEditorSnapshot(nextCard, nextBuilder, nextBlocks, nextRulesMode, true);
   };
 
@@ -1445,6 +2154,9 @@ export function DMCardManagerSection({
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
     setPendingTemplate(null);
+    setWorkspaceStage("overview");
+    setPreviewFocusRegion(null);
+    setPreviewEditField(null);
     setEditorPanel("preview");
     editorBaselineRef.current = "";
   };
@@ -1468,6 +2180,10 @@ export function DMCardManagerSection({
     setCardSectionBlocks(nextBlocks);
     setRulesMode(nextRulesMode);
     setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
+    setWorkspaceStage(getWorkspaceStageForPanel(nextPanel, nextPanel === "mechanics" ? (nextRulesMode === "manual" ? "text" : "rules") : undefined));
+    setPreviewFocusRegion(nextPanel === "assignment" || nextPanel === "progression" ? "delivery" : nextPanel === "tags" ? "tags" : nextPanel === "mechanics" ? "rules" : "identity");
+    setPreviewEditField(null);
+    setIsCardLibraryMobileOpen(false);
     editorBaselineRef.current = buildEditorSnapshot(nextCard, nextBuilder, nextBlocks, nextRulesMode, false);
   };
 
@@ -1499,6 +2215,9 @@ export function DMCardManagerSection({
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
     setEditingCard({ ...editingCard, customFields: nextCustomFields });
+    setWorkspaceStage("effects");
+    setPreviewFocusRegion("quick-rolls");
+    setPreviewEditField(null);
     setEditorPanel("mechanics");
     setMechanicsView("automation");
   };
@@ -1732,6 +2451,14 @@ export function DMCardManagerSection({
   const activeFieldsByTag = useMemo(() => {
     return groupCustomFieldsByTag(activeCardCustomFields);
   }, [activeCardCustomFields]);
+  const populatedOrRequiredTagGroups = useMemo(
+    () => activeFieldsByTag.filter((group) => group.fields.some((field) => field.fieldDef.required || hasFilledFieldValue(editingCard?.customFields[field.key]))),
+    [activeFieldsByTag, editingCard],
+  );
+  const optionalEmptyTagGroups = useMemo(
+    () => activeFieldsByTag.filter((group) => !group.fields.some((field) => field.fieldDef.required || hasFilledFieldValue(editingCard?.customFields[field.key]))),
+    [activeFieldsByTag, editingCard],
+  );
 
   const selectedTagDefs = useMemo(
     () => (editingCard ? cardTags.filter((tag) => editingCard.tags.includes(tag.name)) : []),
@@ -1854,6 +2581,57 @@ export function DMCardManagerSection({
     () => (editingCard ? withPersistedEditorStructure(editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, cardTags) : null),
     [editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, cardTags],
   );
+  const trackerStatusLabel = useMemo(
+    () => (editingCard && hasBuiltInCardTracker(editingCard) ? trackerBucketLabel(currentTrackerBucket) : null),
+    [editingCard, currentTrackerBucket],
+  );
+  const workspaceStageCards = useMemo(() => {
+    if (!editingCard) return [];
+    return [
+      {
+        id: "overview" as CardWorkspaceStage,
+        accent: currentFamilyDef?.accent || "#4A7BFF",
+        title: "Overview",
+        summary: currentFamilyDef ? `${currentFamilyDef.label} profile` : "Pick the card's family",
+        detail: editingCard.name.trim() ? editingCard.name.trim() : "Name and identity still blank",
+      },
+      {
+        id: "rules" as CardWorkspaceStage,
+        accent: rulesMode === "guided" ? "#6ABAFF" : "#FFD166",
+        title: "Rules",
+        summary: rulesMode === "guided" ? "Guided rules save" : "Manual rules save",
+        detail: rulesMode === "guided"
+          ? `${getFilledMechanicsCount(mechanicsBuilder)} structured steps`
+          : (stripHtml(editingCard.effect || "").trim() ? "Manual effect text ready" : "Manual effect text still blank"),
+      },
+      {
+        id: "effects" as CardWorkspaceStage,
+        accent: "#9A7ABB",
+        title: "Effects & Tags",
+        summary: `${selectedTagDefs.length} tag${selectedTagDefs.length === 1 ? "" : "s"} ﾂｷ ${quickRollSlots.length} quick roll${quickRollSlots.length === 1 ? "" : "s"}`,
+        detail: trackerStatusLabel || (missingRequiredTagFields.length > 0 ? `${missingRequiredTagFields.length} required field${missingRequiredTagFields.length === 1 ? "" : "s"} missing` : "No automation configured"),
+      },
+      {
+        id: "delivery" as CardWorkspaceStage,
+        accent: "#7ACA8A",
+        title: "Delivery",
+        summary: editingCard.assignedTo.includes("all") ? "All players" : editingCard.assignedTo.length > 0 ? `${editingCard.assignedTo.length} player${editingCard.assignedTo.length === 1 ? "" : "s"}` : "Unassigned",
+        detail: selectedNode ? `${selectedNode.label}${selectedNodeCapacity?.isFullForSelection ? " (full)" : ""}` : selectedNodeTree ? "Node not picked yet" : "No progression assignment",
+      },
+    ];
+  }, [
+    editingCard,
+    currentFamilyDef,
+    rulesMode,
+    mechanicsBuilder,
+    selectedTagDefs.length,
+    quickRollSlots.length,
+    trackerStatusLabel,
+    missingRequiredTagFields.length,
+    selectedNode,
+    selectedNodeCapacity?.isFullForSelection,
+    selectedNodeTree,
+  ]);
   const workflowSnapshotCards = useMemo(() => {
     if (!editingCard) return [];
     return [
@@ -1958,6 +2736,31 @@ export function DMCardManagerSection({
     if (issue.panel === "mechanics" && issue.mechanicsView) {
       setMechanicsView(issue.mechanicsView);
     }
+    if (issue.panel === "mechanics" && issue.mechanicsView === "automation") {
+      setWorkspaceStage("effects");
+      setPreviewFocusRegion("tracking");
+    } else {
+      setWorkspaceStage(getWorkspaceStageForPanel(issue.panel, issue.mechanicsView));
+      setPreviewFocusRegion(
+        issue.panel === "assignment" || issue.panel === "progression"
+          ? "delivery"
+          : issue.panel === "tags"
+            ? "tags"
+            : issue.panel === "mechanics"
+              ? "rules"
+              : "identity",
+      );
+    }
+    setPreviewEditField(null);
+  };
+
+  const selectWorkspaceStage = (stage: CardWorkspaceStage, focusRegion: CardPreviewFocusRegion = null) => {
+    setWorkspaceStage(stage);
+    setPreviewFocusRegion(focusRegion);
+    setPreviewEditField(null);
+    if (stage === "rules" && mechanicsView === "automation") {
+      setMechanicsView(rulesMode === "manual" ? "text" : "rules");
+    }
   };
 
   const editorPanels: { id: CardEditorPanel; label: string; icon: React.ComponentType<{ size?: number }>; accent: string; step: string }[] = [
@@ -1984,6 +2787,1319 @@ export function DMCardManagerSection({
     setDmCardsSubTab(nextTab);
   };
 
+  const renderOverviewStage = () => {
+    if (!editingCard) return null;
+
+    return (
+      <div className="space-y-4">
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-5`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#4A7BFF")}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[12px]" style={S_SECTION_HDR}>OVERVIEW</div>
+              <div className="text-[10px] mt-1" style={S_SUBTLE}>
+                Shape the card's identity first, then fill the advanced profile only when you need more specificity.
+              </div>
+            </div>
+            {currentFamilyDef && (
+              <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle(currentFamilyDef.accent)}>{currentFamilyDef.label}</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)] gap-4">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Card Name:</label>
+                  <input type="text" value={editingCard.name} onChange={(e) => updateCardField("name", e.target.value)} placeholder="Enter card name..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Card Type:</label>
+                  <input type="text" value={editingCard.type} onChange={(e) => updateCardField("type", e.target.value)} placeholder="e.g., Combat, Utility..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Action Cost:</label>
+                  <input type="text" value={editingCard.actionCost} onChange={(e) => updateCardField("actionCost", e.target.value)} placeholder="e.g., 1 Action, Reaction, Passive..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Level:</label>
+                  <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => updateCardCustomField("Level", e.target.value)} placeholder="0" className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Source / Discipline Type:</label>
+                  <input type="text" value={editingCard.customFields["Source Type"] || ""} onChange={(e) => updateCardCustomField("Source Type", e.target.value)} placeholder="e.g., Light, Martial, Fairy Blood..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Magic Nature:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_MAGIC_NATURE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_MAGIC_NATURE_KEY, e.target.value)} placeholder="e.g., Magical (Spell), Non-spell Technique..." className={inputClass} style={inputStyle} />
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[10px] mb-2" style={S_SECTION_HDR}>PLAYER-FACING DESCRIPTION</div>
+                <RichTextEditor
+                  value={editingCard.customFields[CARD_DESCRIPTION_KEY] || ""}
+                  onChange={(html) => updateCardCustomField(CARD_DESCRIPTION_KEY, html)}
+                  placeholder="Write the short setup or player-facing description..."
+                  minHeight={150}
+                />
+              </div>
+
+              <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] mb-1" style={S_SECTION_HDR}>CARD FAMILY</div>
+                    <div className="text-[10px]" style={S_SUBTLE}>Pick the family that should own the card's core use profile.</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {CARD_FAMILY_OPTIONS.map((family) => {
+                    const active = currentFamily === family.id;
+                    return (
+                      <button
+                        key={family.id}
+                        onClick={() => applyCardFamily(family.id)}
+                        className={`${active ? retro.sunken : retro.raised} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
+                        style={panelButtonStyle(active, family.accent)}
+                      >
+                        {family.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {CARD_FAMILY_OPTIONS.map((family) => (
+                    <div key={family.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(family.accent)}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="text-[11px]" style={S_TEXT_BOLD}>{family.label}</div>
+                        <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(family.accent)}>{family.label}</span>
+                      </div>
+                      <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
+                      <div className="text-[10px] mt-2" style={S_MUTED}>{family.helper}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
+                <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT RULE PROFILE</div>
+                <div className="flex flex-wrap gap-2">
+                  {currentProfileBadges.length > 0 ? currentProfileBadges.map((badge, index) => (
+                    <span key={`${badge}-${index}`} className="text-[9px] px-2 py-1" style={sectionBadgeStyle(index === 0 && currentFamilyDef ? currentFamilyDef.accent : "#6ABAFF")}>{badge}</span>
+                  )) : <span className="text-[10px]" style={S_MUTED}>No family summary yet. Pick a card family to shape the creator around the card's real rules.</span>}
+                </div>
+                {currentFamilyDef ? (
+                  <div className="text-[11px]" style={S_TEXT}>{currentFamilyDef.description}</div>
+                ) : (
+                  <div className="text-[11px]" style={S_SUBTLE}>Choose Spell, Skill, or Ability first.</div>
+                )}
+                <div className="space-y-2 text-[11px]">
+                  <div><span style={S_MUTED}>Cost Model:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || "Not set"}</span></div>
+                  <div><span style={S_MUTED}>Primary Cost:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_PRIMARY_COST_KEY] || "Not set"}</span></div>
+                  <div><span style={S_MUTED}>Uses / Long Rest:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_USES_KEY] || "Not set"}</span></div>
+                  <div><span style={S_MUTED}>Origin:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || "Not set"}</span></div>
+                </div>
+              </div>
+
+              <div className={`${retro.raised} p-4 space-y-2`} style={editorSurfaceStyle("#6ABAFF")}>
+                <div className="text-[10px]" style={S_SECTION_HDR}>QUICK READINESS CHECK</div>
+                <div className="text-[11px]" style={S_SUBTLE}>
+                  {editingCard.name.trim()
+                    ? "Identity is in good shape. Move to Rules once the family and description feel right."
+                    : "Start by naming the card and picking its family so the rest of the workspace becomes clearer."}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[12px]" style={S_SECTION_HDR}>ADVANCED PROFILE</div>
+              <div className="text-[10px] mt-1" style={S_SUBTLE}>Components, requirements, origin, and deeper use-profile controls.</div>
+            </div>
+            <button onClick={() => setShowAdvancedProfile((prev) => !prev)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>
+              {showAdvancedProfile ? "Hide Advanced Profile" : "Show Advanced Profile"}
+            </button>
+          </div>
+
+          {showAdvancedProfile && (
+            <div className={`${retro.raised} p-4 mt-4 space-y-3`} style={editorSurfaceStyle("#6ABAFF")}>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Cost Model:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_COST_MODEL_KEY, e.target.value)} placeholder="e.g., Source, Exhaustion / Uses..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Primary Cost:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_PRIMARY_COST_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_PRIMARY_COST_KEY, e.target.value)} placeholder="e.g., 3 Fire Source, 1 Exhaustion..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Uses Per Long Rest:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_USES_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_USES_KEY, e.target.value)} placeholder="e.g., PB / Long Rest..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Range:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_RANGE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_RANGE_KEY, e.target.value)} placeholder="e.g., Self, 30 feet..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Duration:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_DURATION_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_DURATION_KEY, e.target.value)} placeholder="e.g., Instant, 1 minute..." className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Origin / Source:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_ORIGIN_KEY, e.target.value)} placeholder="e.g., Learned / Taught..." className={inputClass} style={inputStyle} />
+                </div>
+                <div className="md:col-span-2 xl:col-span-3">
+                  <label className="text-[10px] block mb-2" style={labelStyle}>Components:</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {COMPONENT_FLAGS.map((flag) => {
+                      const active = parseComponentFlags(editingCard.customFields[USE_PROFILE_COMPONENTS_KEY] || "").includes(flag);
+                      return (
+                        <button
+                          key={flag}
+                          type="button"
+                          onClick={() => toggleComponentFlag(flag)}
+                          className={`${active ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                          style={panelButtonStyle(active, "#8AB8FF")}
+                        >
+                          {flag}
+                        </button>
+                      );
+                    })}
+                    <input
+                      type="text"
+                      value={editingCard.customFields[USE_PROFILE_COMPONENT_DETAILS_KEY] || ""}
+                      onChange={(e) => updateCardCustomField(USE_PROFILE_COMPONENT_DETAILS_KEY, e.target.value)}
+                      placeholder="Material details or notes..."
+                      className={`${inputClass} min-w-[220px] flex-1`}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+                {showRequirementsField ? (
+                  <div className="md:col-span-2 xl:col-span-3">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="text-[10px] block" style={labelStyle}>Requirements:</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateCardCustomField(USE_PROFILE_REQUIREMENTS_KEY, "");
+                          setShowRequirementsField(false);
+                        }}
+                        className={`${retro.button} px-2 py-1 text-[10px]`}
+                        style={S_RED}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <input type="text" value={editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_REQUIREMENTS_KEY, e.target.value)} placeholder="e.g., Wielding a melee weapon..." className={inputClass} style={inputStyle} />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] block mb-1" style={labelStyle}>Requirements:</label>
+                    <button type="button" onClick={() => setShowRequirementsField(true)} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_TEXT}>
+                      Add Requirements
+                    </button>
+                  </div>
+                )}
+                <div className="md:col-span-2 xl:col-span-3">
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Passive / Trigger Notes:</label>
+                  <input type="text" value={editingCard.customFields[USE_PROFILE_PASSIVE_MODE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_PASSIVE_MODE_KEY, e.target.value)} placeholder="e.g., Activatable Passive, Triggered on damage..." className={inputClass} style={inputStyle} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderRulesStage = () => {
+    if (!editingCard) return null;
+    const activeRulesView = mechanicsView === "automation" ? (rulesMode === "manual" ? "text" : "rules") : mechanicsView;
+
+    return (
+      <div className="space-y-4">
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
+          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>RULES WORKSPACE</div>
+                <div className="text-[10px]" style={S_SUBTLE}>
+                  Pick the saved rules source, then work in either the structured builder or text/scaling view.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
+                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)] gap-4">
+              <div className="space-y-2">
+                <div className="text-[10px]" style={S_SECTION_HDR}>RULES SOURCE</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setRulesMode("guided"); setMechanicsView("rules"); }}
+                    className={`${rulesMode === "guided" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                    style={panelButtonStyle(rulesMode === "guided", "#6ABAFF")}
+                  >
+                    Guided Builder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setRulesMode("manual"); setMechanicsView("text"); }}
+                    className={`${rulesMode === "manual" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                    style={panelButtonStyle(rulesMode === "manual", "#FFD166")}
+                  >
+                    Manual Text
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-[10px]" style={S_SECTION_HDR}>AUTHORING VIEW</div>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    { id: "rules" as MechanicsWorkspaceView, label: "Rules Builder", accent: "#6ABAFF" },
+                    { id: "text" as MechanicsWorkspaceView, label: "Text & Scaling", accent: "#FFD166" },
+                  ]).map((view) => (
+                    <button
+                      key={view.id}
+                      type="button"
+                      onClick={() => setMechanicsView(view.id)}
+                      className={`${activeRulesView === view.id ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                      style={panelButtonStyle(activeRulesView === view.id, view.accent)}
+                    >
+                      {view.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-[10px]" style={S_SUBTLE}>
+              {rulesMode === "guided"
+                ? "Guided Builder is the saved source for effect text. Manual text becomes a reference until you switch."
+                : "Manual Text is the saved source. The builder stays available as a draft and import tool."}
+            </div>
+          </div>
+
+          {activeRulesView === "rules" ? (
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)] gap-4">
+              <div className="space-y-4">
+                <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] mb-1" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
+                      <div className="text-[10px]" style={S_SUBTLE}>Lay out the card's play sequence. These steps feed the generated rules output in order.</div>
+                    </div>
+                    <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
+                      Clear Builder
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+                    {MECHANICS_BLOCKS.map((block) => (
+                      <button
+                        key={block.id}
+                        onClick={() => addMechanicsStarter(block)}
+                        className={`${retro.button} w-full justify-center px-3 py-2 text-[10px] flex items-center gap-1.5`}
+                        style={sectionBadgeStyle("#6ABAFF")}
+                      >
+                        <Plus size={10} /> Seed {block.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    {MECHANICS_BLOCKS.map((block, index) => {
+                      const filled = !!mechanicsBuilder[block.id].trim();
+                      const accent = ["#8AB8FF", "#7ACA8A", "#FFD700", "#C4A0FF", "#FF9A7A", "#6ABAFF", "#7A8AAA"][index % 7];
+                      return (
+                        <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`} style={editorSurfaceStyle(accent)}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(accent)}>Step {index + 1}</span>
+                                <span className="text-[12px]" style={S_TEXT_BOLD}>{block.label}</span>
+                              </div>
+                              <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
+                            </div>
+                            {!filled ? (
+                              <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
+                                <Sparkles size={10} /> Seed
+                              </button>
+                            ) : (
+                              <button onClick={() => clearMechanicsBuilderField(block.id)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={S_RED}>
+                                <Trash2 size={10} /> Remove
+                              </button>
+                            )}
+                          </div>
+                          <textarea
+                            value={mechanicsBuilder[block.id]}
+                            onChange={(e) => updateMechanicsBuilderField(block.id, e.target.value)}
+                            placeholder={block.placeholder}
+                            className={`${inputClass} min-h-[102px] resize-y`}
+                            style={inputStyle}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] mb-1" style={S_SECTION_HDR}>CARD SECTION BLOCKS</div>
+                      <div className="text-[10px]" style={S_SUBTLE}>Use blocks for summaries, reminders, limits, or follow-up text around the main sequence.</div>
+                    </div>
+                    <div className="text-[10px]" style={S_SUBTLE}>{cardSectionBlocks.length} saved section block{cardSectionBlocks.length === 1 ? "" : "s"}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {CARD_SECTION_BLOCK_PRESETS.map((preset) => (
+                      <button
+                        key={`${preset.title}-${preset.tone}`}
+                        onClick={() => addPresetSectionBlock(preset)}
+                        className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+                        style={toneChipStyle(preset.tone)}
+                      >
+                        <Plus size={10} /> {preset.title}
+                      </button>
+                    ))}
+                    <button onClick={clearSectionBlocks} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
+                      Clear All Blocks
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px_auto] gap-2 items-end">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Custom Block Title:</label>
+                      <input type="text" value={newSectionTitle} onChange={(e) => setNewSectionTitle(e.target.value)} placeholder="e.g. Follow-Up, Combo..." className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Tone:</label>
+                      <select value={newSectionTone} onChange={(e) => setNewSectionTone(e.target.value as CardSectionTone)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                        <option value="rules">Rules</option>
+                        <option value="highlight">Highlight</option>
+                        <option value="limitation">Limitation</option>
+                        <option value="reminder">Reminder</option>
+                      </select>
+                    </div>
+                    <button onClick={addCustomSectionBlock} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                      <Plus size={12} /> Add Custom Block
+                    </button>
+                  </div>
+                  {cardSectionBlocks.length === 0 ? (
+                    <div className="text-[11px]" style={S_MUTED}>No card section blocks yet.</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {cardSectionBlocks.map((block, index) => (
+                        <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-3`} style={editorSurfaceStyle(block.tone === "rules" ? "#7ACA8A" : block.tone === "highlight" ? "#8AB8FF" : block.tone === "limitation" ? "#FF9A7A" : "#FFD700")}>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] px-2 py-0.5" style={toneChipStyle(block.tone)}>Section {index + 1}</span>
+                              <span className="text-[10px]" style={S_SUBTLE}>Reorder or tone-shift this block before it joins the final rules output.</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1 justify-end">
+                              <button onClick={() => moveSectionBlock(block.id, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronUp size={10} /></button>
+                              <button onClick={() => moveSectionBlock(block.id, 1)} disabled={index === cardSectionBlocks.length - 1} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><ChevronDown size={10} /></button>
+                              <button onClick={() => removeSectionBlock(block.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_180px] gap-2 items-end">
+                            <div>
+                              <label className="text-[10px] block mb-1" style={labelStyle}>Section Title:</label>
+                              <input type="text" value={block.title} onChange={(e) => updateSectionBlock(block.id, { title: e.target.value })} className={inputClass} style={inputStyle} />
+                            </div>
+                            <div>
+                              <label className="text-[10px] block mb-1" style={labelStyle}>Tone:</label>
+                              <select value={block.tone} onChange={(e) => updateSectionBlock(block.id, { tone: e.target.value as CardSectionTone })} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                                <option value="rules">Rules</option>
+                                <option value="highlight">Highlight</option>
+                                <option value="limitation">Limitation</option>
+                                <option value="reminder">Reminder</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Content:</label>
+                            <textarea value={block.content} onChange={(e) => updateSectionBlock(block.id, { content: e.target.value })} placeholder="Write this section's content..." className={`${inputClass} min-h-[92px] resize-y`} style={inputStyle} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle(rulesMode === "guided" ? "#6ABAFF" : "#FFD166")}>
+                  <div className="text-[12px] mb-2" style={S_SECTION_HDR}>SAVED SOURCE</div>
+                  <div className="text-[11px]" style={S_TEXT_BOLD}>{rulesMode === "guided" ? "Guided Builder" : "Manual Text"}</div>
+                  <div className="text-[11px] mt-2" style={S_SUBTLE}>
+                    {rulesMode === "guided"
+                      ? "Save will write the Full Generated Output below into the card's effect text."
+                      : "Import the generated output when you want the builder draft to replace or append to the saved effect text."}
+                  </div>
+                  {rulesMode === "manual" && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                        <Save size={12} /> Replace with Mechanics Only
+                      </button>
+                      <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                        <Sparkles size={12} /> Replace with Full Output
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-[12px] mb-2" style={S_SECTION_HDR}>STRUCTURED PREVIEW</div>
+                  <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3 min-h-[220px]`} style={editorSurfaceStyle("#6ABAFF")}>
+                    {MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).length === 0 ? (
+                      <div className="text-[11px]" style={S_MUTED}>No structured mechanics blocks yet. Add a block or seed one from a starter.</div>
+                    ) : (
+                      MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block, index) => (
+                        <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
+                              <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
+                            </div>
+                            <button onClick={() => clearMechanicsBuilderField(block.id)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={S_RED}>
+                              <Trash2 size={10} /> Remove
+                            </button>
+                          </div>
+                          <div className="text-[11px]" style={S_TEXT}>{mechanicsBuilder[block.id]}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-[12px] mb-2" style={S_SECTION_HDR}>FULL GENERATED OUTPUT</div>
+                  <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[180px] text-[11px]`} style={{ ...editorSurfaceStyle("#8AB8FF"), ...S_TEXT }}>
+                    {structuredRulesPreview ? (
+                      <div dangerouslySetInnerHTML={{ __html: structuredRulesPreview }} />
+                    ) : (
+                      <span style={S_MUTED}>No generated output yet. Add mechanics or section blocks to compose the saved guided rules text.</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)] gap-4">
+              <div className="space-y-4">
+                <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle(rulesMode === "manual" ? "#FFD166" : "#6ABAFF")}>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] mb-1" style={S_SECTION_HDR}>RULES TEXT</div>
+                      <div className="text-[10px]" style={S_SUBTLE}>
+                        {rulesMode === "manual"
+                          ? "Directly edit the saved effect text here."
+                          : "Guided Builder is the active saved source, so this area shows the guided output instead of a second editable source."}
+                      </div>
+                    </div>
+                    {rulesMode === "guided" && (
+                      <button onClick={() => setRulesMode("manual")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>
+                        Switch to Manual Text
+                      </button>
+                    )}
+                  </div>
+
+                  {rulesMode === "manual" ? (
+                    <RichTextEditor value={editingCard.effect} onChange={(html) => updateCardField("effect", html)} placeholder="Enter card effects..." minHeight={260} />
+                  ) : (
+                    <div className={`${retro.sunken} bg-[#0A0A28] p-4 min-h-[240px] text-[12px]`} style={S_TEXT}>
+                      {structuredRulesPreview ? (
+                        <div dangerouslySetInnerHTML={{ __html: structuredRulesPreview }} />
+                      ) : (
+                        <span style={S_MUTED}>No guided rules output yet. Go back to Rules Builder to create the saved effect text.</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-2`} style={editorSurfaceStyle("#FFD700")}>
+                  <div className="text-[10px]" style={S_SECTION_HDR}>SCALING / UPCAST</div>
+                  <input
+                    type="text"
+                    value={editingCard.customFields[USE_PROFILE_UPCAST_KEY] || ""}
+                    onChange={(e) => updateCardCustomField(USE_PROFILE_UPCAST_KEY, e.target.value)}
+                    placeholder="How does the card scale, upcast, or improve?"
+                    className={inputClass}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <div className="text-[12px] mb-2" style={S_SECTION_HDR}>DESCRIPTION</div>
+                  <RichTextEditor value={editingCard.customFields[CARD_DESCRIPTION_KEY] || ""} onChange={(html) => updateCardCustomField(CARD_DESCRIPTION_KEY, html)} placeholder="Enter a short overview or setup text..." minHeight={140} />
+                </div>
+
+                <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
+                  <div className="text-[12px]" style={S_SECTION_HDR}>STRUCTURED DRAFT PREVIEW</div>
+                  <div className={`${retro.sunken} bg-[#0A0A28] p-4 min-h-[180px] text-[11px]`} style={S_TEXT}>
+                    {structuredRulesPreview ? (
+                      <div dangerouslySetInnerHTML={{ __html: structuredRulesPreview }} />
+                    ) : (
+                      <span style={S_MUTED}>No structured draft yet. Build one in Rules Builder if you want a guided version of this card.</span>
+                    )}
+                  </div>
+                  {rulesMode === "manual" && (
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => applyMechanicsBuilder("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                        <Save size={12} /> Replace with Mechanics Only
+                      </button>
+                      <button onClick={() => applySectionBlocks("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={sectionBadgeStyle("#FFD700")}>
+                        <Save size={12} /> Replace with Blocks Only
+                      </button>
+                      <button onClick={() => applyCombinedStructuredOutput("replace")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_GREEN_BTN}>
+                        <Sparkles size={12} /> Replace with Full Output
+                      </button>
+                      <button onClick={() => applyCombinedStructuredOutput("append")} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                        <Plus size={12} /> Append Full Output
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderEffectsStage = () => {
+    if (!editingCard) return null;
+    const tagGroupsToRender = showOptionalTagGroups ? activeFieldsByTag : populatedOrRequiredTagGroups;
+
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] gap-4">
+          <div className="space-y-4">
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#4ACA6A")}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-[12px] mb-1" style={S_SECTION_HDR}>AUTOMATION</div>
+                  <div className="text-[10px]" style={S_SUBTLE}>
+                    Configure tracker behavior and quick roll buttons without leaving the stage where tags live.
+                  </div>
+                </div>
+                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle(trackerBucketAccent(getCardTrackerBucket(editingCard)))}>
+                  {hasBuiltInCardTracker(editingCard) ? trackerBucketLabel(getCardTrackerBucket(editingCard)) : "Tracker Off"}
+                </span>
+              </div>
+
+              <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#4ACA6A")}>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateCardCustomField(CARD_TRACKER_BUCKET_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_NAME_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_DURATION_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_POTENCY_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_DAMAGE_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_DESCRIPTION_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_BUFF_TYPE_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_BUFF_TARGET_KEY, "");
+                      updateCardCustomField(CARD_TRACKER_BUFF_VALUE_KEY, "");
+                    }}
+                    className={`${getCardTrackerBucket(editingCard) === "" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                    style={panelButtonStyle(getCardTrackerBucket(editingCard) === "", "#7A8AAA")}
+                  >
+                    Off
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateCardCustomField(CARD_TRACKER_BUCKET_KEY, "status")}
+                    className={`${getCardTrackerBucket(editingCard) === "status" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                    style={panelButtonStyle(getCardTrackerBucket(editingCard) === "status", "#4ACA6A")}
+                  >
+                    Status Effect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateCardCustomField(CARD_TRACKER_BUCKET_KEY, "ability")}
+                    className={`${getCardTrackerBucket(editingCard) === "ability" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
+                    style={panelButtonStyle(getCardTrackerBucket(editingCard) === "ability", "#FF8A5A")}
+                  >
+                    Ability / Card Effect
+                  </button>
+                </div>
+
+                {getCardTrackerBucket(editingCard) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Tracker Name:</label>
+                      <input type="text" value={editingCard.customFields[CARD_TRACKER_NAME_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_NAME_KEY, e.target.value)} placeholder="Defaults to the card name" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Duration:</label>
+                      <input type="text" value={editingCard.customFields[CARD_TRACKER_DURATION_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DURATION_KEY, e.target.value)} placeholder="e.g. 3 rounds, 1 minute" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Potency:</label>
+                      <input type="text" value={editingCard.customFields[CARD_TRACKER_POTENCY_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_POTENCY_KEY, e.target.value)} placeholder="e.g. 2, P" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Damage / Roll:</label>
+                      <input type="text" value={editingCard.customFields[CARD_TRACKER_DAMAGE_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DAMAGE_KEY, e.target.value)} placeholder="e.g. 1d8, 2d6+P" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Tracked Effect Text:</label>
+                      <input type="text" value={editingCard.customFields[CARD_TRACKER_DESCRIPTION_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_DESCRIPTION_KEY, e.target.value)} placeholder="Short text shown in Personal Files" className={inputClass} style={inputStyle} />
+                    </div>
+                    {getCardTrackerBucket(editingCard) === "status" && (
+                      <>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Buff Type:</label>
+                          <select value={editingCard.customFields[CARD_TRACKER_BUFF_TYPE_KEY] || ""} onChange={(e) => {
+                            updateCardCustomField(CARD_TRACKER_BUFF_TYPE_KEY, e.target.value);
+                            if (!e.target.value) {
+                              updateCardCustomField(CARD_TRACKER_BUFF_TARGET_KEY, "");
+                              updateCardCustomField(CARD_TRACKER_BUFF_VALUE_KEY, "");
+                            }
+                          }} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="">No buff</option>
+                            <option value="attribute">Attribute</option>
+                            <option value="skill">Skill</option>
+                            <option value="resource">Resource</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Buff Target:</label>
+                          <input type="text" value={editingCard.customFields[CARD_TRACKER_BUFF_TARGET_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_BUFF_TARGET_KEY, e.target.value)} placeholder="e.g. STR, Athletics, Armor Class" className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] block mb-1" style={labelStyle}>Buff Value:</label>
+                          <input type="text" value={editingCard.customFields[CARD_TRACKER_BUFF_VALUE_KEY] || ""} onChange={(e) => updateCardCustomField(CARD_TRACKER_BUFF_VALUE_KEY, e.target.value)} placeholder="e.g. +2, P, -1" className={inputClass} style={inputStyle} />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#FFD166")}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[12px] mb-1" style={S_SECTION_HDR}>QUICK ROLL BUTTONS</div>
+                    <div className="text-[10px]" style={S_SUBTLE}>Add dedicated roll buttons that appear on the card in Personal Files.</div>
+                  </div>
+                  <button onClick={addQuickRollSlot} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`} style={sectionBadgeStyle("#FFD166")}>
+                    <Plus size={10} /> Add Quick Roll
+                  </button>
+                </div>
+
+                {quickRollSlots.length === 0 ? (
+                  <div className="text-[11px]" style={S_MUTED}>No quick roll buttons yet.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {quickRollSlots.map((slot, index) => (
+                      <div key={slot.slotId} className={`${retro.sunken} bg-[#0A0A28] p-3`} style={editorSurfaceStyle("#FFD166")}>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <div className="text-[10px]" style={S_TEXT_BOLD}>Quick Roll #{index + 1}</div>
+                          <button onClick={() => removeQuickRollSlot(slot.slotId)} className="hover:opacity-80"><X size={12} style={S_RED} /></button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Button Label:</label>
+                            <input type="text" value={slot.label} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_LABEL_KEY), e.target.value)} placeholder="Damage" className={inputClass} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression:</label>
+                            <input type="text" value={slot.expression} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_EXPRESSION_KEY), e.target.value)} placeholder="2d6+P" className={inputClass} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] block mb-1" style={labelStyle}>Potency Override:</label>
+                            <input type="text" value={slot.potency} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_POTENCY_KEY), e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#9A7ABB")}>
+              <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>TAGS AS HELPERS AND MODIFIERS</div>
+                <div className="text-[11px]" style={S_SUBTLE}>
+                  Use tags to classify the card, add light modifiers, and expose optional helper fields. Removing a tag also clears the hidden data that belonged to it.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {[
+                  { label: "Active Tags", value: String(selectedTagDefs.length), detail: selectedTagDefs.length === 0 ? "Nothing attached yet" : "Helper tags currently on this card", accent: "#9A7ABB" },
+                  { label: "Suggested Tags", value: String(suggestedTagDefs.length), detail: suggestedTagDefs.length === 0 ? "No strong suggestions" : "Possible helpers based on current rules", accent: "#6ABAFF" },
+                  { label: "Required Fields", value: String(missingRequiredTagFields.length), detail: missingRequiredTagFields.length === 0 ? "No missing required tag data" : "Required helper data still missing", accent: missingRequiredTagFields.length === 0 ? "#7ACA8A" : "#FF7A7A" },
+                ].map((card) => (
+                  <div key={card.label} className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle(card.accent)}>
+                    <div className="text-[10px]" style={S_SECTION_HDR}>{card.label}</div>
+                    <div className="text-[18px] mt-1" style={S_TEXT_BOLD}>{card.value}</div>
+                    <div className="text-[10px] mt-2" style={S_SUBTLE}>{card.detail}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <div className="text-[12px] mb-2" style={S_SECTION_HDR}>ACTIVE TAGS</div>
+                {selectedTagDefs.length === 0 ? (
+                  <div className={`${retro.raised} bg-[#0E0E35] p-3 text-[11px]`} style={S_MUTED}>
+                    No tags selected yet. Add helper tags below or use the suggestions section.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedTagDefs.map((tag) => {
+                      const role = getTagRole(tag);
+                      return (
+                        <div key={tag.id} className={`${retro.raised} bg-[#0E0E35] px-3 py-2 flex items-center gap-2`}>
+                          <button onClick={() => toggleCardTag(tag.name)} className="text-[10px] px-2 py-1" style={DM_TAG_BADGE}>
+                            {tag.name}
+                          </button>
+                          <span className="text-[9px] px-2 py-1" style={{ color: role.color, border: role.border, background: role.background }}>
+                            {role.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="text-[12px] mb-2" style={S_SECTION_HDR}>SUGGESTED HELPER TAGS</div>
+                {suggestedTagDefs.length === 0 ? (
+                  <div className={`${retro.raised} bg-[#0E0E35] p-3 text-[11px]`} style={S_MUTED}>
+                    No extra suggestions right now.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedTagDefs.map((tag) => {
+                      const role = getTagRole(tag);
+                      return (
+                        <button
+                          key={tag.id}
+                          onClick={() => toggleCardTag(tag.name)}
+                          className={`${retro.button} px-3 py-2 text-left flex items-center gap-2`}
+                          style={{ color: role.color, border: role.border, background: role.background }}
+                          title={tag.description || tag.name}
+                        >
+                          <Plus size={11} />
+                          <span className="text-[11px]">{tag.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-[12px]" style={S_SECTION_HDR}>TAG FIELD GROUPS</div>
+                  <div className="flex items-center gap-2">
+                    {optionalEmptyTagGroups.length > 0 && (
+                      <button onClick={() => setShowOptionalTagGroups((prev) => !prev)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
+                        {showOptionalTagGroups ? "Hide Empty Optional Groups" : `Show ${optionalEmptyTagGroups.length} Empty Optional Group${optionalEmptyTagGroups.length === 1 ? "" : "s"}`}
+                      </button>
+                    )}
+                    <div className="text-[10px]" style={S_SUBTLE}>
+                      {tagGroupsToRender.length} visible group{tagGroupsToRender.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                </div>
+                {tagGroupsToRender.length === 0 ? (
+                  <div className={`${retro.raised} bg-[#0E0E35] p-3 text-[11px]`} style={S_MUTED}>
+                    None of the currently selected tags need visible fields yet.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {tagGroupsToRender.map((group) => {
+                      const tagDef = cardTags.find((tag) => tag.name === group.tagName);
+                      const role = tagDef ? getTagRole(tagDef) : { label: "Helper", color: "#7A8AAA", border: "1px solid #7A8AAA33", background: "#7A8AAA15" };
+                      return (
+                        <div key={group.tagName} className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                          <div className="flex flex-wrap items-center gap-2 mb-3">
+                            <span className="text-[11px] px-2 py-1" style={DM_TAG_BADGE}>{group.tagName}</span>
+                            <span className="text-[9px] px-2 py-1" style={{ color: role.color, border: role.border, background: role.background }}>
+                              {role.label}
+                            </span>
+                            {tagDef?.description && (
+                              <span className="text-[10px]" style={S_SUBTLE}>{tagDef.description}</span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {group.fields.map((cf) => renderCardTagFieldInput(cf))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                  <div className="text-[12px]" style={S_SECTION_HDR}>BROWSE ALL TAGS</div>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      { id: "all" as TagFilterMode, label: "All" },
+                      { id: "active" as TagFilterMode, label: "Active" },
+                      { id: "withFields" as TagFilterMode, label: "With Fields" },
+                      { id: "simple" as TagFilterMode, label: "Simple" },
+                    ]).map((mode) => (
+                      <button
+                        key={mode.id}
+                        onClick={() => setTagFilterMode(mode.id)}
+                        className={`${tagFilterMode === mode.id ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648]"} px-3 py-1.5 text-[10px]`}
+                        style={{ color: tagFilterMode === mode.id ? "#8AB8FF" : "#8A9ABB" }}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="relative mb-3">
+                  <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2" style={S_MUTED} />
+                  <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)} placeholder="Search tag names or descriptions..." className={`${inputClass} pl-9`} style={inputStyle} />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {visibleTagDefs.map((tag) => {
+                    const active = editingCard.tags.includes(tag.name);
+                    const role = getTagRole(tag);
+                    return (
+                      <button
+                        key={tag.id}
+                        onClick={() => toggleCardTag(tag.name)}
+                        className={`${retro.button} px-3 py-2 text-left flex items-center gap-2`}
+                        style={{
+                          color: active ? "#4A7BFF" : role.color,
+                          background: active ? "#1A2A5A" : role.background,
+                          border: active ? "1px solid #2A3A6A" : role.border,
+                        }}
+                        title={tag.description || tag.name}
+                      >
+                        <span className="text-[11px]">{tag.name}</span>
+                        <span className="text-[9px] opacity-80">{role.label}</span>
+                        {tag.fields.length > 0 && <span className="text-[8px] opacity-70">+{tag.fields.length}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDeliveryStage = () => {
+    if (!editingCard) return null;
+
+    return (
+      <div className="space-y-4">
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[12px]" style={S_SECTION_HDR}>DELIVERY</div>
+              <div className="text-[10px] mt-1" style={S_SUBTLE}>Choose who receives the card, where it lives in progression, and finish the save checklist.</div>
+            </div>
+            <button onClick={() => setShowDeliveryDetails((prev) => !prev)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+              {showDeliveryDetails ? "Hide Extra Status" : "Show Extra Status"}
+            </button>
+          </div>
+
+          <div className={`${retro.raised} bg-[#10103A] px-3 py-3 space-y-2`} style={{ border: "1px solid #2B3B6B" }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[10px]" style={S_SECTION_HDR}>EDITOR CHECKLIST</div>
+              <div className="text-[10px]" style={S_SUBTLE}>
+                {blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} fix before save` : "No blocking save issues"}
+              </div>
+            </div>
+            {validationIssues.length === 0 ? (
+              <div className="text-[11px]" style={S_MUTED}>This card has no validation warnings right now.</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {validationIssues.map((issue) => (
+                  <button
+                    key={issue.id}
+                    onClick={() => focusValidationIssue(issue)}
+                    className={`${retro.button} px-3 py-1.5 text-left text-[10px]`}
+                    style={issue.level === "error" ? sectionBadgeStyle("#FF7A7A") : sectionBadgeStyle("#FFD700")}
+                  >
+                    {issue.level === "error" ? "Fix" : "Review"}: {issue.message}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
+              <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER ASSIGNMENT</div>
+              <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input type="checkbox" checked={editingCard.assignedTo.includes("all")} onChange={(e) => {
+                    if (e.target.checked) updateCardField("assignedTo", ["all"]);
+                    else updateCardField("assignedTo", []);
+                  }} className="accent-[#4A9A5A]" />
+                  <span className="text-[12px]" style={S_GREEN_BTN}>All Players</span>
+                </label>
+                <div className="h-[1px] mb-2" style={DM_DIVIDER} />
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {players.map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" disabled={editingCard.assignedTo.includes("all")} checked={editingCard.assignedTo.includes("all") || editingCard.assignedTo.includes(p.id)} onChange={(e) => {
+                        const current = editingCard.assignedTo.filter((id) => id !== "all");
+                        if (e.target.checked) updateCardField("assignedTo", [...current, p.id]);
+                        else updateCardField("assignedTo", current.filter((id) => id !== p.id));
+                      }} className="accent-[#4A7BFF]" />
+                      <span className="text-[12px]" style={dmAssignDim(editingCard.assignedTo.includes("all"))}>{p.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#FFD700")}>
+              <div className="text-[12px]" style={S_SECTION_HDR}>PROGRESSION / NODE TREE</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Node Tree:</label>
+                  <select
+                    value={editingCard.nodeTreeId || ""}
+                    onChange={(e) => {
+                      updateCardField("nodeTreeId" as keyof ManagedCard, e.target.value as any);
+                      updateCardField("nodeId" as keyof ManagedCard, "" as any);
+                    }}
+                    className={`${inputClass} cursor-pointer`}
+                    style={inputStyle}
+                  >
+                    <option value="">-- None --</option>
+                    {nodeTrees.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Node:</label>
+                  <select
+                    value={editingCard.nodeId || ""}
+                    onChange={(e) => updateCardField("nodeId" as keyof ManagedCard, e.target.value as any)}
+                    className={`${inputClass} cursor-pointer`}
+                    style={inputStyle}
+                    disabled={!editingCard.nodeTreeId}
+                  >
+                    <option value="">-- None --</option>
+                    {progressionNodes.map(({ node, capacity }) => (
+                      <option key={node.id} value={node.id} disabled={capacity.isFullForSelection}>
+                        {node.label} ({capacity.filledSlots}/3){capacity.isFullForSelection ? " - Full" : capacity.includesCurrentCard ? " - Current" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`}>
+                <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT ASSIGNMENT</div>
+                <div className="text-[11px]" style={S_TEXT}>{selectedNodeTree ? selectedNodeTree.name : "No node tree selected"}</div>
+                <div className="text-[11px]" style={S_MUTED}>{selectedNode ? `Node: ${selectedNode.label}` : "No node selected"}</div>
+                {selectedNode && selectedNodeCapacity && (
+                  <div className="text-[10px]" style={S_SUBTLE}>
+                    This node currently has {selectedNodeCapacity.filledSlots} / 3 card slot{selectedNodeCapacity.filledSlots !== 1 ? "s" : ""} filled.
+                  </div>
+                )}
+                {selectedNodeCapacity?.isFullForSelection && (
+                  <div className="text-[10px]" style={S_RED}>
+                    This node is full. Pick another node before saving.
+                  </div>
+                )}
+              </div>
+
+              {showDeliveryDetails && editingCard.nodeTreeId && progressionNodes.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                  {progressionNodes.map(({ node, capacity }) => (
+                    <div
+                      key={node.id}
+                      className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[10px]`}
+                      style={editorSurfaceStyle(capacity.isFullForSelection ? "#FF7A7A" : capacity.includesCurrentCard ? "#FFD700" : "#7ACA8A")}
+                    >
+                      <div style={S_TEXT_BOLD}>{node.label}</div>
+                      <div style={capacity.isFullForSelection ? S_RED : S_SUBTLE}>
+                        {capacity.filledSlots}/3 filled{capacity.isFullForSelection ? " - Full" : capacity.includesCurrentCard ? " - Current node" : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCardsWorkspace = () => {
+    const stageMeta = getWorkspaceStageMeta(workspaceStage);
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[12px]" style={S_SECTION_HDR}>CARD WORKSPACE</div>
+            <div className="text-[10px] mt-1" style={S_SUBTLE}>
+              A wiki-style card editor with a collapsible library rail, focused stages, and a live preview that stays beside the work.
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setIsCardLibraryMobileOpen((prev) => !prev)} className={`xl:hidden ${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+              <CreditCard size={12} /> {isCardLibraryMobileOpen ? "Hide Library" : "Open Library"}
+            </button>
+            <button onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+              <Plus size={14} /> {showTemplatePicker ? "Hide Templates" : "New Card"}
+            </button>
+          </div>
+        </div>
+
+        {showTemplatePicker && (
+          <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`}>
+            <div>
+              <div className="text-[12px]" style={S_SECTION_HDR}>CARD TEMPLATES</div>
+              <div className="text-[10px] mt-1" style={S_SUBTLE}>
+                Step 1: pick a template. Step 2: choose whether the new card is a Spell, Skill, or Ability.
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              {CARD_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  onClick={() => handleSelectTemplate(template)}
+                  className={`${retro.raised} bg-[#0E0E35] p-3 text-left hover:bg-[#121244] transition-colors`}
+                  style={{ border: "1px solid #1A1A4B" }}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-[12px]" style={S_TEXT_BOLD}>{template.label}</span>
+                    {template.level && <span className="text-[8px] px-1.5 py-0.5" style={DM_LEVEL_BADGE}>Lv.{template.level}</span>}
+                  </div>
+                  <div className="text-[10px] mb-2" style={S_MUTED}>
+                    {template.type || "Flexible"}{template.actionCost ? ` ﾂｷ ${template.actionCost}` : ""}
+                  </div>
+                  <div className="text-[10px]" style={S_SUBTLE}>{template.description}</div>
+                </button>
+              ))}
+            </div>
+            {pendingTemplate && (
+              <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#4A7BFF")}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[12px]" style={S_SECTION_HDR}>STEP 2: CHOOSE CARD CORE</div>
+                    <div className="text-[11px]" style={S_SUBTLE}>
+                      Template selected: <span style={S_TEXT_BOLD}>{pendingTemplate.label}</span>. Pick the starting family profile.
+                    </div>
+                  </div>
+                  <button onClick={() => setPendingTemplate(null)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_TEXT}>
+                    Clear Selection
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {CARD_FAMILY_OPTIONS.map((family) => (
+                    <button
+                      key={family.id}
+                      onClick={() => handleCreateCardFromTemplate(pendingTemplate, family.id)}
+                      className={`${retro.raised} p-3 text-left transition-colors hover:bg-[#121244]`}
+                      style={editorSurfaceStyle(family.accent)}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-[12px]" style={S_TEXT_BOLD}>{family.label}</span>
+                        <span className="text-[8px] px-1.5 py-0.5" style={sectionBadgeStyle(family.accent)}>{family.label}</span>
+                      </div>
+                      <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 xl:grid-cols-[auto_minmax(0,1fr)] gap-4 items-start">
+          <CardLibraryRail
+            collapsed={isCardLibraryCollapsed}
+            mobileOpen={isCardLibraryMobileOpen}
+            onToggleCollapsed={() => setIsCardLibraryCollapsed((prev) => !prev)}
+            onCloseMobile={() => setIsCardLibraryMobileOpen(false)}
+            filteredCards={filteredCards}
+            managedCardsCount={managedCards.length}
+            editingCardId={editingCard?.id}
+            players={players}
+            cardSearch={cardSearch}
+            onCardSearchChange={setCardSearch}
+            cardLibrarySort={cardLibrarySort}
+            onCardLibrarySortChange={setCardLibrarySort}
+            cardTypeFilter={cardTypeFilter}
+            onCardTypeFilterChange={setCardTypeFilter}
+            allCardTypes={allCardTypes}
+            cardTagFilter={cardTagFilter}
+            onCardTagFilterChange={setCardTagFilter}
+            allCardTagNames={allCardTagNames}
+            onOpenCard={openCardEditor}
+            onDeleteCard={(id) => { void handleDeleteCard(id); }}
+            onNewCard={handleAddCard}
+          />
+
+          {!editingCard ? (
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)] gap-4">
+              <div className={`${retro.sunken} bg-[#0C0C2E] p-6`}>
+                <div className="flex items-center gap-3 mb-4">
+                  <Sparkles size={18} style={S_ACCENT} />
+                  <div className="text-[13px]" style={S_TEXT_BOLD}>Card Editor Workspace</div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+                  {CARD_WORKSPACE_STAGES.map((stage) => (
+                    <div key={stage.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(stage.accent)}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="text-[11px]" style={S_TEXT_BOLD}>{stage.label}</div>
+                        <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(stage.accent)}>{stage.label}</span>
+                      </div>
+                      <div className="text-[10px]" style={S_SUBTLE}>{stage.helper}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+                    <Plus size={14} /> Open Template Picker
+                  </button>
+                </div>
+              </div>
+
+              <div className={`${retro.sunken} bg-[#07101F] p-6`} style={editorSurfaceStyle("#4A7BFF")}>
+                <div className="text-[12px]" style={S_SECTION_HDR}>LIVE PREVIEW READY</div>
+                <div className="text-[11px] mt-3" style={S_SUBTLE}>
+                  Open or create a card to see the persistent preview workspace. The preview will stay beside your authoring stages and let you jump straight into the right section.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="sticky top-2 z-20 space-y-3">
+                <CardWorkspaceHeader
+                  editingCard={editingCard}
+                  isAddingNewCard={isAddingNewCard}
+                  currentFamilyDef={currentFamilyDef}
+                  currentProfileBadges={currentProfileBadges}
+                  rulesMode={rulesMode}
+                  hasUnsavedChanges={hasUnsavedChanges}
+                  blockingValidationIssues={blockingValidationIssues}
+                  warningValidationIssues={warningValidationIssues}
+                  trackerLabel={trackerStatusLabel}
+                  currentStage={workspaceStage}
+                  onSave={() => { void handleSaveCard(); }}
+                  onClose={handleCancelCardEdit}
+                  onNewCard={handleAddCard}
+                  onOpenLibrary={() => setIsCardLibraryMobileOpen(true)}
+                />
+
+                <div className={`${retro.sunken} bg-[#081022] p-3 space-y-3`} style={editorSurfaceStyle(stageMeta.accent)}>
+                  <div className="flex flex-wrap gap-2">
+                    {CARD_WORKSPACE_STAGES.map((stage) => {
+                      const active = workspaceStage === stage.id;
+                      const Icon = stage.icon;
+                      return (
+                        <button
+                          key={stage.id}
+                          onClick={() => selectWorkspaceStage(stage.id)}
+                          className={`${active ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
+                          style={{ color: active ? stage.accent : "#8A9ABB", fontWeight: active ? 600 : 400 }}
+                        >
+                          <Icon size={12} /> {stage.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                    {workspaceStageCards.map((card) => {
+                      const active = workspaceStage === card.id;
+                      return (
+                        <button
+                          key={card.id}
+                          onClick={() => selectWorkspaceStage(card.id)}
+                          className={`${active ? retro.sunken : retro.raised} bg-[#0E0E35] p-3 text-left transition-colors hover:bg-[#121244]`}
+                          style={editorSurfaceStyle(active ? card.accent : "#273357")}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="text-[11px]" style={S_TEXT_BOLD}>{card.title}</span>
+                            <span className="text-[8px] px-2 py-0.5" style={sectionBadgeStyle(card.accent)}>{card.title}</span>
+                          </div>
+                          <div className="text-[10px]" style={active ? S_TEXT : S_SUBTLE}>{card.summary}</div>
+                          <div className="text-[10px] mt-2" style={S_MUTED}>{card.detail}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.03fr)_minmax(320px,0.97fr)] gap-4 items-start">
+                <div className="space-y-4 order-2 2xl:order-1">
+                  {workspaceStage === "overview" && renderOverviewStage()}
+                  {workspaceStage === "rules" && renderRulesStage()}
+                  {workspaceStage === "effects" && renderEffectsStage()}
+                  {workspaceStage === "delivery" && renderDeliveryStage()}
+                </div>
+
+                <div className="order-1 2xl:order-2">
+                  {livePreviewCard && (
+                    <InteractiveCardPreview
+                      card={livePreviewCard}
+                      editingCard={editingCard}
+                      players={players}
+                      nodeTrees={nodeTrees}
+                      cardTags={cardTags}
+                      rulesMode={rulesMode}
+                      quickRollSlots={quickRollSlots}
+                      currentStage={workspaceStage}
+                      previewFocusRegion={previewFocusRegion}
+                      previewEditField={previewEditField}
+                      onStageSelect={selectWorkspaceStage}
+                      onPreviewFocus={setPreviewFocusRegion}
+                      onPreviewEditFieldChange={setPreviewEditField}
+                      onUpdateCardField={updateCardField}
+                      onUpdateCardCustomField={updateCardCustomField}
+                      onRulesModeChange={(mode) => {
+                        setRulesMode(mode);
+                        if (mode === "guided") setMechanicsView("rules");
+                      }}
+                      renderTagFieldInput={renderCardTagFieldInput}
+                      onAddQuickRoll={addQuickRollSlot}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Cards</h2>
@@ -2004,7 +4120,9 @@ export function DMCardManagerSection({
         ))}
       </div>
 
-      {dmCardsSubTab === "cards" && (
+      {dmCardsSubTab === "cards" && renderCardsWorkspace()}
+
+      {dmCardsSubTab === "cards" && false && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
