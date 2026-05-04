@@ -65,6 +65,9 @@ type MechanicsWorkspaceView = "rules" | "automation" | "text";
 type CardTemplateId = "blank" | "attack" | "heal" | "buff" | "debuff" | "reaction" | "passive" | "utility";
 type TagFilterMode = "all" | "active" | "withFields" | "simple";
 type CardFamily = "" | "spell" | "skill" | "ability";
+type CardLibrarySortMode = "manual" | "name" | "player";
+type ActiveCustomFieldEntry = { tagName: string; fieldName: string; key: string; fieldDef: TagField };
+type ActiveCustomFieldGroup = { tagName: string; fields: ActiveCustomFieldEntry[] };
 
 interface CardFamilyDef {
   id: Exclude<CardFamily, "">;
@@ -360,8 +363,8 @@ function getSaveError(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback;
 }
 
-function getActiveCustomFields(entity: { tags: string[] }, tagList: TagDefinition[]): { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] {
-  const fields: { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] = [];
+function getActiveCustomFields(entity: { tags: string[] }, tagList: TagDefinition[]): ActiveCustomFieldEntry[] {
+  const fields: ActiveCustomFieldEntry[] = [];
   entity.tags.forEach((tagName) => {
     const tagDef = tagList.find((t) => t.name === tagName);
     if (tagDef && tagDef.fields.length > 0) {
@@ -371,6 +374,20 @@ function getActiveCustomFields(entity: { tags: string[] }, tagList: TagDefinitio
     }
   });
   return fields;
+}
+
+function groupCustomFieldsByTag(fields: ActiveCustomFieldEntry[]): ActiveCustomFieldGroup[] {
+  const groups: ActiveCustomFieldGroup[] = [];
+  const map = new Map<string, ActiveCustomFieldGroup>();
+  fields.forEach((field) => {
+    if (!map.has(field.tagName)) {
+      const entry: ActiveCustomFieldGroup = { tagName: field.tagName, fields: [] };
+      map.set(field.tagName, entry);
+      groups.push(entry);
+    }
+    map.get(field.tagName)!.fields.push(field);
+  });
+  return groups;
 }
 
 function stripHtml(value: string) {
@@ -458,6 +475,17 @@ function getCardSummary(card: ManagedCard) {
   const plain = stripHtml(card.effect || "");
   if (!plain) return "No effect text yet.";
   return plain.length > 180 ? `${plain.slice(0, 177)}...` : plain;
+}
+
+function getCardLibraryOwnerSortKey(card: ManagedCard, players: { id: string; name: string }[]) {
+  if (card.assignedTo.includes("all")) return "0::all players";
+  if (card.assignedTo.length === 0) return "2::unassigned";
+  const ownerNames = card.assignedTo
+    .map((id) => players.find((player) => player.id === id)?.name || id)
+    .sort((left, right) => left.localeCompare(right))
+    .join(", ")
+    .toLowerCase();
+  return `1::${ownerNames}`;
 }
 
 function getNodeAssignmentLabel(card: ManagedCard, nodeTrees: NodeTree[]) {
@@ -1033,10 +1061,10 @@ function CardPreviewPanel({
   nodeTrees: NodeTree[];
   cardTags: TagDefinition[];
 }) {
-  const visibleCustomFields = getActiveCustomFields(card, cardTags).filter((cf) => {
+  const visibleCustomFieldGroups = groupCustomFieldsByTag(getActiveCustomFields(card, cardTags).filter((cf) => {
     const value = card.customFields[cf.key];
     return typeof value === "string" && value.trim();
-  });
+  }));
   const family = getCardFamily(card);
   const familyDef = getCardFamilyDef(family);
   const profileBadges = getCardProfileBadges(card);
@@ -1128,12 +1156,22 @@ function CardPreviewPanel({
             <div>
               <div className="text-[10px] mb-2" style={S_SECTION_HDR}>TAG FIELDS</div>
               <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-1`}>
-                {visibleCustomFields.length === 0 ? (
+                {visibleCustomFieldGroups.length === 0 ? (
                   <div className="text-[11px]" style={S_MUTED}>No active tag fields with values.</div>
                 ) : (
-                  visibleCustomFields.map((cf) => (
-                    <div key={cf.key} className="text-[11px]">
-                      <span style={S_MUTED}>{cf.fieldName}:</span> <span style={S_TEXT}>{card.customFields[cf.key]}</span>
+                  visibleCustomFieldGroups.map((group) => (
+                    <div key={group.tagName} className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] px-2 py-1" style={DM_TAG_BADGE}>{group.tagName}</span>
+                        <span className="text-[9px]" style={S_SUBTLE}>
+                          {group.fields.length} field{group.fields.length === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      {group.fields.map((cf) => (
+                        <div key={cf.key} className="text-[11px]">
+                          <span style={S_MUTED}>{cf.fieldName}:</span> <span style={S_TEXT}>{card.customFields[cf.key]}</span>
+                        </div>
+                      ))}
                     </div>
                   ))
                 )}
@@ -1161,6 +1199,7 @@ export function DMCardManagerSection({
   const [cardSearch, setCardSearch] = useState("");
   const [cardTagFilter, setCardTagFilter] = useState<string>("all");
   const [cardTypeFilter, setCardTypeFilter] = useState<string>("all");
+  const [cardLibrarySort, setCardLibrarySort] = useState<CardLibrarySortMode>("manual");
   const [editorPanel, setEditorPanel] = useState<CardEditorPanel>("preview");
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<CardTemplateDef | null>(null);
@@ -1510,6 +1549,10 @@ export function DMCardManagerSection({
     setMechanicsBuilder(EMPTY_MECHANICS_BUILDER);
   };
 
+  const clearMechanicsBuilderField = (field: MechanicsBuilderField) => {
+    setMechanicsBuilder((prev) => ({ ...prev, [field]: "" }));
+  };
+
   const addPresetSectionBlock = (preset: { title: string; tone: CardSectionTone; content: string }) => {
     setCardSectionBlocks((prev) => [
       ...prev,
@@ -1687,17 +1730,7 @@ export function DMCardManagerSection({
   );
 
   const activeFieldsByTag = useMemo(() => {
-    const groups: Array<{ tagName: string; fields: { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] }> = [];
-    const map = new Map<string, { tagName: string; fields: { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] }>();
-    activeCardCustomFields.forEach((field) => {
-      if (!map.has(field.tagName)) {
-        const entry = { tagName: field.tagName, fields: [] as { tagName: string; fieldName: string; key: string; fieldDef: TagField }[] };
-        map.set(field.tagName, entry);
-        groups.push(entry);
-      }
-      map.get(field.tagName)!.fields.push(field);
-    });
-    return groups;
+    return groupCustomFieldsByTag(activeCardCustomFields);
   }, [activeCardCustomFields]);
 
   const selectedTagDefs = useMemo(
@@ -1749,19 +1782,30 @@ export function DMCardManagerSection({
 
   const filteredCards = useMemo(() => {
     const query = cardSearch.trim().toLowerCase();
-    return managedCards.filter((card) => {
+    const nextCards = managedCards.filter((card) => {
       const matchesQuery = !query || [
         card.name,
         card.type,
         card.actionCost,
         card.customFields["Source Type"] || "",
         getCardSummary(card),
+        formatOwners(card.assignedTo, players),
       ].some((value) => value.toLowerCase().includes(query));
       const matchesTag = cardTagFilter === "all" || card.tags.includes(cardTagFilter);
       const matchesType = cardTypeFilter === "all" || card.type === cardTypeFilter;
       return matchesQuery && matchesTag && matchesType;
     });
-  }, [managedCards, cardSearch, cardTagFilter, cardTypeFilter]);
+    if (cardLibrarySort === "manual") return nextCards;
+    return [...nextCards].sort((left, right) => {
+      if (cardLibrarySort === "player") {
+        const ownerCompare = getCardLibraryOwnerSortKey(left, players).localeCompare(getCardLibraryOwnerSortKey(right, players));
+        if (ownerCompare !== 0) return ownerCompare;
+      }
+      const leftName = (left.name || "Untitled Card").toLowerCase();
+      const rightName = (right.name || "Untitled Card").toLowerCase();
+      return leftName.localeCompare(rightName);
+    });
+  }, [managedCards, cardSearch, cardTagFilter, cardTypeFilter, cardLibrarySort, players]);
 
   const selectedNodeTree = useMemo(
     () => editingCard?.nodeTreeId ? nodeTrees.find((tree) => tree.id === editingCard.nodeTreeId) || null : null,
@@ -2073,6 +2117,11 @@ export function DMCardManagerSection({
                     style={inputStyle}
                   />
                 </div>
+                <select value={cardLibrarySort} onChange={(e) => setCardLibrarySort(e.target.value as CardLibrarySortMode)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                  <option value="manual">Original Order</option>
+                  <option value="name">Name (A-Z)</option>
+                  <option value="player">Player Assignment</option>
+                </select>
                 <div className="grid grid-cols-2 gap-2">
                   <select value={cardTypeFilter} onChange={(e) => setCardTypeFilter(e.target.value)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
                     <option value="all">All Types</option>
@@ -2103,6 +2152,7 @@ export function DMCardManagerSection({
                               )}
                             </div>
                             <div className="text-[10px] mb-1" style={S_MUTED}>{card.type || "No type"}</div>
+                            <div className="text-[10px] mb-1" style={S_SUBTLE}>Assigned: {formatOwners(card.assignedTo, players)}</div>
                             <div className="text-[10px] line-clamp-3" style={S_SUBTLE}>{getCardSummary(card)}</div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -2608,11 +2658,17 @@ export function DMCardManagerSection({
                                           </div>
                                           <div className="text-[10px]" style={S_SUBTLE}>{block.placeholder}</div>
                                         </div>
-                                        {!filled && (
-                                          <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} shrink-0 px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
-                                            <Sparkles size={10} /> Seed
-                                          </button>
-                                        )}
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          {!filled ? (
+                                            <button onClick={() => addMechanicsStarter(block)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={sectionBadgeStyle(accent)}>
+                                              <Sparkles size={10} /> Seed
+                                            </button>
+                                          ) : (
+                                            <button onClick={() => clearMechanicsBuilderField(block.id)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={S_RED}>
+                                              <Trash2 size={10} /> Remove
+                                            </button>
+                                          )}
+                                        </div>
                                       </div>
                                       <textarea
                                         value={mechanicsBuilder[block.id]}
@@ -2630,7 +2686,7 @@ export function DMCardManagerSection({
                                 })}
                               </div>
                               <div className="text-[10px] mt-2" style={S_SUBTLE}>
-                                Changing family updates the family label and overwrites the family-managed profile fields to match the selected family.
+                                Seed drops in a starter line. Remove clears that structured block without touching the rest of the builder.
                               </div>
                             </div>
 
@@ -2772,9 +2828,14 @@ export function DMCardManagerSection({
                                 ) : (
                                   MECHANICS_BLOCKS.filter((block) => mechanicsBuilder[block.id].trim()).map((block, index) => (
                                     <div key={block.id} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
-                                        <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
+                                      <div className="flex items-center justify-between gap-2 mb-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{index + 1}</span>
+                                          <div className="text-[10px]" style={S_SECTION_HDR}>{block.label.toUpperCase()}</div>
+                                        </div>
+                                        <button onClick={() => clearMechanicsBuilderField(block.id)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={S_RED}>
+                                          <Trash2 size={10} /> Remove
+                                        </button>
                                       </div>
                                       <div className="text-[11px]" style={S_TEXT}>{mechanicsBuilder[block.id]}</div>
                                     </div>
