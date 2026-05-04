@@ -1781,6 +1781,7 @@ function InteractiveCardPreview({
   onAddQuickRoll,
   onRemoveQuickRoll,
   stickyPreview = true,
+  panelClassName = "",
 }: {
   card: ManagedCard;
   editingCard: ManagedCard;
@@ -1807,6 +1808,7 @@ function InteractiveCardPreview({
   onAddQuickRoll: () => void;
   onRemoveQuickRoll: (slotId: string) => void;
   stickyPreview?: boolean;
+  panelClassName?: string;
 }) {
   const visibleCustomFieldGroups = groupCustomFieldsByTag(getActiveCustomFields(card, cardTags).filter((cf) => hasFilledFieldValue(card.customFields[cf.key])));
   const trackerBucket = getCardTrackerBucket(editingCard);
@@ -1852,7 +1854,7 @@ function InteractiveCardPreview({
   const stopEditing = () => onPreviewEditFieldChange(null);
 
   return (
-    <div className={`${retro.sunken} bg-[#07101F] p-5 space-y-4 ${stickyPreview ? "xl:sticky xl:top-2" : ""}`} style={editorSurfaceStyle(selectedStageAccent)}>
+    <div className={`${retro.sunken} bg-[#07101F] p-5 space-y-4 ${stickyPreview ? "xl:sticky xl:top-2" : ""} ${panelClassName}`.trim()} style={editorSurfaceStyle(selectedStageAccent)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
@@ -4489,7 +4491,7 @@ export function DMCardManagerSection({
                   </div>
                 )}
 
-                <div className={liveEditStageActive ? "xl:h-[calc(100vh-15rem)] 2xl:h-[calc(100vh-14rem)] xl:overflow-y-auto xl:pr-1" : "order-1 xl:order-2"}>
+                <div className={liveEditStageActive ? "pb-6" : "order-1 xl:order-2"}>
                   {livePreviewCard && (
                     <InteractiveCardPreview
                       card={livePreviewCard}
@@ -4517,6 +4519,7 @@ export function DMCardManagerSection({
                       onAddQuickRoll={addQuickRollSlot}
                       onRemoveQuickRoll={removeQuickRollSlot}
                       stickyPreview={!liveEditStageActive}
+                      panelClassName={liveEditStageActive ? "min-h-[calc(100vh-2rem)] 2xl:min-h-[calc(100vh+2rem)]" : ""}
                     />
                   )}
                 </div>
