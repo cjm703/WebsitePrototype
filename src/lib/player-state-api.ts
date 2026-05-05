@@ -4,11 +4,14 @@ import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env
 const API_BASE = supabaseFunctionBase;
 const LOCAL_DM_LEVEL_CATEGORIES_KEY = "inet-dm-player-level-categories";
 const LEVEL_CATEGORIES_FALLBACK_STATE_KEY = "inet-dm-player-level-categories-fallback";
+const LOCAL_DM_MAGIC_LISTS_KEY = "inet-dm-player-magic-lists";
+const MAGIC_LISTS_FALLBACK_STATE_KEY = "inet-dm-player-magic-lists-fallback";
 const LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 const LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 type LocalLevelCategoryMap = Record<string, Record<string, unknown>[]>;
+type LocalMagicListMap = Record<string, Record<string, unknown>[]>;
 type LevelCategoriesFallbackState = {
   mode: "local";
   reason: "deployment" | "transient";
@@ -17,6 +20,8 @@ type LevelCategoriesFallbackState = {
 
 let inMemoryLevelCategoriesFallbackState: LevelCategoriesFallbackState | null = null;
 let hasLoggedLevelCategoriesFallback = false;
+let inMemoryMagicListsFallbackState: LevelCategoriesFallbackState | null = null;
+let hasLoggedMagicListsFallback = false;
 
 function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
@@ -173,8 +178,26 @@ function isDeploymentLevelCategoriesFailure(err: unknown) {
   return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
 }
 
+function shouldFallbackPlayerMagicLists(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return (
+    isDeploymentMagicListsFailure(err) ||
+    /Failed to fetch|NetworkError|Load failed|timed out|timeout/i.test(message)
+  );
+}
+
+function isDeploymentMagicListsFailure(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
+}
+
 function loadLocalDMPlayerLevelCategories(playerId: string) {
   const stored = safeGetJson<LocalLevelCategoryMap>(LOCAL_DM_LEVEL_CATEGORIES_KEY, {});
+  return Array.isArray(stored[playerId]) ? stored[playerId] : [];
+}
+
+function loadLocalDMPlayerMagicLists(playerId: string) {
+  const stored = safeGetJson<LocalMagicListMap>(LOCAL_DM_MAGIC_LISTS_KEY, {});
   return Array.isArray(stored[playerId]) ? stored[playerId] : [];
 }
 
@@ -205,12 +228,48 @@ function getActiveLevelCategoriesFallbackState() {
   return null;
 }
 
+function getActiveMagicListsFallbackState() {
+  if (
+    inMemoryMagicListsFallbackState?.mode === "local" &&
+    typeof inMemoryMagicListsFallbackState.retryAfter === "number" &&
+    inMemoryMagicListsFallbackState.retryAfter > Date.now()
+  ) {
+    return inMemoryMagicListsFallbackState;
+  }
+
+  const persisted = safeGetJson<LevelCategoriesFallbackState | null>(
+    MAGIC_LISTS_FALLBACK_STATE_KEY,
+    null,
+  );
+
+  if (
+    persisted?.mode === "local" &&
+    typeof persisted.retryAfter === "number" &&
+    persisted.retryAfter > Date.now()
+  ) {
+    inMemoryMagicListsFallbackState = persisted;
+    return persisted;
+  }
+
+  inMemoryMagicListsFallbackState = null;
+  return null;
+}
+
 function logLevelCategoriesFallback(action: "load" | "save", err: unknown) {
   if (hasLoggedLevelCategoriesFallback) return;
   hasLoggedLevelCategoriesFallback = true;
   const message = err instanceof Error ? err.message : String(err || "Unknown fallback reason");
   console.warn(
     `${action === "load" ? "Loading" : "Saving"} DM level categories in local fallback mode (${message}).`,
+  );
+}
+
+function logMagicListsFallback(action: "load" | "save", err: unknown) {
+  if (hasLoggedMagicListsFallback) return;
+  hasLoggedMagicListsFallback = true;
+  const message = err instanceof Error ? err.message : String(err || "Unknown fallback reason");
+  console.warn(
+    `${action === "load" ? "Loading" : "Saving"} DM magic lists in local fallback mode (${message}).`,
   );
 }
 
@@ -225,8 +284,23 @@ function saveLocalDMPlayerLevelCategories(
   });
 }
 
+function saveLocalDMPlayerMagicLists(
+  playerId: string,
+  magicLists: Record<string, unknown>[],
+) {
+  const stored = safeGetJson<LocalMagicListMap>(LOCAL_DM_MAGIC_LISTS_KEY, {});
+  safeSetJson(LOCAL_DM_MAGIC_LISTS_KEY, {
+    ...stored,
+    [playerId]: magicLists,
+  });
+}
+
 function shouldUseLocalLevelCategoriesFallback() {
   return getActiveLevelCategoriesFallbackState() !== null;
+}
+
+function shouldUseLocalMagicListsFallback() {
+  return getActiveMagicListsFallbackState() !== null;
 }
 
 function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient") {
@@ -243,10 +317,30 @@ function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient"
   safeSetJson(LEVEL_CATEGORIES_FALLBACK_STATE_KEY, fallbackState);
 }
 
+function activateLocalMagicListsFallback(reason: "deployment" | "transient") {
+  const fallbackState = {
+    mode: "local",
+    reason,
+    retryAfter:
+      Date.now() +
+      (reason === "deployment"
+        ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
+        : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
+  } satisfies LevelCategoriesFallbackState;
+  inMemoryMagicListsFallbackState = fallbackState;
+  safeSetJson(MAGIC_LISTS_FALLBACK_STATE_KEY, fallbackState);
+}
+
 function clearLocalLevelCategoriesFallback() {
   inMemoryLevelCategoriesFallbackState = null;
   hasLoggedLevelCategoriesFallback = false;
   safeRemoveItem(LEVEL_CATEGORIES_FALLBACK_STATE_KEY);
+}
+
+function clearLocalMagicListsFallback() {
+  inMemoryMagicListsFallbackState = null;
+  hasLoggedMagicListsFallback = false;
+  safeRemoveItem(MAGIC_LISTS_FALLBACK_STATE_KEY);
 }
 
 export async function loadDMPlayerLevelCategories(playerId: string) {
@@ -293,6 +387,53 @@ export async function saveDMPlayerLevelCategories(
     );
     logLevelCategoriesFallback("save", err);
     saveLocalDMPlayerLevelCategories(playerId, levelCategories);
+  }
+}
+
+export async function loadDMPlayerMagicLists(playerId: string) {
+  if (shouldUseLocalMagicListsFallback()) {
+    return loadLocalDMPlayerMagicLists(playerId);
+  }
+
+  try {
+    const body = await apiFetch(`/dm/player-magic-lists/${playerId}`, {
+      method: "GET",
+    });
+
+    clearLocalMagicListsFallback();
+    return (body?.magicLists ?? []) as Record<string, unknown>[];
+  } catch (err) {
+    if (!shouldFallbackPlayerMagicLists(err)) throw err;
+    activateLocalMagicListsFallback(
+      isDeploymentMagicListsFailure(err) ? "deployment" : "transient",
+    );
+    logMagicListsFallback("load", err);
+    return loadLocalDMPlayerMagicLists(playerId);
+  }
+}
+
+export async function saveDMPlayerMagicLists(
+  playerId: string,
+  magicLists: Record<string, unknown>[],
+) {
+  if (shouldUseLocalMagicListsFallback()) {
+    saveLocalDMPlayerMagicLists(playerId, magicLists);
+    return;
+  }
+
+  try {
+    await apiFetch("/dm/player-magic-lists/save", {
+      method: "POST",
+      body: JSON.stringify({ playerId, magicLists }),
+    });
+    clearLocalMagicListsFallback();
+  } catch (err) {
+    if (!shouldFallbackPlayerMagicLists(err)) throw err;
+    activateLocalMagicListsFallback(
+      isDeploymentMagicListsFailure(err) ? "deployment" : "transient",
+    );
+    logMagicListsFallback("save", err);
+    saveLocalDMPlayerMagicLists(playerId, magicLists);
   }
 }
 

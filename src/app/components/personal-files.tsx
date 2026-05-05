@@ -14,8 +14,28 @@ import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
 import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
+import {
+  collectLevelCardsForCards,
+  collectMagicCardIds,
+  getLevelCategoryCardIds,
+  getLevelCategoryEntries,
+  MAGIC_TIER_LABELS,
+  MAGIC_TIER_ORDER,
+  normalizeLevelCategories,
+  normalizeMagicLists,
+} from "@/lib/card-placement";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
-import type { PlayerStats, PlayerData, ManagedItem, ManagedCard, ManagedInfo, TagDefinition } from "./types";
+import type {
+  LevelCategory,
+  MagicTierKey,
+  ManagedCard,
+  ManagedInfo,
+  ManagedItem,
+  PlayerData,
+  PlayerMagicList,
+  PlayerStats,
+  TagDefinition,
+} from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
 import PersonalFilesInformationPanel from "./personal-files-information-panel";
 import {
@@ -47,7 +67,8 @@ type BuffEntry = { key: string; category: "attribute" | "skill" | "resource"; to
 interface QuickItem { id: string; name: string; qty: number; description?: string; category: "source" | "money" | "consumable"; sourceAmount?: number; sourceType?: string; priority?: boolean; }
 interface SourceUsageEntry { id: string; cardName: string; sourceType: string; amount: number; timestamp: number; }
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
-interface LevelCategory { id: string; name: string; order: number; cardIds: string[]; }
+type CardSourceFilter = "all" | "direct" | "node" | "magic" | "level";
+type CardSourceLabel = "Direct" | "Node" | "Magic" | "Level";
 
 const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
 const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
@@ -481,7 +502,7 @@ export function PersonalFiles() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"character" | "inventory" | "cards" | "information">("character");
   const [inventorySubTab, setInventorySubTab] = useState<"equipped" | "effects" | "consumables" | "general">("equipped");
-  const [cardsSubTab, setCardsSubTab] = useState<"cards" | "nodetrees" | "levelabilities">("cards");
+  const [cardsSubTab, setCardsSubTab] = useState<"cards" | "magic" | "nodetrees" | "levelabilities">("cards");
   const [playerNodeTrees, setPlayerNodeTrees] = useState<NodeTree[]>([]);
   const currentUser = safeGetItem("inet-user") || "";
   const currentUserId = safeGetItem("inet-user-id") || "";
@@ -533,6 +554,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [equipSlots, setEquipSlots] = useState<EquipSlotState>({ ...DEFAULT_EQUIP_SLOTS });
   const [statusEffects, setStatusEffects] = useState<StatusEffectRow[]>([]);
   const [levelCategories, setLevelCategories] = useState<LevelCategory[]>([]);
+  const [magicLists, setMagicLists] = useState<PlayerMagicList[]>([]);
   const [allPlayers, setAllPlayers] = useState<PlayerData[]>([]);
   const [allItems, setAllItems] = useState<ManagedItem[]>([]);
   const [allCards, setAllCards] = useState<ManagedCard[]>([]);
@@ -585,7 +607,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setSkillProficiencies(playerState.skillProficiencies ?? {});
       setEquipSlots({ ...DEFAULT_EQUIP_SLOTS, ...(playerState.equipmentSlots ?? {}) });
       setStatusEffects(playerState.statusEffects ?? []);
-      setLevelCategories(playerState.levelCategories ?? []);
+      setLevelCategories(normalizeLevelCategories(playerState.levelCategories ?? [], cards));
+      setMagicLists(normalizeMagicLists(playerState.magicLists ?? []));
     } finally {
       setIsHydrating(false);
     }
@@ -623,6 +646,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         equipmentSlots: equipSlots,
         statusEffects,
         levelCategories,
+        magicLists,
       })
         .then(() => showSaveToast("saved"))
         .catch((err) => {
@@ -642,6 +666,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     equipSlots,
     statusEffects,
     levelCategories,
+    magicLists,
     isHydrating,
     showSaveToast,
   ]);
@@ -754,14 +779,84 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     [allItems, player]
   );
 
-  const playerCards = useMemo(
+  const directPlayerCards = useMemo(
     () => player ? allCards.filter((c) => isAssignedTo(c.assignedTo, player.id)) : [],
     [allCards, player]
   );
 
   const playerInfos = useMemo(
-    () => player ? allInfos.filter((i) => isAssignedTo(i.assignedTo, player.id) || isAssignedTo(i.assignedTo, "all")) : [],
+    () => player ? allInfos.filter((i) => isAssignedTo(i.assignedTo, player.id) || isAssignedTo(i.assignedTo, "all")) : [], 
     [allInfos, player]
+  );
+
+  const normalizedLevelCategories = useMemo(
+    () => normalizeLevelCategories(levelCategories, allCards),
+    [levelCategories, allCards],
+  );
+
+  const normalizedMagicLists = useMemo(
+    () => normalizeMagicLists(magicLists),
+    [magicLists],
+  );
+
+  const allCardsById = useMemo(
+    () => new Map(allCards.map((card) => [card.id, card])),
+    [allCards],
+  );
+
+  const playerAssignedNodeTrees = useMemo(
+    () =>
+      player
+        ? playerNodeTrees.filter(
+            (tree) => tree.assignedTo.includes(player.id) || tree.assignedTo.includes("all"),
+          )
+        : [],
+    [player, playerNodeTrees],
+  );
+
+  const nodeGrantedCardIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const tree of playerAssignedNodeTrees) {
+      for (const node of tree.nodes) {
+        for (const cardId of node.cardIds) {
+          ids.add(cardId);
+        }
+      }
+    }
+    return ids;
+  }, [playerAssignedNodeTrees]);
+
+  const magicCardIds = useMemo(
+    () => collectMagicCardIds(normalizedMagicLists),
+    [normalizedMagicLists],
+  );
+
+  const levelCardsForCards = useMemo(
+    () => collectLevelCardsForCards(normalizedLevelCategories),
+    [normalizedLevelCategories],
+  );
+
+  const cardSourceMap = useMemo(() => {
+    const next = new Map<string, Set<CardSourceLabel>>();
+
+    const addSource = (cardId: string, source: CardSourceLabel) => {
+      if (!allCardsById.has(cardId)) return;
+      const existing = next.get(cardId) || new Set<CardSourceLabel>();
+      existing.add(source);
+      next.set(cardId, existing);
+    };
+
+    for (const card of directPlayerCards) addSource(card.id, "Direct");
+    for (const cardId of nodeGrantedCardIds) addSource(cardId, "Node");
+    for (const cardId of magicCardIds) addSource(cardId, "Magic");
+    for (const cardId of levelCardsForCards) addSource(cardId, "Level");
+
+    return next;
+  }, [allCardsById, directPlayerCards, nodeGrantedCardIds, magicCardIds, levelCardsForCards]);
+
+  const playerCards = useMemo(
+    () => allCards.filter((card) => cardSourceMap.has(card.id)),
+    [allCards, cardSourceMap],
   );
 
   // ========================
@@ -1017,6 +1112,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [cardTreeFilter, setCardTreeFilter] = useState<string | null>(null);
   const [cardNodeFilter, setCardNodeFilter] = useState<string | null>(null);
   const [cardSortBy, setCardSortBy] = useState<"default" | "level" | "actionType" | "sourceType">("default");
+  const [cardSourceFilter, setCardSourceFilter] = useState<CardSourceFilter>("all");
+
+  const [magicSearch, setMagicSearch] = useState("");
+  const [magicActiveTags, setMagicActiveTags] = useState<string[]>([]);
+  const [magicSelectedCard, setMagicSelectedCard] = useState<ManagedCard | null>(null);
+  const [selectedMagicListId, setSelectedMagicListId] = useState<string>("");
 
   // Level Abilities state (per-player)
 
@@ -1030,8 +1131,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const isDM = currentUserId === "dm" || currentUser === "DM";
 
   const saveLevelCategories = useCallback(async (cats: typeof levelCategories) => {
-    setLevelCategories(cats);
-  }, []);
+    setLevelCategories(normalizeLevelCategories(cats, allCards));
+  }, [allCards]);
 
   const toggleLevelCollapse = useCallback((id: string) => {
     setCollapsedLevels(prev => {
@@ -1043,6 +1144,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const toggleLaTag = (tag: string) => {
     setLaActiveTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+  };
+
+  const toggleMagicTag = (tag: string) => {
+    setMagicActiveTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
   };
 
   // Skills data — calculated from actual player stats
@@ -1060,6 +1165,26 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const allInvTags = useMemo(() => getAllTags(playerItems), [playerItems]);
   const allCardTags = useMemo(() => getAllTags(playerCards), [playerCards]);
+  const allMagicTags = useMemo(() => getAllTags(playerCards.filter((card) => magicCardIds.has(card.id))), [playerCards, magicCardIds]);
+
+  useEffect(() => {
+    if (normalizedMagicLists.length === 0) {
+      setSelectedMagicListId("");
+      return;
+    }
+    if (!normalizedMagicLists.some((list) => list.id === selectedMagicListId)) {
+      setSelectedMagicListId(normalizedMagicLists[0].id);
+    }
+  }, [normalizedMagicLists, selectedMagicListId]);
+
+  const selectedMagicList = useMemo(
+    () => normalizedMagicLists.find((list) => list.id === selectedMagicListId) || null,
+    [normalizedMagicLists, selectedMagicListId],
+  );
+
+  const getCardSourceLabels = useCallback((cardId: string) => {
+    return Array.from(cardSourceMap.get(cardId) || []);
+  }, [cardSourceMap]);
 
   const filteredItems = useMemo(() => {
     return playerItems.filter((item) => {
@@ -1455,9 +1580,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         card.tags.some((t) => t.toLowerCase().includes(cardSearch.toLowerCase()));
       const matchesTags =
         cardActiveTags.length === 0 || cardActiveTags.every((t) => card.tags.includes(t));
+      const sourceLabels = getCardSourceLabels(card.id);
+      const matchesSource =
+        cardSourceFilter === "all" ||
+        sourceLabels.some((source) => source.toLowerCase() === cardSourceFilter);
       const matchesTree = !cardTreeFilter || card.nodeTreeId === cardTreeFilter;
       const matchesNode = !cardNodeFilter || card.nodeId === cardNodeFilter;
-      return matchesSearch && matchesTags && matchesTree && matchesNode;
+      return matchesSearch && matchesTags && matchesSource && matchesTree && matchesNode;
     }).sort((a, b) => {
       if (cardSortBy === "level") {
         const aLvl = parseInt(a.customFields["Level"] || "0") || 0;
@@ -1468,7 +1597,29 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       if (cardSortBy === "sourceType") return (a.customFields["Source Type"] || a.type || "").localeCompare(b.customFields["Source Type"] || b.type || "");
       return 0;
     });
-  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy]);
+  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy, cardSourceFilter, getCardSourceLabels]);
+
+  const filteredMagicCardsByTier = useMemo(() => {
+    if (!selectedMagicList) return {} as Record<MagicTierKey, ManagedCard[]>;
+
+    return MAGIC_TIER_ORDER.reduce((acc, tier) => {
+      const tierCards = (selectedMagicList.tiers[tier] || [])
+        .map((cardId) => allCardsById.get(cardId))
+        .filter(Boolean)
+        .filter((card): card is ManagedCard => {
+          const matchesSearch =
+            magicSearch === "" ||
+            card.name.toLowerCase().includes(magicSearch.toLowerCase()) ||
+            card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(magicSearch.toLowerCase()) ||
+            card.tags.some((tag) => tag.toLowerCase().includes(magicSearch.toLowerCase()));
+          const matchesTags =
+            magicActiveTags.length === 0 || magicActiveTags.every((tag) => card.tags.includes(tag));
+          return matchesSearch && matchesTags;
+        });
+      acc[tier] = tierCards;
+      return acc;
+    }, {} as Record<MagicTierKey, ManagedCard[]>);
+  }, [selectedMagicList, allCardsById, magicSearch, magicActiveTags]);
 
   const toggleInvTag = (tag: string) => {
     setInvActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -2499,7 +2650,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             <div className="flex items-center gap-1 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
               {([
                 { id: "cards" as const, label: "Cards", icon: CreditCard, accent: "#FF7A5A" },
-                { id: "levelabilities" as const, label: "Level Abilities", icon: Zap, accent: "#FFD700" },
+                { id: "magic" as const, label: "Magic", icon: Sparkles, accent: "#8AB8FF" },
+                { id: "levelabilities" as const, label: "Level", icon: Zap, accent: "#FFD700" },
                 { id: "nodetrees" as const, label: "Node Trees", icon: GitBranch, accent: "#5AE0B0" },
               ]).map((sub) => {
                 const isActive = cardsSubTab === sub.id;
@@ -2507,7 +2659,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 return (
                   <button
                     key={sub.id}
-                    onClick={() => { setCardsSubTab(sub.id); setSelectedCard(null); }}
+                    onClick={() => {
+                      setCardsSubTab(sub.id);
+                      setSelectedCard(null);
+                      setMagicSelectedCard(null);
+                      setLaSelectedCard(null);
+                    }}
                     className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
                     style={{
                       background: isActive ? theme.panelBg : theme.cardBg,
@@ -4467,11 +4624,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   {selectedCard ? (
                     renderCardDetail(selectedCard)
                   ) : (() => {
-                    const nodeTrees = player
-                      ? playerNodeTrees.filter(
-                          (t) => t.assignedTo.includes(player.id) || t.assignedTo.includes("all")
-                        )
-                      : [];
+                    const nodeTrees = playerAssignedNodeTrees;
                     const activeTree = cardTreeFilter ? nodeTrees.find(t => t.id === cardTreeFilter) : null;
                     const activeNode = activeTree && cardNodeFilter ? activeTree.nodes.find(n => n.id === cardNodeFilter) : null;
                     return (
@@ -4546,6 +4699,31 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                       {renderSearchBar(cardSearch, setCardSearch, allCardTags, cardActiveTags, toggleCardTag, "Search ability cards...")}
 
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
+                        <span className="text-[9px]" style={S_MUTED}>Sources:</span>
+                        {([
+                          { id: "all" as const, label: "All" },
+                          { id: "direct" as const, label: "Direct" },
+                          { id: "node" as const, label: "Node" },
+                          { id: "magic" as const, label: "Magic" },
+                          { id: "level" as const, label: "Level" },
+                        ]).map((source) => (
+                          <button
+                            key={source.id}
+                            onClick={() => setCardSourceFilter(source.id)}
+                            className="text-[9px] px-1.5 py-0.5"
+                            style={{
+                              color: cardSourceFilter === source.id ? firstColor(theme.accentColor) : "#5A6A8A",
+                              background: cardSourceFilter === source.id ? `${firstColor(theme.accentColor)}15` : "transparent",
+                              border: `1px solid ${cardSourceFilter === source.id ? firstColor(theme.accentColor) + "40" : "#1A1A4B"}`,
+                              fontWeight: cardSourceFilter === source.id ? 600 : 400,
+                            }}
+                          >
+                            {source.label}
+                          </button>
+                        ))}
+                      </div>
+
                       {/* Sort Options */}
                       <div className="flex items-center gap-1.5 mb-3">
                         <span className="text-[9px]" style={S_MUTED}>Sort:</span>
@@ -4562,11 +4740,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       {filteredCards.length === 0 ? (
                         <div className="text-[12px] text-center py-6" style={S_MUTED}>
                           {playerCards.length === 0
-                            ? "No ability cards have been assigned to your profile yet."
+                            ? "No ability cards are available on this profile yet."
                             : "No cards match your search or filters."}
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
                           {filteredCards.map((card) => (
                             <button
                               key={card.id}
@@ -4577,13 +4755,45 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                               <div className="text-[14px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
                                 {card.name}
                               </div>
-                              <div className="text-[11px] mb-1" style={{ color: theme.labelColor }}>
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] mb-2" style={{ color: theme.labelColor }}>
+                                <span>{card.type || "No type"}</span>
+                                <span style={S_DIM}>|</span>
+                                <span>{card.actionCost || "No action cost"}</span>
+                                {card.customFields["Level"] && (
+                                  <>
+                                    <span style={S_DIM}>|</span>
+                                    <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span>
+                                  </>
+                                )}
+                                {card.customFields["Source Type"] && (
+                                  <>
+                                    <span style={S_DIM}>|</span>
+                                    <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span>
+                                  </>
+                                )}
+                              </div>
+                              <div className="hidden text-[11px] mb-1" style={{ color: theme.labelColor }}>
                                 {card.type} · {card.actionCost}
                                 {card.customFields["Level"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></span>}
                                 {card.customFields["Source Type"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span></span>}
                               </div>
-                              <div className="text-[12px] mb-3" style={{ color: theme.textColor }}>
+                              <div className="text-[12px] leading-relaxed mb-3 break-words" style={{ color: theme.textColor }}>
                                 {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 100 ? plain.slice(0, 100) + "..." : plain; })()}
+                              </div>
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {getCardSourceLabels(card.id).map((source) => (
+                                  <span
+                                    key={`${card.id}-${source}`}
+                                    className="text-[8px] px-1.5 py-0.5"
+                                    style={{
+                                      background: source === "Magic" ? "#162548" : source === "Level" ? "#30240A" : source === "Node" ? "#113524" : "#2A1630",
+                                      color: source === "Magic" ? "#9FC9FF" : source === "Level" ? "#FFD700" : source === "Node" ? "#7CF0BE" : "#F4A9D8",
+                                      border: "1px solid #2B3B6B",
+                                    }}
+                                  >
+                                    {source}
+                                  </span>
+                                ))}
                               </div>
                               <div className="flex flex-wrap gap-1">
                                 {card.tags.map((tag) => (
@@ -4607,8 +4817,169 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               )}
 
               {/* ═══ LEVEL ABILITIES SUB-TAB ═══ */}
+              {cardsSubTab === "magic" && (
+                <div style={DISPLAY_CONTENTS}>
+                  {magicSelectedCard ? (
+                    <div style={DISPLAY_CONTENTS}>
+                      <button
+                        onClick={() => setMagicSelectedCard(null)}
+                        className={`${retro.raised} px-3 py-1.5 text-[11px] flex items-center gap-1.5 mb-3 hover:brightness-110`}
+                        style={{ background: theme.cardBg, color: theme.labelColor }}
+                      ><ChevronLeft size={12} />Back to Magic</button>
+                      {renderCardDetail(magicSelectedCard)}
+                    </div>
+                  ) : (
+                    <div style={DISPLAY_CONTENTS}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Sparkles size={18} style={{ color: "#8AB8FF" }} />
+                        <h2 className="text-[16px]" style={{ color: "#8AB8FF", fontWeight: 600 }}>
+                          Magic
+                        </h2>
+                        <span className="text-[10px] px-1.5 py-0.5 ml-1" style={SUNKEN_INPUT_DIM}>
+                          {normalizedMagicLists.length} magic list{normalizedMagicLists.length !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+
+                      {normalizedMagicLists.length === 0 ? (
+                        <div className="text-[12px] text-center py-6" style={S_MUTED}>
+                          No magic lists have been granted to this character yet.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {normalizedMagicLists.map((list) => {
+                              const isActive = selectedMagicListId === list.id;
+                              const totalSpells = MAGIC_TIER_ORDER.reduce((sum, tier) => sum + (list.tiers[tier]?.length || 0), 0);
+                              return (
+                                <button
+                                  key={list.id}
+                                  onClick={() => setSelectedMagicListId(list.id)}
+                                  className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
+                                  style={{
+                                    background: isActive ? theme.panelBg : theme.cardBg,
+                                    color: isActive ? "#8AB8FF" : theme.labelColor,
+                                    borderBottom: isActive ? "2px solid #8AB8FF" : "2px solid transparent",
+                                    fontWeight: isActive ? 600 : 400,
+                                  }}
+                                >
+                                  <Sparkles size={11} />
+                                  {list.name}
+                                  <span className="text-[8px] px-1 py-0.5" style={SUNKEN_INPUT_DIM}>{totalSpells}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {selectedMagicList && (
+                            <>
+                              {renderSearchBar(magicSearch, setMagicSearch, allMagicTags, magicActiveTags, toggleMagicTag, `Search ${selectedMagicList.name} spells...`)}
+
+                              {(selectedMagicList.description || "").trim() && (
+                                <div className={`${retro.sunken} bg-[#0C0C2E] px-3 py-2 mb-4`} style={{ borderLeft: "3px solid #8AB8FF66" }}>
+                                  <div className="text-[10px] mb-1" style={S_SUBTLE}>Magic Notes</div>
+                                  <div className="text-[11px]" style={{ color: theme.textColor }}>{selectedMagicList.description}</div>
+                                </div>
+                              )}
+
+                              <div className="space-y-4">
+                                {(() => {
+                                  const hasAnySpells = MAGIC_TIER_ORDER.some((tier) => (selectedMagicList.tiers[tier] || []).length > 0);
+                                  const hasFilteredSpells = MAGIC_TIER_ORDER.some((tier) => (filteredMagicCardsByTier[tier] || []).length > 0);
+
+                                  if (!hasAnySpells) {
+                                    return (
+                                      <div className="text-[12px] text-center py-6" style={S_MUTED}>
+                                        This magic list does not have any spells assigned yet.
+                                      </div>
+                                    );
+                                  }
+
+                                  if (!hasFilteredSpells) {
+                                    return (
+                                      <div className="text-[12px] text-center py-6" style={S_MUTED}>
+                                        No spells in this magic list match your search or filters.
+                                      </div>
+                                    );
+                                  }
+
+                                  return MAGIC_TIER_ORDER.map((tier) => {
+                                    const tierCards = filteredMagicCardsByTier[tier] || [];
+                                    const tierHasCards = (selectedMagicList.tiers[tier] || []).length > 0;
+                                    if (!tierHasCards) return null;
+
+                                    return (
+                                      <div key={tier} className={`${retro.sunken} bg-[#0C0C2E] overflow-hidden`}>
+                                        <div className="px-4 py-3 border-b" style={{ borderColor: "#223358", background: "rgba(18,28,66,0.9)" }}>
+                                          <div className="flex items-center justify-between gap-3">
+                                            <div className="text-[13px]" style={{ color: "#8AB8FF", fontWeight: 700 }}>
+                                              {MAGIC_TIER_LABELS[tier]}
+                                            </div>
+                                            <div className="text-[10px]" style={S_SUBTLE}>
+                                              {tierCards.length} spell{tierCards.length !== 1 ? "s" : ""}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        {tierCards.length === 0 ? (
+                                          <div className="px-4 py-4 text-[11px]" style={S_MUTED}>
+                                            No spells in this tier match your current filters.
+                                          </div>
+                                        ) : (
+                                          <div>
+                                            {tierCards.map((card) => (
+                                              <button
+                                                key={`${tier}-${card.id}`}
+                                                onClick={() => setMagicSelectedCard(card)}
+                                                className="w-full text-left px-4 py-3 hover:bg-[#121C42] transition-colors border-b last:border-b-0"
+                                                style={{ borderColor: "#182748" }}
+                                              >
+                                                <div className="flex flex-wrap items-center gap-2 mb-1">
+                                                  <span className="text-[13px]" style={{ color: "#B7D4FF", fontWeight: 700 }}>
+                                                    {card.name}
+                                                  </span>
+                                                  <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}>
+                                                    {card.type || "Spell"}
+                                                  </span>
+                                                  <span className="text-[9px]" style={S_SUBTLE}>
+                                                    {card.actionCost || "No action cost"}
+                                                  </span>
+                                                  {(card.customFields["Source Type"] || "").trim() && (
+                                                    <span className="text-[9px]" style={{ color: "#C4A0FF" }}>
+                                                      {card.customFields["Source Type"]}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                <div className="text-[11px] leading-relaxed" style={{ color: theme.textColor }}>
+                                                  {(() => {
+                                                    const plain = card.effect.replace(/<[^>]*>/g, "");
+                                                    return plain.length > 180 ? `${plain.slice(0, 180)}...` : plain;
+                                                  })()}
+                                                </div>
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  });
+                                })()}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {cardsSubTab === "levelabilities" && (() => {
-                const laFilteredCards = playerCards.filter((card) => {
+                const levelAbilityCards = Array.from(
+                  new Set(normalizedLevelCategories.flatMap((level) => getLevelCategoryCardIds(level))),
+                )
+                  .map((cardId) => allCardsById.get(cardId))
+                  .filter(Boolean) as ManagedCard[];
+
+                const laFilteredCards = levelAbilityCards.filter((card) => {
                   const matchesSearch = laSearch === "" ||
                     card.name.toLowerCase().includes(laSearch.toLowerCase()) ||
                     card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(laSearch.toLowerCase()) ||
@@ -4617,9 +4988,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   return matchesSearch && matchesTags;
                 });
 
-                const assignedCardIds = new Set(levelCategories.flatMap(lc => lc.cardIds));
-                const unassignedCards = laFilteredCards.filter(c => !assignedCardIds.has(c.id));
-                const sortedLevels = [...levelCategories].sort((a, b) => a.order - b.order);
+                const sortedLevels = [...normalizedLevelCategories].sort((a, b) => a.order - b.order);
 
                 return (
                 <div style={DISPLAY_CONTENTS}>
@@ -4629,7 +4998,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         onClick={() => setLaSelectedCard(null)}
                         className={`${retro.raised} px-3 py-1.5 text-[11px] flex items-center gap-1.5 mb-3 hover:brightness-110`}
                         style={{ background: theme.cardBg, color: theme.labelColor }}
-                      ><ChevronLeft size={12} />Back to Level Abilities</button>
+                      ><ChevronLeft size={12} />Back to Level</button>
                       {renderCardDetail(laSelectedCard)}
                     </div>
                   ) : (
@@ -4637,10 +5006,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       <div className="flex items-center gap-2 mb-2">
                         <Zap size={18} style={{ color: "#FFD700" }} />
                         <h2 className="text-[16px]" style={{ color: "#FFD700", fontWeight: 600 }}>
-                          Level Abilities
+                          Level
                         </h2>
                         <span className="text-[10px] px-1.5 py-0.5 ml-1" style={SUNKEN_INPUT_DIM}>
-                          {laFilteredCards.length} card{laFilteredCards.length !== 1 ? "s" : ""}
+                          {laFilteredCards.length} reward{laFilteredCards.length !== 1 ? "s" : ""}
                         </span>
                         <button
                           onClick={() => { void hydratePersonalFiles(); }}
@@ -4650,60 +5019,21 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         ><RefreshCw size={10} />Sync</button>
                       </div>
 
-                      {renderSearchBar(laSearch, setLaSearch, allCardTags, laActiveTags, toggleLaTag, "Search level abilities...")}
+                      {renderSearchBar(laSearch, setLaSearch, allCardTags, laActiveTags, toggleLaTag, "Search level rewards...")}
 
-                      {/* DM: Add Level Category */}
                       {isDM && (
-                        <div className="mb-3">
-                          {laAddingLevel ? (
-                            <div className="flex items-center gap-2">
-                              <input
-                                value={laNewLevelName}
-                                onChange={e => setLaNewLevelName(e.target.value)}
-                                placeholder="Level name (e.g. Level 1)"
-                                className="flex-1 px-2 py-1.5 text-[11px]"
-                                style={{ ...SUNKEN_INPUT, color: theme.textColor }}
-                                onKeyDown={e => {
-                                  if (e.key === "Enter" && laNewLevelName.trim()) {
-                                    const newCat = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardIds: [] as string[] };
-                                    saveLevelCategories([...levelCategories, newCat]);
-                                    setLaNewLevelName("");
-                                    setLaAddingLevel(false);
-                                  }
-                                }}
-                                autoFocus
-                              />
-                              <button
-                                onClick={() => {
-                                  if (laNewLevelName.trim()) {
-                                    const newCat = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardIds: [] as string[] };
-                                    saveLevelCategories([...levelCategories, newCat]);
-                                    setLaNewLevelName("");
-                                    setLaAddingLevel(false);
-                                  }
-                                }}
-                                className={`${retro.raised} px-2 py-1.5 text-[10px]`}
-                                style={{ color: "#6ACA8A" }}
-                              ><Plus size={10} /></button>
-                              <button
-                                onClick={() => { setLaAddingLevel(false); setLaNewLevelName(""); }}
-                                className={`${retro.raised} px-2 py-1.5 text-[10px]`}
-                                style={{ color: "#FF5A5A" }}
-                              ><X size={10} /></button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => setLaAddingLevel(true)}
-                              className={`${retro.raised} px-3 py-1.5 text-[10px] flex items-center gap-1.5 hover:brightness-110`}
-                              style={{ background: theme.cardBg, color: "#FFD700" }}
-                            ><Plus size={10} />Add Level Category</button>
-                          )}
+                        <div className={`${retro.sunken} bg-[#0C0C2E] px-3 py-2.5 mb-3`} style={{ borderLeft: "3px solid #FFD70066" }}>
+                          <div className="text-[10px] mb-1" style={S_SECTION_HDR}>DM NOTE</div>
+                          <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>
+                            Personal Files now shows the player-facing result only. Edit Magic and Level in Dungeon Master Area - Manage Cards.
+                          </div>
                         </div>
                       )}
 
                       {/* Level Categories */}
                       {sortedLevels.map(level => {
-                        const levelCards = laFilteredCards.filter(c => level.cardIds.includes(c.id));
+                        const levelEntries = getLevelCategoryEntries(level);
+                        const levelCards = laFilteredCards.filter(c => levelEntries.some(entry => entry.cardId === c.id));
                         const isCollapsed = collapsedLevels.has(level.id);
                         // Show all level categories, even empty ones
                         return (
@@ -4721,35 +5051,19 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                   transition: "transform 0.2s ease",
                                 }}
                               />
-                              {laEditingLevel === level.id && isDM ? (
-                                <input
-                                  value={level.name}
-                                  onClick={e => e.stopPropagation()}
-                                  onChange={e => {
-                                    const updated = levelCategories.map(lc => lc.id === level.id ? { ...lc, name: e.target.value } : lc);
-                                    saveLevelCategories(updated);
-                                  }}
-                                  onBlur={() => setLaEditingLevel(null)}
-                                  onKeyDown={e => { if (e.key === "Enter") setLaEditingLevel(null); }}
-                                  className="flex-1 px-1 py-0.5 text-[12px]"
-                                  style={{ ...SUNKEN_INPUT, color: "#FFD700" }}
-                                  autoFocus
-                                />
-                              ) : (
-                                <span className="text-[12px] flex-1" style={{ color: "#FFD700", fontWeight: 600 }}>{level.name}</span>
-                              )}
-                              <span className="text-[9px] px-1.5 py-0.5" style={SUNKEN_INPUT_DIM}>{levelCards.length}</span>
-                              {isDM && (
+                              <span className="text-[12px] flex-1" style={{ color: "#FFD700", fontWeight: 600 }}>{level.name}</span>
+                              <span className="text-[9px] px-1.5 py-0.5" style={SUNKEN_INPUT_DIM}>{levelEntries.length}</span>
+                              {false && isDM && (
                                 <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                                   {(() => { const idx = sortedLevels.findIndex(l => l.id === level.id); return idx > 0 ? (
-                                    <button onClick={() => { const reordered = levelCategories.map(l => l.id === sortedLevels[idx].id ? { ...l, order: sortedLevels[idx - 1].order } : l.id === sortedLevels[idx - 1].id ? { ...l, order: sortedLevels[idx].order } : l); saveLevelCategories(reordered); }} className="hover:brightness-150 text-[9px] px-0.5" style={{ color: theme.labelColor }}>▲</button>
+                                    <button onClick={() => { const reordered = normalizedLevelCategories.map(l => l.id === sortedLevels[idx].id ? { ...l, order: sortedLevels[idx - 1].order } : l.id === sortedLevels[idx - 1].id ? { ...l, order: sortedLevels[idx].order } : l); saveLevelCategories(reordered); }} className="hover:brightness-150 text-[9px] px-0.5" style={{ color: theme.labelColor }}>▲</button>
                                   ) : null; })()}
                                   {(() => { const idx = sortedLevels.findIndex(l => l.id === level.id); return idx < sortedLevels.length - 1 ? (
-                                    <button onClick={() => { const reordered = levelCategories.map(l => l.id === sortedLevels[idx].id ? { ...l, order: sortedLevels[idx + 1].order } : l.id === sortedLevels[idx + 1].id ? { ...l, order: sortedLevels[idx].order } : l); saveLevelCategories(reordered); }} className="hover:brightness-150 text-[9px] px-0.5" style={{ color: theme.labelColor }}>▼</button>
+                                    <button onClick={() => { const reordered = normalizedLevelCategories.map(l => l.id === sortedLevels[idx].id ? { ...l, order: sortedLevels[idx + 1].order } : l.id === sortedLevels[idx + 1].id ? { ...l, order: sortedLevels[idx].order } : l); saveLevelCategories(reordered); }} className="hover:brightness-150 text-[9px] px-0.5" style={{ color: theme.labelColor }}>▼</button>
                                   ) : null; })()}
                                   <button onClick={() => setLaEditingLevel(level.id)} className="hover:brightness-150" style={{ color: theme.labelColor }}><Edit size={10} /></button>
                                   <button
-                                    onClick={() => saveLevelCategories(levelCategories.filter(lc => lc.id !== level.id))}
+                                    onClick={() => saveLevelCategories(normalizedLevelCategories.filter(lc => lc.id !== level.id))}
                                     className="hover:brightness-150"
                                     style={{ color: "#FF5A5A" }}
                                   ><Trash2 size={10} /></button>
@@ -4758,15 +5072,15 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                             </div>
                             {!isCollapsed && (
                               <div className="mt-2 ml-4">
-                                {(level as any).description && (
+                                {(level.description || "").trim() && (
                                   <div className="text-[11px] mb-2 px-2 py-1.5" style={{ color: theme.textColor, background: theme.cardBg, borderLeft: `2px solid #FFD70066` }}>
-                                    {(level as any).description}
+                                    {level.description}
                                   </div>
                                 )}
-                                {levelCards.length === 0 ? (
-                                  <div className="text-[10px] py-2" style={S_MUTED}>No cards assigned to this level yet.</div>
+                                {levelEntries.length === 0 ? (
+                                  <div className="text-[10px] py-2" style={S_MUTED}>No rewards assigned to this level yet.</div>
                                 ) : (
-                                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                  <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
                                     {levelCards.map(card => (
                                       <button
                                         key={card.id}
@@ -4775,24 +5089,32 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                         style={{ background: theme.cardBg }}
                                       >
                                         <div className="text-[13px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</div>
-                                        <div className="text-[10px] mb-1" style={{ color: theme.labelColor }}>
+                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] mb-2" style={{ color: theme.labelColor }}>
+                                          <span>{card.type || "No type"}</span>
+                                          <span style={S_DIM}>|</span>
+                                          <span>{card.actionCost || "No action cost"}</span>
+                                        </div>
+                                        <div className="hidden text-[10px] mb-1" style={{ color: theme.labelColor }}>
                                           {card.type} · {card.actionCost}
                                         </div>
-                                        <div className="text-[11px] mb-2" style={{ color: theme.textColor }}>
+                                        <div className="text-[11px] leading-relaxed mb-2 break-words" style={{ color: theme.textColor }}>
                                           {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 80 ? plain.slice(0, 80) + "..." : plain; })()}
+                                        </div>
+                                        <div className="text-[9px] mb-2" style={{ color: levelEntries.find((entry) => entry.cardId === card.id)?.showInCards ? "#8AB8FF" : "#FFD700" }}>
+                                          {levelEntries.find((entry) => entry.cardId === card.id)?.showInCards ? "Shows in Cards too" : "Passive reward only"}
                                         </div>
                                         <div className="flex flex-wrap gap-1">
                                           {card.tags.map(tag => (
                                             <span key={tag} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}>{tag}</span>
                                           ))}
                                         </div>
-                                        {isDM && (
+                                        {false && isDM && (
                                           <button
                                             className="mt-2 text-[9px] px-1.5 py-0.5 hover:brightness-150"
                                             style={{ color: "#FF5A5A", background: "#1A080822" }}
                                             onClick={e => {
                                               e.stopPropagation();
-                                              const updated = levelCategories.map(lc => lc.id === level.id ? { ...lc, cardIds: lc.cardIds.filter(cid => cid !== card.id) } : lc);
+                                              const updated = normalizedLevelCategories.map(lc => lc.id === level.id ? { ...lc, cardEntries: getLevelCategoryEntries(lc).filter(entry => entry.cardId !== card.id) } : lc);
                                               saveLevelCategories(updated);
                                             }}
                                           >Remove</button>
@@ -4802,30 +5124,50 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                   </div>
                                 )}
                                 {/* DM: Assign card dropdown */}
-                                {isDM && (() => {
-                                  const availableCards = playerCards.filter(c => !level.cardIds.includes(c.id));
+                                {false && isDM && (() => {
+                                  const availableCards = allCards.filter(c => !levelEntries.some(entry => entry.cardId === c.id));
                                   if (availableCards.length === 0) return null;
                                   return (
-                                    <select
-                                      className="mt-2 px-2 py-1 text-[10px] w-full"
-                                      style={{ ...SUNKEN_INPUT, color: theme.textColor }}
-                                      value=""
-                                      onChange={e => {
-                                        if (!e.target.value) return;
-                                        // Remove from other levels first, then add to this one
-                                        const cardId = e.target.value;
-                                        const updated = levelCategories.map(lc => ({
-                                          ...lc,
-                                          cardIds: lc.id === level.id
-                                            ? [...lc.cardIds.filter(cid => cid !== cardId), cardId]
-                                            : lc.cardIds.filter(cid => cid !== cardId),
-                                        }));
-                                        saveLevelCategories(updated);
-                                      }}
-                                    >
-                                      <option value="">+ Assign card to {level.name}...</option>
-                                      {availableCards.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                    </select>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                                      <select
+                                        className="px-2 py-1 text-[10px] w-full"
+                                        style={{ ...SUNKEN_INPUT, color: theme.textColor }}
+                                        value=""
+                                        onChange={e => {
+                                          if (!e.target.value) return;
+                                          const cardId = e.target.value;
+                                          const updated = normalizedLevelCategories.map(lc => ({
+                                            ...lc,
+                                            cardEntries: lc.id === level.id
+                                              ? [...getLevelCategoryEntries(lc).filter(entry => entry.cardId !== cardId), { cardId, showInCards: false }]
+                                              : getLevelCategoryEntries(lc).filter(entry => entry.cardId !== cardId),
+                                          }));
+                                          saveLevelCategories(updated);
+                                        }}
+                                      >
+                                        <option value="">+ Add passive reward to {level.name}...</option>
+                                        {availableCards.map(c => <option key={`${level.id}-passive-${c.id}`} value={c.id}>{c.name}</option>)}
+                                      </select>
+                                      <select
+                                        className="px-2 py-1 text-[10px] w-full"
+                                        style={{ ...SUNKEN_INPUT, color: theme.textColor }}
+                                        value=""
+                                        onChange={e => {
+                                          if (!e.target.value) return;
+                                          const cardId = e.target.value;
+                                          const updated = normalizedLevelCategories.map(lc => ({
+                                            ...lc,
+                                            cardEntries: lc.id === level.id
+                                              ? [...getLevelCategoryEntries(lc).filter(entry => entry.cardId !== cardId), { cardId, showInCards: true }]
+                                              : getLevelCategoryEntries(lc).filter(entry => entry.cardId !== cardId),
+                                          }));
+                                          saveLevelCategories(updated);
+                                        }}
+                                      >
+                                        <option value="">+ Add usable reward to {level.name}...</option>
+                                        {availableCards.map(c => <option key={`${level.id}-usable-${c.id}`} value={c.id}>{c.name}</option>)}
+                                      </select>
+                                    </div>
                                   );
                                 })()}
                               </div>
@@ -4836,8 +5178,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                       {laFilteredCards.length === 0 && (
                         <div className="text-[12px] text-center py-6" style={S_MUTED}>
-                          {playerCards.length === 0
-                            ? "No ability cards assigned yet."
+                          {levelAbilityCards.length === 0
+                            ? "No level rewards assigned yet."
                             : "No cards match your search or filters."}
                         </div>
                       )}

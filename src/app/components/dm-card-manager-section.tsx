@@ -2,8 +2,29 @@
 import { retro } from "./retro-styles";
 import { RichTextEditor } from "./rich-text-editor";
 import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
-import { loadDMPlayerLevelCategories, saveDMPlayerLevelCategories } from "@/lib/player-state-api";
-import type { PlayerData, TagDefinition, ManagedCard, TagField } from "./types";
+import {
+  loadDMPlayerLevelCategories,
+  loadDMPlayerMagicLists,
+  saveDMPlayerLevelCategories,
+  saveDMPlayerMagicLists,
+} from "@/lib/player-state-api";
+import {
+  createEmptyMagicList,
+  getLevelCategoryEntries,
+  normalizeLevelCategories,
+  normalizeMagicLists,
+  MAGIC_TIER_LABELS,
+  MAGIC_TIER_ORDER,
+} from "@/lib/card-placement";
+import type {
+  LevelCategory,
+  MagicTierKey,
+  ManagedCard,
+  PlayerData,
+  PlayerMagicList,
+  TagDefinition,
+  TagField,
+} from "./types";
 import { type NodeTree } from "./node-trees";
 import {
   CreditCard,
@@ -58,7 +79,6 @@ interface DMCardManagerSectionProps {
   setDmError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
-type LevelCategory = { id: string; name: string; order: number; cardIds: string[]; description?: string };
 type CardEditorPanel = "preview" | "core" | "mechanics" | "tags" | "progression" | "assignment";
 type CardWorkspaceStage = "live" | "overview" | "rules" | "effects" | "delivery";
 type CardRulesMode = "guided" | "manual";
@@ -1530,7 +1550,7 @@ function CardLibraryRail({
 
   if (collapsed) {
     return (
-      <div className={`${railShellClass} hidden xl:flex xl:w-[76px] xl:flex-col xl:items-center xl:gap-3 xl:p-3`}>
+      <div className={`${railShellClass} hidden xl:flex xl:w-[88px] xl:flex-col xl:items-center xl:gap-3 xl:p-3`}>
         <button onClick={onToggleCollapsed} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={sectionBadgeStyle("#4A7BFF")}>
           <ChevronRight size={14} className="rotate-180" />
         </button>
@@ -1563,11 +1583,11 @@ function CardLibraryRail({
   }
 
   return (
-    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[288px] 2xl:w-[312px] p-4 space-y-3`}>
+    <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[320px] 2xl:w-[348px] p-4 space-y-3`}>
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
-          <div className="text-[10px] mt-1" style={S_SUBTLE}>Search, sort, and reopen cards without leaving the preview-first workspace.</div>
+          <div className="text-[11px] mt-1 leading-relaxed" style={S_SUBTLE}>Search, sort, and reopen cards without leaving the preview-first workspace.</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-[10px] px-2 py-1" style={{ color: "#7A8AAA", border: "1px solid #1A1A4B", background: "#0A0A28" }}>
@@ -1598,11 +1618,11 @@ function CardLibraryRail({
             style={inputStyle}
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={onToggleFilters} className={`${retro.button} flex-1 px-3 py-2 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>
             {showFilters ? "Hide Filters" : "Show Filters"}
           </button>
-          <select value={cardLibrarySort} onChange={(e) => onCardLibrarySortChange(e.target.value as CardLibrarySortMode)} className={`${inputClass} w-[138px] cursor-pointer`} style={inputStyle}>
+          <select value={cardLibrarySort} onChange={(e) => onCardLibrarySortChange(e.target.value as CardLibrarySortMode)} className={`${inputClass} min-w-[156px] flex-1 cursor-pointer`} style={inputStyle}>
             <option value="manual">Original</option>
             <option value="name">Name A-Z</option>
             <option value="player">By Player</option>
@@ -1629,21 +1649,21 @@ function CardLibraryRail({
           filteredCards.map((card) => {
             const isSelected = editingCardId === card.id;
             return (
-              <div key={card.id} className={`${retro.raised} p-3 transition-colors`} style={{ background: isSelected ? "#111B40" : "#0E0E35", border: isSelected ? "1px solid #2A4A8A" : "1px solid #1A1A4B" }}>
-                <div className="flex items-start justify-between gap-2">
+              <div key={card.id} className={`${retro.raised} p-3.5 transition-colors`} style={{ background: isSelected ? "#111B40" : "#0E0E35", border: isSelected ? "1px solid #2A4A8A" : "1px solid #1A1A4B" }}>
+                <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                      <span className="text-[12px] leading-snug break-words" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
-                      {card.actionCost && <span className="text-[8px] px-1.5 py-0.5" style={DM_ACTION_BADGE}>{card.actionCost}</span>}
+                      <span className="text-[13px] leading-snug break-words" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
+                      {card.actionCost && <span className="text-[9px] px-1.5 py-0.5" style={DM_ACTION_BADGE}>{card.actionCost}</span>}
                       {card.customFields["Level"] && parseInt(card.customFields["Level"] || "0", 10) > 0 && (
-                        <span className="text-[8px] px-1.5 py-0.5" style={DM_LEVEL_BADGE}>Lv.{card.customFields["Level"]}</span>
+                        <span className="text-[9px] px-1.5 py-0.5" style={DM_LEVEL_BADGE}>Lv.{card.customFields["Level"]}</span>
                       )}
                     </div>
-                    <div className="text-[10px] leading-snug mb-1" style={S_MUTED}>{card.type || "No type"}</div>
-                    <div className="text-[9px] leading-snug mb-1" style={S_SUBTLE}>Assigned: {formatOwners(card.assignedTo, players)}</div>
-                    <div className="text-[10px] leading-snug line-clamp-3" style={S_SUBTLE}>{getCardSummary(card)}</div>
+                    <div className="text-[11px] leading-snug mb-1 break-words" style={S_MUTED}>{card.type || "No type"}</div>
+                    <div className="text-[10px] leading-snug mb-1 break-words" style={S_SUBTLE}>Assigned: {formatOwners(card.assignedTo, players)}</div>
+                    <div className="text-[11px] leading-relaxed line-clamp-3 break-words" style={S_SUBTLE}>{getCardSummary(card)}</div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex flex-col items-stretch gap-1.5 shrink-0 self-start">
                     <button onClick={() => onOpenCard(card, "preview")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}><Edit size={10} /></button>
                     <button onClick={() => onDeleteCard(card.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}><Trash2 size={10} /></button>
                   </div>
@@ -1700,8 +1720,12 @@ function CardWorkspaceHeader({
   const statusChips = [
     currentFamilyDef ? { label: currentFamilyDef.label, accent: currentFamilyDef.accent } : null,
     hasUnsavedChanges ? { label: "Unsaved Changes", accent: "#FF9A7A" } : null,
-    blockingValidationIssues.length > 0 ? { label: `${blockingValidationIssues.length} Blocking`, accent: "#FF7A7A" } : null,
-    warningValidationIssues.length > 0 ? { label: `${warningValidationIssues.length} Warning`, accent: "#FFD700" } : null,
+    blockingValidationIssues.length > 0
+      ? { label: `${blockingValidationIssues.length} Blocking Issue${blockingValidationIssues.length === 1 ? "" : "s"}`, accent: "#FF7A7A" }
+      : null,
+    warningValidationIssues.length > 0
+      ? { label: `${warningValidationIssues.length} Warning${warningValidationIssues.length === 1 ? "" : "s"}`, accent: "#FFD700" }
+      : null,
     trackerLabel ? { label: trackerLabel, accent: "#4ACA6A" } : null,
     ...currentProfileBadges.slice(currentFamilyDef ? 1 : 0, currentFamilyDef ? 4 : 3).map((badge) => ({ label: badge, accent: "#6ABAFF" })),
   ].filter(Boolean) as Array<{ label: string; accent: string }>;
@@ -1728,16 +1752,16 @@ function CardWorkspaceHeader({
               </span>
             ))}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
             {[
               { label: "Rules Source", value: rulesMode === "guided" ? "Guided Builder" : "Manual Text" },
               { label: "Validation", value: blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} blocking issue${blockingValidationIssues.length === 1 ? "" : "s"} to fix` : warningValidationIssues.length > 0 ? `${warningValidationIssues.length} warning${warningValidationIssues.length === 1 ? "" : "s"} to review` : "Ready to save" },
               { label: "Tracker", value: trackerLabel || "Tracker off" },
               { label: "Current Stage", value: stageMeta.label },
             ].map((item) => (
-              <div key={item.label} className={`${retro.raised} bg-[#101B36] px-3 py-2 min-h-[52px]`} style={{ border: "1px solid #20345C" }}>
-                <div className="text-[9px] uppercase tracking-[0.06em] mb-1" style={S_SECTION_HDR}>{item.label}</div>
-                <div className="text-[11px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
+              <div key={item.label} className={`${retro.raised} bg-[#101B36] px-3.5 py-3 min-h-[60px]`} style={{ border: "1px solid #20345C" }}>
+                <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_SECTION_HDR}>{item.label}</div>
+                <div className="text-[12px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
               </div>
             ))}
           </div>
@@ -1854,7 +1878,7 @@ function InteractiveCardPreview({
   const stopEditing = () => onPreviewEditFieldChange(null);
 
   return (
-    <div className={`${retro.sunken} bg-[#07101F] p-5 space-y-4 ${panelClassName}`.trim()} style={editorSurfaceStyle(selectedStageAccent)}>
+    <div className={`${retro.sunken} bg-[#07101F] p-6 space-y-4 ${panelClassName}`.trim()} style={editorSurfaceStyle(selectedStageAccent)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
@@ -1922,7 +1946,7 @@ function InteractiveCardPreview({
         )}
 
         {previewMeta.primaryFacts.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-2">
             {previewMeta.primaryFacts.map((fact) => (
               <button
                 key={fact.label}
@@ -1968,7 +1992,7 @@ function InteractiveCardPreview({
 
         <div className="h-[1px] w-full" style={{ background: "linear-gradient(90deg, transparent, rgba(122,154,200,0.45), transparent)" }} />
 
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.58fr)_minmax(280px,1fr)] gap-4 items-start">
+        <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.58fr)_minmax(320px,1fr)] gap-4 items-start">
           <div className="space-y-4 min-w-0">
             <div className={`${retro.sunken} p-4`} style={previewSectionStyle("#6ABAFF", previewFocusRegion === "description" || previewEditField === "description")}>
               <div className="flex items-center justify-between gap-2 mb-2">
@@ -2246,7 +2270,7 @@ export function DMCardManagerSection({
   onPersistNodeTrees,
   setDmError,
 }: DMCardManagerSectionProps) {
-  const [dmCardsSubTab, setDmCardsSubTab] = useState<"cards" | "levelabilities">("cards");
+  const [dmCardsSubTab, setDmCardsSubTab] = useState<"cards" | "magic" | "levelabilities">("cards");
   const [editingCard, setEditingCard] = useState<ManagedCard | null>(null);
   const [isAddingNewCard, setIsAddingNewCard] = useState(false);
   const [cardSearch, setCardSearch] = useState("");
@@ -2277,6 +2301,13 @@ export function DMCardManagerSection({
   const [showAdvancedProfile, setShowAdvancedProfile] = useState(false);
   const [showOptionalTagGroups, setShowOptionalTagGroups] = useState(false);
   const [showDeliveryDetails, setShowDeliveryDetails] = useState(false);
+  const [magicSelectedPlayerId, setMagicSelectedPlayerId] = useState<string>("");
+  const [magicLists, setMagicLists] = useState<PlayerMagicList[]>([]);
+  const [magicEditingList, setMagicEditingList] = useState<string | null>(null);
+  const [magicNewListName, setMagicNewListName] = useState("");
+  const [magicAddingList, setMagicAddingList] = useState(false);
+  const [magicCollapsedLists, setMagicCollapsedLists] = useState<Set<string>>(new Set());
+  const [magicEditingDesc, setMagicEditingDesc] = useState<string | null>(null);
   const [laSelectedPlayerId, setLaSelectedPlayerId] = useState<string>("");
   const [levelCategories, setLevelCategories] = useState<LevelCategory[]>([]);
   const [laEditingLevel, setLaEditingLevel] = useState<string | null>(null);
@@ -2295,6 +2326,12 @@ export function DMCardManagerSection({
     onChange: (key: string, val: string) => void,
     labelEl: React.ReactNode,
   ) => renderTypedFieldShared(key, fieldDef, value, onChange, labelEl, inputClass, inputStyle, retro.button), []);
+
+  useEffect(() => {
+    if (dmCardsSubTab === "magic" && !magicSelectedPlayerId && players.length > 0) {
+      setMagicSelectedPlayerId(players[0].id);
+    }
+  }, [dmCardsSubTab, magicSelectedPlayerId, players]);
 
   useEffect(() => {
     if (dmCardsSubTab === "levelabilities" && !laSelectedPlayerId && players.length > 0) {
@@ -2354,23 +2391,40 @@ export function DMCardManagerSection({
   );
   const hasUnsavedChanges = !!editingCard && currentEditorSnapshot !== editorBaselineRef.current;
 
+  const saveMagicLists = useCallback(async (lists: PlayerMagicList[]) => {
+    if (!magicSelectedPlayerId) return;
+    try {
+      setDmError(null);
+      const normalized = normalizeMagicLists(lists);
+      await saveDMPlayerMagicLists(magicSelectedPlayerId, normalized);
+      setMagicLists(normalized);
+    } catch (err) {
+      setDmError(getSaveError(err, "Failed to save magic lists"));
+      throw err;
+    }
+  }, [magicSelectedPlayerId, setDmError]);
+
   const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
     if (!laSelectedPlayerId) return;
     try {
       setDmError(null);
-      await saveDMPlayerLevelCategories(laSelectedPlayerId, cats);
-      setLevelCategories(cats);
+      const normalized = normalizeLevelCategories(cats, managedCards);
+      await saveDMPlayerLevelCategories(laSelectedPlayerId, normalized);
+      setLevelCategories(normalized);
     } catch (err) {
       setDmError(getSaveError(err, "Failed to save level categories"));
       throw err;
     }
-  }, [laSelectedPlayerId, setDmError]);
+  }, [laSelectedPlayerId, managedCards, setDmError]);
 
   const copyLevelCategoriesToAllPlayers = useCallback(async () => {
     if (!laSelectedPlayerId) return;
     try {
       setDmError(null);
-      const currentCats = await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[];
+      const currentCats = normalizeLevelCategories(
+        await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[],
+        managedCards,
+      );
       for (const p of players) {
         if (p.id !== laSelectedPlayerId) {
           await saveDMPlayerLevelCategories(p.id, JSON.parse(JSON.stringify(currentCats)));
@@ -2380,14 +2434,42 @@ export function DMCardManagerSection({
     } catch (err) {
       setDmError(getSaveError(err, "Failed to copy level categories to all players"));
     }
-  }, [laSelectedPlayerId, players, setDmError]);
+  }, [laSelectedPlayerId, managedCards, players, setDmError]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMagicListsForPlayer() {
+      if (!magicSelectedPlayerId) return;
+      try {
+        const existing = normalizeMagicLists(
+          await loadDMPlayerMagicLists(magicSelectedPlayerId) as PlayerMagicList[],
+        );
+        if (cancelled) return;
+        setMagicLists(existing);
+        setMagicEditingList(null);
+        setMagicAddingList(false);
+        setMagicNewListName("");
+        setMagicCollapsedLists(new Set());
+        setMagicEditingDesc(null);
+      } catch (err) {
+        if (!cancelled) {
+          setDmError(getSaveError(err, "Failed to load magic lists"));
+        }
+      }
+    }
+    void loadMagicListsForPlayer();
+    return () => { cancelled = true; };
+  }, [magicSelectedPlayerId, setDmError]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadLevelCategories() {
       if (!laSelectedPlayerId) return;
       try {
-        const existing = await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[];
+        const existing = normalizeLevelCategories(
+          await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[],
+          managedCards,
+        );
         let cats = existing;
         if (cats.length === 0) {
           const p = players.find((pl) => pl.id === laSelectedPlayerId);
@@ -2396,7 +2478,7 @@ export function DMCardManagerSection({
               id: `lvl-${Date.now()}-${i}`,
               name: `Level ${i + 1}`,
               order: p.level - 1 - i,
-              cardIds: [],
+              cardEntries: [],
               description: "",
             }));
             await saveDMPlayerLevelCategories(laSelectedPlayerId, cats);
@@ -2418,7 +2500,7 @@ export function DMCardManagerSection({
     }
     void loadLevelCategories();
     return () => { cancelled = true; };
-  }, [laSelectedPlayerId, players, setDmError]);
+  }, [laSelectedPlayerId, managedCards, players, setDmError]);
 
   const confirmDiscardUnsavedChanges = useCallback((destination: string) => {
     if (!hasUnsavedChanges) return true;
@@ -3207,11 +3289,30 @@ export function DMCardManagerSection({
     preview: "Review the exact card output that will be saved.",
   };
 
-  const handleCardsSubTabChange = (nextTab: "cards" | "levelabilities") => {
+  const handleCardsSubTabChange = (nextTab: "cards" | "magic" | "levelabilities") => {
     if (nextTab === dmCardsSubTab) return;
-    if (nextTab === "levelabilities" && !confirmDiscardUnsavedChanges("Level Abilities")) return;
+    if (nextTab === "magic" && !confirmDiscardUnsavedChanges("Magic")) return;
+    if (nextTab === "levelabilities" && !confirmDiscardUnsavedChanges("Level")) return;
     setDmCardsSubTab(nextTab);
   };
+
+  const updateMagicListTierCards = useCallback((
+    listId: string,
+    tier: MagicTierKey,
+    cardIds: string[],
+  ) => {
+    const nextLists = magicLists.map((list) => {
+      if (list.id !== listId) return list;
+      return {
+        ...list,
+        tiers: {
+          ...list.tiers,
+          [tier]: cardIds,
+        },
+      };
+    });
+    void saveMagicLists(nextLists);
+  }, [magicLists, saveMagicLists]);
 
   const renderOverviewStage = () => {
     if (!editingCard) return null;
@@ -3222,7 +3323,7 @@ export function DMCardManagerSection({
 
         {overviewSubTab === "identity" && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#4A7BFF")}>
-            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)] gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <div className="space-y-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle("#4A7BFF")}>
                   <div className="text-[12px] mb-1" style={S_SECTION_HDR}>PREVIEW-FIRST EDITING</div>
@@ -3230,7 +3331,7 @@ export function DMCardManagerSection({
                     Use the live preview for the card's visible text first. This sub-tab keeps the same fields available in a wider supporting layout when you want a full form.
                   </div>
                 </div>
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 2xl:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Card Name:</label>
                     <input type="text" value={editingCard.name} onChange={(e) => updateCardField("name", e.target.value)} placeholder="Enter card name..." className={inputClass} style={inputStyle} />
@@ -3313,8 +3414,8 @@ export function DMCardManagerSection({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] gap-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Cost Model:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_COST_MODEL_KEY, e.target.value)} placeholder="e.g., Source, Exhaustion / Uses..." className={inputClass} style={inputStyle} />
@@ -3365,9 +3466,9 @@ export function DMCardManagerSection({
 
         {overviewSubTab === "advanced-profile" && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={editorSurfaceStyle("#8AB8FF")}>
-            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)] gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                   <div className="md:col-span-2 xl:col-span-3">
                     <label className="text-[10px] block mb-2" style={labelStyle}>Components:</label>
                     <div className="flex flex-wrap items-center gap-2">
@@ -4072,11 +4173,49 @@ export function DMCardManagerSection({
   const renderDeliveryStage = () => {
     if (!editingCard) return null;
 
+    const currentMagicPlacementCount = magicLists.reduce(
+      (sum, list) =>
+        sum +
+        MAGIC_TIER_ORDER.reduce(
+          (tierSum, tier) => tierSum + ((list.tiers[tier] || []).includes(editingCard.id) ? 1 : 0),
+          0,
+        ),
+      0,
+    );
+    const currentLevelPlacementCount = levelCategories.reduce(
+      (sum, level) => sum + (getLevelCategoryEntries(level).some((entry) => entry.cardId === editingCard.id) ? 1 : 0),
+      0,
+    );
+
     return (
       <div className="space-y-4">
         <WorkspaceSubTabBar tabs={DELIVERY_SUB_TABS} activeTab={deliverySubTab} onSelect={setDeliverySubTab} />
 
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#7ACA8A")}>
+              <div className="text-[10px]" style={S_SECTION_HDR}>DIRECT ASSIGNMENT</div>
+              <div className="text-[12px] mt-2" style={S_TEXT_BOLD}>
+                {editingCard.assignedTo.includes("all")
+                  ? "All players"
+                  : `${editingCard.assignedTo.length} player${editingCard.assignedTo.length === 1 ? "" : "s"}`}
+              </div>
+              <div className="text-[10px] mt-1" style={S_SUBTLE}>Controlled in the Players sub-tab below.</div>
+            </div>
+            <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#8AB8FF")}>
+              <div className="text-[10px]" style={S_SECTION_HDR}>MAGIC LISTS</div>
+              <div className="text-[12px] mt-2" style={S_TEXT_BOLD}>{currentMagicPlacementCount} current placement{currentMagicPlacementCount === 1 ? "" : "s"}</div>
+              <div className="text-[10px] mt-1 mb-2" style={S_SUBTLE}>Use Magic lists for spell-style grants that also appear in Personal Files Magic.</div>
+              <button onClick={() => { setMagicSelectedPlayerId(editingCard.assignedTo.find((id) => id !== "all") || players[0]?.id || ""); handleCardsSubTabChange("magic"); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#8AB8FF")}>Open Magic Manager</button>
+            </div>
+            <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#FFD700")}>
+              <div className="text-[10px]" style={S_SECTION_HDR}>LEVEL</div>
+              <div className="text-[12px] mt-2" style={S_TEXT_BOLD}>{currentLevelPlacementCount} current placement{currentLevelPlacementCount === 1 ? "" : "s"}</div>
+              <div className="text-[10px] mt-1 mb-2" style={S_SUBTLE}>Use Level for level-up rewards, then choose Passive Only or Show in Cards.</div>
+              <button onClick={() => { setLaSelectedPlayerId(editingCard.assignedTo.find((id) => id !== "all") || players[0]?.id || ""); handleCardsSubTabChange("levelabilities"); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#FFD700")}>Open Level</button>
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-[12px]" style={S_SECTION_HDR}>DELIVERY</div>
@@ -4408,8 +4547,8 @@ export function DMCardManagerSection({
                     })}
                   </div>
 
-                  <div className={liveEditStageActive ? "grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,0.42fr)] gap-2" : "grid grid-cols-1 xl:grid-cols-2 gap-2"}>
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+                  <div className={liveEditStageActive ? "grid grid-cols-1 2xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-2.5" : "grid grid-cols-1 2xl:grid-cols-2 gap-2.5"}>
+                    <div className="grid grid-cols-1 2xl:grid-cols-2 gap-2.5">
                       {[
                         {
                           label: "Current Stage",
@@ -4424,19 +4563,19 @@ export function DMCardManagerSection({
                           accent: "#7ACA8A",
                         },
                       ].map((item) => (
-                        <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-1.5`} style={editorSurfaceStyle(item.accent)}>
+                        <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3.5 space-y-2`} style={editorSurfaceStyle(item.accent)}>
                           <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>{item.label}</div>
-                          <div className="text-[12px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
-                          <div className="text-[10px] leading-relaxed break-words" style={S_SUBTLE}>{item.detail}</div>
+                          <div className="text-[13px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
+                          <div className="text-[11px] leading-relaxed break-words" style={S_SUBTLE}>{item.detail}</div>
                         </div>
                       ))}
                     </div>
 
                     {liveEditStageActive && (
-                      <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-2`} style={editorSurfaceStyle(validationIssues.length > 0 ? (blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700") : "#7A8AAA")}>
+                      <div className={`${retro.raised} bg-[#0E0E35] p-3.5 space-y-2.5`} style={editorSurfaceStyle(validationIssues.length > 0 ? (blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700") : "#7A8AAA")}>
                         <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>Open Issues</div>
                         {validationIssues.length === 0 ? (
-                          <div className="text-[10px] leading-relaxed" style={S_SUBTLE}>No open issues. The live preview is ready for direct editing.</div>
+                          <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>No open issues. The live preview is ready for direct editing.</div>
                         ) : (
                           <button
                             type="button"
@@ -4447,7 +4586,7 @@ export function DMCardManagerSection({
                             <div className="text-[10px]" style={validationIssues[0].level === "error" ? S_RED : { color: "#FFD700" }}>
                               {validationIssues[0].level === "error" ? "Error" : "Warning"}
                             </div>
-                            <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{validationIssues[0].message}</div>
+                            <div className="text-[12px] leading-relaxed mt-1" style={S_TEXT}>{validationIssues[0].message}</div>
                             {validationIssues.length > 1 && (
                               <div className="text-[10px] mt-2" style={S_SUBTLE}>+{validationIssues.length - 1} more issue{validationIssues.length - 1 === 1 ? "" : "s"}</div>
                             )}
@@ -4481,7 +4620,7 @@ export function DMCardManagerSection({
                 )}
               </div>
 
-              <div className={liveEditStageActive ? "space-y-4" : "grid grid-cols-1 xl:grid-cols-[minmax(440px,0.94fr)_minmax(720px,1.06fr)] gap-6 items-start"}>
+              <div className={liveEditStageActive ? "space-y-4" : "grid grid-cols-1 xl:grid-cols-[minmax(520px,0.92fr)_minmax(780px,1.08fr)] gap-7 items-start"}>
                 {!liveEditStageActive && (
                   <div className="space-y-4 order-2 xl:order-1">
                     {workspaceStage === "overview" && renderOverviewStage()}
@@ -4531,6 +4670,245 @@ export function DMCardManagerSection({
     );
   };
 
+  const renderMagicManager = () => {
+    const selectedPlayer = players.find((player) => player.id === magicSelectedPlayerId);
+    const sortedMagicLists = [...magicLists].sort((a, b) => a.order - b.order);
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER MAGIC LISTS</div>
+        </div>
+        <p className="text-[10px]" style={S_SUBTLE}>
+          Create named magic lists for each player and place cards into Cantrips and Levels 1 through 8. Magic placement is separate from direct card assignment.
+        </p>
+
+        {players.length === 0 ? (
+          <div className="text-[12px] text-center py-6" style={S_MUTED}>No players created yet. Add players in the Manage Players section first.</div>
+        ) : (
+          <div>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {players.map((player) => {
+                const isActive = magicSelectedPlayerId === player.id;
+                const totalSpells = isActive
+                  ? magicLists.reduce((sum, list) => sum + MAGIC_TIER_ORDER.reduce((tierSum, tier) => tierSum + (list.tiers[tier]?.length || 0), 0), 0)
+                  : 0;
+                return (
+                  <button
+                    key={player.id}
+                    onClick={() => setMagicSelectedPlayerId(player.id)}
+                    className={`${isActive ? retro.sunken + " bg-[#0C0C2E]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
+                    style={{ color: isActive ? "#8AB8FF" : "#8A9ABB", fontWeight: isActive ? 600 : 400, borderBottom: isActive ? "2px solid #8AB8FF" : "2px solid transparent" }}
+                  >
+                    <User size={12} />
+                    {player.name}
+                    {isActive && (
+                      <span className="text-[9px] px-1 py-0.5 ml-0.5" style={{ background: "#0A0A28", color: "#8AB8FF", border: "1px solid #8AB8FF44" }}>
+                        {magicLists.length} list{magicLists.length === 1 ? "" : "s"} | {totalSpells} spells
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+              {magicAddingList ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    value={magicNewListName}
+                    onChange={(e) => setMagicNewListName(e.target.value)}
+                    placeholder="Magic list name (e.g. Light Magic)"
+                    className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] flex-1 outline-none`}
+                    style={{ color: "#8AB8FF" }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && magicNewListName.trim()) {
+                        void saveMagicLists([
+                          ...magicLists,
+                          createEmptyMagicList(magicNewListName.trim(), magicLists.length),
+                        ]);
+                        setMagicNewListName("");
+                        setMagicAddingList(false);
+                      }
+                      if (e.key === "Escape") {
+                        setMagicAddingList(false);
+                        setMagicNewListName("");
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => {
+                      if (!magicNewListName.trim()) return;
+                      void saveMagicLists([
+                        ...magicLists,
+                        createEmptyMagicList(magicNewListName.trim(), magicLists.length),
+                      ]);
+                      setMagicNewListName("");
+                      setMagicAddingList(false);
+                    }}
+                    className={`${retro.button} px-3 py-2 text-[11px]`}
+                    style={S_GREEN_BTN}
+                  >
+                    <Save size={12} className="inline mr-1" />Add
+                  </button>
+                  <button onClick={() => { setMagicAddingList(false); setMagicNewListName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}><X size={12} className="inline mr-1" />Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setMagicAddingList(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 mb-4`} style={S_GREEN_BTN}>
+                  <Plus size={14} /> Add Magic List
+                </button>
+              )}
+
+              {sortedMagicLists.length === 0 ? (
+                <div className="text-[11px] text-center py-6" style={S_MUTED}>
+                  {selectedPlayer ? `No magic lists yet for ${selectedPlayer.name}.` : "Select a player to manage magic lists."}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sortedMagicLists.map((list, listIdx) => {
+                    const isCollapsed = magicCollapsedLists.has(list.id);
+                    const listCardIds = new Set(MAGIC_TIER_ORDER.flatMap((tier) => list.tiers[tier] || []));
+                    return (
+                      <div key={list.id} className={`${retro.sunken} bg-[#0C0C2E]`}>
+                        <div
+                          className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-[#0E0E35] transition-colors"
+                          style={{ borderBottom: isCollapsed ? "none" : "1px solid #1A1A4B" }}
+                          onClick={() => setMagicCollapsedLists((prev) => { const next = new Set(prev); if (next.has(list.id)) next.delete(list.id); else next.add(list.id); return next; })}
+                        >
+                          <ChevronRight size={14} style={{ color: "#8AB8FF", transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)", transition: "transform 0.2s ease" }} />
+                          {magicEditingList === list.id ? (
+                            <input
+                              value={list.name}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, name: e.target.value } : entry))}
+                              onBlur={() => setMagicEditingList(null)}
+                              onKeyDown={(e) => { if (e.key === "Enter") setMagicEditingList(null); }}
+                              className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[13px] flex-1 outline-none`}
+                              style={{ color: "#8AB8FF" }}
+                              autoFocus
+                            />
+                          ) : (
+                            <span className="text-[13px] flex-1" style={{ color: "#8AB8FF", fontWeight: 600 }}>{list.name}</span>
+                          )}
+                          <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#0A0A28", color: "#7A8AAA", border: "1px solid #1A1A4B" }}>
+                            {Array.from(listCardIds).length} spells
+                          </span>
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            {listIdx > 0 && (
+                              <button onClick={() => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, order: sortedMagicLists[listIdx - 1].order } : entry.id === sortedMagicLists[listIdx - 1].id ? { ...entry, order: list.order } : entry))} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#7A8AAA" }} title="Move up"><ChevronUp size={12} /></button>
+                            )}
+                            {listIdx < sortedMagicLists.length - 1 && (
+                              <button onClick={() => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, order: sortedMagicLists[listIdx + 1].order } : entry.id === sortedMagicLists[listIdx + 1].id ? { ...entry, order: list.order } : entry))} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#7A8AAA" }} title="Move down"><ChevronDown size={12} /></button>
+                            )}
+                            <button onClick={() => setMagicEditingList(list.id)} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#4A7BFF" }} title="Rename"><Edit size={12} /></button>
+                            <button onClick={() => void saveMagicLists(magicLists.filter((entry) => entry.id !== list.id))} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#FF5A5A" }} title="Delete list"><Trash2 size={12} /></button>
+                          </div>
+                        </div>
+
+                        {!isCollapsed && (
+                          <div className="px-4 pb-4 pt-2 space-y-4">
+                            <div>
+                              <div className="text-[10px] mb-1" style={S_SECTION_HDR}>DESCRIPTION</div>
+                              {magicEditingDesc === list.id ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    value={list.description || ""}
+                                    onChange={(e) => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, description: e.target.value } : entry))}
+                                    placeholder="Add notes for this magic list..."
+                                    className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none resize-y min-h-[60px]`}
+                                    style={{ color: "#C0D0F0" }}
+                                    rows={3}
+                                  />
+                                  <button onClick={() => setMagicEditingDesc(null)} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_ACCENT}>Done</button>
+                                </div>
+                              ) : (
+                                <div className="text-[11px] cursor-pointer px-2 py-1.5 hover:bg-[#0A0A28] transition-colors" style={{ color: list.description ? "#C0D0F0" : "#4A5A7A", border: "1px dashed #1A1A4B" }} onClick={() => setMagicEditingDesc(list.id)}>
+                                  {list.description || "Click to add a description..."}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                              {MAGIC_TIER_ORDER.map((tier) => {
+                                const tierCards = (list.tiers[tier] || [])
+                                  .map((cardId) => managedCards.find((card) => card.id === cardId))
+                                  .filter(Boolean) as ManagedCard[];
+                                const availableCards = managedCards.filter((card) => !listCardIds.has(card.id));
+
+                                return (
+                                  <div key={`${list.id}-${tier}`} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-2`} style={{ border: "1px solid #1A1A4B" }}>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="text-[11px]" style={S_SECTION_HDR}>{MAGIC_TIER_LABELS[tier]}</div>
+                                      <div className="text-[9px]" style={S_SUBTLE}>{tierCards.length} card{tierCards.length === 1 ? "" : "s"}</div>
+                                    </div>
+                                    {tierCards.length === 0 ? (
+                                      <div className="text-[10px]" style={S_MUTED}>No spells assigned to this tier.</div>
+                                    ) : (
+                                      <div className="space-y-1">
+                                        {tierCards.map((card) => (
+                                          <div key={`${list.id}-${tier}-${card.id}`} className={`${retro.raised} bg-[#11163D] p-2 flex items-center justify-between gap-2`}>
+                                            <div>
+                                              <div className="text-[12px]" style={S_TEXT_BOLD}>{card.name}</div>
+                                              <div className="text-[10px]" style={S_MUTED}>{card.type} | {card.actionCost}</div>
+                                            </div>
+                                            <button
+                                              onClick={() => updateMagicListTierCards(list.id, tier, (list.tiers[tier] || []).filter((cardId) => cardId !== card.id))}
+                                              className={`${retro.button} px-2 py-1 text-[10px] shrink-0`}
+                                              style={S_RED}
+                                            >
+                                              <X size={10} className="inline mr-0.5" />Remove
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {availableCards.length > 0 && (
+                                      <select
+                                        className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none`}
+                                        style={{ color: "#C0D0F0" }}
+                                        value=""
+                                        onChange={(e) => {
+                                          if (!e.target.value) return;
+                                          const cardId = e.target.value;
+                                          const nextLists = magicLists.map((entry) => {
+                                            if (entry.id !== list.id) return entry;
+                                            const nextTiers = { ...entry.tiers };
+                                            for (const tierKey of MAGIC_TIER_ORDER) {
+                                              nextTiers[tierKey] = (nextTiers[tierKey] || []).filter((id) => id !== cardId);
+                                            }
+                                            nextTiers[tier] = [...(nextTiers[tier] || []), cardId];
+                                            return {
+                                              ...entry,
+                                              tiers: nextTiers,
+                                            };
+                                          });
+                                          void saveMagicLists(nextLists);
+                                        }}
+                                      >
+                                        <option value="">+ Add spell to {MAGIC_TIER_LABELS[tier]}...</option>
+                                        {availableCards.map((card) => <option key={`${list.id}-${tier}-${card.id}`} value={card.id}>{card.name} ({card.type})</option>)}
+                                      </select>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Cards</h2>
@@ -4538,7 +4916,8 @@ export function DMCardManagerSection({
       <div className="flex gap-2 mb-2">
         {([
           { id: "cards" as const, label: "Player Cards", icon: CreditCard, accent: "#4A7BFF" },
-          { id: "levelabilities" as const, label: "Level Abilities", icon: Zap, accent: "#FFD700" },
+          { id: "magic" as const, label: "Magic", icon: Sparkles, accent: "#8AB8FF" },
+          { id: "levelabilities" as const, label: "Level", icon: Zap, accent: "#FFD700" },
         ]).map((sub) => (
           <button
             key={sub.id}
@@ -4552,6 +4931,7 @@ export function DMCardManagerSection({
       </div>
 
       {dmCardsSubTab === "cards" && renderCardsWorkspace()}
+      {dmCardsSubTab === "magic" && renderMagicManager()}
 
       {dmCardsSubTab === "cards" && false && (
         <div className="space-y-4">
@@ -5993,7 +6373,7 @@ export function DMCardManagerSection({
               <div className="text-[12px]" style={S_SECTION_HDR}>LEVEL ABILITY CATEGORIES</div>
             </div>
             <p className="text-[10px]" style={S_SUBTLE}>
-              Create level categories per player and assign cards to them. Each player has their own set of level categories. Select a player below to manage their Level Abilities.
+              Create level categories per player and assign cards to them. Each player has their own set of level categories. Select a player below to manage their Level rewards.
             </p>
 
             {players.length === 0 ? (
@@ -6003,7 +6383,7 @@ export function DMCardManagerSection({
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   {players.map((p) => {
                     const isActive = laSelectedPlayerId === p.id;
-                    const totalCards = isActive ? levelCategories.reduce((sum, c) => sum + c.cardIds.length, 0) : 0;
+                    const totalCards = isActive ? levelCategories.reduce((sum, c) => sum + getLevelCategoryEntries(c).length, 0) : 0;
                     return (
                       <button
                         key={p.id}
@@ -6057,7 +6437,7 @@ export function DMCardManagerSection({
                         style={{ color: "#FFD700" }}
                         onKeyDown={async (e) => {
                           if (e.key === "Enter" && laNewLevelName.trim()) {
-                            const newCat = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardIds: [] as string[], description: "" };
+                            const newCat: LevelCategory = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardEntries: [], description: "" };
                             void saveLevelCategories([...levelCategories, newCat]);
                             setLaNewLevelName("");
                             setLaAddingLevel(false);
@@ -6072,7 +6452,7 @@ export function DMCardManagerSection({
                       <button
                         onClick={() => {
                           if (!laNewLevelName.trim()) return;
-                          const newCat = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardIds: [] as string[], description: "" };
+                          const newCat: LevelCategory = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardEntries: [], description: "" };
                           void saveLevelCategories([...levelCategories, newCat]);
                           setLaNewLevelName("");
                           setLaAddingLevel(false);
@@ -6093,18 +6473,17 @@ export function DMCardManagerSection({
                   {levelCategories.length === 0 ? (
                     <div className="text-[11px] text-center py-6" style={S_MUTED}>No level categories yet for this player.</div>
                   ) : (() => {
-                    const selectedPlayerId = laSelectedPlayerId;
-                    const playerAssignedCards = managedCards.filter((c) => c.assignedTo.includes(selectedPlayerId) || c.assignedTo.includes("all"));
+                    const availableLevelCards = managedCards;
                     return (<>
                       <div className="text-[10px] mb-3" style={S_SUBTLE}>
-                        {selectedPlayer?.name} has <span style={S_TEXT}>{playerAssignedCards.length}</span> assigned card{playerAssignedCards.length !== 1 ? "s" : ""} available for level categories.
+                        {selectedPlayer?.name} has <span style={S_TEXT}>{availableLevelCards.length}</span> total card{availableLevelCards.length !== 1 ? "s" : ""} available for level rewards.
                       </div>
                       <div className="space-y-3">
                         {sortedLevels.map((level, levelIdx) => {
                           const isCollapsed = laCollapsedLevels.has(level.id);
-                          const levelCards = playerAssignedCards.filter((c) => level.cardIds.includes(c.id));
-                          const assignedCardIds = new Set(levelCategories.flatMap((lc) => lc.cardIds));
-                          const availableCards = playerAssignedCards.filter((c) => !assignedCardIds.has(c.id));
+                          const levelEntries = getLevelCategoryEntries(level);
+                          const levelCards = availableLevelCards.filter((card) => levelEntries.some((entry) => entry.cardId === card.id));
+                          const availableCards = availableLevelCards.filter((card) => !levelEntries.some((entry) => entry.cardId === card.id));
                           return (
                             <div key={level.id} className={`${retro.sunken} bg-[#0C0C2E]`}>
                               <div
@@ -6174,7 +6553,7 @@ export function DMCardManagerSection({
                                   <div>
                                     <div className="text-[10px] mb-1" style={S_SECTION_HDR}>ASSIGNED CARDS ({levelCards.length})</div>
                                     {levelCards.length === 0 ? (
-                                      <div className="text-[11px] py-2" style={S_MUTED}>No cards assigned to this level yet.</div>
+                                      <div className="text-[11px] py-2" style={S_MUTED}>No rewards assigned to this level yet.</div>
                                     ) : (
                                       <div className="space-y-1">
                                         {levelCards.map((card) => (
@@ -6182,13 +6561,16 @@ export function DMCardManagerSection({
                                             <div>
                                               <span className="text-[12px]" style={S_TEXT_BOLD}>{card.name}</span>
                                               <span className="text-[10px] ml-2" style={S_MUTED}>{card.type} | {card.actionCost}</span>
+                                              <span className="text-[10px] ml-2" style={{ color: levelEntries.find((entry) => entry.cardId === card.id)?.showInCards ? "#8AB8FF" : "#FFD700" }}>
+                                                {levelEntries.find((entry) => entry.cardId === card.id)?.showInCards ? "Shows in Cards" : "Passive Only"}
+                                              </span>
                                               {card.tags.length > 0 && (
                                                 <div className="flex flex-wrap gap-1 mt-0.5">
                                                   {card.tags.map((t) => <span key={t} className="text-[8px] px-1 py-0.5" style={DM_TAG_BADGE}>{t}</span>)}
                                                 </div>
                                               )}
                                             </div>
-                                            <button onClick={() => void saveLevelCategories(levelCategories.map((lc) => lc.id === level.id ? { ...lc, cardIds: lc.cardIds.filter((cid) => cid !== card.id) } : lc))} className={`${retro.button} px-2 py-1 text-[10px] shrink-0`} style={S_RED}>
+                                            <button onClick={() => void saveLevelCategories(levelCategories.map((lc) => lc.id === level.id ? { ...lc, cardEntries: getLevelCategoryEntries(lc).filter((entry) => entry.cardId !== card.id) } : lc))} className={`${retro.button} px-2 py-1 text-[10px] shrink-0`} style={S_RED}>
                                               <X size={10} className="inline mr-0.5" />Remove
                                             </button>
                                           </div>
@@ -6199,18 +6581,31 @@ export function DMCardManagerSection({
 
                                   {availableCards.length > 0 && (
                                     <div>
-                                      <div className="text-[10px] mb-1" style={S_SECTION_HDR}>ADD CARD</div>
-                                      <select className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none`} style={{ color: "#C0D0F0" }} value="" onChange={(e) => {
-                                        if (!e.target.value) return;
-                                        const cardId = e.target.value;
-                                        void saveLevelCategories(levelCategories.map((lc) => ({
-                                          ...lc,
-                                          cardIds: lc.id === level.id ? [...lc.cardIds.filter((cid) => cid !== cardId), cardId] : lc.cardIds.filter((cid) => cid !== cardId),
-                                        })));
-                                      }}>
-                                        <option value="">+ Assign a card to {level.name}...</option>
-                                        {availableCards.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
-                                      </select>
+                                      <div className="text-[10px] mb-1" style={S_SECTION_HDR}>ADD REWARD</div>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        <select className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none`} style={{ color: "#C0D0F0" }} value="" onChange={(e) => {
+                                          if (!e.target.value) return;
+                                          const cardId = e.target.value;
+                                          void saveLevelCategories(levelCategories.map((lc) => ({
+                                            ...lc,
+                                            cardEntries: lc.id === level.id ? [...getLevelCategoryEntries(lc).filter((entry) => entry.cardId !== cardId), { cardId, showInCards: false }] : getLevelCategoryEntries(lc).filter((entry) => entry.cardId !== cardId),
+                                          })));
+                                        }}>
+                                          <option value="">+ Passive reward for {level.name}...</option>
+                                          {availableCards.map((c) => <option key={`${level.id}-passive-${c.id}`} value={c.id}>{c.name} ({c.type})</option>)}
+                                        </select>
+                                        <select className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none`} style={{ color: "#C0D0F0" }} value="" onChange={(e) => {
+                                          if (!e.target.value) return;
+                                          const cardId = e.target.value;
+                                          void saveLevelCategories(levelCategories.map((lc) => ({
+                                            ...lc,
+                                            cardEntries: lc.id === level.id ? [...getLevelCategoryEntries(lc).filter((entry) => entry.cardId !== cardId), { cardId, showInCards: true }] : getLevelCategoryEntries(lc).filter((entry) => entry.cardId !== cardId),
+                                          })));
+                                        }}>
+                                          <option value="">+ Usable reward for {level.name}...</option>
+                                          {availableCards.map((c) => <option key={`${level.id}-usable-${c.id}`} value={c.id}>{c.name} ({c.type})</option>)}
+                                        </select>
+                                      </div>
                                     </div>
                                   )}
                                 </div>

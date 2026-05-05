@@ -165,6 +165,7 @@ function requireDM(playerId: string) {
 
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
+const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${playerId}`;
 
 
 async function listEntityRows(table: "app_players" | "app_deleted_players") {
@@ -787,6 +788,7 @@ function registerRoutes(prefix: string) {
         statusEffectsRes,
         levelCategoriesRes,
         nodeUnlocksRes,
+        magicListsRes,
       ] = await Promise.all([
         supabase.from("app_players").select("data").eq("id", playerId).maybeSingle(),
         supabase.from("player_quick_items").select("data").eq("player_id", playerId).maybeSingle(),
@@ -798,6 +800,7 @@ function registerRoutes(prefix: string) {
         supabase.from("player_status_effects").select("data").eq("player_id", playerId).maybeSingle(),
         supabase.from("player_level_categories").select("data").eq("player_id", playerId).maybeSingle(),
         supabase.from("player_node_tree_unlocks").select("data").eq("player_id", playerId).maybeSingle(),
+        kv.get(playerMagicListsKey(playerId)),
       ]);
 
       const firstError =
@@ -818,6 +821,7 @@ function registerRoutes(prefix: string) {
         statusEffects: statusEffectsRes.data?.data ?? [],
         levelCategories: levelCategoriesRes.data?.data ?? [],
         nodeUnlocks: nodeUnlocksRes.data?.data ?? {},
+        magicLists: Array.isArray(magicListsRes) ? magicListsRes : [],
       });
     } catch (err) {
       return c.json({ error: String(err) }, 401);
@@ -906,6 +910,10 @@ function registerRoutes(prefix: string) {
             { onConflict: "player_id" },
           ),
         );
+      }
+
+      if ("magicLists" in body) {
+        writes.push(kv.set(playerMagicListsKey(playerId), body.magicLists));
       }
 
       if ("nodeUnlocks" in body) {
@@ -1815,8 +1823,8 @@ function registerRoutes(prefix: string) {
       const playerId = await resolveSessionPlayerId(c);
       requireDM(playerId);
 
-      const collection = c.req.param("collection") as DMCollectionKey;
-      const meta = DM_COLLECTIONS[collection];
+      const collection = c.req.param("collection");
+      const meta = DM_COLLECTIONS[collection as DMCollectionKey];
       if (!meta || collection === "players" || collection === "deleted-players") {
         return c.json({ error: "Unknown DM collection" }, 404);
       }
@@ -1836,7 +1844,7 @@ function registerRoutes(prefix: string) {
       const playerId = await resolveSessionPlayerId(c);
       requireDM(playerId);
 
-      const collection = c.req.param("collection") as DMCollectionKey;
+      const collection = c.req.param("collection");
 
       if (collection === "player-level-categories") {
         const body = await c.req.json();
@@ -1857,7 +1865,17 @@ function registerRoutes(prefix: string) {
         return c.json({ ok: true });
       }
 
-      const meta = DM_COLLECTIONS[collection];
+      if (collection === "player-magic-lists") {
+        const body = await c.req.json();
+        if (!body?.playerId || !Array.isArray(body?.magicLists)) {
+          return c.json({ error: "playerId and magicLists are required" }, 400);
+        }
+
+        await kv.set(playerMagicListsKey(body.playerId), body.magicLists);
+        return c.json({ ok: true });
+      }
+
+      const meta = DM_COLLECTIONS[collection as DMCollectionKey];
       if (!meta || collection === "players" || collection === "deleted-players") {
         return c.json({ error: "Unknown DM collection" }, 404);
       }
@@ -1923,6 +1941,44 @@ function registerRoutes(prefix: string) {
         );
 
       if (error) return c.json({ error: error.message }, 500);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/player-magic-lists/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const playerId = c.req.param("playerId");
+      if (!playerId) return c.json({ error: "Missing playerId" }, 400);
+
+      const magicLists = await kv.get(playerMagicListsKey(playerId));
+      return c.json({ magicLists: Array.isArray(magicLists) ? magicLists : [] });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/player-magic-lists/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      if (!body?.playerId || !Array.isArray(body?.magicLists)) {
+        return c.json({ error: "playerId and magicLists are required" }, 400);
+      }
+
+      await kv.set(playerMagicListsKey(body.playerId), body.magicLists);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

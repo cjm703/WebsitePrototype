@@ -75,6 +75,30 @@ export interface ManagedCard {
   nodeId?: string;
 }
 
+export type MagicTierKey = "cantrip" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8";
+
+export interface PlayerMagicList {
+  id: string;
+  name: string;
+  order: number;
+  description?: string;
+  tiers: Record<MagicTierKey, string[]>;
+}
+
+export interface LevelAbilityEntry {
+  cardId: string;
+  showInCards: boolean;
+}
+
+export interface LevelCategory {
+  id: string;
+  name: string;
+  order: number;
+  description?: string;
+  cardEntries?: LevelAbilityEntry[];
+  cardIds?: string[];
+}
+
 export interface InfoFollowUp {
   id: string;
   content: string;
