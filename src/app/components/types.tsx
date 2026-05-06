@@ -27,6 +27,9 @@ export interface PlayerData {
   currentWeight: number;
   maxWeight: number;
   autoMaxWeight?: boolean;
+  insanityPoints?: number;
+  inspirationPoints?: number;
+  foresight?: boolean;
   exhaustion: number;
   maxExhaustion: number;
   authCode: string;

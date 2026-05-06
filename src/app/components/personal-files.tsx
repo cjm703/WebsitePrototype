@@ -924,6 +924,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [tempHP, setTempHP] = useState(player?.tempHP ?? 0);
   const [damageReduction, setDamageReduction] = useState(player?.damageReduction ?? 0);
   const [currentWeight, setCurrentWeight] = useState(player?.currentWeight ?? 0);
+  const [insanityPoints, setInsanityPoints] = useState(player?.insanityPoints ?? 0);
+  const [inspirationPoints, setInspirationPoints] = useState(player?.inspirationPoints ?? 0);
+  const [foresight, setForesight] = useState(player?.foresight ?? false);
   const [exhaustion, setExhaustion] = useState(player?.exhaustion ?? 0);
   const [currentMovement, setCurrentMovement] = useState(() => parseInt(player?.speed || "0") || 0);
   const playerBaseMaxWeight = useMemo(() => getBaseMaxWeight(player), [player]);
@@ -933,14 +936,20 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setTempHP(player.tempHP ?? 0);
       setDamageReduction(player.damageReduction ?? 0);
       setCurrentWeight(player.currentWeight ?? 0);
+      setInsanityPoints(player.insanityPoints ?? 0);
+      setInspirationPoints(player.inspirationPoints ?? 0);
+      setForesight(player.foresight ?? false);
       setExhaustion(player.exhaustion ?? 0);
       setCurrentMovement(parseInt(player.speed || "0") || 0);
     }
-  }, [player?.id, player?.tempHP, player?.damageReduction, player?.currentWeight, player?.exhaustion, player?.speed]);
+  }, [player?.id, player?.tempHP, player?.damageReduction, player?.currentWeight, player?.insanityPoints, player?.inspirationPoints, player?.foresight, player?.exhaustion, player?.speed]);
 
   const handleSetTempHP = (v: number) => { const c = Math.max(0, v); setTempHP(c); void persistPlayerField({ tempHP: c }); };
   const handleSetDR = (v: number) => { const c = Math.max(0, v); setDamageReduction(c); void persistPlayerField({ damageReduction: c }); };
   const handleSetWeight = (v: number) => { const c = Math.max(0, v); setCurrentWeight(c); void persistPlayerField({ currentWeight: c }); };
+  const handleSetInsanityPoints = (v: number) => { const c = Math.max(0, v); setInsanityPoints(c); void persistPlayerField({ insanityPoints: c }); };
+  const handleSetInspirationPoints = (v: number) => { const c = Math.max(0, v); setInspirationPoints(c); void persistPlayerField({ inspirationPoints: c }); };
+  const handleSetForesight = (v: boolean) => { setForesight(v); void persistPlayerField({ foresight: v }); };
   const handleSetExhaustion = (v: number) => { const c = Math.max(0, Math.min(player?.maxExhaustion ?? 6, v)); setExhaustion(c); void persistPlayerField({ exhaustion: c }); };
   const handleSetMovement = (v: number) => { const c = Math.max(0, v); setCurrentMovement(c); void persistPlayerField({ speed: String(c) }); };
 
@@ -3123,6 +3132,48 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           <span className="text-[18px]" style={{ color: theme.labelColor, fontWeight: 600 }}>/ {buffedDenom(player.maxExhaustion ?? 6, mesBuff)}</span>
                           <button onClick={() => handleSetExhaustion(exhaustion + 1)} className={`${retro.button} p-1`} style={S_RED}><Plus size={12} /></button>
                         </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                      <div className={`${retro.sunken} p-3`} style={SUNKEN_INPUT}>
+                        <label className="text-[12px] block mb-2" style={{ color: theme.labelColor }}>Insanity Points:</label>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => handleSetInsanityPoints(insanityPoints - 1)} className={`${retro.button} p-1`} style={S_RED}><Minus size={12} /></button>
+                          <input type="number" value={insanityPoints} onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSetInsanityPoints(v); }} className={`${retro.sunken} bg-[#0A0A28] w-14 text-center text-[16px] py-1 outline-none`} style={{ color: insanityPoints > 0 ? theme.hpWarning : theme.textColor, fontWeight: 600 }} />
+                          <button onClick={() => handleSetInsanityPoints(insanityPoints + 1)} className={`${retro.button} p-1`} style={S_GREEN_BTN}><Plus size={12} /></button>
+                        </div>
+                      </div>
+                      <div className={`${retro.sunken} p-3`} style={SUNKEN_INPUT}>
+                        <label className="text-[12px] block mb-2" style={{ color: theme.labelColor }}>Inspiration Points:</label>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => handleSetInspirationPoints(inspirationPoints - 1)} className={`${retro.button} p-1`} style={S_RED}><Minus size={12} /></button>
+                          <input type="number" value={inspirationPoints} onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSetInspirationPoints(v); }} className={`${retro.sunken} bg-[#0A0A28] w-14 text-center text-[16px] py-1 outline-none`} style={{ color: inspirationPoints > 0 ? "#FFD700" : theme.textColor, fontWeight: 600 }} />
+                          <button onClick={() => handleSetInspirationPoints(inspirationPoints + 1)} className={`${retro.button} p-1`} style={S_GREEN_BTN}><Plus size={12} /></button>
+                        </div>
+                      </div>
+                      <div className={`${retro.sunken} p-3`} style={SUNKEN_INPUT}>
+                        <label className="text-[12px] block mb-2" style={{ color: theme.labelColor }}>Foresight:</label>
+                        <button
+                          onClick={() => handleSetForesight(!foresight)}
+                          className={`${retro.button} w-full px-3 py-2 text-[12px] flex items-center justify-center gap-2`}
+                          style={{
+                            color: foresight ? "#4ACA6A" : theme.labelColor,
+                            background: foresight ? "rgba(74,202,106,0.12)" : theme.cardBg,
+                            border: `1px solid ${foresight ? "rgba(74,202,106,0.35)" : bc(theme.dividerColor)}`,
+                          }}
+                        >
+                          <span
+                            className={`${retro.sunken} inline-flex h-5 w-5 items-center justify-center text-[12px]`}
+                            style={{
+                              background: foresight ? "rgba(74,202,106,0.18)" : "#0A0A28",
+                              color: foresight ? "#4ACA6A" : theme.labelColor,
+                            }}
+                          >
+                            {foresight ? "✓" : ""}
+                          </span>
+                          <span style={{ fontWeight: 600 }}>{foresight ? "Enabled" : "Not Enabled"}</span>
+                        </button>
                       </div>
                     </div>
 

@@ -1113,7 +1113,7 @@ async function persistCustomReactions(next: CustomReaction[]) {
       id: `player-${Date.now()}`, name: "New Agent", race: "", class: "Operative", level: 1, hpIncreasePerLevel: "",
       stats: { ...defaultStats }, currentHP: 10, maxHP: 10, armorClass: 10,
       speed: "30 ft", woundDice: "1d6", currentWounds: 0, totalWounds: 3,
-      damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: getAutoMaxWeightFromCon(defaultStats.CON), autoMaxWeight: true, exhaustion: 0, maxExhaustion: 6,
+      damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: getAutoMaxWeightFromCon(defaultStats.CON), autoMaxWeight: true, insanityPoints: 0, inspirationPoints: 0, foresight: false, exhaustion: 0, maxExhaustion: 6,
       authCode: "",
     });
     setIsAddingNewPlayer(true);
@@ -1839,6 +1839,9 @@ const handleSaveItem = async () => {
                                   currentWeight: 0,
                                   maxWeight: getBaseMaxWeight(player),
                                   autoMaxWeight: usesAutoMaxWeight(player),
+                                  insanityPoints: 0,
+                                  inspirationPoints: 0,
+                                  foresight: false,
                                   exhaustion: 0,
                                   maxExhaustion: 6,
                                   race: "",
