@@ -10,8 +10,10 @@ export interface PlayerStats {
 export interface PlayerData {
   id: string;
   name: string;
+  race?: string;
   class: string;
   level: number;
+  hpIncreasePerLevel?: string;
   stats: PlayerStats;
   currentHP: number;
   maxHP: number;
@@ -24,6 +26,7 @@ export interface PlayerData {
   tempHP: number;
   currentWeight: number;
   maxWeight: number;
+  autoMaxWeight?: boolean;
   exhaustion: number;
   maxExhaustion: number;
   authCode: string;
@@ -54,6 +57,8 @@ export interface ManagedItem {
   name: string;
   rarity: string;
   type: string;
+  weightTier?: "S" | "M" | "L" | "XL" | "Custom";
+  weightValue?: number;
   tags: string[];
   description: string;
   assignedTo: string[];

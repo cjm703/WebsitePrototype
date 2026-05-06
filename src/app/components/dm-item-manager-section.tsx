@@ -5,6 +5,13 @@ import { RichTextEditor } from "./rich-text-editor";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 import type { ManagedItem, PlayerData, TagDefinition } from "./types";
 import {
+  formatItemWeight,
+  formatWeightValue,
+  getItemWeightTier,
+  getItemWeightValue,
+  ITEM_WEIGHT_OPTIONS,
+} from "@/lib/weight-rules";
+import {
   DM_DIVIDER,
   DM_LOCKED_BADGE,
   DM_PANEL_ALT,
@@ -375,7 +382,7 @@ function deleteKeys(item: ManagedItem, keys: string[]) {
 function buildDisplayFacts(item: ManagedItem) {
   const slotLabels = Object.fromEntries(EQUIP_SLOT_OPTIONS.map((slot) => [slot.id, slot.label])) as Record<string, string>;
   const hiddenPrefixes = [EFFECT_PREFIX, ITEM_INFO_PREFIX];
-  return Object.entries(item.customFields || {})
+  const facts = Object.entries(item.customFields || {})
     .filter(([key, value]) => !!String(value || "").trim() && !hiddenPrefixes.some((prefix) => key.startsWith(prefix)))
     .map(([key, value]) => {
       const [group, ...rest] = key.split("::");
@@ -394,8 +401,18 @@ function buildDisplayFacts(item: ManagedItem) {
 
       return { key, label, value: displayValue };
     })
-    .filter((fact) => fact.value.trim())
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .filter((fact) => fact.value.trim());
+
+  const weight = getItemWeightValue(item);
+  if (weight !== null) {
+    facts.push({
+      key: "weight",
+      label: "Weight",
+      value: `${formatWeightValue(weight)} W`,
+    });
+  }
+
+  return facts.sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function stripUnusedCustomFields(item: ManagedItem) {
@@ -431,6 +448,8 @@ function makeItemFromTemplate(template: ItemTemplateDef, itemTags: TagDefinition
     name: template.name,
     rarity: template.rarity,
     type: template.type,
+    weightTier: "M",
+    weightValue: 1,
     tags,
     description: template.starterDescription,
     assignedTo: [],
@@ -466,6 +485,17 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
 
   const updateItemField = <K extends keyof ManagedItem>(key: K, value: ManagedItem[K]) => {
     if (editingItem) setEditingItem({ ...editingItem, [key]: value });
+  };
+
+  const updateItemWeightTier = (tier: ManagedItem["weightTier"]) => {
+    if (!editingItem) return;
+    const nextWeightValue =
+      tier === "S" ? 0.5 :
+      tier === "M" ? 1 :
+      tier === "L" ? 2 :
+      tier === "XL" ? 5 :
+      editingItem.weightValue ?? 0;
+    setEditingItem({ ...editingItem, weightTier: tier, weightValue: nextWeightValue });
   };
 
   const updateItemCustomField = (key: string, value: string) => {
@@ -580,7 +610,12 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
 
   const startEditingItem = (item: ManagedItem) => {
     originalAssignedToRef.current = [...item.assignedTo];
-    setEditingItem({ ...item, customFields: { ...item.customFields } });
+    setEditingItem({
+      ...item,
+      weightTier: getItemWeightTier(item) ?? "M",
+      weightValue: getItemWeightValue(item) ?? 1,
+      customFields: { ...item.customFields },
+    });
     setIsAddingNewItem(false);
     setEditorPanel("basics");
     setTagSearch("");
@@ -868,7 +903,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)] gap-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4`}>
                   <div className="text-[10px] mb-3" style={S_SECTION_HDR}>ITEM IDENTITY</div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Item Name</label>
                       <input type="text" value={editingItem.name} onChange={(e) => updateItemField("name", e.target.value)} placeholder="Enter item name..." className={inputClass} style={inputStyle} />
@@ -882,6 +917,31 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                       <select value={editingItem.rarity} onChange={(e) => updateItemField("rarity", e.target.value)} className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full`} style={{ color: rarityColor(editingItem.rarity) }}>
                         {rarities.map((rarity) => <option key={rarity} value={rarity} style={{ color: rarityColor(rarity) }}>{rarity}</option>)}
                       </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Weight</label>
+                      <select
+                        value={getItemWeightTier(editingItem) || "M"}
+                        onChange={(e) => updateItemWeightTier(e.target.value as ManagedItem["weightTier"])}
+                        className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full`}
+                        style={inputStyle}
+                      >
+                        {ITEM_WEIGHT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                      {(getItemWeightTier(editingItem) || "M") === "Custom" && (
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={editingItem.weightValue ?? 0}
+                          onChange={(e) => updateItemField("weightValue", Math.max(0, parseFloat(e.target.value) || 0))}
+                          placeholder="Custom weight"
+                          className={`${inputClass} mt-2`}
+                          style={inputStyle}
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -898,6 +958,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                     <div className="text-[11px] mb-2" style={S_MUTED}>{editingItem.type || "No type yet"}</div>
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       <span className="text-[9px] px-1.5 py-0.5" style={dmRarityBadge(rarityColor(editingItem.rarity))}>{editingItem.rarity}</span>
+                      <span className="text-[9px] px-1.5 py-0.5" style={DM_TAG_BADGE}>Weight {formatItemWeight(editingItem)}</span>
                       {editingItem.tags.slice(0, 4).map((tag) => <span key={tag} className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}>{tag}</span>)}
                     </div>
                     <div className="text-[11px]" style={S_TEXT}>{stripHtml(editingItem.description || "") || "Add a description to see how the item reads at a glance."}</div>
@@ -915,6 +976,10 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                     <div className={`${retro.sunken} bg-[#0A0A28] px-3 py-2`}>
                       <div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Effect Blocks</div>
                       <div className="text-[11px]" style={S_TEXT}>{countItemEffects(editingItem)}</div>
+                    </div>
+                    <div className={`${retro.sunken} bg-[#0A0A28] px-3 py-2`}>
+                      <div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Weight</div>
+                      <div className="text-[11px]" style={S_TEXT}>{formatItemWeight(editingItem)}</div>
                     </div>
                     <div className={`${retro.sunken} bg-[#0A0A28] px-3 py-2`}>
                       <div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Tracker Fields</div>
@@ -1327,7 +1392,9 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                 <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
                   <div>
                     <div className="text-[16px]" style={S_TEXT_BOLD}>{editingItem.name || "(unnamed item)"}</div>
-                    <div className="text-[11px] mt-0.5" style={S_MUTED}>{editingItem.type || "No type yet"} · Assigned to: {formatOwners(editingItem.assignedTo, players)}</div>
+                    <div className="text-[11px] mt-0.5" style={S_MUTED}>
+                      {editingItem.type || "No type yet"} | Weight {formatItemWeight(editingItem)} | Assigned to: {formatOwners(editingItem.assignedTo, players)}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] px-1.5 py-0.5" style={dmRarityBadge(rarityColor(editingItem.rarity))}>{editingItem.rarity}</span>
@@ -1510,6 +1577,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="text-[13px]" style={S_TEXT_BOLD}>{item.name}</span>
                         <span className="text-[9px] px-1.5 py-0.5" style={dmRarityBadge(rarityColor(item.rarity))}>{item.rarity}</span>
+                        {getItemWeightValue(item) !== null && <span className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}>{formatItemWeight(item)}</span>}
                         {item.locked && <span className="text-[8px] px-1.5 py-0.5 flex items-center gap-0.5" style={DM_LOCKED_BADGE}><Lock size={8} /> LOCKED</span>}
                       </div>
                       <div className="text-[10px] mb-1" style={S_MUTED}>{item.type || "No type"} · {ownerStr}</div>

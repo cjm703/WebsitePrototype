@@ -64,6 +64,11 @@ import {
   normalizeInfoDocumentsForSave,
   type InfoSubTab as SharedInfoSubTab,
 } from "./personal-files-information-utils";
+import {
+  getAutoMaxWeightFromCon,
+  getBaseMaxWeight,
+  usesAutoMaxWeight,
+} from "@/lib/weight-rules";
 
 
 // ========================
@@ -1105,10 +1110,10 @@ async function persistCustomReactions(next: CustomReaction[]) {
   // ========================
   const handleAddPlayer = () => {
     setEditingPlayer({
-      id: `player-${Date.now()}`, name: "New Agent", class: "Operative", level: 1,
+      id: `player-${Date.now()}`, name: "New Agent", race: "", class: "Operative", level: 1, hpIncreasePerLevel: "",
       stats: { ...defaultStats }, currentHP: 10, maxHP: 10, armorClass: 10,
       speed: "30 ft", woundDice: "1d6", currentWounds: 0, totalWounds: 3,
-      damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: 100, exhaustion: 0, maxExhaustion: 6,
+      damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: getAutoMaxWeightFromCon(defaultStats.CON), autoMaxWeight: true, exhaustion: 0, maxExhaustion: 6,
       authCode: "",
     });
     setIsAddingNewPlayer(true);
@@ -1127,7 +1132,13 @@ async function persistCustomReactions(next: CustomReaction[]) {
       }
     }
 
-    const playerToSave = { ...editingPlayer, authCode: "" };
+    const playerToSave = {
+      ...editingPlayer,
+      maxWeight: usesAutoMaxWeight(editingPlayer)
+        ? getAutoMaxWeightFromCon(editingPlayer.stats?.CON ?? defaultStats.CON)
+        : editingPlayer.maxWeight,
+      authCode: "",
+    };
     const updated = isAddingNewPlayer
       ? [...players, playerToSave]
       : players.map((p) => (p.id === playerToSave.id ? playerToSave : p));
@@ -1679,12 +1690,37 @@ const handleSaveItem = async () => {
                       <input type="text" value={editingPlayer.name} onChange={(e) => updatePlayerField("name", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
                     <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Race:</label>
+                      <input type="text" value={editingPlayer.race || ""} onChange={(e) => updatePlayerField("race", e.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Class:</label>
                       <input type="text" value={editingPlayer.class} onChange={(e) => updatePlayerField("class", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Level:</label>
                       <input type="number" value={editingPlayer.level} onChange={(e) => updatePlayerField("level", Math.max(1, parseInt(e.target.value) || 1))} className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>HP Increase per Level:</label>
+                      <input type="text" value={editingPlayer.hpIncreasePerLevel || ""} onChange={(e) => updatePlayerField("hpIncreasePerLevel", e.target.value)} placeholder="e.g. +8 or 1d8 + CON" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div className={`${retro.sunken} bg-[#0A0A28] px-3 py-2`}>
+                      <label className="text-[10px] block mb-2" style={labelStyle}>Weight Capacity Rule:</label>
+                      <label className="flex items-center gap-2 cursor-pointer mb-2">
+                        <input
+                          type="checkbox"
+                          checked={usesAutoMaxWeight(editingPlayer)}
+                          onChange={(e) => updatePlayerField("autoMaxWeight", e.target.checked)}
+                          className="accent-[#4A9A5A]"
+                        />
+                        <span className="text-[11px]" style={S_TEXT}>Auto-calculate from Constitution</span>
+                      </label>
+                      <div className="text-[9px]" style={S_MUTED}>
+                        Auto rule: 50 base + 5 per point above 10 CON. Current auto result: {getAutoMaxWeightFromCon(editingPlayer.stats?.CON ?? defaultStats.CON)}.
+                      </div>
                     </div>
                   </div>
                   <div className="mb-4">
@@ -1712,7 +1748,6 @@ const handleSaveItem = async () => {
                         { key: "damageReduction" as const, label: "Damage Reduction", type: "number" },
                         { key: "tempHP" as const, label: "Temp HP", type: "number" },
                         { key: "currentWeight" as const, label: "Current Weight", type: "number" },
-                        { key: "maxWeight" as const, label: "Max Weight", type: "number" },
                         { key: "exhaustion" as const, label: "Exhaustion", type: "number" },
                         { key: "maxExhaustion" as const, label: "Max Exhaustion", type: "number" },
                       ] as const).map((f) => (
@@ -1729,6 +1764,17 @@ const handleSaveItem = async () => {
                           />
                         </div>
                       ))}
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Max Weight:</label>
+                        <input
+                          type="number"
+                          value={usesAutoMaxWeight(editingPlayer) ? getAutoMaxWeightFromCon(editingPlayer.stats?.CON ?? defaultStats.CON) : editingPlayer.maxWeight}
+                          disabled={usesAutoMaxWeight(editingPlayer)}
+                          onChange={(e) => updatePlayerField("maxWeight", Math.max(0, parseInt(e.target.value) || 0))}
+                          className={inputClass}
+                          style={{ ...inputStyle, ...(usesAutoMaxWeight(editingPlayer) ? { opacity: 0.65 } : null) }}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1780,7 +1826,9 @@ const handleSaveItem = async () => {
                         <div className="flex items-start justify-between mb-3">
                           <div>
                             <div className="text-[14px] mb-0.5" style={S_TEXT_BOLD}>{player.name}</div>
-                            <div className="text-[11px]" style={S_MUTED}>{player.class} · Level {player.level}</div>
+                            <div className="text-[11px]" style={S_MUTED}>
+                              {(player.race || "").trim() ? `${player.race} | ` : ""}{player.class} | Level {player.level}
+                            </div>
                           </div>
                           <div className="flex items-center gap-2">
                             <button
@@ -1789,9 +1837,12 @@ const handleSaveItem = async () => {
                                   damageReduction: 0,
                                   tempHP: 0,
                                   currentWeight: 0,
-                                  maxWeight: 100,
+                                  maxWeight: getBaseMaxWeight(player),
+                                  autoMaxWeight: usesAutoMaxWeight(player),
                                   exhaustion: 0,
                                   maxExhaustion: 6,
+                                  race: "",
+                                  hpIncreasePerLevel: "",
                                   ...player,
                                 });
                                 setIsAddingNewPlayer(false);
@@ -1831,7 +1882,7 @@ const handleSaveItem = async () => {
                           <div><div className="text-[9px]" style={S_MUTED}>Wounds</div><div className="text-[12px]" style={dmWarnColor(player.currentWounds)}>{player.currentWounds}/{player.totalWounds}</div></div>
                           <div><div className="text-[9px]" style={S_MUTED}>DR</div><div className="text-[12px]" style={S_TEXT}>{player.damageReduction ?? 0}</div></div>
                           <div><div className="text-[9px]" style={S_MUTED}>Temp HP</div><div className="text-[12px]" style={dmTempColor(player.tempHP ?? 0)}>{player.tempHP ?? 0}</div></div>
-                          <div><div className="text-[9px]" style={S_MUTED}>Weight</div><div className="text-[12px]" style={dmOverColor(player.currentWeight ?? 0, player.maxWeight ?? 100)}>{player.currentWeight ?? 0}/{player.maxWeight ?? 100}</div></div>
+                          <div><div className="text-[9px]" style={S_MUTED}>Weight</div><div className="text-[12px]" style={dmOverColor(player.currentWeight ?? 0, getBaseMaxWeight(player))}>{player.currentWeight ?? 0}/{getBaseMaxWeight(player)}</div></div>
                           <div><div className="text-[9px]" style={S_MUTED}>Exhaustion</div><div className="text-[12px]" style={dmExhaustColor(player.exhaustion ?? 0)}>{player.exhaustion ?? 0}/{player.maxExhaustion ?? 6}</div></div>
                         </div>
                       </div>

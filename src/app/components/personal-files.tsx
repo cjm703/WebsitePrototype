@@ -24,6 +24,16 @@ import {
   normalizeLevelCategories,
   normalizeMagicLists,
 } from "@/lib/card-placement";
+import {
+  formatItemWeight,
+  getAutoMaxWeightFromCon,
+  getBaseMaxWeight,
+  getItemWeightTier,
+  getItemWeightValue,
+  ITEM_WEIGHT_OPTIONS,
+  usesAutoMaxWeight,
+  WOUND_DICE_INCREASE_LEVELS,
+} from "@/lib/weight-rules";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type {
   LevelCategory,
@@ -916,6 +926,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [currentWeight, setCurrentWeight] = useState(player?.currentWeight ?? 0);
   const [exhaustion, setExhaustion] = useState(player?.exhaustion ?? 0);
   const [currentMovement, setCurrentMovement] = useState(() => parseInt(player?.speed || "0") || 0);
+  const playerBaseMaxWeight = useMemo(() => getBaseMaxWeight(player), [player]);
 
   useEffect(() => {
     if (player) {
@@ -1052,11 +1063,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     currentWounds,
     totalWounds: player?.totalWounds ?? 1,
     currentWeight,
-    maxWeight: player?.maxWeight ?? 100,
+    maxWeight: playerBaseMaxWeight,
     exhaustion,
     maxExhaustion: player?.maxExhaustion ?? 6,
     statusEffectNames: statusEffects.map((se) => se.name).filter(Boolean),
-  }), [currentHP, player?.maxHP, currentWounds, player?.totalWounds, currentWeight, player?.maxWeight, exhaustion, player?.maxExhaustion, statusEffects]);
+  }), [currentHP, player?.maxHP, currentWounds, player?.totalWounds, currentWeight, playerBaseMaxWeight, exhaustion, player?.maxExhaustion, statusEffects]);
 
   // ========================
   // Inventory state
@@ -1074,17 +1085,33 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const startCreateItem = () => {
     setEditingPlayerItem({
       id: `pi-${Date.now()}`, name: "", rarity: "Common", type: "",
+      weightTier: "M", weightValue: 1,
       tags: [], description: "", assignedTo: player ? [player.id] : [], customFields: {},
     });
     setIsNewPlayerItem(true);
   };
   const startEditItem = (item: ManagedItem) => {
-    setEditingPlayerItem({ ...item, customFields: { ...item.customFields } });
+    setEditingPlayerItem({
+      ...item,
+      weightTier: getItemWeightTier(item) ?? "M",
+      weightValue: getItemWeightValue(item) ?? 1,
+      customFields: { ...item.customFields },
+    });
     setIsNewPlayerItem(false);
   };
   const cancelItemEditor = () => { setEditingPlayerItem(null); setIsNewPlayerItem(false); };
   const updateEditorField = <K extends keyof ManagedItem>(key: K, value: ManagedItem[K]) => {
     if (editingPlayerItem) setEditingPlayerItem({ ...editingPlayerItem, [key]: value });
+  };
+  const updateEditorWeightTier = (tier: ManagedItem["weightTier"]) => {
+    if (!editingPlayerItem) return;
+    const nextWeightValue =
+      tier === "S" ? 0.5 :
+      tier === "M" ? 1 :
+      tier === "L" ? 2 :
+      tier === "XL" ? 5 :
+      editingPlayerItem.weightValue ?? 0;
+    setEditingPlayerItem({ ...editingPlayerItem, weightTier: tier, weightValue: nextWeightValue });
   };
   const updateEditorCustomField = (key: string, value: string) => {
     if (editingPlayerItem) setEditingPlayerItem({ ...editingPlayerItem, customFields: { ...editingPlayerItem.customFields, [key]: value } });
@@ -1132,15 +1159,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [magicSelectedCard, setMagicSelectedCard] = useState<ManagedCard | null>(null);
   const [selectedMagicListId, setSelectedMagicListId] = useState<string>("");
 
-  // Level Abilities state (per-player)
-
+  // Level state (per-player)
   const [collapsedLevels, setCollapsedLevels] = useState<Set<string>>(new Set());
   const [laSearch, setLaSearch] = useState("");
   const [laActiveTags, setLaActiveTags] = useState<string[]>([]);
   const [laSelectedCard, setLaSelectedCard] = useState<ManagedCard | null>(null);
   const [laEditingLevel, setLaEditingLevel] = useState<string | null>(null);
-  const [laNewLevelName, setLaNewLevelName] = useState("");
-  const [laAddingLevel, setLaAddingLevel] = useState(false);
   const isDM = currentUserId === "dm" || currentUser === "DM";
 
   const saveLevelCategories = useCallback(async (cats: typeof levelCategories) => {
@@ -1148,15 +1172,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   }, [allCards]);
 
   const toggleLevelCollapse = useCallback((id: string) => {
-    setCollapsedLevels(prev => {
+    setCollapsedLevels((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }, []);
 
   const toggleLaTag = (tag: string) => {
-    setLaActiveTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+    setLaActiveTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
   const toggleMagicTag = (tag: string) => {
@@ -1717,6 +1742,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       </button>
 
       <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+        {(() => {
+          const itemWeight = getItemWeightValue(item);
+          return (
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
@@ -1741,6 +1769,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   <Lock size={8} /> DM LOCKED
                 </span>
               )}
+              {itemWeight !== null && (
+                <span
+                  className="px-2 py-0.5 text-[10px]"
+                  style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}
+                >
+                  Weight {formatItemWeight(item)}
+                </span>
+              )}
             </div>
           </div>
           {canPlayerEdit(item) && (
@@ -1753,6 +1789,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </button>
           )}
         </div>
+          );
+        })()}
 
         {/* Tags */}
         <div className="flex flex-wrap gap-1.5 mb-4">
@@ -1781,10 +1819,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           const trackerCount = infoFields.filter((field) => field.trackerMode).length;
           const equippedEffectCount = infoFields.filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()).length;
           const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
+          const itemWeight = getItemWeightValue(item);
           return (
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
+            <div className={`grid grid-cols-2 md:grid-cols-3 ${itemWeight !== null ? "xl:grid-cols-7" : "xl:grid-cols-6"} gap-2 mb-4`}>
               <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Type</div><div className="text-[11px]" style={{ color: theme.textColor }}>{item.type || "None"}</div></div>
               <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Rarity</div><div className="text-[11px]" style={{ color: theme.textColor }}>{item.rarity || "Common"}</div></div>
+              {itemWeight !== null && <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Weight</div><div className="text-[11px]" style={{ color: theme.textColor }}>{formatItemWeight(item)}</div></div>}
               <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Allowed Slots</div><div className="text-[11px]" style={{ color: theme.textColor }}>{allowedSlots.length > 0 ? allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", ") : "Not equippable"}</div></div>
               <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Information Fields</div><div className="text-[11px]" style={{ color: theme.textColor }}>{infoFields.length}</div></div>
               <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Quick Rolls</div><div className="text-[11px]" style={{ color: theme.textColor }}>{quickRollCount}</div></div>
@@ -2993,7 +3033,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   const effAC = player.armorClass + acBuff;
                   const spdNum = parseInt(player.speed) || 0;
                   const effSpeed = speedBuff !== 0 ? `${spdNum + speedBuff} ft` : player.speed;
-                  const effMaxWt = (player.maxWeight ?? 100) + maxWtBuff;
+                  const autoMaxWeight = usesAutoMaxWeight(player);
+                  const effMaxWt = playerBaseMaxWeight + maxWtBuff;
                   const effTW = player.totalWounds + twBuff;
                   const effME = (player.maxExhaustion ?? 6) + mesBuff;
                   const buffPill = (b: number, sz: number = 9) => b !== 0 ? (
@@ -3065,9 +3106,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         <div className="flex items-center gap-2">
                           <button onClick={() => handleSetWeight(currentWeight - 1)} className={`${retro.button} p-1`} style={S_RED}><Minus size={12} /></button>
                           <input type="number" value={currentWeight} onChange={(e) => { const v = parseInt(e.target.value); if (!isNaN(v)) handleSetWeight(v); }} className={`${retro.sunken} bg-[#0A0A28] w-16 text-center text-[18px] py-1 outline-none`} style={{ color: currentWeight > effMaxWt ? theme.hpCritical : theme.hpHealthy, fontWeight: 600 }} />
-                          <span className="text-[18px]" style={{ color: theme.labelColor, fontWeight: 600 }}>/ {buffedDenom(player.maxWeight ?? 100, maxWtBuff)}</span>
+                          <span className="text-[18px]" style={{ color: theme.labelColor, fontWeight: 600 }}>/ {buffedDenom(playerBaseMaxWeight, maxWtBuff)}</span>
                           <button onClick={() => handleSetWeight(currentWeight + 1)} className={`${retro.button} p-1`} style={S_GREEN_BTN}><Plus size={12} /></button>
                         </div>
+                        {autoMaxWeight && (
+                          <div className="text-[9px] mt-2 leading-relaxed" style={S_MUTED}>
+                            Auto max weight: 50 + 5 for each CON point above 10.
+                          </div>
+                        )}
                       </div>
                       <div className={`${retro.sunken} p-3`} style={SUNKEN_INPUT}>
                         <label className="text-[12px] block mb-2" style={{ color: theme.labelColor }}>Exhaustion:</label>
@@ -3410,11 +3456,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               const quickRollCount = getQuickRollSlots(item.customFields || {}).filter((slot) => slot.expression.trim()).length + infoFields.filter((field) => field.rollExpression.trim()).length;
               const trackerCount = infoFields.filter((field) => field.trackerMode).length;
               const equippedEffectCount = infoFields.filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()).length;
+              const itemWeight = getItemWeightValue(item);
               const previewText = [
                 stripHtml(item.description || ""),
                 ...infoFields.map((field) => stripHtml(field.content || "")).filter(Boolean),
               ].find(Boolean) || "";
               const summaryBadges = [
+                ...(itemWeight !== null ? [{ label: `Weight ${formatItemWeight(item)}`, accent: "#8AB8FF" }] : []),
                 ...(allowedSlots.length > 0 ? [{ label: allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", "), accent: "#8AB8FF" }] : []),
                 ...(quickRollCount > 0 ? [{ label: `${quickRollCount} Roll${quickRollCount === 1 ? "" : "s"}`, accent: "#FFD166" }] : []),
                 ...(trackerCount > 0 ? [{ label: `${trackerCount} Tracker`, accent: "#FF8A5A" }] : []),
@@ -3443,7 +3491,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           </div>
                           <div className="text-[11px] mt-0.5" style={{ color: theme.labelColor }}>
                             {item.type || "No type"}
-                            {item.rarity && <span style={DISPLAY_CONTENTS}> · <span style={{ color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon }}>{item.rarity}</span></span>}
+                            {item.rarity && <span style={DISPLAY_CONTENTS}> <span style={S_DIM}>|</span> <span style={{ color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon }}>{item.rarity}</span></span>}
                           </div>
                         </div>
                         <ChevronLeft size={12} className="rotate-180 shrink-0 mt-1" style={S_DIM} />
@@ -3544,7 +3592,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           </div>
 
                           {/* Row 1: Name, Type, Rarity */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
                             <div>
                               <label className="text-[10px] block mb-1" style={labelStyle}>Item Name:</label>
                               <input type="text" value={editingPlayerItem.name} onChange={(e) => updateEditorField("name", e.target.value)} placeholder="Enter item name..." className={inputClass} style={inputStyle} />
@@ -3558,6 +3606,31 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                               <select value={editingPlayerItem.rarity} onChange={(e) => updateEditorField("rarity", e.target.value)} className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full`} style={{ color: rarityColor(editingPlayerItem.rarity) }}>
                                 {RARITIES.map((r) => <option key={r} value={r} style={{ color: rarityColor(r) }}>{r}</option>)}
                               </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] block mb-1" style={labelStyle}>Weight:</label>
+                              <select
+                                value={getItemWeightTier(editingPlayerItem) ?? "M"}
+                                onChange={(e) => updateEditorWeightTier(e.target.value as ManagedItem["weightTier"])}
+                                className={inputClass}
+                                style={inputStyle}
+                              >
+                                {ITEM_WEIGHT_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                              {getItemWeightTier(editingPlayerItem) === "Custom" && (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.1}
+                                  value={editingPlayerItem.weightValue ?? 0}
+                                  onChange={(e) => updateEditorField("weightValue", Math.max(0, parseFloat(e.target.value) || 0))}
+                                  placeholder="Custom weight"
+                                  className={`${inputClass} mt-2`}
+                                  style={inputStyle}
+                                />
+                              )}
                             </div>
                           </div>
 
@@ -4986,22 +5059,32 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               )}
 
               {cardsSubTab === "levelabilities" && (() => {
-                const levelAbilityCards = Array.from(
-                  new Set(normalizedLevelCategories.flatMap((level) => getLevelCategoryCardIds(level))),
-                )
-                  .map((cardId) => allCardsById.get(cardId))
-                  .filter(Boolean) as ManagedCard[];
+                const getLevelNumberFromCategory = (level: LevelCategory) => {
+                  const match = level.name.match(/level\s*(\d+)/i);
+                  return match ? parseInt(match[1], 10) : null;
+                };
 
-                const laFilteredCards = levelAbilityCards.filter((card) => {
-                  const matchesSearch = laSearch === "" ||
-                    card.name.toLowerCase().includes(laSearch.toLowerCase()) ||
-                    card.effect.replace(/<[^>]*>/g, "").toLowerCase().includes(laSearch.toLowerCase()) ||
-                    card.tags.some((t) => t.toLowerCase().includes(laSearch.toLowerCase()));
-                  const matchesTags = laActiveTags.length === 0 || laActiveTags.every((t) => card.tags.includes(t));
-                  return matchesSearch && matchesTags;
-                });
+                const categoriesByLevel = new Map<number, LevelCategory[]>();
+                const uncatalogedLevels: LevelCategory[] = [];
 
-                const sortedLevels = [...normalizedLevelCategories].sort((a, b) => a.order - b.order);
+                for (const level of normalizedLevelCategories) {
+                  const levelNumber = getLevelNumberFromCategory(level);
+                  if (levelNumber === null) {
+                    uncatalogedLevels.push(level);
+                    continue;
+                  }
+                  const existing = categoriesByLevel.get(levelNumber) || [];
+                  existing.push(level);
+                  categoriesByLevel.set(levelNumber, existing);
+                }
+
+                const highestConfiguredLevel = Math.max(0, ...Array.from(categoriesByLevel.keys()));
+                const highestVisibleLevel = Math.max(player?.level ?? 1, highestConfiguredLevel, 1);
+                const totalLevelRewards = normalizedLevelCategories.reduce(
+                  (sum, level) => sum + getLevelCategoryEntries(level).length,
+                  0,
+                );
+                const woundIncreaseLabel = WOUND_DICE_INCREASE_LEVELS.map((level) => `Level ${level}`).join(", ");
 
                 return (
                 <div style={DISPLAY_CONTENTS}>
@@ -5016,13 +5099,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     </div>
                   ) : (
                     <div style={DISPLAY_CONTENTS}>
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-2 mb-4 flex-wrap">
                         <Zap size={18} style={{ color: "#FFD700" }} />
                         <h2 className="text-[16px]" style={{ color: "#FFD700", fontWeight: 600 }}>
                           Level
                         </h2>
-                        <span className="text-[10px] px-1.5 py-0.5 ml-1" style={SUNKEN_INPUT_DIM}>
-                          {laFilteredCards.length} reward{laFilteredCards.length !== 1 ? "s" : ""}
+                        <span className="text-[10px] px-1.5 py-0.5" style={SUNKEN_INPUT_DIM}>
+                          {totalLevelRewards} reward{totalLevelRewards !== 1 ? "s" : ""}
                         </span>
                         <button
                           onClick={() => { void hydratePersonalFiles(); }}
@@ -5032,10 +5115,195 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         ><RefreshCw size={10} />Sync</button>
                       </div>
 
-                      {renderSearchBar(laSearch, setLaSearch, allCardTags, laActiveTags, toggleLaTag, "Search level rewards...")}
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-4">
+                        {[
+                          { label: "Level", value: `${player?.level ?? 1}` },
+                          { label: "Race", value: player?.race?.trim() || "Not set" },
+                          { label: "Class", value: player?.class?.trim() || "Not set" },
+                          { label: "HP Increase per Level", value: player?.hpIncreasePerLevel?.trim() || "Not set" },
+                          { label: "Wound Dice", value: player?.woundDice?.trim() || "Not set" },
+                          { label: "Wound Dice Increases", value: woundIncreaseLabel },
+                        ].map((summary) => (
+                          <div key={summary.label} className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3`}>
+                            <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>{summary.label}</div>
+                            <div className="text-[13px] break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{summary.value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="space-y-3 mb-4">
+                        {Array.from({ length: highestVisibleLevel }, (_, index) => {
+                          const levelNumber = index + 1;
+                          const categories = categoriesByLevel.get(levelNumber) || [];
+                          const rewardRows = categories.flatMap((level) =>
+                            getLevelCategoryEntries(level)
+                              .map((entry) => {
+                                const card = allCardsById.get(entry.cardId);
+                                return card ? { entry, card } : null;
+                              })
+                              .filter(Boolean) as Array<{ entry: ReturnType<typeof getLevelCategoryEntries>[number]; card: ManagedCard }>
+                          );
+                          const passiveRewards = rewardRows.filter(({ entry }) => !entry.showInCards);
+                          const usableRewards = rewardRows.filter(({ entry }) => entry.showInCards);
+                          const descriptions = categories.map((level) => (level.description || "").trim()).filter(Boolean);
+                          const isCurrentLevel = levelNumber === (player?.level ?? 1);
+                          const hasWoundIncrease = WOUND_DICE_INCREASE_LEVELS.includes(levelNumber as typeof WOUND_DICE_INCREASE_LEVELS[number]);
+
+                          const renderRewardRow = ({ entry, card }: { entry: ReturnType<typeof getLevelCategoryEntries>[number]; card: ManagedCard }) => (
+                            <button
+                              key={`${levelNumber}-${entry.cardId}-${entry.showInCards ? "usable" : "passive"}`}
+                              onClick={() => setLaSelectedCard(card)}
+                              className={`${retro.raised} w-full p-3 text-left hover:brightness-110 transition-colors cursor-pointer`}
+                              style={{ background: theme.cardBg }}
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                                <div className="text-[13px] break-words" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</div>
+                                <span
+                                  className="text-[9px] px-1.5 py-0.5"
+                                  style={{
+                                    background: entry.showInCards ? "#10203F" : "#2B2410",
+                                    color: entry.showInCards ? "#8AB8FF" : "#FFD700",
+                                    border: `1px solid ${entry.showInCards ? "#274274" : "#6B5520"}`,
+                                  }}
+                                >
+                                  {entry.showInCards ? "Usable Reward" : "Passive Reward"}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] mb-2" style={{ color: theme.labelColor }}>
+                                <span>{card.type || "No type"}</span>
+                                <span style={S_DIM}>|</span>
+                                <span>{card.actionCost || "No action cost"}</span>
+                              </div>
+                              <div className="text-[11px] leading-relaxed mb-2 break-words" style={{ color: theme.textColor }}>
+                                {(() => {
+                                  const plain = card.effect.replace(/<[^>]*>/g, "");
+                                  return plain.length > 110 ? `${plain.slice(0, 110)}...` : plain;
+                                })()}
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {card.tags.map((tag) => (
+                                  <span key={tag} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}>
+                                    {getDisplayCardTagName(tag)}
+                                  </span>
+                                ))}
+                              </div>
+                            </button>
+                          );
+
+                          return (
+                            <div key={`level-timeline-${levelNumber}`} className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+                              <div className="flex flex-wrap items-center gap-2 mb-3">
+                                <div className="text-[14px]" style={{ color: "#FFD700", fontWeight: 700 }}>
+                                  Level {levelNumber}
+                                </div>
+                                {isCurrentLevel && (
+                                  <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}>
+                                    Current
+                                  </span>
+                                )}
+                                {hasWoundIncrease && (
+                                  <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#2B2410", color: "#FFD700", border: "1px solid #6B5520" }}>
+                                    Wound Dice Increase
+                                  </span>
+                                )}
+                                <span className="text-[9px] px-1.5 py-0.5 ml-auto" style={SUNKEN_INPUT_DIM}>
+                                  {rewardRows.length} reward{rewardRows.length !== 1 ? "s" : ""}
+                                </span>
+                              </div>
+
+                              {descriptions.length > 0 && (
+                                <div className="space-y-2 mb-3">
+                                  {descriptions.map((description, descriptionIndex) => (
+                                    <div key={`level-${levelNumber}-description-${descriptionIndex}`} className="text-[11px] px-3 py-2" style={{ color: theme.textColor, background: theme.cardBg, borderLeft: "2px solid rgba(255,215,0,0.4)" }}>
+                                      {description}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {rewardRows.length === 0 ? (
+                                <div className="text-[11px] py-2" style={S_MUTED}>
+                                  No rewards cataloged for this level yet.
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  {passiveRewards.length > 0 && (
+                                    <div className="space-y-2">
+                                      <div className="text-[10px] uppercase tracking-[0.06em]" style={{ color: "#FFD700", fontWeight: 700 }}>
+                                        Passive Rewards
+                                      </div>
+                                      <div className="space-y-2">
+                                        {passiveRewards.map(renderRewardRow)}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {usableRewards.length > 0 && (
+                                    <div className="space-y-2">
+                                      <div className="text-[10px] uppercase tracking-[0.06em]" style={{ color: "#8AB8FF", fontWeight: 700 }}>
+                                        Usable Rewards
+                                      </div>
+                                      <div className="space-y-2">
+                                        {usableRewards.map(renderRewardRow)}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {uncatalogedLevels.length > 0 && (
+                        <div className={`${retro.sunken} bg-[#0C0C2E] p-4 mb-4`}>
+                          <div className="text-[12px] mb-3" style={{ color: "#FFD700", fontWeight: 700 }}>
+                            Other Progression Entries
+                          </div>
+                          <div className="space-y-3">
+                            {uncatalogedLevels.map((level) => {
+                              const rewardRows = getLevelCategoryEntries(level)
+                                .map((entry) => {
+                                  const card = allCardsById.get(entry.cardId);
+                                  return card ? { entry, card } : null;
+                                })
+                                .filter(Boolean) as Array<{ entry: ReturnType<typeof getLevelCategoryEntries>[number]; card: ManagedCard }>;
+
+                              return (
+                                <div key={level.id} className={`${retro.raised} p-3`} style={{ background: theme.cardBg }}>
+                                  <div className="text-[12px] mb-1" style={{ color: theme.textColor, fontWeight: 600 }}>{level.name}</div>
+                                  {(level.description || "").trim() && (
+                                    <div className="text-[11px] mb-2" style={{ color: theme.labelColor }}>{level.description}</div>
+                                  )}
+                                  {rewardRows.length === 0 ? (
+                                    <div className="text-[10px]" style={S_MUTED}>No rewards cataloged here.</div>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {rewardRows.map(({ entry, card }) => (
+                                        <button
+                                          key={`${level.id}-${entry.cardId}`}
+                                          onClick={() => setLaSelectedCard(card)}
+                                          className={`${retro.sunken} w-full p-2 text-left hover:brightness-110 transition-colors`}
+                                          style={SUNKEN_INPUT}
+                                        >
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <span className="text-[12px]" style={{ color: theme.textColor, fontWeight: 600 }}>{card.name}</span>
+                                            <span className="text-[9px]" style={{ color: entry.showInCards ? "#8AB8FF" : "#FFD700" }}>
+                                              {entry.showInCards ? "Usable reward" : "Passive reward"}
+                                            </span>
+                                          </div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Level Categories */}
-                      {sortedLevels.map(level => {
+                      {false && sortedLevels.map(level => {
                         const levelEntries = getLevelCategoryEntries(level);
                         const levelCards = laFilteredCards.filter(c => levelEntries.some(entry => entry.cardId === c.id));
                         const isCollapsed = collapsedLevels.has(level.id);
@@ -5180,7 +5448,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         );
                       })}
 
-                      {laFilteredCards.length === 0 && (
+                      {false && laFilteredCards.length === 0 && (
                         <div className="text-[12px] text-center py-6" style={S_MUTED}>
                           {levelAbilityCards.length === 0
                             ? "No level rewards assigned yet."
