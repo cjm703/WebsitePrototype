@@ -42,7 +42,7 @@ app.use(
   "/*",
   cors({
     origin: "*",
-    allowHeaders: ["Content-Type", "Authorization", "apikey", "X-Session-Token"],
+    allowHeaders: ["Content-Type", "Authorization", "apikey", "X-Session-Token", "X-Backup-Secret"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -166,6 +166,8 @@ function requireDM(playerId: string) {
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${playerId}`;
+const githubBackupStatusKey = "inet-github-backup-status";
+const GITHUB_API_BASE = "https://api.github.com";
 
 
 async function listEntityRows(table: "app_players" | "app_deleted_players") {
@@ -273,6 +275,355 @@ async function listCollectionRows(table: string) {
     id: row.id,
     ...(row.data ?? {}),
   }));
+}
+
+async function listPlayerScopedRows(table: string) {
+  const supabase = admin();
+  const { data, error } = await supabase
+    .from(table)
+    .select("player_id, data, updated_at")
+    .order("player_id", { ascending: true });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((row: any) => ({
+    playerId: row.player_id,
+    data: row.data ?? null,
+    updatedAt: row.updated_at ?? null,
+  }));
+}
+
+async function loadSingletonCollectionRow(table: string, id = "default") {
+  const supabase = admin();
+  const { data, error } = await supabase
+    .from(table)
+    .select("id, data, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+
+  return {
+    id,
+    data: data?.data ?? null,
+    updatedAt: data?.updated_at ?? null,
+  };
+}
+
+type GitHubBackupLastRun = {
+  status: "idle" | "success" | "error";
+  trigger: "manual" | "weekly";
+  startedAt: string;
+  finishedAt?: string;
+  snapshotPath?: string;
+  latestPath?: string;
+  commitSha?: string;
+  commitUrl?: string;
+  error?: string;
+};
+
+type GitHubBackupConfig = {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  basePath: string;
+  triggerSecret: string;
+};
+
+function getGitHubBackupConfig(): GitHubBackupConfig {
+  return {
+    token: String(Deno.env.get("GITHUB_BACKUP_TOKEN") || "").trim(),
+    owner: String(Deno.env.get("GITHUB_BACKUP_OWNER") || "").trim(),
+    repo: String(Deno.env.get("GITHUB_BACKUP_REPO") || "").trim(),
+    branch: String(Deno.env.get("GITHUB_BACKUP_BRANCH") || "main").trim() || "main",
+    basePath: String(Deno.env.get("GITHUB_BACKUP_BASE_PATH") || "backups/inet").trim().replace(/^\/+|\/+$/g, "") || "backups/inet",
+    triggerSecret: String(Deno.env.get("INET_BACKUP_TRIGGER_SECRET") || "").trim(),
+  };
+}
+
+function getPublicGitHubBackupStatus(config: GitHubBackupConfig, lastBackup: GitHubBackupLastRun | null) {
+  return {
+    configured: !!(config.token && config.owner && config.repo),
+    owner: config.owner,
+    repo: config.repo,
+    branch: config.branch,
+    basePath: config.basePath,
+    triggerSecretConfigured: !!config.triggerSecret,
+    lastBackup,
+  };
+}
+
+function assertGitHubBackupConfigured(config: GitHubBackupConfig) {
+  if (!config.token || !config.owner || !config.repo) {
+    throw new Error("GitHub backup is not configured. Set GITHUB_BACKUP_TOKEN, GITHUB_BACKUP_OWNER, and GITHUB_BACKUP_REPO.");
+  }
+}
+
+function ensureGitHubBackupApiKey(c: any) {
+  const unauthorized = requireApiKey(c);
+  if (unauthorized) throw unauthorized;
+}
+
+async function authorizeGitHubBackupRequest(c: any) {
+  const unauthorized = requireApiKey(c);
+  if (unauthorized) return unauthorized;
+
+  const config = getGitHubBackupConfig();
+  const providedSecret = String(c.req.header("X-Backup-Secret") || "").trim();
+  if (config.triggerSecret && providedSecret && providedSecret === config.triggerSecret) {
+    return null;
+  }
+
+  const playerId = await resolveSessionPlayerId(c);
+  requireDM(playerId);
+  return null;
+}
+
+function encodeBase64Utf8(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function readGitHubFileSha(config: GitHubBackupConfig, path: string) {
+  const res = await fetch(
+    `${GITHUB_API_BASE}/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/${path}?ref=${encodeURIComponent(config.branch)}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${config.token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "inet-backup-bot",
+      },
+    },
+  );
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GitHub read failed (${res.status}): ${body}`);
+  }
+
+  const body = await res.json();
+  return typeof body?.sha === "string" ? body.sha : null;
+}
+
+async function writeGitHubFile(
+  config: GitHubBackupConfig,
+  path: string,
+  content: string,
+  message: string,
+) {
+  const sha = await readGitHubFileSha(config, path);
+  const payload: Record<string, unknown> = {
+    message,
+    content: encodeBase64Utf8(content),
+    branch: config.branch,
+    committer: {
+      name: "I-Net Backup Bot",
+      email: "inet-backup-bot@users.noreply.github.com",
+    },
+  };
+  if (sha) payload.sha = sha;
+
+  const res = await fetch(
+    `${GITHUB_API_BASE}/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/${path}`,
+    {
+      method: "PUT",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${config.token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "inet-backup-bot",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GitHub write failed (${res.status}): ${body}`);
+  }
+
+  return await res.json();
+}
+
+async function loadLastGitHubBackupRun() {
+  const value = await kv.get(githubBackupStatusKey);
+  return value && typeof value === "object" ? value as GitHubBackupLastRun : null;
+}
+
+async function saveLastGitHubBackupRun(status: GitHubBackupLastRun) {
+  await kv.set(githubBackupStatusKey, status);
+}
+
+async function buildGitHubBackupPayload() {
+  const players = await listEntityRows("app_players");
+  const playerIds = players
+    .map((player) => String(player?.id || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  const [
+    quickItems,
+    sourceUsage,
+    activityLog,
+    skillSettings,
+    skillProficiencies,
+    equipmentSlots,
+    statusEffects,
+    levelCategories,
+    nodeUnlocks,
+    customization,
+    placedStickers,
+    wikiDrafts,
+    sites,
+    customPanelStyles,
+    wikiTags,
+    news,
+    sessionLogState,
+    sessionPlayerNotes,
+    campaignTimelineState,
+    timelineCalendarPresets,
+  ] = await Promise.all([
+    listPlayerScopedRows("player_quick_items"),
+    listPlayerScopedRows("player_source_usage_log"),
+    listPlayerScopedRows("player_activity_log"),
+    listPlayerScopedRows("player_skill_settings"),
+    listPlayerScopedRows("player_skill_proficiencies"),
+    listPlayerScopedRows("player_equipment_slots"),
+    listPlayerScopedRows("player_status_effects"),
+    listPlayerScopedRows("player_level_categories"),
+    listPlayerScopedRows("player_node_tree_unlocks"),
+    listPlayerScopedRows("player_customization"),
+    listPlayerScopedRows("player_placed_stickers"),
+    listPlayerScopedRows("player_wiki_editor_drafts"),
+    listCollectionRows("app_sites"),
+    listCollectionRows("app_custom_panel_styles"),
+    listTagRows("wiki"),
+    listCollectionRows("app_news"),
+    loadSingletonCollectionRow("app_session_log_state"),
+    loadSingletonCollectionRow("app_session_player_notes"),
+    loadSingletonCollectionRow("app_campaign_timeline_state"),
+    loadSingletonCollectionRow("app_timeline_calendar_presets"),
+  ]);
+
+  const magicLists = await Promise.all(
+    playerIds.map(async (playerId) => {
+      const value = await kv.get(playerMagicListsKey(playerId));
+      return {
+        playerId,
+        data: Array.isArray(value) ? value : [],
+      };
+    }),
+  );
+
+  return {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    source: "inet-dm-backup",
+    includes: [
+      "personal-files",
+      "wiki",
+      "news",
+      "session-log",
+      "campaign-timeline",
+    ],
+    personalFiles: {
+      players,
+      quickItems,
+      sourceUsage,
+      activityLog,
+      skillSettings,
+      skillProficiencies,
+      equipmentSlots,
+      statusEffects,
+      levelCategories,
+      nodeUnlocks,
+      customization,
+      placedStickers,
+      wikiDrafts,
+      magicLists,
+    },
+    wiki: {
+      sites,
+      customPanelStyles,
+      wikiTags,
+    },
+    news,
+    sessionLog: {
+      state: sessionLogState,
+      playerNotes: sessionPlayerNotes,
+    },
+    campaignTimeline: {
+      state: campaignTimelineState,
+      calendarPresets: timelineCalendarPresets,
+    },
+  };
+}
+
+async function runGitHubBackup(trigger: "manual" | "weekly") {
+  const config = getGitHubBackupConfig();
+  assertGitHubBackupConfigured(config);
+
+  const startedAt = new Date().toISOString();
+  const payload = await buildGitHubBackupPayload();
+  const timestamp = startedAt.replace(/[:.]/g, "-");
+  const datePrefix = startedAt.slice(0, 10);
+  const snapshotPath = `${config.basePath}/snapshots/${datePrefix}/inet-backup-${timestamp}.json`;
+  const latestPath = `${config.basePath}/latest.json`;
+
+  try {
+    const content = JSON.stringify(payload, null, 2);
+    const snapshotWrite = await writeGitHubFile(
+      config,
+      snapshotPath,
+      content,
+      `[I-Net Backup] ${trigger} snapshot ${startedAt}`,
+    );
+    const latestWrite = await writeGitHubFile(
+      config,
+      latestPath,
+      content,
+      `[I-Net Backup] update latest backup (${trigger})`,
+    );
+
+    const commitSha =
+      snapshotWrite?.commit?.sha ||
+      latestWrite?.commit?.sha ||
+      "";
+
+    const status: GitHubBackupLastRun = {
+      status: "success",
+      trigger,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      snapshotPath,
+      latestPath,
+      commitSha: commitSha || undefined,
+      commitUrl: commitSha
+        ? `https://github.com/${config.owner}/${config.repo}/commit/${commitSha}`
+        : undefined,
+    };
+    await saveLastGitHubBackupRun(status);
+    return status;
+  } catch (err) {
+    const status: GitHubBackupLastRun = {
+      status: "error",
+      trigger,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      snapshotPath,
+      latestPath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    await saveLastGitHubBackupRun(status);
+    throw err;
+  }
 }
 
 async function replaceCollectionRows(
@@ -1982,6 +2333,52 @@ function registerRoutes(prefix: string) {
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/backups/github/status`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const config = getGitHubBackupConfig();
+      const lastBackup = await loadLastGitHubBackupRun();
+      return c.json({
+        status: getPublicGitHubBackupStatus(config, lastBackup),
+      });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/backups/github/run`, async (c) => {
+    try {
+      const unauthorized = await authorizeGitHubBackupRequest(c);
+      if (unauthorized) return unauthorized;
+
+      const body = await c.req.json().catch(() => ({}));
+      const trigger = body?.trigger === "weekly" ? "weekly" : "manual";
+      const status = await runGitHubBackup(trigger);
+      const config = getGitHubBackupConfig();
+
+      return c.json({
+        ok: true,
+        status,
+        config: getPublicGitHubBackupStatus(config, status),
+      });
+    } catch (err) {
+      const config = getGitHubBackupConfig();
+      const lastBackup = await loadLastGitHubBackupRun();
+      return c.json(
+        {
+          error: err instanceof Error ? err.message : String(err),
+          status: getPublicGitHubBackupStatus(config, lastBackup),
+        },
+        500,
+      );
     }
   });
 

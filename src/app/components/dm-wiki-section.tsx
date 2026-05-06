@@ -669,7 +669,10 @@ export function DMWikiSection() {
       </div>
       <div className="mb-3">
         <label className="text-[11px] block mb-1" style={labelStyle}>Main Body</label>
-        <RichTextEditor value={pageFormBody} onChange={setPageFormBody} placeholder="Write the main page content here..." minHeight={160} />
+        <RichTextEditor value={pageFormBody} onChange={setPageFormBody} placeholder="Write the main page content here..." minHeight={160} enableWikiLayouts />
+        <div className="mt-1 text-[9px]" style={S_DIM}>
+          Bullets and numbered lists work here, and Wiki Layouts can seed spell directories or reference tables.
+        </div>
       </div>
 
       <div className="mb-3">
@@ -690,7 +693,10 @@ export function DMWikiSection() {
                 </div>
                 <input type="text" value={panel.title} onChange={(e) => updatePanelField(panel.id, { title: e.target.value })} placeholder="Panel title..." className={`${retro.sunken} bg-[#080820] px-2 py-1.5 text-[12px] w-full outline-none mb-2`} style={inputStyle} />
                 <input type="text" value={panel.subtitle || ""} onChange={(e) => updatePanelField(panel.id, { subtitle: e.target.value })} placeholder="Subtitle (optional)..." className={`${retro.sunken} bg-[#080820] px-2 py-1.5 text-[11px] w-full outline-none mb-2`} style={{ ...inputStyle, opacity: 0.7 }} />
-                <RichTextEditor value={panel.content} onChange={(html) => updatePanelField(panel.id, { content: html })} placeholder="Panel content..." minHeight={80} />
+                <RichTextEditor value={panel.content} onChange={(html) => updatePanelField(panel.id, { content: html })} placeholder="Panel content..." minHeight={80} enableWikiLayouts />
+                <div className="mt-1 text-[9px]" style={S_DIM}>
+                  Use lists inside panels for grouped links, rules, and spell-style entries, or open Wiki Layouts in the toolbar.
+                </div>
                 <div className="mt-2 flex items-center gap-3 text-[9px]" style={DM_STYLE_DIM}>
                   <span>Style:</span>
                   <select value={panel.style || "blank"} onChange={(e) => updatePanelField(panel.id, { style: e.target.value })} className={`${retro.sunken} bg-[#080820] px-1 py-0.5 text-[10px] outline-none`} style={inputStyle}>

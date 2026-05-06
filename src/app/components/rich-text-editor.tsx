@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
 import {
   Bold, Italic, AlignLeft, AlignCenter, AlignRight,
-  List, Table, ImageIcon, Palette, ChevronDown,
+  List, ListOrdered, Table, ImageIcon, Palette, ChevronDown,
 } from "lucide-react";
 
 // ========================
@@ -12,6 +12,7 @@ interface RichTextEditorProps {
   onChange: (html: string) => void;
   placeholder?: string;
   minHeight?: number;
+  enableWikiLayouts?: boolean;
 }
 
 // ========================
@@ -39,6 +40,89 @@ const COLORS = [
   "#FFD700", "#FF69B4", "#00FF7F", "#4A9AFF",
   "#C0D0F0", "#9AAABB", "#FF4444", "#44FF44",
 ];
+
+const SPELL_DIRECTORY_LEVELS = [
+  { id: "cantrips", label: "Cantrips" },
+  { id: "level-1", label: "Level 1" },
+  { id: "level-2", label: "Level 2" },
+  { id: "level-3", label: "Level 3" },
+  { id: "level-4", label: "Level 4" },
+  { id: "level-5", label: "Level 5" },
+  { id: "level-6", label: "Level 6" },
+  { id: "level-7", label: "Level 7" },
+  { id: "level-8", label: "Level 8" },
+  { id: "level-9", label: "Level 9" },
+];
+
+function buildSpellTierTable(title: string, anchorId: string): string {
+  return `
+    <h2 id="${anchorId}">${title}</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Spell Name</th>
+          <th>School</th>
+          <th>Casting Time</th>
+          <th>Range</th>
+          <th>Duration</th>
+          <th>Components</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>[[Example Spell]]</td>
+          <td>Evocation</td>
+          <td>1 Action</td>
+          <td>60 feet</td>
+          <td>Instantaneous</td>
+          <td>V, S</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function buildSpellDirectoryTemplate(): string {
+  const navItems = SPELL_DIRECTORY_LEVELS.map(
+    (level) => `<li><a href="#spell-${level.id}">${level.label}</a></li>`,
+  ).join("");
+  const sections = SPELL_DIRECTORY_LEVELS.map((level) => buildSpellTierTable(level.label, `spell-${level.id}`)).join("");
+  return `
+    <h2>Spell Directory</h2>
+    <p>Use this page for a spell library, school index, or per-magic reference list.</p>
+    <ul>
+      ${navItems}
+    </ul>
+    ${sections}
+  `;
+}
+
+function buildReferenceTableTemplate(): string {
+  return `
+    <h2>Reference Table</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Summary</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Entry One</td>
+          <td>Primary</td>
+          <td>Replace this row with your article data.</td>
+        </tr>
+        <tr>
+          <td>Entry Two</td>
+          <td>Secondary</td>
+          <td>Add more rows as needed.</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
 
 // ========================
 // Toolbar Button
@@ -165,7 +249,7 @@ function ToolDropdown({
 // ========================
 // Main Component
 // ========================
-export function RichTextEditor({ value, onChange, placeholder, minHeight = 120 }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, enableWikiLayouts = false }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const sizeDropRef = useRef<HTMLDivElement>(null);
   const savedSelectionRef = useRef<Range | null>(null);
@@ -173,6 +257,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120 }
   const isInternalChange = useRef(false);
   const [fontDropOpen, setFontDropOpen] = useState(false);
   const [sizeDropOpen, setSizeDropOpen] = useState(false);
+  const [layoutDropOpen, setLayoutDropOpen] = useState(false);
   const [customSizeInput, setCustomSizeInput] = useState("");
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [tablePopupOpen, setTablePopupOpen] = useState(false);
@@ -237,6 +322,7 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120 }
   const handleAlignCenter = () => execCmd("justifyCenter");
   const handleAlignRight = () => execCmd("justifyRight");
   const handleBulletList = () => execCmd("insertUnorderedList");
+  const handleNumberedList = () => execCmd("insertOrderedList");
 
   const handleFontChange = (fontVal: string) => {
     if (fontVal) {
@@ -353,10 +439,22 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120 }
     setImagePopupOpen(false);
   };
 
+  const handleInsertWikiLayout = (layout: "spell-directory" | "spell-tier" | "reference-table") => {
+    if (layout === "spell-directory") {
+      insertHtml(buildSpellDirectoryTemplate());
+    } else if (layout === "spell-tier") {
+      insertHtml(buildSpellTierTable("Cantrips", "spell-cantrips"));
+    } else {
+      insertHtml(buildReferenceTableTemplate());
+    }
+    setLayoutDropOpen(false);
+  };
+
   // Close other popups when one opens
   const closeAllPopups = () => {
     setFontDropOpen(false);
     setSizeDropOpen(false);
+    setLayoutDropOpen(false);
     setColorPickerOpen(false);
     setTablePopupOpen(false);
     setImagePopupOpen(false);
@@ -641,6 +739,55 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120 }
         <ToolBtn onClick={handleBulletList} title="Bullet List">
           <List size={13} />
         </ToolBtn>
+        <ToolBtn onClick={handleNumberedList} title="Numbered List">
+          <ListOrdered size={13} />
+        </ToolBtn>
+
+        {enableWikiLayouts && (
+          <ToolDropdown
+            label="Wiki Layouts"
+            open={layoutDropOpen}
+            onToggle={() => togglePopup(setLayoutDropOpen, layoutDropOpen)}
+            width={132}
+          >
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleInsertWikiLayout("spell-directory");
+              }}
+              style={dropdownItemStyle}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1A2A5A"; }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
+            >
+              Full Spell Directory
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleInsertWikiLayout("spell-tier");
+              }}
+              style={dropdownItemStyle}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1A2A5A"; }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
+            >
+              Spell Tier Table
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleInsertWikiLayout("reference-table");
+              }}
+              style={dropdownItemStyle}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1A2A5A"; }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
+            >
+              Reference Table
+            </button>
+          </ToolDropdown>
+        )}
 
         {/* Separator */}
         <div style={{ width: 1, height: 20, background: "#2A2A5A", margin: "0 2px" }} />
@@ -837,12 +984,62 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120 }
           border-radius: 3px;
           margin: 6px 0;
         }
+        .rich-text-editable h2,
+        .rich-text-editable h3 {
+          color: #7abaFF;
+          font-weight: 700;
+          line-height: 1.35;
+          margin: 14px 0 6px;
+        }
+        .rich-text-editable h2 {
+          font-size: 18px;
+          border-bottom: 1px solid #2a3a6a;
+          padding-bottom: 4px;
+        }
+        .rich-text-editable h3 {
+          font-size: 15px;
+        }
+        .rich-text-editable th {
+          border: 1px solid #3A3A6A;
+          padding: 6px 8px;
+          min-width: 60px;
+          font-size: 12px;
+          font-weight: 700;
+          text-align: left;
+          background: #111b42;
+          color: #9fc4ff;
+        }
+        .rich-text-editable tbody tr:nth-child(even) {
+          background: rgba(26, 42, 90, 0.18);
+        }
         .rich-text-editable ul {
+          list-style: disc;
           padding-left: 20px;
-          margin: 4px 0;
+          margin: 6px 0;
+        }
+        .rich-text-editable ol {
+          list-style: decimal;
+          padding-left: 20px;
+          margin: 6px 0;
         }
         .rich-text-editable li {
           margin: 2px 0;
+        }
+        .rich-text-editable ul ul {
+          list-style: circle;
+        }
+        .rich-text-editable ul ul ul {
+          list-style: square;
+        }
+        .rich-text-editable ol ol {
+          list-style: lower-alpha;
+        }
+        .rich-text-editable ol ol ol {
+          list-style: lower-roman;
+        }
+        .rich-text-editable a[href^="#"] {
+          color: #7abaff;
+          text-decoration: underline;
         }
       `}</style>
     </div>

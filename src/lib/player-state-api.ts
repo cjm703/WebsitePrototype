@@ -12,6 +12,25 @@ const LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 type LocalLevelCategoryMap = Record<string, Record<string, unknown>[]>;
 type LocalMagicListMap = Record<string, Record<string, unknown>[]>;
+export type GitHubBackupStatus = {
+  configured: boolean;
+  owner: string;
+  repo: string;
+  branch: string;
+  basePath: string;
+  triggerSecretConfigured: boolean;
+  lastBackup: {
+    status: "idle" | "success" | "error";
+    trigger: "manual" | "weekly";
+    startedAt: string;
+    finishedAt?: string;
+    snapshotPath?: string;
+    latestPath?: string;
+    commitSha?: string;
+    commitUrl?: string;
+    error?: string;
+  } | null;
+};
 type LevelCategoriesFallbackState = {
   mode: "local";
   reason: "deployment" | "transient";
@@ -477,4 +496,19 @@ export async function saveWikiCustomPanelStyles(
     method: "POST",
     body: JSON.stringify({ customPanelStyles }),
   });
+}
+
+export async function loadDMGitHubBackupStatus() {
+  const body = await apiFetch("/dm/backups/github/status", {
+    method: "GET",
+  });
+  return (body?.status ?? null) as GitHubBackupStatus | null;
+}
+
+export async function runDMGitHubBackup(trigger: "manual" | "weekly" = "manual") {
+  const body = await apiFetch("/dm/backups/github/run", {
+    method: "POST",
+    body: JSON.stringify({ trigger }),
+  });
+  return (body?.status ?? null) as GitHubBackupStatus["lastBackup"];
 }

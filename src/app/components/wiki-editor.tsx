@@ -1021,7 +1021,10 @@ export function WikiEditor() {
                 </div>
                 <div>
                   <label style={labelStyle}>Main Body</label>
-                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={200} />
+                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={200} enableWikiLayouts />
+                  <div className="mt-1 text-[9px]" style={S_DIM}>
+                    Use bullet or numbered lists, or open Wiki Layouts in the toolbar for spell directories and reference tables.
+                  </div>
                   <div className="flex gap-1 mt-1">
                     <button onClick={() => { setLinkInsertTarget("body"); setShowLinkDialog(true); }} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}>
                       <Link2 size={8} /> Insert Wiki Link
@@ -1301,7 +1304,10 @@ export function WikiEditor() {
                           {/* Content */}
                           <div>
                             <label className="text-[10px] block mb-1" style={S_MUTED}>Content</label>
-                            <RichTextEditor value={panel.content} onChange={(html) => updatePanel(panel.id, { content: html })} placeholder="Section content..." minHeight={100} />
+                            <RichTextEditor value={panel.content} onChange={(html) => updatePanel(panel.id, { content: html })} placeholder="Section content..." minHeight={100} enableWikiLayouts />
+                            <div className="mt-1 text-[9px]" style={S_DIM}>
+                              Lists work here too, and Wiki Layouts can seed spell groupings or reference tables inside a section.
+                            </div>
                             <div className="flex gap-1 mt-1">
                               <button onClick={() => { setSpoilerInsertTarget(panel.id); setShowSpoilerInsert(true); }} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#FF6A6A", border: "1px solid #3A1A1A" }}>
                                 <Shield size={8} /> Insert Spoiler Box

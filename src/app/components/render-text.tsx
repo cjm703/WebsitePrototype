@@ -234,20 +234,91 @@ export function RenderFormattedText({
       return `<span class="wiki-link-broken" style="color:#FF6A6A;text-decoration:underline dotted;cursor:help;" title="Article not found: ${escapeHtml(articleName)}">${escapeHtml(display)}</span>`;
     });
     return (
-      <div
-        ref={contentRef}
-        className="rich-text-rendered"
-        dangerouslySetInnerHTML={{ __html: processedHtml }}
-        onClick={(e) => { handleLinkClick(e); handleSpoilerClick(e); }}
-        style={{
-          color,
-          fontFamily: font,
-          fontSize: baseSize,
-          lineHeight: 1.7,
-          wordWrap: "break-word",
-          overflowWrap: "break-word",
-        }}
-      />
+      <>
+        <div
+          ref={contentRef}
+          className="rich-text-rendered"
+          dangerouslySetInnerHTML={{ __html: processedHtml }}
+          onClick={(e) => { handleLinkClick(e); handleSpoilerClick(e); }}
+          style={{
+            color,
+            fontFamily: font,
+            fontSize: baseSize,
+            lineHeight: 1.7,
+            wordWrap: "break-word",
+            overflowWrap: "break-word",
+          }}
+        />
+        <style>{`
+          .rich-text-rendered h2,
+          .rich-text-rendered h3 {
+            line-height: 1.35;
+            margin: 0.9em 0 0.35em;
+          }
+          .rich-text-rendered h2 {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: #7abaff;
+            border-bottom: 1px solid rgba(122, 186, 255, 0.25);
+            padding-bottom: 0.2em;
+          }
+          .rich-text-rendered h3 {
+            font-size: 1.1em;
+            font-weight: 700;
+            color: #9fc4ff;
+          }
+          .rich-text-rendered table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0.8em 0 1em;
+          }
+          .rich-text-rendered th,
+          .rich-text-rendered td {
+            border: 1px solid rgba(122, 186, 255, 0.22);
+            padding: 0.45em 0.6em;
+            text-align: left;
+            vertical-align: top;
+          }
+          .rich-text-rendered th {
+            background: rgba(26, 42, 90, 0.45);
+            color: #9fc4ff;
+            font-weight: 700;
+          }
+          .rich-text-rendered tbody tr:nth-child(even) {
+            background: rgba(26, 42, 90, 0.14);
+          }
+          .rich-text-rendered ul,
+          .rich-text-rendered ol {
+            margin: 0.6em 0;
+            padding-left: 1.5em;
+          }
+          .rich-text-rendered ul {
+            list-style: disc;
+          }
+          .rich-text-rendered ol {
+            list-style: decimal;
+          }
+          .rich-text-rendered ul ul {
+            list-style: circle;
+          }
+          .rich-text-rendered ul ul ul {
+            list-style: square;
+          }
+          .rich-text-rendered ol ol {
+            list-style: lower-alpha;
+          }
+          .rich-text-rendered ol ol ol {
+            list-style: lower-roman;
+          }
+          .rich-text-rendered li {
+            margin: 0.2em 0;
+          }
+          .rich-text-rendered a[href^="#"] {
+            color: #7abaff;
+            text-decoration: underline;
+          }
+        `}</style>
+      </>
     );
   }
 
