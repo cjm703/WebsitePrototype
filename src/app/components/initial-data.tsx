@@ -84,6 +84,9 @@ export interface InitialCard {
   nodeId?: string;
 }
 
+const LEGACY_USE_BUTTON_TAG = "use-able";
+const USE_BUTTON_ENABLED_TAG = "Use Button Enabled";
+
 export interface InfoFollowUp {
   id: string;
   content: string;
@@ -340,6 +343,39 @@ export function seedInitialData(): void {
       }
     } catch {}
   }
+
+  // Migrate: rename legacy "use-able" card tag and tag definition to "Use Button Enabled"
+  try {
+    const rawCardTags = safeGetItem("inet-dm-cardTags");
+    if (rawCardTags) {
+      const tags: TagDefinition[] = JSON.parse(rawCardTags);
+      let changed = false;
+      for (const tag of tags) {
+        if (String(tag.name || "").trim().toLowerCase() === LEGACY_USE_BUTTON_TAG) {
+          tag.name = USE_BUTTON_ENABLED_TAG;
+          changed = true;
+        }
+      }
+      if (changed) safeSetJson("inet-dm-cardTags", tags);
+    }
+  } catch { /* ignore */ }
+  try {
+    const rawCards = safeGetItem("inet-dm-cards");
+    if (rawCards) {
+      const cards: InitialCard[] = JSON.parse(rawCards);
+      let changed = false;
+      for (const card of cards) {
+        const nextTags = card.tags.map((tag) =>
+          String(tag || "").trim().toLowerCase() === LEGACY_USE_BUTTON_TAG ? USE_BUTTON_ENABLED_TAG : tag,
+        );
+        if (nextTags.some((tag, index) => tag !== card.tags[index])) {
+          card.tags = nextTags;
+          changed = true;
+        }
+      }
+      if (changed) safeSetJson("inet-dm-cards", cards);
+    }
+  } catch { /* ignore */ }
 
   // Merge any new default tags into existing tag lists (so new built-in tags
   // like Equipment, Attribute Buff, Skill Buff appear even for returning users)

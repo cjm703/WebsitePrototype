@@ -103,12 +103,19 @@ const ITEM_INFO_TRACKER_DESCRIPTION_KEY = "Tracker Description";
 const ITEM_INFO_TRACKER_BUFF_TYPE_KEY = "Tracker Buff Type";
 const ITEM_INFO_TRACKER_BUFF_TARGET_KEY = "Tracker Buff Target";
 const ITEM_INFO_TRACKER_BUFF_VALUE_KEY = "Tracker Buff Value";
+const LEGACY_USE_BUTTON_TAG = "use-able";
+const USE_BUTTON_ENABLED_TAG = "Use Button Enabled";
 
 const hasUseButtonEnabledTag = (card: ManagedCard) =>
   card.tags.some((tag) => {
     const normalized = String(tag || "").trim().toLowerCase();
-    return normalized === "use-able" || normalized === "use button enabled";
+    return normalized === LEGACY_USE_BUTTON_TAG || normalized === USE_BUTTON_ENABLED_TAG.toLowerCase();
   });
+
+const getDisplayCardTagName = (tag: string) =>
+  String(tag || "").trim().toLowerCase() === LEGACY_USE_BUTTON_TAG
+    ? USE_BUTTON_ENABLED_TAG
+    : tag;
 
 interface QuickRollSlot {
   slotId: string;
@@ -2315,7 +2322,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
               >
                 <Tag size={8} />
-                {tag}
+                {getDisplayCardTagName(tag)}
               </span>
             ))}
           </div>
@@ -4808,7 +4815,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                     className="text-[9px] px-1.5 py-0.5"
                                     style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
                                   >
-                                    {tag}
+                                    {getDisplayCardTagName(tag)}
                                   </span>
                                 ))}
                               </div>
@@ -5027,15 +5034,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                       {renderSearchBar(laSearch, setLaSearch, allCardTags, laActiveTags, toggleLaTag, "Search level rewards...")}
 
-                      {isDM && (
-                        <div className={`${retro.sunken} bg-[#0C0C2E] px-3 py-2.5 mb-3`} style={{ borderLeft: "3px solid #FFD70066" }}>
-                          <div className="text-[10px] mb-1" style={S_SECTION_HDR}>DM NOTE</div>
-                          <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>
-                            Personal Files now shows the player-facing result only. Edit Magic and Level in Dungeon Master Area - Manage Cards.
-                          </div>
-                        </div>
-                      )}
-
                       {/* Level Categories */}
                       {sortedLevels.map(level => {
                         const levelEntries = getLevelCategoryEntries(level);
@@ -5111,7 +5109,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                         </div>
                                         <div className="flex flex-wrap gap-1">
                                           {card.tags.map(tag => (
-                                            <span key={tag} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}>{tag}</span>
+                                            <span key={tag} className="text-[8px] px-1 py-0.5" style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}>{getDisplayCardTagName(tag)}</span>
                                           ))}
                                         </div>
                                         {false && isDM && (
