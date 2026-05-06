@@ -46,11 +46,23 @@ And this JSON body:
 
 The backup bundle currently includes:
 
+- Core site content:
+  - cards
+  - items
+  - info entries and info subtabs
+  - node trees
+  - notifications
+  - card/item/info/status/wiki tags
+  - deleted players
 - Personal Files data
 - Wiki data
 - News data
 - Session Log data
 - Campaign Timeline data
+- Community data
+- Commerce data
+- Site state data such as Intelli Maps, DM customization, party color, weather, and Nexus Nomad state
+- Arcade state and player arcade profiles
 
 Backups are written to:
 
