@@ -133,7 +133,7 @@ export const initialCardTags: TagDefinition[] = [
   { id: "ctag-4", name: "Passive", description: "Always-active abilities that require no action.", fields: [] },
   { id: "ctag-5", name: "Defensive", description: "Abilities focused on protection and damage mitigation.", fields: [{ id: "cf3", name: "Damage Reduction", type: "number" }] },
   { id: "ctag-6", name: "Buff", description: "Abilities that enhance the user's capabilities.", fields: [{ id: "cf4", name: "Duration", type: "number", placeholder: "Turns" }, { id: "cf5", name: "Stat" }, { id: "cf6", name: "Amount", type: "number", placeholder: "e.g. +2 or -1" }] },
-  { id: "ctag-7", name: "use-able", description: "Cards with this tag can be activated via the 'Use' button on the player side. Combine with Buff, Timed Effect, or other tags to define what happens on use.", fields: [] },
+  { id: "ctag-7", name: "Use Button Enabled", description: "Cards with this tag can be activated via the 'Use' button on the player side. Combine with Buff, Timed Effect, or other tags to define what happens on use.", fields: [] },
   { id: "ctag-8", name: "Timed Effect", description: "When used, automatically adds a Status Effect to the player's tracker with the configured name, duration, potency, damage, description, and optional stat buff.", fields: [{ id: "cf7", name: "Effect Name" }, { id: "cf8", name: "Duration", type: "number", placeholder: "Turns", required: true }, { id: "cf9", name: "Potency", type: "number" }, { id: "cf10", name: "Damage", type: "dice", placeholder: "e.g. 1d6" }, { id: "cf11", name: "Description", type: "textarea" }, { id: "cf12", name: "Buff Type", type: "dropdown", options: ["attribute", "skill", "resource"] }, { id: "cf13", name: "Buff Target" }, { id: "cf14", name: "Buff Value", placeholder: "e.g. +2, P, -1" }] },
   { id: "ctag-9", name: "Source Type: Fire", description: "This card consumes Fire-type source when used. The card's Level determines how much source is consumed.", fields: [] },
   { id: "ctag-10", name: "Source Type: Ice", description: "This card consumes Ice-type source when used. The card's Level determines how much source is consumed.", fields: [] },
@@ -183,7 +183,7 @@ export const initialCards: InitialCard[] = [
     name: "Inferno Burst",
     type: "Spell",
     actionCost: "1 Action",
-    tags: ["Combat", "use-able", "Timed Effect", "Source Type: Fire", "Target: Enemy", "Tactical"],
+    tags: ["Combat", "Use Button Enabled", "Timed Effect", "Source Type: Fire", "Target: Enemy", "Tactical"],
     effect: "Conjure a roaring sphere of elemental fire that detonates on impact, engulfing enemies in searing flames. Targets struck continue to burn, taking residual fire damage each turn as cinders eat through armor and flesh alike. <b>Critical hits</b> double the burn duration.",
     assignedTo: ["player-1", "player-2", "player-3"],
     customFields: {
@@ -205,7 +205,7 @@ export const initialCards: InitialCard[] = [
     name: "Glacial Aegis",
     type: "Spell",
     actionCost: "1 Bonus Action",
-    tags: ["Defensive", "Buff", "use-able", "Timed Effect", "Source Type: Ice", "Target: Self"],
+    tags: ["Defensive", "Buff", "Use Button Enabled", "Timed Effect", "Source Type: Ice", "Target: Self"],
     effect: "Encase yourself in a shimmering shell of enchanted ice that absorbs incoming blows and chills attackers on contact. While active, your Armor Class is bolstered and melee attackers suffer frost recoil. The barrier <i>shatters dramatically</i> when the effect expires.",
     assignedTo: ["player-1", "player-2", "player-3"],
     customFields: {

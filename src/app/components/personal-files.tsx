@@ -6,7 +6,7 @@ import { RenderFormattedText } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
 import { MascotPopup } from "./mascot-popup";
 import { getPlayerTheme, buildPageGradient, isGradient, firstColor, ts, type PlayerTheme } from "./player-theme";
-import { DISPLAY_CONTENTS, SUNKEN_INPUT, SUNKEN_INPUT_DIM, S_MUTED, S_DIM, S_SUBTLE, S_TEXT, S_RED, S_GREEN_BTN, S_LABEL, S_LINK, S_WARN, S_ACCENT } from "./shared-styles";
+import { DISPLAY_CONTENTS, SUNKEN_INPUT, SUNKEN_INPUT_DIM, S_MUTED, S_DIM, S_SUBTLE, S_TEXT, S_RED, S_GREEN_BTN, S_LABEL, S_LINK, S_WARN, S_ACCENT, S_SECTION_HDR } from "./shared-styles";
 import { getOwnedStickers } from "./game-leaderboard";
 import { playDiceRoll, playTabClick, playSuccessChime } from "./sound-effects";
 import { safeGetItem } from "./safe-storage";
@@ -103,6 +103,12 @@ const ITEM_INFO_TRACKER_DESCRIPTION_KEY = "Tracker Description";
 const ITEM_INFO_TRACKER_BUFF_TYPE_KEY = "Tracker Buff Type";
 const ITEM_INFO_TRACKER_BUFF_TARGET_KEY = "Tracker Buff Target";
 const ITEM_INFO_TRACKER_BUFF_VALUE_KEY = "Tracker Buff Value";
+
+const hasUseButtonEnabledTag = (card: ManagedCard) =>
+  card.tags.some((tag) => {
+    const normalized = String(tag || "").trim().toLowerCase();
+    return normalized === "use-able" || normalized === "use button enabled";
+  });
 
 interface QuickRollSlot {
   slotId: string;
@@ -1830,7 +1836,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     </div>
   );
 
-  // ── Use Card (use-able tag) ──
+  // ── Use Card (Use Button Enabled tag) ──
   const [useCardFlash, setUseCardFlash] = useState<string | null>(null);
   const [inlineDiceRollResults, setInlineDiceRollResults] = useState<Record<string, string>>({});
 
@@ -2014,8 +2020,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   }, [applyItemInfoTracker, renderDiceRollControls, theme.inputBg, theme.textColor]);
 
   const handleUseCard = (card: ManagedCard) => {
-    const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
-    if (!isUseable) return;
+    const isUseButtonEnabled = hasUseButtonEnabledTag(card);
+    if (!isUseButtonEnabled) return;
 
     const isBuff = card.tags.some((t) => t.toLowerCase() === "buff");
     const isTimedEffect = card.tags.some((t) => t.toLowerCase() === "timed effect");
@@ -2193,7 +2199,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   };
 
   const renderCardDetail = (card: ManagedCard) => {
-    const isUseable = card.tags.some((t) => t.toLowerCase() === "use-able");
+    const isUseButtonEnabled = hasUseButtonEnabledTag(card);
     const justUsed = useCardFlash === card.id;
     const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
     const detailRollPotency = (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || card.customFields?.["Timed Effect::Potency"] || "").trim();
@@ -2285,7 +2291,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
               </div>
             </div>
-            {isUseable && (
+            {isUseButtonEnabled && (
               <button
                 onClick={() => handleUseCard(card)}
                 className={`${retro.button} px-4 py-2 text-[13px] flex items-center gap-2 font-semibold transition-all`}
