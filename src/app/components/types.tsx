@@ -13,6 +13,7 @@ export interface PlayerData {
   race?: string;
   class: string;
   level: number;
+  tp?: number;
   hpIncreasePerLevel?: string;
   stats: PlayerStats;
   currentHP: number;

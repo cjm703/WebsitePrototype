@@ -1110,7 +1110,7 @@ async function persistCustomReactions(next: CustomReaction[]) {
   // ========================
   const handleAddPlayer = () => {
     setEditingPlayer({
-      id: `player-${Date.now()}`, name: "New Agent", race: "", class: "Operative", level: 1, hpIncreasePerLevel: "",
+      id: `player-${Date.now()}`, name: "New Agent", race: "", class: "Operative", level: 1, tp: 0, hpIncreasePerLevel: "",
       stats: { ...defaultStats }, currentHP: 10, maxHP: 10, armorClass: 10,
       speed: "30 ft", woundDice: "1d6", currentWounds: 0, totalWounds: 3,
       damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: getAutoMaxWeightFromCon(defaultStats.CON), autoMaxWeight: true, insanityPoints: 0, inspirationPoints: 0, foresight: false, exhaustion: 0, maxExhaustion: 6,
@@ -1702,10 +1702,18 @@ const handleSaveItem = async () => {
                       <input type="number" value={editingPlayer.level} onChange={(e) => updatePlayerField("level", Math.max(1, parseInt(e.target.value) || 1))} className={inputClass} style={inputStyle} />
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>HP Increase per Level:</label>
                       <input type="text" value={editingPlayer.hpIncreasePerLevel || ""} onChange={(e) => updatePlayerField("hpIncreasePerLevel", e.target.value)} placeholder="e.g. +8 or 1d8 + CON" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Wound Dice:</label>
+                      <input type="text" value={editingPlayer.woundDice} onChange={(e) => updatePlayerField("woundDice", e.target.value)} placeholder="e.g. 1d6" className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>TP:</label>
+                      <input type="number" value={editingPlayer.tp ?? 0} onChange={(e) => updatePlayerField("tp", Math.max(0, parseInt(e.target.value) || 0))} className={inputClass} style={inputStyle} />
                     </div>
                     <div className={`${retro.sunken} bg-[#0A0A28] px-3 py-2`}>
                       <label className="text-[10px] block mb-2" style={labelStyle}>Weight Capacity Rule:</label>
@@ -1743,7 +1751,6 @@ const handleSaveItem = async () => {
                         { key: "maxHP" as const, label: "Max HP", type: "number" },
                         { key: "armorClass" as const, label: "Armor Class", type: "number" },
                         { key: "speed" as const, label: "Speed", type: "text" },
-                        { key: "woundDice" as const, label: "Wound Dice", type: "text" },
                         { key: "totalWounds" as const, label: "Total Wounds", type: "number" },
                         { key: "damageReduction" as const, label: "Damage Reduction", type: "number" },
                         { key: "tempHP" as const, label: "Temp HP", type: "number" },
@@ -1845,6 +1852,7 @@ const handleSaveItem = async () => {
                                   exhaustion: 0,
                                   maxExhaustion: 6,
                                   race: "",
+                                  tp: 0,
                                   hpIncreasePerLevel: "",
                                   ...player,
                                 });

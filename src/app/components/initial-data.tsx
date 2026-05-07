@@ -11,6 +11,7 @@ export interface InitialPlayerData {
   race?: string;
   class: string;
   level: number;
+  tp?: number;
   hpIncreasePerLevel?: string;
   authCode: string;
   stats: { STR: number; AGI: number; CON: number; KNOW: number; WIS: number; WILL: number };
@@ -35,21 +36,21 @@ export interface InitialPlayerData {
 
 export const initialPlayers: InitialPlayerData[] = [
   {
-    id: "player-1", name: "Agent Phoenix", race: "Human", class: "Operative", level: 5, hpIncreasePerLevel: "+9",
+    id: "player-1", name: "Agent Phoenix", race: "Human", class: "Operative", level: 5, tp: 0, hpIncreasePerLevel: "+9",
     stats: { STR: 14, AGI: 12, CON: 13, KNOW: 10, WIS: 11, WILL: 8 },
     currentHP: 45, maxHP: 45, armorClass: 15, speed: "30 ft",
     woundDice: "1d6", currentWounds: 0, totalWounds: 5, authCode: "",
     damageReduction: 0, tempHP: 0, currentWeight: 22, maxWeight: 140, autoMaxWeight: false, insanityPoints: 0, inspirationPoints: 0, foresight: false, exhaustion: 0, maxExhaustion: 6,
   },
   {
-    id: "player-2", name: "Agent Shadow", race: "Human", class: "Infiltrator", level: 4, hpIncreasePerLevel: "+7",
+    id: "player-2", name: "Agent Shadow", race: "Human", class: "Infiltrator", level: 4, tp: 0, hpIncreasePerLevel: "+7",
     stats: { STR: 8, AGI: 16, CON: 10, KNOW: 12, WIS: 14, WILL: 10 },
     currentHP: 32, maxHP: 32, armorClass: 14, speed: "35 ft",
     woundDice: "1d6", currentWounds: 1, totalWounds: 4, authCode: "",
     damageReduction: 0, tempHP: 0, currentWeight: 15, maxWeight: 80, autoMaxWeight: false, insanityPoints: 0, inspirationPoints: 0, foresight: false, exhaustion: 0, maxExhaustion: 6,
   },
   {
-    id: "player-3", name: "Agent Atlas", race: "Human", class: "Enforcer", level: 5, hpIncreasePerLevel: "+11",
+    id: "player-3", name: "Agent Atlas", race: "Human", class: "Enforcer", level: 5, tp: 0, hpIncreasePerLevel: "+11",
     stats: { STR: 18, AGI: 8, CON: 16, KNOW: 8, WIS: 10, WILL: 12 },
     currentHP: 58, maxHP: 58, armorClass: 17, speed: "25 ft",
     woundDice: "1d8", currentWounds: 0, totalWounds: 6, authCode: "",

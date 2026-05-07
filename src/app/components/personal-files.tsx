@@ -5169,6 +5169,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-4">
                         {[
                           { label: "Level", value: `${player?.level ?? 1}` },
+                          { label: "TP", value: `${player?.tp ?? 0}` },
                           { label: "Race", value: player?.race?.trim() || "Not set" },
                           { label: "Class", value: player?.class?.trim() || "Not set" },
                           { label: "HP Increase per Level", value: player?.hpIncreasePerLevel?.trim() || "Not set" },
