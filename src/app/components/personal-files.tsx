@@ -19,10 +19,13 @@ import {
   collectMagicCardIds,
   getLevelCategoryCardIds,
   getLevelCategoryEntries,
+  getLevelCategoryNumber,
+  isRaceLevelCategory,
   MAGIC_TIER_LABELS,
   MAGIC_TIER_ORDER,
   normalizeLevelCategories,
   normalizeMagicLists,
+  sortLevelCategories,
 } from "@/lib/card-placement";
 import {
   formatItemWeight,
@@ -524,7 +527,8 @@ function isPlayerHiddenCustomFieldKey(key: string): boolean {
 export function PersonalFiles() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"character" | "inventory" | "cards" | "information">("character");
-  const [inventorySubTab, setInventorySubTab] = useState<"equipped" | "effects" | "consumables" | "general">("equipped");
+  const [inventorySubTab, setInventorySubTab] = useState<"equipment" | "consumables" | "general">("equipment");
+  const [equipmentSubTab, setEquipmentSubTab] = useState<"equipped" | "effects">("equipped");
   const [cardsSubTab, setCardsSubTab] = useState<"cards" | "magic" | "nodetrees" | "levelabilities">("cards");
   const [playerNodeTrees, setPlayerNodeTrees] = useState<NodeTree[]>([]);
   const currentUser = safeGetItem("inet-user") || "";
@@ -1679,7 +1683,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const tabs = [
     { id: "character" as const, label: "Character", icon: User },
     { id: "inventory" as const, label: "Inventory", icon: Package },
-    { id: "cards" as const, label: "Cards", icon: CreditCard },
+    { id: "cards" as const, label: "Cards / Level", icon: CreditCard },
     { id: "information" as const, label: "Information", icon: Info },
   ];
 
@@ -2669,39 +2673,66 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
           {/* Inventory sub-tabs */}
           {activeTab === "inventory" && (
-            <div className="flex items-center gap-1 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
-              {([
-                { id: "equipped" as const, label: "Equipped", icon: Sword, accent: "#FF7A5A" },
-                { id: "effects" as const, label: "Equipped Item Effects", icon: Sparkles, accent: "#C4A0FF" },
-                { id: "consumables" as const, label: "Sources / Money", icon: Coins, accent: "#FFD700" },
-                { id: "general" as const, label: "General Inventory", icon: Backpack, accent: "#5A9AFF" },
-              ]).map((sub) => {
-                const isActive = inventorySubTab === sub.id;
-                const SubIcon = sub.icon;
-                return (
-                  <button
-                    key={sub.id}
-                    onClick={() => { playTabClick(); setInventorySubTab(sub.id); setSelectedItem(null); }}
-                    className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
-                    style={{
-                      background: isActive ? theme.panelBg : theme.cardBg,
-                      color: isActive ? sub.accent : theme.labelColor,
-                      fontWeight: isActive ? 600 : 400,
-                    }}
-                  >
-                    <SubIcon size={12} />
-                    {sub.label}
-                  </button>
-                );
-              })}
-              {inventorySubTab === "consumables" && totalSourceAll > 0 && (
-                <div className="ml-2 flex items-center gap-1.5">
-                  <div className={`${retro.sunken} px-2 py-0.5 text-[10px] flex items-center gap-1`} style={{ background: "#0C0C2E" }}>
-                    <Flame size={9} style={{ color: "#FF7A5A" }} />
-                    <span style={{ color: totalSourceUsed > totalSourceAll ? "#FF6A6A" : totalSourceUsed > 0 ? "#FFB347" : "#5A6A8A", fontWeight: 600 }}>
-                      {totalSourceUsed}/{totalSourceAll}
-                    </span>
+            <div className="space-y-2 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
+              <div className="flex items-center gap-1">
+                {([
+                  { id: "equipment" as const, label: "Equipment", icon: Sword, accent: "#FF7A5A" },
+                  { id: "consumables" as const, label: "Money / Sources", icon: Coins, accent: "#FFD700" },
+                  { id: "general" as const, label: "General Inventory", icon: Backpack, accent: "#5A9AFF" },
+                ]).map((sub) => {
+                  const isActive = inventorySubTab === sub.id;
+                  const SubIcon = sub.icon;
+                  return (
+                    <button
+                      key={sub.id}
+                      onClick={() => { playTabClick(); setInventorySubTab(sub.id); setSelectedItem(null); }}
+                      className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
+                      style={{
+                        background: isActive ? theme.panelBg : theme.cardBg,
+                        color: isActive ? sub.accent : theme.labelColor,
+                        fontWeight: isActive ? 600 : 400,
+                      }}
+                    >
+                      <SubIcon size={12} />
+                      {sub.label}
+                    </button>
+                  );
+                })}
+                {inventorySubTab === "consumables" && totalSourceAll > 0 && (
+                  <div className="ml-2 flex items-center gap-1.5">
+                    <div className={`${retro.sunken} px-2 py-0.5 text-[10px] flex items-center gap-1`} style={{ background: "#0C0C2E" }}>
+                      <Flame size={9} style={{ color: "#FF7A5A" }} />
+                      <span style={{ color: totalSourceUsed > totalSourceAll ? "#FF6A6A" : totalSourceUsed > 0 ? "#FFB347" : "#5A6A8A", fontWeight: 600 }}>
+                        {totalSourceUsed}/{totalSourceAll}
+                      </span>
+                    </div>
                   </div>
+                )}
+              </div>
+              {inventorySubTab === "equipment" && (
+                <div className="flex items-center gap-1">
+                  {([
+                    { id: "equipped" as const, label: "Equipped", icon: Sword, accent: "#FF7A5A" },
+                    { id: "effects" as const, label: "Equipped Item Effects", icon: Sparkles, accent: "#C4A0FF" },
+                  ]).map((sub) => {
+                    const isActive = equipmentSubTab === sub.id;
+                    const SubIcon = sub.icon;
+                    return (
+                      <button
+                        key={sub.id}
+                        onClick={() => { playTabClick(); setEquipmentSubTab(sub.id); setSelectedItem(null); }}
+                        className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[10px] flex items-center gap-1.5 transition-colors`}
+                        style={{
+                          background: isActive ? theme.panelBg : theme.cardBg,
+                          color: isActive ? sub.accent : theme.labelColor,
+                          fontWeight: isActive ? 600 : 400,
+                        }}
+                      >
+                        <SubIcon size={11} />
+                        {sub.label}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2827,7 +2858,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                       setCharSubTab("status");
                                     } else {
                                       // Navigate to equipped items / effects
-                                      setInventorySubTab("effects");
+                                      setInventorySubTab("equipment");
+                                      setEquipmentSubTab("effects");
                                       setActiveTab("inventory");
                                     }
                                   }}
@@ -3491,9 +3523,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           {/* INVENTORY TAB */}
           {player && activeTab === "inventory" && (() => {
             const subConfig = {
-              equipped: { label: "Equipped", icon: Sword, accent: "#FF7A5A", items: equippedItems, empty: "No equipped items. Items typed as Weapon, Armor, etc. or tagged \"Equipped\" appear here." },
-              effects: { label: "Equipped Item Effects", icon: Sparkles, accent: "#C4A0FF", items: [] as ManagedItem[], empty: "" },
-              consumables: { label: "Sources / Money", icon: Coins, accent: "#FFD700", items: consumableItems, empty: "No source or currency items." },
+              equipment: { label: "Equipment", icon: Sword, accent: "#FF7A5A", items: equippedItems, empty: "No equipped items. Items typed as Weapon, Armor, etc. or tagged \"Equipped\" appear here." },
+              consumables: { label: "Money / Sources", icon: Coins, accent: "#FFD700", items: consumableItems, empty: "No source or currency items." },
               general: { label: "General Inventory", icon: Backpack, accent: "#5A9AFF", items: generalItems, empty: "No items match your search or filters." },
             } as const;
             const active = subConfig[inventorySubTab];
@@ -3924,7 +3955,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     })()}
 
                     {/* ═══ EQUIPPED: Two-panel layout ═══ */}
-                    {inventorySubTab === "equipped" && (() => {
+                    {inventorySubTab === "equipment" && equipmentSubTab === "equipped" && (() => {
                       // Classic RPG equipment layout: left & right columns flanking the silhouette
                       const SLOT_POSITIONS: Record<EquipSlotId, { left: number; top: number; side: "left" | "right" }> = {
                         // ── LEFT COLUMN (body-part order top→bottom) ──
@@ -4250,7 +4281,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     })()}
 
                     {/* ═══ EQUIPPED ITEM EFFECTS ═══ */}
-                    {inventorySubTab === "effects" && (() => {
+                    {inventorySubTab === "equipment" && equipmentSubTab === "effects" && (() => {
                       // Collect equipped items that have effect blocks or info-field equipped effects
                       const seenIds = new Set<string>();
                       const effectItems: ManagedItem[] = [];
@@ -4331,8 +4362,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     {/* ═══ SOURCES / MONEY: 2-panel layout ═══ */}
                     {inventorySubTab === "consumables" && (() => {
                       const panelDefs = [
-                        { id: "source" as const, label: "Sources", icon: Gem, accent: "#C4A0FF", dmItems: sourceItems, emptyHint: "Items tagged \"Source\" or typed Material, Reagent, Gem, etc." },
                         { id: "money" as const, label: "Money", icon: Banknote, accent: "#FFD700", dmItems: moneyItems, emptyHint: "Items tagged \"Money\" or typed Currency, Gold, Coin, etc." },
+                        { id: "source" as const, label: "Sources", icon: Gem, accent: "#C4A0FF", dmItems: sourceItems, emptyHint: "Items tagged \"Source\" or typed Material, Reagent, Gem, etc." },
                       ];
                       return (
                         <div className="space-y-4">
@@ -5110,16 +5141,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               )}
 
               {cardsSubTab === "levelabilities" && (() => {
-                const getLevelNumberFromCategory = (level: LevelCategory) => {
-                  const match = level.name.match(/level\s*(\d+)/i);
-                  return match ? parseInt(match[1], 10) : null;
-                };
-
+                const orderedLevelCategories = sortLevelCategories(normalizedLevelCategories);
                 const categoriesByLevel = new Map<number, LevelCategory[]>();
+                const raceCategories: LevelCategory[] = [];
                 const uncatalogedLevels: LevelCategory[] = [];
 
-                for (const level of normalizedLevelCategories) {
-                  const levelNumber = getLevelNumberFromCategory(level);
+                for (const level of orderedLevelCategories) {
+                  if (isRaceLevelCategory(level)) {
+                    raceCategories.push(level);
+                    continue;
+                  }
+
+                  const levelNumber = getLevelCategoryNumber(level);
                   if (levelNumber === null) {
                     uncatalogedLevels.push(level);
                     continue;
@@ -5131,7 +5164,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
                 const highestConfiguredLevel = Math.max(0, ...Array.from(categoriesByLevel.keys()));
                 const highestVisibleLevel = Math.max(player?.level ?? 1, highestConfiguredLevel, 1);
-                const totalLevelRewards = normalizedLevelCategories.reduce(
+                const totalLevelRewards = orderedLevelCategories.reduce(
                   (sum, level) => sum + getLevelCategoryEntries(level).length,
                   0,
                 );
@@ -5181,6 +5214,81 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                             <div className="text-[13px] break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{summary.value}</div>
                           </div>
                         ))}
+                      </div>
+
+                      <div className="space-y-3 mb-4">
+                        <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+                          <div className="flex flex-wrap items-center gap-2 mb-3">
+                            <div className="text-[14px]" style={{ color: "#FFD700", fontWeight: 700 }}>
+                              Race
+                            </div>
+                            <span className="text-[9px] px-1.5 py-0.5 ml-auto" style={SUNKEN_INPUT_DIM}>
+                              {raceCategories.reduce((sum, category) => sum + getLevelCategoryEntries(category).length, 0)} reward{raceCategories.reduce((sum, category) => sum + getLevelCategoryEntries(category).length, 0) !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+
+                          {raceCategories.length === 0 ? (
+                            <div className="text-[11px] py-2" style={S_MUTED}>
+                              No race progression notes or rewards cataloged yet.
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {raceCategories.map((category) => {
+                                const rewardRows = getLevelCategoryEntries(category)
+                                  .map((entry) => {
+                                    const card = allCardsById.get(entry.cardId);
+                                    return card ? { entry, card } : null;
+                                  })
+                                  .filter(Boolean) as Array<{ entry: ReturnType<typeof getLevelCategoryEntries>[number]; card: ManagedCard }>;
+
+                                return (
+                                  <div key={category.id} className={`${retro.raised} p-3`} style={{ background: theme.cardBg }}>
+                                    {category.name.trim().toLowerCase() !== "race" && (
+                                      <div className="text-[12px] mb-2" style={{ color: theme.textColor, fontWeight: 600 }}>{category.name}</div>
+                                    )}
+                                    {(category.description || "").trim() && (
+                                      <div className="mb-3 px-3 py-2" style={{ background: "#0C0C2E", borderLeft: "2px solid rgba(255,215,0,0.4)" }}>
+                                        <RenderFormattedText text={category.description} color={theme.textColor} baseSize={11} />
+                                      </div>
+                                    )}
+                                    {rewardRows.length === 0 ? (
+                                      <div className="text-[11px]" style={S_MUTED}>No race rewards attached yet.</div>
+                                    ) : (
+                                      <div className="space-y-2">
+                                        {rewardRows.map(({ entry, card }) => (
+                                          <button
+                                            key={`${category.id}-${entry.cardId}`}
+                                            onClick={() => setLaSelectedCard(card)}
+                                            className={`${retro.sunken} w-full p-3 text-left hover:brightness-110 transition-colors`}
+                                            style={SUNKEN_INPUT}
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                                              <span className="text-[13px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{card.name}</span>
+                                              <span className="text-[9px]" style={{ color: entry.showInCards ? "#8AB8FF" : "#FFD700" }}>
+                                                {entry.showInCards ? "Usable Reward" : "Passive Reward"}
+                                              </span>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] mb-2" style={{ color: theme.labelColor }}>
+                                              <span>{card.type || "No type"}</span>
+                                              <span style={S_DIM}>|</span>
+                                              <span>{card.actionCost || "No action cost"}</span>
+                                            </div>
+                                            <div className="text-[11px] leading-relaxed break-words" style={{ color: theme.textColor }}>
+                                              {(() => {
+                                                const plain = card.effect.replace(/<[^>]*>/g, "");
+                                                return plain.length > 110 ? `${plain.slice(0, 110)}...` : plain;
+                                              })()}
+                                            </div>
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       <div className="space-y-3 mb-4">
@@ -5266,8 +5374,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                               {descriptions.length > 0 && (
                                 <div className="space-y-2 mb-3">
                                   {descriptions.map((description, descriptionIndex) => (
-                                    <div key={`level-${levelNumber}-description-${descriptionIndex}`} className="text-[11px] px-3 py-2" style={{ color: theme.textColor, background: theme.cardBg, borderLeft: "2px solid rgba(255,215,0,0.4)" }}>
-                                      {description}
+                                    <div
+                                      key={`level-${levelNumber}-description-${descriptionIndex}`}
+                                      className="px-3 py-2"
+                                      style={{ color: theme.textColor, background: theme.cardBg, borderLeft: "2px solid rgba(255,215,0,0.4)" }}
+                                    >
+                                      <RenderFormattedText text={description} color={theme.textColor} baseSize={11} />
                                     </div>
                                   ))}
                                 </div>
@@ -5324,7 +5436,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 <div key={level.id} className={`${retro.raised} p-3`} style={{ background: theme.cardBg }}>
                                   <div className="text-[12px] mb-1" style={{ color: theme.textColor, fontWeight: 600 }}>{level.name}</div>
                                   {(level.description || "").trim() && (
-                                    <div className="text-[11px] mb-2" style={{ color: theme.labelColor }}>{level.description}</div>
+                                    <div className="mb-2 px-3 py-2" style={{ background: "#0C0C2E", borderLeft: "2px solid rgba(255,215,0,0.4)" }}>
+                                      <RenderFormattedText text={level.description} color={theme.textColor} baseSize={11} />
+                                    </div>
                                   )}
                                   {rewardRows.length === 0 ? (
                                     <div className="text-[10px]" style={S_MUTED}>No rewards cataloged here.</div>

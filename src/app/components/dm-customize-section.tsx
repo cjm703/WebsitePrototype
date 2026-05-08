@@ -38,6 +38,7 @@ const DEFAULT_BORED_LINES = [
   "I've been sitting here for ages. Entertain me!",
   "Meow? ...I mean, hello fellow human.",
 ];
+const CUSTOMIZE_EVENT = "inet-dm-customize-updated";
 
 
 
@@ -69,7 +70,11 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
-      void appStore.saveDmCustomizeState({ mascotTriggers, partyColorPrompt, boredLines }).catch(() => {});
+      void appStore.saveDmCustomizeState({ mascotTriggers, partyColorPrompt, boredLines })
+        .then(() => {
+          window.dispatchEvent(new CustomEvent(CUSTOMIZE_EVENT));
+        })
+        .catch(() => {});
     }, 350);
     return () => clearTimeout(handle);
   }, [mascotTriggers, partyColorPrompt, boredLines]);

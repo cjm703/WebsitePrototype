@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { retro } from "./retro-styles";
 import { RichTextEditor } from "./rich-text-editor";
+import { RenderFormattedText } from "./render-text";
 import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
 import {
   loadDMPlayerLevelCategories,
@@ -11,10 +12,13 @@ import {
 import {
   createEmptyMagicList,
   getLevelCategoryEntries,
+  getLevelCategoryNumber,
+  isRaceLevelCategory,
   normalizeLevelCategories,
   normalizeMagicLists,
   MAGIC_TIER_LABELS,
   MAGIC_TIER_ORDER,
+  sortLevelCategories,
 } from "@/lib/card-placement";
 import type {
   LevelCategory,
@@ -2408,7 +2412,10 @@ export function DMCardManagerSection({
     if (!laSelectedPlayerId) return;
     try {
       setDmError(null);
-      const normalized = normalizeLevelCategories(cats, managedCards);
+      const normalized = normalizeLevelCategories(
+        sortLevelCategories(cats).map((level, index) => ({ ...level, order: index })),
+        managedCards,
+      );
       await saveDMPlayerLevelCategories(laSelectedPlayerId, normalized);
       setLevelCategories(normalized);
     } catch (err) {
@@ -2470,19 +2477,43 @@ export function DMCardManagerSection({
           await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[],
           managedCards,
         );
+        const playerProfile = players.find((pl) => pl.id === laSelectedPlayerId);
         let cats = existing;
-        if (cats.length === 0) {
-          const p = players.find((pl) => pl.id === laSelectedPlayerId);
-          if (p && p.level > 0) {
-            cats = Array.from({ length: p.level }, (_, i) => ({
-              id: `lvl-${Date.now()}-${i}`,
-              name: `Level ${i + 1}`,
-              order: p.level - 1 - i,
+        if (playerProfile) {
+          const requiredNames = ["Race", ...Array.from({ length: Math.max(0, playerProfile.level) }, (_, i) => `Level ${i + 1}`)];
+          const existingNames = new Set(cats.map((level) => level.name.trim().toLowerCase()));
+          const missing = requiredNames
+            .filter((name) => !existingNames.has(name.trim().toLowerCase()))
+            .map((name, index) => ({
+              id: `lvl-${Date.now()}-${index}-${name.toLowerCase().replace(/\s+/g, "-")}`,
+              name,
+              order: cats.length + index,
+              cardEntries: [],
+              description: "",
+            } satisfies LevelCategory));
+
+          if (cats.length === 0 && missing.length === 0 && playerProfile.level > 0) {
+            cats = requiredNames.map((name, index) => ({
+              id: `lvl-${Date.now()}-${index}-${name.toLowerCase().replace(/\s+/g, "-")}`,
+              name,
+              order: index,
               cardEntries: [],
               description: "",
             }));
-            await saveDMPlayerLevelCategories(laSelectedPlayerId, cats);
+          } else if (missing.length > 0) {
+            cats = [...cats, ...missing];
           }
+        }
+
+        cats = sortLevelCategories(cats).map((level, index) => ({ ...level, order: index }));
+        if (
+          cats.length !== existing.length ||
+          cats.some((level, index) => {
+            const prior = existing[index];
+            return !prior || prior.id !== level.id || prior.order !== level.order || prior.name !== level.name;
+          })
+        ) {
+          await saveDMPlayerLevelCategories(laSelectedPlayerId, cats);
         }
         if (cancelled) return;
         setLevelCategories(cats);
@@ -6370,10 +6401,10 @@ export function DMCardManagerSection({
         return (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <div className="text-[12px]" style={S_SECTION_HDR}>LEVEL ABILITY CATEGORIES</div>
+              <div className="text-[12px]" style={S_SECTION_HDR}>LEVEL CATEGORIES</div>
             </div>
             <p className="text-[10px]" style={S_SUBTLE}>
-              Create level categories per player and assign cards to them. Each player has their own set of level categories. Select a player below to manage their Level rewards.
+              Create rich-text progression sections per player, including Race, Level 1, and any later levels. Each player has their own set of Level categories and attached reward cards.
             </p>
 
             {players.length === 0 ? (
@@ -6465,8 +6496,8 @@ export function DMCardManagerSection({
                       <button onClick={() => { setLaAddingLevel(false); setLaNewLevelName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}><X size={12} className="inline mr-1" />Cancel</button>
                     </div>
                   ) : (
-                    <button onClick={() => setLaAddingLevel(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 mb-4`} style={S_GREEN_BTN}>
-                      <Plus size={14} /> Add Level Category
+                      <button onClick={() => setLaAddingLevel(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 mb-4`} style={S_GREEN_BTN}>
+                      <Plus size={14} /> Add Level Section
                     </button>
                   )}
 
@@ -6533,19 +6564,21 @@ export function DMCardManagerSection({
                                     <div className="text-[10px] mb-1" style={S_SECTION_HDR}>DESCRIPTION</div>
                                     {laEditingDesc === level.id ? (
                                       <div className="space-y-2">
-                                        <textarea
+                                        <RichTextEditor
                                           value={level.description || ""}
-                                          onChange={(e) => void saveLevelCategories(levelCategories.map((lc) => lc.id === level.id ? { ...lc, description: e.target.value } : lc))}
-                                          placeholder="Add a description for this level category..."
-                                          className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none resize-y min-h-[60px]`}
-                                          style={{ color: "#C0D0F0" }}
-                                          rows={3}
+                                          onChange={(html) => void saveLevelCategories(levelCategories.map((lc) => lc.id === level.id ? { ...lc, description: html } : lc))}
+                                          placeholder="Add a description, list, or progression notes for this section..."
+                                          minHeight={140}
                                         />
                                         <button onClick={() => setLaEditingDesc(null)} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_ACCENT}>Done</button>
                                       </div>
                                     ) : (
                                       <div className="text-[11px] cursor-pointer px-2 py-1.5 hover:bg-[#0A0A28] transition-colors" style={{ color: level.description ? "#C0D0F0" : "#4A5A7A", border: "1px dashed #1A1A4B" }} onClick={() => setLaEditingDesc(level.id)}>
-                                        {level.description || "Click to add a description..."}
+                                        {level.description ? (
+                                          <RenderFormattedText text={level.description} color="#C0D0F0" baseSize={11} />
+                                        ) : (
+                                          "Click to add a description, list, or notes..."
+                                        )}
                                       </div>
                                     )}
                                   </div>

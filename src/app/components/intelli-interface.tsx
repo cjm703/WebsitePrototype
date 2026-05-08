@@ -57,6 +57,7 @@ export function IntelliInterface() {
     "I've been sitting here for ages. Entertain me!",
     "Meow? ...I mean, hello fellow human.",
   ];
+  const CUSTOMIZE_EVENT = "inet-dm-customize-updated";
 
   const assignedToMatches = (assignedTo: unknown, playerId: string) =>
     Array.isArray(assignedTo)
@@ -119,7 +120,7 @@ export function IntelliInterface() {
 
     const hydrateDashboardState = async () => {
       try {
-        const [players, items, cards, infos, notifications, sessions, calendarWeatherState] = await Promise.all([
+        const [players, items, cards, infos, notifications, sessions, calendarWeatherState, dmCustomizeState] = await Promise.all([
           appStore.listPlayers<any>().catch(() => [] as any[]),
           appStore.listItems<any>().catch(() => [] as any[]),
           appStore.listCards<any>().catch(() => [] as any[]),
@@ -127,6 +128,7 @@ export function IntelliInterface() {
           appStore.listNotifications<DMNotification>().catch(() => [] as DMNotification[]),
           appStore.loadSessionLogState<Array<{ id: string }>>([]).catch(() => [] as Array<{ id: string }>),
           appStore.loadCalendarWeatherState<any>({}).catch(() => ({})),
+          appStore.loadDmCustomizeState<{ boredLines?: unknown }>({}).catch(() => ({})),
         ]);
 
         if (cancelled) return;
@@ -163,11 +165,14 @@ export function IntelliInterface() {
         const nextWeather = calendarWeatherState?.weather && typeof calendarWeatherState.weather === "object"
           ? { ...DEFAULT_WEATHER, ...calendarWeatherState.weather }
           : DEFAULT_WEATHER;
+        const nextBoredLines = Array.isArray(dmCustomizeState?.boredLines)
+          ? dmCustomizeState.boredLines
+              .map((line: unknown) => String(line).trim())
+              .filter(Boolean)
+          : DEFAULT_BORED_LINES;
         setCalendarState(nextCalendar);
         setWeatherState(nextWeather);
-        if (Array.isArray(calendarWeatherState?.boredLines) && calendarWeatherState.boredLines.length > 0) {
-          setBoredLines(calendarWeatherState.boredLines.map((line: unknown) => String(line)).filter(Boolean));
-        }
+        setBoredLines(nextBoredLines);
 
         setNotifData(buildUserNotifications(notifRows));
       } catch {
@@ -175,6 +180,7 @@ export function IntelliInterface() {
           setSectionDetails(DEFAULT_SECTION_DETAILS);
           setCalendarState(DEFAULT_CALENDAR);
           setWeatherState(DEFAULT_WEATHER);
+          setBoredLines(DEFAULT_BORED_LINES);
           setNotifData({ active: [], past: [] });
         }
       }
@@ -183,9 +189,11 @@ export function IntelliInterface() {
     void hydrateDashboardState();
     const onFocus = () => { void hydrateDashboardState(); };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(CUSTOMIZE_EVENT, onFocus as EventListener);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(CUSTOMIZE_EVENT, onFocus as EventListener);
     };
   }, [currentUser]);
 

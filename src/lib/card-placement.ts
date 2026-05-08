@@ -124,6 +124,35 @@ export function normalizeLevelCategories(
     .filter(Boolean) as LevelCategory[];
 }
 
+export function isRaceLevelCategory(level: Pick<LevelCategory, "name"> | string | null | undefined) {
+  const name = typeof level === "string" ? level : level?.name;
+  return (name || "").trim().toLowerCase() === "race";
+}
+
+export function getLevelCategoryNumber(level: Pick<LevelCategory, "name"> | string | null | undefined) {
+  const name = typeof level === "string" ? level : level?.name;
+  const match = (name || "").trim().match(/^level\s*(\d+)$/i);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+export function sortLevelCategories(levels: LevelCategory[]) {
+  return [...levels].sort((a, b) => {
+    const aIsRace = isRaceLevelCategory(a);
+    const bIsRace = isRaceLevelCategory(b);
+    if (aIsRace && !bIsRace) return -1;
+    if (!aIsRace && bIsRace) return 1;
+
+    const aLevel = getLevelCategoryNumber(a);
+    const bLevel = getLevelCategoryNumber(b);
+    if (aLevel !== null && bLevel !== null) return aLevel - bLevel;
+    if (aLevel !== null && bLevel === null) return -1;
+    if (aLevel === null && bLevel !== null) return 1;
+
+    if (a.order !== b.order) return a.order - b.order;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
 export function getLevelCategoryEntries(level: LevelCategory) {
   return Array.isArray(level.cardEntries) ? level.cardEntries : [];
 }
