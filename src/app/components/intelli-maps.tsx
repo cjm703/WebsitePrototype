@@ -2136,7 +2136,7 @@ export function IntelliMaps() {
                   <div className="flex items-center gap-2"><div className="w-3 h-2" style={{ background: "#FFFFFF10", border: "1px solid #FFFFFF33", borderRadius: 1 }} /><span className="text-[9px]" style={S_MUTED}>Inner City Wall · 2 gates (N/S)</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-3" style={{ background: "#4AFFFF10", border: "1px solid #4AFFFF33" }} /><span className="text-[9px]" style={S_MUTED}>5-14 — Outer Ring (10 sectors)</span></div>
                   <div className="flex items-center gap-2"><div className="w-3 h-2.5" style={{ background: "#0F1F3855", border: "1px solid #2A4A6B55", borderRadius: 1 }} /><span className="text-[9px]" style={S_MUTED}>The Great City Wall · No gates</span></div>
-                  <div className="flex items-center gap-2"><div className="w-3 h-3" style={{ background: "#4A7BFF08", border: "1px solid #4A7BFF33" }} /><span className="text-[9px]" style={S_MUTED}>15-22 — Outer Sectors (8 · 60��/30°)</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3" style={{ background: "#4A7BFF08", border: "1px solid #4A7BFF33" }} /><span className="text-[9px]" style={S_MUTED}>15-22 - Outer Sectors (8 sectors | 60 deg / 30 deg)</span></div>
                 </div>
                 {isDM && (
                   <div className="mt-1.5 space-y-0.5">

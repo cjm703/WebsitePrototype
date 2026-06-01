@@ -753,7 +753,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [theme, setThemeState] = useState<PlayerTheme>(() => getPlayerTheme());
   const bc = (value: string) => firstColor(value);
 
-  // Owned badges ��� auto-display all owned badges in the tab row
+  // Owned badges - auto-display all owned badges in the tab row
   const [ownedBadgeIds, setOwnedBadgeIds] = useState<string[]>(() => getOwnedStickers());
 
   // Reload theme/badges on focus
@@ -960,7 +960,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   // ========================
   // Character sub-tab (Resources vs Status Effects)
   // ========================
-  const [charSubTab, setCharSubTab] = useState<"sheet" | "status">("sheet");
+  const [charSubTab, setCharSubTab] = useState<"sheet" | "level" | "status" | "source">("sheet");
   const [buffTooltipKey, setBuffTooltipKey] = useState<string | null>(null);
 
   // ========================
@@ -1089,7 +1089,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [invActiveTags, setInvActiveTags] = useState<string[]>([]);
   const [selectedItem, setSelectedItem] = useState<ManagedItem | null>(null);
 
-  // ─��� Player item creation & editing ──
+  // Player item creation and editing
   const [editingPlayerItem, setEditingPlayerItem] = useState<ManagedItem | null>(null);
   const [isNewPlayerItem, setIsNewPlayerItem] = useState(false);
 
@@ -1284,7 +1284,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const moneyItems = useMemo(() => consumableItems.filter(i => subCategorizeConsumable(i) === "money"), [consumableItems, subCategorizeConsumable]);
   const pureConsumableItems = useMemo(() => consumableItems.filter(i => subCategorizeConsumable(i) === "consumable"), [consumableItems, subCategorizeConsumable]);
 
-  // General Inventory shows ALL items, filtered by search/tags when active
+  // Full Inventory shows all items, filtered by search/tags when active
   const generalItems = filteredItems;
 
   // ── Source System Computations ──
@@ -1683,9 +1683,94 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const tabs = [
     { id: "character" as const, label: "Character", icon: User },
     { id: "inventory" as const, label: "Inventory", icon: Package },
-    { id: "cards" as const, label: "Cards / Level", icon: CreditCard },
+    { id: "cards" as const, label: "Cards", icon: CreditCard },
     { id: "information" as const, label: "Information", icon: Info },
   ];
+
+  const activeSectionSummary = (() => {
+    if (activeTab === "character") {
+      switch (charSubTab) {
+        case "sheet":
+          return {
+            label: "Character Overview",
+            accent: "#5A9AFF",
+            text: "Core stats, current resources, equipped load, and the main character snapshot.",
+          };
+        case "level":
+          return {
+            label: "Level Progression",
+            accent: "#FFD700",
+            text: "Race traits, level rewards, and progression cards are grouped here in the order they were earned.",
+          };
+        case "status":
+          return {
+            label: "Active Effects",
+            accent: "#AA77FF",
+            text: "Track timed statuses, card effects, and turn-end progression in one place.",
+          };
+        case "source":
+          return {
+            label: "Source Tracking",
+            accent: "#C4A0FF",
+            text: "Watch source gain and spend activity without mixing it into inventory management.",
+          };
+      }
+    }
+
+    if (activeTab === "inventory") {
+      switch (inventorySubTab) {
+        case "equipment":
+          return {
+            label: equipmentSubTab === "effects" ? "Equipped Item Effects" : "Equipment Loadout",
+            accent: equipmentSubTab === "effects" ? "#C4A0FF" : "#FF7A5A",
+            text: equipmentSubTab === "effects"
+              ? "Review the active effects coming from equipped gear."
+              : "Manage equipped slots and inspect the items currently worn or wielded.",
+          };
+        case "consumables":
+          return {
+            label: "Money Tracker",
+            accent: "#FFD700",
+            text: "Quick access to coinage and other money-tagged items assigned to this profile.",
+          };
+        case "general":
+          return {
+            label: "Full Inventory",
+            accent: "#5A9AFF",
+            text: "Browse every carried item with the normal search and tag filters still available.",
+          };
+      }
+    }
+
+    if (activeTab === "cards") {
+      switch (cardsSubTab) {
+        case "cards":
+          return {
+            label: "Ability Cards",
+            accent: "#FF7A5A",
+            text: "Direct cards, node rewards, and any level rewards that are meant to appear in the main card list.",
+          };
+        case "magic":
+          return {
+            label: "Magic Lists",
+            accent: "#8AB8FF",
+            text: "Spell-style lists organized by magic type and tier, separate from the broader card index.",
+          };
+        case "nodetrees":
+          return {
+            label: "Node Trees",
+            accent: "#5AE0B0",
+            text: "View progression trees and the cards currently granted through node unlocks.",
+          };
+      }
+    }
+
+    return {
+      label: "Intel Archive",
+      accent: firstColor(theme.accentColor),
+      text: "Reference notes, world details, and supporting character information.",
+    };
+  })();
 
   // --- Render tag pill ---
   const renderTagPill = (tag: string, isActive: boolean, onClick: () => void) => (
@@ -1738,6 +1823,401 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const renderTrackerPanels = (
+    panelDefs: Array<{
+      id: "source" | "money";
+      label: string;
+      icon: React.ComponentType<{ size?: number; style?: React.CSSProperties; className?: string }>;
+      accent: string;
+      dmItems: ManagedItem[];
+      emptyHint: string;
+    }>,
+    options?: {
+      showSourceSummary?: boolean;
+      activityCategories?: ActivityLogEntry["category"][];
+    },
+  ) => {
+    const allowedPanelIds = new Set(panelDefs.map((panel) => panel.id));
+    const visibleViewingQuickItem =
+      viewingQuickItem && allowedPanelIds.has(viewingQuickItem.category as "source" | "money")
+        ? viewingQuickItem
+        : null;
+    const filteredActivityLog = options?.activityCategories
+      ? activityLog.filter((entry) => options.activityCategories!.includes(entry.category))
+      : activityLog;
+
+    return (
+      <div className="space-y-4">
+        {visibleViewingQuickItem && (() => {
+          const liveQi = quickItems.find((item) => item.id === visibleViewingQuickItem.id) || visibleViewingQuickItem;
+          return (
+            <div className={`${retro.raised} p-4 mb-2`} style={{ background: theme.cardBg, border: `1px solid ${bc(theme.panelBorder)}` }}>
+              <div className="flex items-center justify-between mb-3">
+                <button onClick={() => setViewingQuickItem(null)} className="text-[11px] flex items-center gap-1 hover:opacity-80" style={S_ACCENT}>
+                  <ChevronLeft size={12} /> Back
+                </button>
+                <button onClick={() => deleteQuickItem(visibleViewingQuickItem.id)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={S_RED}>
+                  <Trash2 size={10} /> Remove
+                </button>
+              </div>
+              <div className="text-[15px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>{liveQi.name}</div>
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <button onClick={() => updateQuickItemQty(visibleViewingQuickItem.id, -1)} className={`${retro.button} w-6 h-6 flex items-center justify-center`} style={S_RED}><Minus size={10} /></button>
+                  <span className="text-[14px] w-8 text-center" style={{ color: theme.textColor, fontWeight: 700 }}>{liveQi.qty}</span>
+                  <button onClick={() => updateQuickItemQty(visibleViewingQuickItem.id, 1)} className={`${retro.button} w-6 h-6 flex items-center justify-center`} style={{ color: "#4ACA6A" }}><Plus size={10} /></button>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5" style={SUNKEN_INPUT_DIM}>
+                  {liveQi.category === "source" ? "Source" : "Money"}
+                </span>
+                {liveQi.category === "source" && (
+                  <button
+                    onClick={() => setQuickItems((prev) => prev.map((item) => item.id === liveQi.id ? { ...item, priority: !item.priority } : item))}
+                    className={`${retro.button} px-2 py-0.5 text-[10px] flex items-center gap-1`}
+                    style={{ color: liveQi.priority ? "#FFD700" : "#5A6A8A" }}
+                    title={liveQi.priority ? "Priority (used first when balancing)" : "Mark as priority"}
+                  >
+                    <Star size={10} fill={liveQi.priority ? "#FFD700" : "none"} /> {liveQi.priority ? "Priority" : "Set Priority"}
+                  </button>
+                )}
+              </div>
+              {liveQi.category === "source" && (
+                <div className="flex items-center gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px]" style={S_MUTED}>Source Amt:</span>
+                    <div className="flex items-center gap-0.5">
+                      <button onClick={() => setQuickItems((prev) => prev.map((item) => item.id === liveQi.id ? { ...item, sourceAmount: Math.max(0, (item.sourceAmount || 0) - 1) } : item))} className={`${retro.button} w-5 h-5 flex items-center justify-center`} style={S_RED}><Minus size={8} /></button>
+                      <span className="text-[13px] w-8 text-center" style={{ color: "#C4A0FF", fontWeight: 700 }}>{liveQi.sourceAmount || 0}</span>
+                      <button onClick={() => setQuickItems((prev) => prev.map((item) => item.id === liveQi.id ? { ...item, sourceAmount: (item.sourceAmount || 0) + 1 } : item))} className={`${retro.button} w-5 h-5 flex items-center justify-center`} style={{ color: "#4ACA6A" }}><Plus size={8} /></button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px]" style={S_MUTED}>Type:</span>
+                    <select
+                      value={liveQi.sourceType || "All"}
+                      onChange={(e) => setQuickItems((prev) => prev.map((item) => item.id === liveQi.id ? { ...item, sourceType: e.target.value } : item))}
+                      className={`${retro.sunken} px-2 py-0.5 text-[10px] outline-none bg-[#0C0C2E]`}
+                      style={{ color: "#C0D0F0", fontFamily: "'Tahoma', sans-serif" }}
+                    >
+                      {allSourceTypes.map((st) => <option key={st} value={st}>{st}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+              {liveQi.description && (
+                <div className={`${retro.sunken} p-3 text-[12px]`} style={{ color: theme.textColor, background: theme.inputBg }}>
+                  {liveQi.description}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {!visibleViewingQuickItem && panelDefs.map((panel) => {
+          const PanelIcon = panel.icon;
+          const myQuickItems = quickItems.filter((item) => item.category === panel.id);
+          const isAdding = addingQuickCategory === panel.id;
+          const totalCount = panel.dmItems.length + myQuickItems.length;
+          return (
+            <div key={panel.id} className={`${retro.sunken}`} style={{ background: "#0C0C2E" }}>
+              <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid #1A1A4B" }}>
+                <PanelIcon size={14} style={{ color: panel.accent }} />
+                <span className="text-[13px]" style={{ color: panel.accent, fontWeight: 600 }}>{panel.label}</span>
+                <span className="text-[9px] px-1.5 py-0.5" style={SUNKEN_INPUT_DIM}>{totalCount}</span>
+                <button
+                  onClick={() => setAddingQuickCategory(isAdding ? null : panel.id)}
+                  className={`${retro.button} ml-auto px-2 py-0.5 text-[10px] flex items-center gap-1`}
+                  style={{ color: isAdding ? "#FF6A6A" : "#4ACA6A" }}
+                >
+                  {isAdding ? <div style={DISPLAY_CONTENTS}><X size={9} /> Cancel</div> : <div style={DISPLAY_CONTENTS}><Plus size={9} /> Add</div>}
+                </button>
+              </div>
+
+              {isAdding && (
+                <div className="px-3 py-2 space-y-1.5" style={{ background: "#0A0A28", borderBottom: "1px solid #1A1A4B" }}>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={quickName}
+                      onChange={(e) => setQuickName(e.target.value)}
+                      placeholder="Item name..."
+                      className={`${retro.sunken} flex-1 px-2 py-1 text-[11px] outline-none bg-[#0C0C2E]`}
+                      style={{ color: "#C0D0F0", fontFamily: "'Tahoma', sans-serif" }}
+                      autoFocus
+                      onKeyDown={(e) => { if (e.key === "Enter") addQuickItem(panel.id); }}
+                    />
+                    <input
+                      type="number"
+                      value={quickQty}
+                      onChange={(e) => setQuickQty(e.target.value)}
+                      placeholder="Qty"
+                      min="0"
+                      className={`${retro.sunken} w-14 px-2 py-1 text-[11px] text-center outline-none bg-[#0C0C2E]`}
+                      style={{ color: "#C0D0F0", fontFamily: "'Tahoma', sans-serif" }}
+                    />
+                  </div>
+                  {panel.id === "source" && (
+                    <div className="flex gap-1.5">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[9px] shrink-0" style={S_MUTED}>Amt:</span>
+                        <input
+                          type="number"
+                          value={quickSourceAmt}
+                          onChange={(e) => setQuickSourceAmt(e.target.value)}
+                          placeholder="0"
+                          min="0"
+                          className={`${retro.sunken} w-14 px-2 py-1 text-[11px] text-center outline-none bg-[#0C0C2E]`}
+                          style={{ color: "#C4A0FF", fontFamily: "'Tahoma', sans-serif" }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 flex-1">
+                        <span className="text-[9px] shrink-0" style={S_MUTED}>Type:</span>
+                        <select
+                          value={quickSourceType}
+                          onChange={(e) => setQuickSourceType(e.target.value)}
+                          className={`${retro.sunken} flex-1 px-2 py-1 text-[11px] outline-none bg-[#0C0C2E]`}
+                          style={{ color: "#C0D0F0", fontFamily: "'Tahoma', sans-serif" }}
+                        >
+                          {allSourceTypes.map((st) => <option key={st} value={st}>{st}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                  <input
+                    type="text"
+                    value={quickDesc}
+                    onChange={(e) => setQuickDesc(e.target.value)}
+                    placeholder="Description (optional)..."
+                    className={`${retro.sunken} w-full px-2 py-1 text-[11px] outline-none bg-[#0C0C2E]`}
+                    style={{ color: "#C0D0F0", fontFamily: "'Tahoma', sans-serif" }}
+                    onKeyDown={(e) => { if (e.key === "Enter") addQuickItem(panel.id); }}
+                  />
+                  <button onClick={() => addQuickItem(panel.id)} className={`${retro.button} w-full py-1 text-[10px]`} style={{ color: "#4ACA6A" }}>
+                    ADD ITEM
+                  </button>
+                </div>
+              )}
+
+              <div className="px-3 py-2">
+                {totalCount === 0 && !isAdding ? (
+                  <div className="text-[11px] text-center py-3" style={S_MUTED}>{panel.emptyHint}</div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {panel.dmItems.map((item) => {
+                      const srcPts = panel.id === "source" ? parseInt(item.customFields["Source::Source Points"] || "0", 10) : 0;
+                      let srcType = "";
+                      if (panel.id === "source") {
+                        for (const tag of item.tags) {
+                          const match = tag.match(/^Source Type:\s*(.+)$/i);
+                          if (match) { srcType = match[1].trim(); break; }
+                        }
+                      }
+                      const qtyAmt = item.tags.includes("Quantity") ? (item.customFields["Quantity::Amount"] || "0") : null;
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => { setActiveTab("inventory"); setInventorySubTab("general"); setSelectedItem(item); setViewingQuickItem(null); }}
+                          className="w-full flex items-center justify-between py-1.5 px-2 text-left hover:bg-[#0E0E35] transition-colors cursor-pointer"
+                          style={{ border: "none", background: "transparent", borderBottom: "1px solid #1A1A4B22" }}
+                        >
+                          <span className="text-[12px] flex items-center gap-1.5" style={{ color: theme.textColor }}>
+                            {item.name}
+                            {qtyAmt !== null && (
+                              <span className="text-[10px] px-1 py-px" style={{ background: "rgba(255,215,0,0.1)", color: "#FFD700", border: "1px solid rgba(255,215,0,0.2)", fontWeight: 600 }}>
+                                x{qtyAmt}
+                              </span>
+                            )}
+                          </span>
+                          {panel.id === "source" && srcPts > 0 ? (
+                            <span className="text-[10px] px-1.5 py-px shrink-0" style={{ background: "rgba(196,160,255,0.1)", color: "#C4A0FF", border: "1px solid rgba(196,160,255,0.2)", fontWeight: 600 }}>
+                              {srcPts}{srcType ? ` ${srcType}` : ""}
+                            </span>
+                          ) : (
+                            <span className="text-[10px]" style={S_MUTED}>{item.type}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+
+                    {myQuickItems.map((qi) => (
+                      <div
+                        key={qi.id}
+                        className="flex items-center py-1.5 px-2 hover:bg-[#0E0E35] transition-colors group/qi"
+                        style={{ borderBottom: "1px solid #1A1A4B22" }}
+                      >
+                        {qi.category === "source" && (
+                          <button
+                            onClick={() => setQuickItems((prev) => prev.map((item) => item.id === qi.id ? { ...item, priority: !item.priority } : item))}
+                            className="w-4 h-4 flex items-center justify-center shrink-0 mr-1 cursor-pointer"
+                            style={{ border: "none", background: "transparent", color: qi.priority ? "#FFD700" : "#2A2A5B" }}
+                            title={qi.priority ? "Priority (used first)" : "Set as priority"}
+                          >
+                            <Star size={10} fill={qi.priority ? "#FFD700" : "none"} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setViewingQuickItem(qi)}
+                          className="flex-1 text-left cursor-pointer"
+                          style={{ border: "none", background: "transparent" }}
+                        >
+                          <span className="text-[12px] inline-flex items-center gap-1.5" style={{ color: theme.textColor }}>
+                            {qi.name}
+                            {qi.description && <span className="text-[8px]" style={S_MUTED}>...</span>}
+                            {qi.category === "source" && (qi.sourceAmount || 0) > 0 && (
+                              <span className="text-[9px] px-1 py-px" style={{ background: "rgba(196,160,255,0.1)", color: "#C4A0FF", border: "1px solid rgba(196,160,255,0.2)" }}>
+                                {qi.sourceAmount} {qi.sourceType || "All"}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => updateQuickItemQty(qi.id, -1)} className="w-4 h-4 flex items-center justify-center opacity-0 group-hover/qi:opacity-100 transition-opacity cursor-pointer" style={{ color: "#FF6A6A", border: "none", background: "transparent" }}>
+                            <Minus size={8} />
+                          </button>
+                          <span className="text-[11px] w-6 text-center" style={{ color: panel.accent, fontWeight: 700 }}>{qi.qty}</span>
+                          <button onClick={() => updateQuickItemQty(qi.id, 1)} className="w-4 h-4 flex items-center justify-center opacity-0 group-hover/qi:opacity-100 transition-opacity cursor-pointer" style={{ color: "#4ACA6A", border: "none", background: "transparent" }}>
+                            <Plus size={8} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {!visibleViewingQuickItem && options?.showSourceSummary && (
+          <div className={`${retro.raised} p-3`} style={SUNKEN_INPUT}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Flame size={14} style={{ color: "#FF7A5A" }} />
+              <span className="text-[12px]" style={{ color: "#FF7A5A", fontWeight: 600 }}>Source Used / Total</span>
+              <div className="flex-1" />
+              <div
+                className="relative"
+                onMouseEnter={() => setHoveredSourceTotal(true)}
+                onMouseLeave={() => setHoveredSourceTotal(false)}
+              >
+                <div
+                  className={`${retro.sunken} px-3 py-1.5 text-[13px] cursor-default`}
+                  style={{
+                    background: "#0C0C2E",
+                    color: totalSourceUsed > totalSourceAll ? "#FF6A6A" : totalSourceUsed > 0 ? "#FFB347" : "#C0D0F0",
+                    fontWeight: 700,
+                    minWidth: 80,
+                    textAlign: "center",
+                  }}
+                >
+                  {totalSourceUsed} / {totalSourceAll}
+                </div>
+                {hoveredSourceTotal && (
+                  <div
+                    className={`${retro.raised} absolute bottom-full left-1/2 mb-1 p-2 z-50 whitespace-nowrap`}
+                    style={{ background: "#0C0C2E", border: "1px solid #2A2A6B", transform: "translateX(-50%)", minWidth: 140 }}
+                  >
+                    <div className="text-[9px] mb-1" style={{ color: "#5A6A8A", fontWeight: 600 }}>SOURCE BREAKDOWN</div>
+                    {Object.keys(totalSourceByType).length === 0 ? (
+                      <div className="text-[10px]" style={S_MUTED}>No source items</div>
+                    ) : (
+                      Object.entries(totalSourceByType).map(([type, amt]) => (
+                        <div key={type} className="flex items-center justify-between text-[10px] gap-3">
+                          <span style={{ color: "#C4A0FF" }}>{type}</span>
+                          <span style={{ color: "#C0D0F0", fontWeight: 600 }}>{amt}</span>
+                        </div>
+                      ))
+                    )}
+                    {Object.keys(sourceUsedByType).length > 0 && (
+                      <div style={DISPLAY_CONTENTS}>
+                        <div className="h-px my-1" style={{ background: "#1A1A4B" }} />
+                        <div className="text-[9px] mb-0.5" style={{ color: "#FF7A5A", fontWeight: 600 }}>USED</div>
+                        {Object.entries(sourceUsedByType).map(([type, amt]) => (
+                          <div key={type} className="flex items-center justify-between text-[10px] gap-3">
+                            <span style={{ color: "#FFB347" }}>{type}</span>
+                            <span style={{ color: "#FF7A5A", fontWeight: 600 }}>-{amt}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={handleBalanceSource}
+                disabled={sourceUsed.length === 0}
+                className={`${retro.button} px-2 py-1.5 text-[10px] flex items-center gap-1`}
+                style={{
+                  color: sourceUsed.length === 0 ? "#3A4A6A" : "#4ACA6A",
+                  cursor: sourceUsed.length === 0 ? "not-allowed" : "pointer",
+                }}
+                title="Subtract used source from source items (priority items first)"
+              >
+                <Scale size={11} /> Balance
+              </button>
+            </div>
+            {sourceUsed.length > 0 && (
+              <div className="mt-2 space-y-0.5">
+                {sourceUsed.slice(-5).reverse().map((su) => (
+                  <div key={su.id} className="flex items-center justify-between text-[10px] px-1">
+                    <span style={S_TEXT}>{su.cardName}</span>
+                    <span style={{ color: "#FFB347" }}>-{su.amount} {su.sourceType}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!visibleViewingQuickItem && (
+          <div className={`${retro.sunken}`} style={{ background: "#0C0C2E" }}>
+            <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid #1A1A4B" }}>
+              <History size={13} style={{ color: "#5A9AFF" }} />
+              <span className="text-[12px]" style={{ color: "#5A9AFF", fontWeight: 600 }}>Recent Activity</span>
+              <span className="text-[9px] px-1.5 py-0.5" style={SUNKEN_INPUT_DIM}>
+                {filteredActivityLog.length}
+              </span>
+              {filteredActivityLog.length > 0 && (
+                <button
+                  onClick={() => setActivityLog((prev) => options?.activityCategories ? prev.filter((entry) => !options.activityCategories!.includes(entry.category)) : [])}
+                  className={`${retro.button} ml-auto px-2 py-0.5 text-[9px]`}
+                  style={S_RED}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="px-3 py-2" style={{ maxHeight: 160, overflowY: "auto" }}>
+              {filteredActivityLog.length === 0 ? (
+                <div className="text-[11px] text-center py-3" style={S_MUTED}>
+                  No recent activity yet.
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {filteredActivityLog.map((entry) => {
+                    const actionColors: Record<string, string> = { use: "#FF7A5A", add: "#4ACA6A", remove: "#FF6A6A", balance: "#5A9AFF" };
+                    const actionIcons: Record<string, string> = { use: ">", add: "+", remove: "-", balance: "=" };
+                    const timeDiff = Date.now() - entry.timestamp;
+                    const mins = Math.floor(timeDiff / 60000);
+                    const timeStr = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : `${Math.floor(mins / 60)}h ago`;
+                    return (
+                      <div key={entry.id} className="flex items-center gap-2 py-1 text-[10px]" style={{ borderBottom: "1px solid #1A1A4B22" }}>
+                        <span className="shrink-0 w-3 text-center" style={{ color: actionColors[entry.action] || "#5A6A8A" }}>
+                          {actionIcons[entry.action] || "\u00B7"}
+                        </span>
+                        <span className="flex-1 truncate" style={S_TEXT}>{entry.detail}</span>
+                        <span className="shrink-0" style={S_DIM}>{timeStr}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -2258,7 +2738,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     return { key, label, value: displayValue };
   };
 
-  const renderCardDetail = (card: ManagedCard) => {
+  const renderCardDetail = (card: ManagedCard, options?: { showBackButton?: boolean }) => {
+    const showBackButton = options?.showBackButton ?? true;
     const isUseButtonEnabled = hasUseButtonEnabledTag(card);
     const justUsed = useCardFlash === card.id;
     const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
@@ -2331,14 +2812,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     return (
       <div className="space-y-4">
-        <button
-          onClick={() => setSelectedCard(null)}
-          className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
-          style={ts(theme.accentColor)}
-        >
-          <ArrowLeft size={14} />
-          BACK TO CARDS
-        </button>
+        {showBackButton && (
+          <button
+            onClick={() => setSelectedCard(null)}
+            className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
+            style={ts(theme.accentColor)}
+          >
+            <ArrowLeft size={14} />
+            BACK TO CARDS
+          </button>
+        )}
 
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
           <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
@@ -2347,8 +2830,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 {card.name}
               </h2>
               <div className="text-[12px]" style={S_LABEL}>
-                {card.type || "No type"} · {card.actionCost || "No action cost"}
-                {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
+                {card.type || "No type"} | {card.actionCost || "No action cost"}
+                {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> | <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
               </div>
             </div>
             {isUseButtonEnabled && (
@@ -2566,7 +3049,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             Personal Files
           </h1>
           <p className="text-[12px]" style={ts(theme.labelColor)}>
-            {player ? `${player.name} — ${player.class} · Level ${player.level}` : "Agent dossier and equipment manifest"}
+            {player ? `${player.name} | ${player.class?.trim() || "Class not set"} | Level ${player.level}` : "Agent dossier and equipment manifest"}
           </p>
         </div>
 
@@ -2645,18 +3128,20 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
           {/* Character sub-tabs */}
           {activeTab === "character" && (
-            <div className="flex items-center gap-1 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
+            <div className="flex flex-wrap items-center gap-1.5 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
               {([
                 { id: "sheet" as const, label: "Character Sheet", icon: User, accent: "#5A9AFF" },
-                { id: "status" as const, label: "Status Effects & Abilities", icon: Zap, accent: "#AA77FF" },
+                { id: "level" as const, label: "Level", icon: Crown, accent: "#FFD700" },
+                { id: "status" as const, label: "Status Effect Tracker", icon: Zap, accent: "#AA77FF" },
+                { id: "source" as const, label: "Source Tracker", icon: Flame, accent: "#C4A0FF" },
               ]).map((sub) => {
                 const isActive = charSubTab === sub.id;
                 const SubIcon = sub.icon;
                 return (
                   <button
                     key={sub.id}
-                    onClick={() => { playTabClick(); setCharSubTab(sub.id); }}
-                    className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
+                    onClick={() => { playTabClick(); setCharSubTab(sub.id); setSelectedItem(null); setViewingQuickItem(null); }}
+                    className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors whitespace-nowrap`}
                     style={{
                       background: isActive ? theme.panelBg : theme.cardBg,
                       color: isActive ? sub.accent : theme.labelColor,
@@ -2674,19 +3159,19 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           {/* Inventory sub-tabs */}
           {activeTab === "inventory" && (
             <div className="space-y-2 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {([
                   { id: "equipment" as const, label: "Equipment", icon: Sword, accent: "#FF7A5A" },
-                  { id: "consumables" as const, label: "Money / Sources", icon: Coins, accent: "#FFD700" },
-                  { id: "general" as const, label: "General Inventory", icon: Backpack, accent: "#5A9AFF" },
+                  { id: "consumables" as const, label: "Money Tracker", icon: Coins, accent: "#FFD700" },
+                  { id: "general" as const, label: "Full Inventory", icon: Backpack, accent: "#5A9AFF" },
                 ]).map((sub) => {
                   const isActive = inventorySubTab === sub.id;
                   const SubIcon = sub.icon;
                   return (
                     <button
                       key={sub.id}
-                      onClick={() => { playTabClick(); setInventorySubTab(sub.id); setSelectedItem(null); }}
-                      className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
+                      onClick={() => { playTabClick(); setInventorySubTab(sub.id); setSelectedItem(null); setViewingQuickItem(null); }}
+                      className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors whitespace-nowrap`}
                       style={{
                         background: isActive ? theme.panelBg : theme.cardBg,
                         color: isActive ? sub.accent : theme.labelColor,
@@ -2698,30 +3183,20 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     </button>
                   );
                 })}
-                {inventorySubTab === "consumables" && totalSourceAll > 0 && (
-                  <div className="ml-2 flex items-center gap-1.5">
-                    <div className={`${retro.sunken} px-2 py-0.5 text-[10px] flex items-center gap-1`} style={{ background: "#0C0C2E" }}>
-                      <Flame size={9} style={{ color: "#FF7A5A" }} />
-                      <span style={{ color: totalSourceUsed > totalSourceAll ? "#FF6A6A" : totalSourceUsed > 0 ? "#FFB347" : "#5A6A8A", fontWeight: 600 }}>
-                        {totalSourceUsed}/{totalSourceAll}
-                      </span>
-                    </div>
-                  </div>
-                )}
               </div>
               {inventorySubTab === "equipment" && (
-                <div className="flex items-center gap-1">
-                  {([
-                    { id: "equipped" as const, label: "Equipped", icon: Sword, accent: "#FF7A5A" },
-                    { id: "effects" as const, label: "Equipped Item Effects", icon: Sparkles, accent: "#C4A0FF" },
-                  ]).map((sub) => {
+                <div className="flex flex-wrap items-center gap-1">
+                      {([
+                        { id: "equipped" as const, label: "Equipped", icon: Sword, accent: "#FF7A5A" },
+                        { id: "effects" as const, label: "Equipped Item Effects", icon: Sparkles, accent: "#C4A0FF" },
+                      ]).map((sub) => {
                     const isActive = equipmentSubTab === sub.id;
                     const SubIcon = sub.icon;
                     return (
                       <button
                         key={sub.id}
                         onClick={() => { playTabClick(); setEquipmentSubTab(sub.id); setSelectedItem(null); }}
-                        className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[10px] flex items-center gap-1.5 transition-colors`}
+                        className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[10px] flex items-center gap-1.5 transition-colors whitespace-nowrap`}
                         style={{
                           background: isActive ? theme.panelBg : theme.cardBg,
                           color: isActive ? sub.accent : theme.labelColor,
@@ -2740,11 +3215,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
           {/* Cards sub-tabs */}
           {activeTab === "cards" && (
-            <div className="flex items-center gap-1 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
+            <div className="flex flex-wrap items-center gap-1.5 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
               {([
                 { id: "cards" as const, label: "Cards", icon: CreditCard, accent: "#FF7A5A" },
                 { id: "magic" as const, label: "Magic", icon: Sparkles, accent: "#8AB8FF" },
-                { id: "levelabilities" as const, label: "Level", icon: Zap, accent: "#FFD700" },
                 { id: "nodetrees" as const, label: "Node Trees", icon: GitBranch, accent: "#5AE0B0" },
               ]).map((sub) => {
                 const isActive = cardsSubTab === sub.id;
@@ -2758,7 +3232,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       setMagicSelectedCard(null);
                       setLaSelectedCard(null);
                     }}
-                    className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
+                    className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors whitespace-nowrap`}
                     style={{
                       background: isActive ? theme.panelBg : theme.cardBg,
                       color: isActive ? sub.accent : theme.labelColor,
@@ -2772,6 +3246,27 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               })}
             </div>
           )}
+
+          <div
+            className={`${retro.sunken} mt-3 ml-1 px-4 py-2.5 flex flex-wrap items-center gap-3`}
+            style={{
+              background: "#0C0C2E",
+              borderLeft: `3px solid ${activeSectionSummary.accent}66`,
+            }}
+          >
+            <span
+              className="text-[9px] uppercase tracking-[0.08em]"
+              style={{ color: activeSectionSummary.accent, fontWeight: 700 }}
+            >
+              {activeSectionSummary.label}
+            </span>
+            <span
+              className="text-[11px] leading-relaxed flex-1 min-w-[220px]"
+              style={{ color: theme.labelColor }}
+            >
+              {activeSectionSummary.text}
+            </span>
+          </div>
         </div>
 
         {/* Tab Content */}
@@ -3517,6 +4012,25 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   </div>
                 );
               })()}
+
+              {charSubTab === "source" && (
+                renderTrackerPanels(
+                  [
+                    {
+                      id: "source",
+                      label: "Sources",
+                      icon: Gem,
+                      accent: "#C4A0FF",
+                      dmItems: sourceItems,
+                      emptyHint: "Items tagged \"Source\" or typed Material, Reagent, Gem, etc.",
+                    },
+                  ],
+                  {
+                    showSourceSummary: true,
+                    activityCategories: ["source"],
+                  },
+                )
+              )}
             </div>
           )}
 
@@ -3524,8 +4038,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           {player && activeTab === "inventory" && (() => {
             const subConfig = {
               equipment: { label: "Equipment", icon: Sword, accent: "#FF7A5A", items: equippedItems, empty: "No equipped items. Items typed as Weapon, Armor, etc. or tagged \"Equipped\" appear here." },
-              consumables: { label: "Money / Sources", icon: Coins, accent: "#FFD700", items: consumableItems, empty: "No source or currency items." },
-              general: { label: "General Inventory", icon: Backpack, accent: "#5A9AFF", items: generalItems, empty: "No items match your search or filters." },
+              consumables: { label: "Money Tracker", icon: Coins, accent: "#FFD700", items: moneyItems, empty: "No money items have been assigned to your profile yet." },
+              general: { label: "Full Inventory", icon: Backpack, accent: "#5A9AFF", items: generalItems, empty: "No items match your search or filters." },
             } as const;
             const active = subConfig[inventorySubTab];
             const ActiveIcon = active.icon;
@@ -4360,7 +4874,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     })()}
 
                     {/* ═══ SOURCES / MONEY: 2-panel layout ═══ */}
-                    {inventorySubTab === "consumables" && (() => {
+                    {false && inventorySubTab === "consumables" && (() => {
                       const panelDefs = [
                         { id: "money" as const, label: "Money", icon: Banknote, accent: "#FFD700", dmItems: moneyItems, emptyHint: "Items tagged \"Money\" or typed Currency, Gold, Coin, etc." },
                         { id: "source" as const, label: "Sources", icon: Gem, accent: "#C4A0FF", dmItems: sourceItems, emptyHint: "Items tagged \"Source\" or typed Material, Reagent, Gem, etc." },
@@ -4530,7 +5044,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                     </div>
                                   ) : (
                                     <div className="space-y-0.5">
-                                      {/* Items (click goes to General Inventory) */}
+                                      {/* Items (click goes to Full Inventory) */}
                                       {panel.dmItems.map((item) => {
                                         const srcPts = panel.id === "source" ? parseInt(item.customFields["Source::Source Points"] || "0", 10) : 0;
                                         let srcType = "";
@@ -4751,6 +5265,22 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     })()}
 
                     {/* ═══ GENERAL: Original list layout ═══ */}
+                    {inventorySubTab === "consumables" && renderTrackerPanels(
+                      [
+                        {
+                          id: "money",
+                          label: "Money",
+                          icon: Banknote,
+                          accent: "#FFD700",
+                          dmItems: moneyItems,
+                          emptyHint: "Items tagged \"Money\" or typed Currency, Gold, Coin, etc.",
+                        },
+                      ],
+                      {
+                        activityCategories: ["money"],
+                      },
+                    )}
+
                     {inventorySubTab === "general" && (
                       <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
                         {active.items.length === 0 ? (
@@ -4784,10 +5314,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           })()}
 
           {/* CARDS TAB */}
-          {player && activeTab === "cards" && (
+          {player && (activeTab === "cards" || (activeTab === "character" && charSubTab === "level")) && (
             <div className="space-y-4">
               {/* ═══ CARDS SUB-TAB ═══ */}
-              {cardsSubTab === "cards" && (
+              {activeTab === "cards" && cardsSubTab === "cards" && (
                 <div style={DISPLAY_CONTENTS}>
                   {selectedCard ? (
                     renderCardDetail(selectedCard)
@@ -4941,9 +5471,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 )}
                               </div>
                               <div className="hidden text-[11px] mb-1" style={{ color: theme.labelColor }}>
-                                {card.type} · {card.actionCost}
-                                {card.customFields["Level"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></span>}
-                                {card.customFields["Source Type"] && <span style={DISPLAY_CONTENTS}> · <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span></span>}
+                                {card.type} | {card.actionCost}
+                                {card.customFields["Level"] && <span style={DISPLAY_CONTENTS}> | <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></span>}
+                                {card.customFields["Source Type"] && <span style={DISPLAY_CONTENTS}> | <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span></span>}
                               </div>
                               <div className="text-[12px] leading-relaxed mb-3 break-words" style={{ color: theme.textColor }}>
                                 {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 100 ? plain.slice(0, 100) + "..." : plain; })()}
@@ -4985,7 +5515,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               )}
 
               {/* ═══ LEVEL ABILITIES SUB-TAB ═══ */}
-              {cardsSubTab === "magic" && (
+              {activeTab === "cards" && cardsSubTab === "magic" && (
                 <div style={DISPLAY_CONTENTS}>
                   {magicSelectedCard ? (
                     <div style={DISPLAY_CONTENTS}>
@@ -4994,7 +5524,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         className={`${retro.raised} px-3 py-1.5 text-[11px] flex items-center gap-1.5 mb-3 hover:brightness-110`}
                         style={{ background: theme.cardBg, color: theme.labelColor }}
                       ><ChevronLeft size={12} />Back to Magic</button>
-                      {renderCardDetail(magicSelectedCard)}
+                      {renderCardDetail(magicSelectedCard, { showBackButton: false })}
                     </div>
                   ) : (
                     <div style={DISPLAY_CONTENTS}>
@@ -5140,7 +5670,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
               )}
 
-              {cardsSubTab === "levelabilities" && (() => {
+              {((activeTab === "cards" && cardsSubTab === "levelabilities") || (activeTab === "character" && charSubTab === "level")) && (() => {
                 const orderedLevelCategories = sortLevelCategories(normalizedLevelCategories);
                 const categoriesByLevel = new Map<number, LevelCategory[]>();
                 const raceCategories: LevelCategory[] = [];
@@ -5179,7 +5709,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         className={`${retro.raised} px-3 py-1.5 text-[11px] flex items-center gap-1.5 mb-3 hover:brightness-110`}
                         style={{ background: theme.cardBg, color: theme.labelColor }}
                       ><ChevronLeft size={12} />Back to Level</button>
-                      {renderCardDetail(laSelectedCard)}
+                      {renderCardDetail(laSelectedCard, { showBackButton: false })}
                     </div>
                   ) : (
                     <div style={DISPLAY_CONTENTS}>
@@ -5533,7 +6063,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                           <span>{card.actionCost || "No action cost"}</span>
                                         </div>
                                         <div className="hidden text-[10px] mb-1" style={{ color: theme.labelColor }}>
-                                          {card.type} · {card.actionCost}
+                                          {card.type} | {card.actionCost}
                                         </div>
                                         <div className="text-[11px] leading-relaxed mb-2 break-words" style={{ color: theme.textColor }}>
                                           {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 80 ? plain.slice(0, 80) + "..." : plain; })()}
@@ -5628,7 +6158,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               })()}
 
               {/* ═══ NODE TREES SUB-TAB ═══ */}
-              {cardsSubTab === "nodetrees" && (
+              {activeTab === "cards" && cardsSubTab === "nodetrees" && (
                 <div style={DISPLAY_CONTENTS}>
                   <div className="flex items-center gap-2 mb-4">
                     <GitBranch size={18} style={{ color: "#5AE0B0" }} />

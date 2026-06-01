@@ -36,7 +36,7 @@ export function IntelliInterface() {
     personalFiles: "View and manage your character sheet",
     inetSearch: "Browse the I-Net encyclopedia.",
     nexusNomad: "Company headquarters and operations.",
-    intelliMaps: "13 sectors · Hexagonal deep city map with fog of war and path connections.",
+    intelliMaps: "13 sectors | Hexagonal deep city map with fog of war and path connections.",
     dmArea: "Campaign management tools.",
     community: "Share updates and messages with your party.",
     sessionLog: "Chronicle your campaign adventures.",
@@ -142,21 +142,21 @@ export function IntelliInterface() {
 
         const me = playerRows.find((p) => p?.name === currentUser);
         const personalFiles = me
-          ? `${me.class || "Operative"} level ${me.level ?? 1} · HP: ${me.currentHP ?? me.hp ?? 0}/${me.maxHP ?? me.maxHp ?? 0}`
+          ? `${me.class || "Operative"} level ${me.level ?? 1} | HP: ${me.currentHP ?? me.hp ?? 0}/${me.maxHP ?? me.maxHp ?? 0}`
           : DEFAULT_SECTION_DETAILS.personalFiles;
         const myItems = me ? itemRows.filter((i) => assignedToMatches(i?.assignedTo, me.id)).length : 0;
         const myCards = me ? cardRows.filter((c) => assignedToMatches(c?.assignedTo, me.id)).length : 0;
-        const personalSuffix = me ? ` · ${myItems} item${myItems !== 1 ? "s" : ""} · ${myCards} card${myCards !== 1 ? "s" : ""}` : "";
+        const personalSuffix = me ? ` | ${myItems} item${myItems !== 1 ? "s" : ""} | ${myCards} card${myCards !== 1 ? "s" : ""}` : "";
         const totalPages = itemRows.length + cardRows.length + infoRows.length;
 
         setSectionDetails({
           personalFiles: personalFiles + personalSuffix,
           inetSearch: `Browse the I-Net encyclopedia. Currently ${totalPages} article${totalPages !== 1 ? "s" : ""} indexed.`,
-          nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged`,
+          nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} | ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged`,
           intelliMaps: DEFAULT_SECTION_DETAILS.intelliMaps,
-          dmArea: `${playerRows.length} player${playerRows.length !== 1 ? "s" : ""} · ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} · ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} · ${infoRows.length} info entr${infoRows.length !== 1 ? "ies" : "y"} · ${notifRows.length} notification${notifRows.length !== 1 ? "s" : ""}`,
+          dmArea: `${playerRows.length} player${playerRows.length !== 1 ? "s" : ""} | ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} | ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} | ${infoRows.length} info entr${infoRows.length !== 1 ? "ies" : "y"} | ${notifRows.length} notification${notifRows.length !== 1 ? "s" : ""}`,
           community: DEFAULT_SECTION_DETAILS.community,
-          sessionLog: `${sessionRows.length} session${sessionRows.length !== 1 ? "s" : ""} recorded · Chronicle your campaign adventures.`,
+          sessionLog: `${sessionRows.length} session${sessionRows.length !== 1 ? "s" : ""} recorded | Chronicle your campaign adventures.`,
         });
 
         const nextCalendar = calendarWeatherState?.calendar && typeof calendarWeatherState.calendar === "object"
@@ -368,32 +368,36 @@ export function IntelliInterface() {
       details: sectionDetails.community,
     },
     {
-      name: "Commerce",
-      path: "/interface/commerce",
-      icon: Store,
-      description: "Browse shops and trade with merchants",
-      details: `Marketplace for buying and selling goods.`,
-    },
-    {
       name: "Personal Files",
       path: "/interface/personal-files",
       icon: FileText,
-      description: "View and manage your character sheet",
-      details: sectionDetails.personalFiles
+      description: "Character sheet, inventory, and progression tools",
+      details: sectionDetails.personalFiles,
+      badge: "Character",
+    },
+    {
+      name: "Commerce",
+      path: "/interface/commerce",
+      icon: Store,
+      description: "Shops, trade, and currency exchange",
+      details: `Marketplace for buying and selling goods.`,
+      badge: "Trade",
     },
     {
       name: loadOfficeName(),
       path: "/interface/nexus-nomad",
       icon: Building2,
       description: "Company headquarters and operations",
-      details: sectionDetails.nexusNomad
+      details: sectionDetails.nexusNomad,
+      badge: "Office",
     },
     {
       name: "Intelli Maps",
       path: "/interface/intelli-maps",
       icon: Map,
-      description: "The Inner City — Hexagonal deep city map",
-      details: sectionDetails.intelliMaps
+      description: "The Inner City - Hexagonal deep city map",
+      details: sectionDetails.intelliMaps,
+      badge: "Travel",
     },
     {
       name: "DM Area",
@@ -401,9 +405,19 @@ export function IntelliInterface() {
       icon: ShieldAlert,
       description: "Campaign management tools",
       details: sectionDetails.dmArea,
+      badge: "Admin",
       dmOnly: true,
     },
   ];
+
+  const normalizeInterfaceText = (text: string) =>
+    text
+      .replace(/\u2014/g, "-")
+      .replace(/\u2122/g, "TM")
+      .replace(/\u00A9/g, "(C)")
+      .replace(/\u00B7/g, "|")
+      .replace(/\u25CF\s/g, "")
+      .replace(/\u2605\s/g, "");
 
   const visibleSections = sections.filter((s) => !('dmOnly' in s && s.dmOnly) || currentUser === "DM");
 
@@ -421,7 +435,7 @@ export function IntelliInterface() {
       <div className={`${retro.toolbar} flex items-center justify-between`} style={{ background: theme.toolbarBg }}>
         <div className="flex items-center gap-3">
           <span className="text-[11px]" style={ts(theme.accentColor)}>
-            ● I-NET Interface™
+            I-NET Interface TM
           </span>
           <span className="text-[11px]" style={{ color: theme.labelColor }}>
             |
@@ -440,8 +454,8 @@ export function IntelliInterface() {
       </div>
 
       {/* Main content with sidebar layout */}
-      <div className="flex-1 flex gap-4 p-4 max-w-[1600px] mx-auto w-full relative">
-        {/* Sticker overlay — interface page slots */}
+      <div className="flex-1 flex gap-4 p-4 max-w-[1680px] mx-auto w-full relative">
+        {/* Sticker overlay - interface page slots */}
         {placedStickers.map((ps) => {
           const slot = getSlot(ps.slotId);
           if (!slot || slot.page !== "interface") return null;
@@ -486,6 +500,17 @@ export function IntelliInterface() {
             >
               I-NET INTERFACE
             </h1>
+            <div
+              className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3 flex flex-wrap items-center gap-3 max-w-[960px]`}
+              style={{ borderLeft: `3px solid ${firstColor(theme.accentColor)}66` }}
+            >
+              <span className="text-[10px] uppercase tracking-[0.08em]" style={{ color: firstColor(theme.accentColor), fontWeight: 700 }}>
+                System Modules
+              </span>
+              <span className="text-[11px] leading-relaxed" style={{ color: theme.labelColor }}>
+                Personal Files now sits ahead of Commerce so character, inventory, and progression tools are quicker to reach.
+              </span>
+            </div>
           </div>
 
           {/* Global Search */}
@@ -546,16 +571,30 @@ export function IntelliInterface() {
                       </div>
 
                       <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
                           <h3 className="text-[18px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
                             {section.name}
                           </h3>
+                          {"badge" in section && section.badge ? (
+                            <span
+                              className="text-[9px] px-2 py-0.5"
+                              style={{
+                                color: firstColor(theme.accentColor),
+                                background: `${firstColor(theme.accentColor)}14`,
+                                border: `1px solid ${firstColor(theme.accentColor)}40`,
+                                fontWeight: 700,
+                                letterSpacing: "0.04em",
+                              }}
+                            >
+                              {section.badge}
+                            </span>
+                          ) : null}
                         </div>
                         <p className="text-[13px] mb-2" style={S_SUBTLE}>
-                          {section.description}
+                          {normalizeInterfaceText(section.description)}
                         </p>
                         <p className="text-[11px]" style={{ color: theme.labelColor }}>
-                          {section.details}
+                          {normalizeInterfaceText(section.details)}
                         </p>
                       </div>
                     </div>
@@ -589,7 +628,7 @@ export function IntelliInterface() {
               {message}
             </span>
             <span className="text-[9px]" style={{ color: "#2A3A5A" }}>
-              Intelli Corporation™ © 2026 · Classified System Access
+              Intelli Corporation | (C) 2026 | Classified System Access
             </span>
           </div>
         </div>
@@ -613,7 +652,7 @@ export function IntelliInterface() {
                 {currentUser}
               </div>
               <div className="text-[10px]" style={S_GREEN_BTN}>
-                ● Active Session
+                Active Session
               </div>
             </div>
 
@@ -794,20 +833,20 @@ export function IntelliInterface() {
                   </div>
                   {calendarState.isStarfall && (
                     <div className="text-[9px] mt-1" style={{ color: "#FFD700AA" }}>
-                      ★ A day outside the regular months
+                      A day outside the regular months
                     </div>
                   )}
                 </div>
 
                 <div className={`${retro.sunken} bg-[#0C0C2E] p-3`}>
-                  <div className="text-[10px] mb-2" style={S_MUTED}>The Great City — Forecast</div>
+                  <div className="text-[10px] mb-2" style={S_MUTED}>The Great City - Forecast</div>
                   <div className="flex items-center gap-3 mb-2">
                     <div className="p-2" style={SUNKEN_INPUT}>
                       <WeatherIcon size={24} style={{ color: "#6A8ABB" }} />
                     </div>
                     <div>
                       <div className="text-[14px]" style={{ color: "#9AAFCF", fontWeight: 600 }}>{weatherState.condition}</div>
-                      <div className="text-[10px]" style={S_MUTED}>{weatherState.temperature} · {weatherState.wind}</div>
+                      <div className="text-[10px]" style={S_MUTED}>{weatherState.temperature} | {weatherState.wind}</div>
                     </div>
                   </div>
                   {weatherState.description && (
@@ -1023,3 +1062,4 @@ export function IntelliInterface() {
     </div>
   );
 }
+

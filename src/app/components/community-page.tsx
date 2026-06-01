@@ -1380,9 +1380,9 @@ interface ReactionDef {
 
 const BUILTIN_EMOJI: ReactionDef[] = [
   { id: "thumbsup", display: "👍", label: "Thumbs Up", type: "emoji" },
-  { id: "heart", display: "❤���", label: "Heart", type: "emoji" },
+  { id: "heart", display: "<3", label: "Heart", type: "emoji" },
   { id: "laugh", display: "😂", label: "Laugh", type: "emoji" },
-  { id: "fire", display: "��", label: "Fire", type: "emoji" },
+  { id: "fire", display: "Fire", label: "Fire", type: "emoji" },
   { id: "skull", display: "💀", label: "Skull", type: "emoji" },
   { id: "swords", display: "⚔️", label: "Swords", type: "emoji" },
   { id: "dice", display: "🎲", label: "Dice", type: "emoji" },
