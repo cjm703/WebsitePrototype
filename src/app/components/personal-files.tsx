@@ -905,6 +905,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     [allCards, cardSourceMap],
   );
 
+  const getCardLevelValue = useCallback((card: ManagedCard) => {
+    const rawLevel = String(card.customFields["Level"] || "").trim();
+    const match = rawLevel.match(/\d+/);
+    const parsed = match ? parseInt(match[0], 10) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  }, []);
+
   const totalCardCount = useMemo(() => {
     const stats = player?.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 };
     const totalMods =
@@ -918,7 +925,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     return Math.max(0, Math.floor((level * totalMods) / 2));
   }, [player?.level, player?.stats]);
 
-  const currentCardCount = playerCards.length;
+  const currentCardCount = useMemo(
+    () => playerCards.reduce((sum, card) => sum + getCardLevelValue(card), 0),
+    [getCardLevelValue, playerCards],
+  );
 
   const totalLearnedMagicCount = learnedMagicCardIds.size;
 
@@ -5915,12 +5925,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       </div>
 
                       {renderCardCountStrip(
-                        totalLearnedMagicCount,
+                        currentCardCount,
                         totalCardCount,
                         "#8AB8FF",
                         selectedMagicList
                           ? `${selectedMagicListLearnedCount} learned in ${selectedMagicList.name}`
-                          : "Mark spells as learned before they count toward Cards",
+                          : `${totalLearnedMagicCount} learned spell${totalLearnedMagicCount === 1 ? "" : "s"} across all magic lists`,
                       )}
 
                       {normalizedMagicLists.length === 0 ? (
