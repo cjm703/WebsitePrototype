@@ -975,11 +975,19 @@ useEffect(() => {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <GitBranch size={16} style={{ color: NT_ACCENT }} />
-        <span className="text-[13px]" style={{ color: NT_ACCENT, fontWeight: 600 }}>Node Trees</span>
-        <span className="text-[10px]" style={S_MUTED}>({trees.length})</span>
-        <div className="flex-1" />
+      <div className={`${retro.raised} p-4 flex flex-wrap items-start justify-between gap-3`} style={{ background: "#0E0E35", border: "1px solid #1A1A4B" }}>
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <GitBranch size={16} style={{ color: NT_ACCENT }} />
+            <span className="text-[13px]" style={{ color: NT_ACCENT, fontWeight: 600 }}>Node Trees</span>
+            <span className="text-[10px] px-2 py-0.5" style={{ color: "#8AB8FF", border: "1px solid #223256", background: "#0A0A28" }}>
+              {trees.length} total
+            </span>
+          </div>
+          <div className="text-[10px] mt-2 max-w-[760px]" style={S_MUTED}>
+            Build progression trees, assign them to players, and place cards directly on nodes so Personal Files and the card editor stay in sync.
+          </div>
+        </div>
         <button onClick={() => setShowNewTreeForm(true)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`} style={{ color: NT_ACCENT }}>
           <Plus size={12} /> New Tree
         </button>
@@ -998,52 +1006,71 @@ useEffect(() => {
       )}
 
       {/* Tree list */}
-      <div className={`${retro.sunken} bg-[#0C0C2E] p-3`}>
+      <div className={`${retro.sunken} bg-[#0C0C2E] p-3`} style={{ border: "1px solid #15324A" }}>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <div className="text-[10px]" style={{ color: "#7CAFD4", fontWeight: 700 }}>TREE LIBRARY</div>
+            <div className="text-[10px] mt-1" style={S_DIM}>Select a tree to edit its canvas, nodes, assignments, and rewards.</div>
+          </div>
+          <span className="text-[9px] px-2 py-1" style={{ color: "#7CAFD4", border: "1px solid #1A3A4F", background: "#0A0A28" }}>
+            {trees.length} tree{trees.length === 1 ? "" : "s"}
+          </span>
+        </div>
         {trees.length === 0 ? (
           <div className="text-[12px] text-center py-4" style={S_DIM}>No node trees yet. Click "New Tree" to start.</div>
         ) : (
-          <div className="space-y-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
             {trees.map(t => (
-              <div key={t.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors hover:bg-[#FFFFFF06]"
-                style={{ background: selectedTreeId === t.id ? `${NT_ACCENT}12` : "transparent", borderLeft: selectedTreeId === t.id ? `2px solid ${NT_ACCENT}` : "2px solid transparent" }}
+              <div key={t.id} className={`${retro.raised} px-3 py-3 cursor-pointer transition-colors hover:bg-[#FFFFFF06]`}
+                style={{ background: selectedTreeId === t.id ? `${NT_ACCENT}12` : "#0E0E35", border: selectedTreeId === t.id ? `1px solid ${NT_ACCENT}55` : "1px solid #1A1A4B", borderLeft: selectedTreeId === t.id ? `3px solid ${NT_ACCENT}` : "3px solid transparent" }}
                 onClick={() => { setSelectedTreeId(t.id); setEditingNodeId(null); setConnectingFrom(null); setConfirmDeleteTree(null); setRenamingTreeId(null); }}
               >
-                <GitBranch size={13} style={{ color: selectedTreeId === t.id ? NT_ACCENT : "#4A5A7A" }} />
-                {renamingTreeId === t.id ? (
-                  <input
-                    autoFocus
-                    value={renameValue}
-                    onChange={e => setRenameValue(e.target.value)}
-                    onKeyDown={async e => {
-                      if (e.key === "Enter") await commitRenameTree(t.id);
-                      if (e.key === "Escape") setRenamingTreeId(null);
-                    }}
-                    onBlur={async () => {
-                      await commitRenameTree(t.id);
-                    }}
-                    className={`${retro.sunken} bg-[#0A0A28] px-2 py-0.5 text-[12px] flex-1 outline-none`}
-                    style={{ color: NT_ACCENT }}
-                    onClick={e => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="text-[12px] flex-1 truncate" style={{ color: selectedTreeId === t.id ? NT_ACCENT : "#8A9ABB", fontWeight: selectedTreeId === t.id ? 600 : 400 }}>
-                    {t.name}
-                  </span>
-                )}
-                <span className="text-[9px] shrink-0" style={{ color: "#4A5A7A" }}>{t.nodes.length}n</span>
-                <span className="text-[9px] shrink-0" style={{ color: t.assignedTo.length > 0 ? "#5A9AFF" : "#3A4A6A" }}>
-                  {t.assignedTo.length === 0 ? "None" : t.assignedTo.includes("all") ? "All" : `${t.assignedTo.length}p`}
-                </span>
-                <button onClick={e => { e.stopPropagation(); setRenamingTreeId(t.id); setRenameValue(t.name); }} className="hover:opacity-80 p-0.5" title="Rename"><Pencil size={10} style={S_MUTED} /></button>
-                <button onClick={e => { e.stopPropagation(); duplicateTree(t.id); }} className="hover:opacity-80 p-0.5" title="Duplicate"><Copy size={11} style={S_MUTED} /></button>
-                {confirmDeleteTree === t.id ? (
-                  <div style={DISPLAY_CONTENTS}>
-                    <button onClick={e => { e.stopPropagation(); deleteTree(t.id); }} className="hover:opacity-80 p-0.5" title="Confirm delete"><Check size={11} style={S_RED} /></button>
-                    <button onClick={e => { e.stopPropagation(); setConfirmDeleteTree(null); }} className="hover:opacity-80 p-0.5" title="Cancel"><X size={11} style={S_MUTED} /></button>
+                <div className="flex items-start gap-2">
+                  <GitBranch size={13} style={{ color: selectedTreeId === t.id ? NT_ACCENT : "#4A5A7A", marginTop: 2 }} />
+                  <div className="flex-1 min-w-0">
+                    {renamingTreeId === t.id ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={async e => {
+                          if (e.key === "Enter") await commitRenameTree(t.id);
+                          if (e.key === "Escape") setRenamingTreeId(null);
+                        }}
+                        onBlur={async () => {
+                          await commitRenameTree(t.id);
+                        }}
+                        className={`${retro.sunken} bg-[#0A0A28] px-2 py-0.5 text-[12px] w-full outline-none`}
+                        style={{ color: NT_ACCENT }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <span className="text-[12px] block truncate" style={{ color: selectedTreeId === t.id ? NT_ACCENT : "#8A9ABB", fontWeight: selectedTreeId === t.id ? 600 : 400 }}>
+                        {t.name}
+                      </span>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      <span className="text-[8px] px-1.5 py-0.5" style={{ color: "#7CAFD4", background: "#0A0A28", border: "1px solid #1A3A4F" }}>{t.nodes.length} nodes</span>
+                      <span className="text-[8px] px-1.5 py-0.5" style={{ color: "#FFD700", background: "#0A0A28", border: "1px solid #473A12" }}>{t.connections.length} links</span>
+                      <span className="text-[8px] px-1.5 py-0.5" style={{ color: "#FF9A7A", background: "#0A0A28", border: "1px solid #4A2A1A" }}>{new Set(t.nodes.flatMap((node) => node.cardIds)).size} cards</span>
+                      <span className="text-[8px] px-1.5 py-0.5" style={{ color: t.assignedTo.length > 0 ? "#5A9AFF" : "#6A728A", background: "#0A0A28", border: "1px solid #1A1A4B" }}>
+                        {t.assignedTo.length === 0 ? "No players" : t.assignedTo.includes("all") ? "All players" : `${t.assignedTo.length} player${t.assignedTo.length === 1 ? "" : "s"}`}
+                      </span>
+                    </div>
                   </div>
-                ) : (
-                  <button onClick={e => { e.stopPropagation(); setConfirmDeleteTree(t.id); }} className="hover:opacity-80 p-0.5" title="Delete"><Trash2 size={11} style={S_RED} /></button>
-                )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={e => { e.stopPropagation(); setRenamingTreeId(t.id); setRenameValue(t.name); }} className="hover:opacity-80 p-0.5" title="Rename"><Pencil size={10} style={S_MUTED} /></button>
+                    <button onClick={e => { e.stopPropagation(); duplicateTree(t.id); }} className="hover:opacity-80 p-0.5" title="Duplicate"><Copy size={11} style={S_MUTED} /></button>
+                    {confirmDeleteTree === t.id ? (
+                      <div style={DISPLAY_CONTENTS}>
+                        <button onClick={e => { e.stopPropagation(); deleteTree(t.id); }} className="hover:opacity-80 p-0.5" title="Confirm delete"><Check size={11} style={S_RED} /></button>
+                        <button onClick={e => { e.stopPropagation(); setConfirmDeleteTree(null); }} className="hover:opacity-80 p-0.5" title="Cancel"><X size={11} style={S_MUTED} /></button>
+                      </div>
+                    ) : (
+                      <button onClick={e => { e.stopPropagation(); setConfirmDeleteTree(t.id); }} className="hover:opacity-80 p-0.5" title="Delete"><Trash2 size={11} style={S_RED} /></button>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -1072,51 +1099,64 @@ useEffect(() => {
           </div>
 
           {/* Toolbar */}
-          <div className={`${retro.raised} p-3 flex items-center gap-2 flex-wrap`} style={{ background: "#0E0E35" }}>
-            <span className="text-[12px] mr-1" style={{ color: NT_ACCENT, fontWeight: 600 }}>{selectedTree.name}</span>
-            {/* Assign */}
-            <div className="relative">
-              <button onClick={() => setAssignDropdown(p => !p)} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`} style={{ color: "#5A9AFF" }}>
-                <Users size={11} /> Assign ({selectedTree.assignedTo.length}) <ChevronDown size={9} />
-              </button>
-              {assignDropdown && (
-                <div className={`${retro.raised} absolute right-0 top-full mt-1 z-30 w-52 p-2`} style={{ background: "#0E0E35" }}>
-                  <button onClick={() => toggleAssign("all")} className="w-full flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-[#FFFFFF06]"
-                    style={{ color: selectedTree.assignedTo.includes("all") ? NT_ACCENT : "#8A9ABB" }}>
-                    <div className="w-3 h-3 rounded-sm flex items-center justify-center" style={{ background: selectedTree.assignedTo.includes("all") ? NT_ACCENT : "#1A1A3B", border: `1px solid ${selectedTree.assignedTo.includes("all") ? NT_ACCENT : "#2A3A5B"}` }}>
-                      {selectedTree.assignedTo.includes("all") && <Check size={8} style={{ color: "#080820" }} />}
-                    </div>
-                    All Players
-                  </button>
-                  {players.map(p => (
-                    <button key={p.id} onClick={() => toggleAssign(p.id)} className="w-full flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-[#FFFFFF06]"
-                      style={{ color: selectedTree.assignedTo.includes(p.id) ? NT_ACCENT : "#8A9ABB" }}>
-                      <div className="w-3 h-3 rounded-sm flex items-center justify-center" style={{ background: selectedTree.assignedTo.includes(p.id) ? NT_ACCENT : "#1A1A3B", border: `1px solid ${selectedTree.assignedTo.includes(p.id) ? NT_ACCENT : "#2A3A5B"}` }}>
-                        {selectedTree.assignedTo.includes(p.id) && <Check size={8} style={{ color: "#080820" }} />}
-                      </div>
-                      {p.name}
-                    </button>
-                  ))}
-                  <button onClick={() => setAssignDropdown(false)} className="w-full text-[9px] mt-1 text-center py-1" style={S_MUTED}>Close</button>
+          <div className={`${retro.raised} p-4 space-y-3`} style={{ background: "#0E0E35", border: "1px solid #1A1A4B" }}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-[12px]" style={{ color: NT_ACCENT, fontWeight: 600 }}>{selectedTree.name}</div>
+                <div className="text-[10px] mt-1 max-w-[720px]" style={S_MUTED}>
+                  Use the canvas for placement, the node list for quick jumps, and the editor panel for detailed node setup.
                 </div>
-              )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Assign */}
+                <div className="relative">
+                  <button onClick={() => setAssignDropdown(p => !p)} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`} style={{ color: "#5A9AFF" }}>
+                    <Users size={11} /> Assign ({selectedTree.assignedTo.length}) <ChevronDown size={9} />
+                  </button>
+                  {assignDropdown && (
+                    <div className={`${retro.raised} absolute right-0 top-full mt-1 z-30 w-52 p-2`} style={{ background: "#0E0E35" }}>
+                      <button onClick={() => toggleAssign("all")} className="w-full flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-[#FFFFFF06]"
+                        style={{ color: selectedTree.assignedTo.includes("all") ? NT_ACCENT : "#8A9ABB" }}>
+                        <div className="w-3 h-3 rounded-sm flex items-center justify-center" style={{ background: selectedTree.assignedTo.includes("all") ? NT_ACCENT : "#1A1A3B", border: `1px solid ${selectedTree.assignedTo.includes("all") ? NT_ACCENT : "#2A3A5B"}` }}>
+                          {selectedTree.assignedTo.includes("all") && <Check size={8} style={{ color: "#080820" }} />}
+                        </div>
+                        All Players
+                      </button>
+                      {players.map(p => (
+                        <button key={p.id} onClick={() => toggleAssign(p.id)} className="w-full flex items-center gap-2 px-2 py-1 text-[11px] hover:bg-[#FFFFFF06]"
+                          style={{ color: selectedTree.assignedTo.includes(p.id) ? NT_ACCENT : "#8A9ABB" }}>
+                          <div className="w-3 h-3 rounded-sm flex items-center justify-center" style={{ background: selectedTree.assignedTo.includes(p.id) ? NT_ACCENT : "#1A1A3B", border: `1px solid ${selectedTree.assignedTo.includes(p.id) ? NT_ACCENT : "#2A3A5B"}` }}>
+                            {selectedTree.assignedTo.includes(p.id) && <Check size={8} style={{ color: "#080820" }} />}
+                          </div>
+                          {p.name}
+                        </button>
+                      ))}
+                      <button onClick={() => setAssignDropdown(false)} className="w-full text-[9px] mt-1 text-center py-1" style={S_MUTED}>Close</button>
+                    </div>
+                  )}
+                </div>
+                <button onClick={addNode} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`} style={{ color: NT_ACCENT }}>
+                  <Plus size={11} /> Node
+                </button>
+                <button onClick={() => setConnectingFrom(connectingFrom ? null : "__waiting__")}
+                  className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`}
+                  style={{ color: connectingFrom ? "#FF6A6A" : "#FFD700" }}>
+                  <Link2 size={11} /> {connectingFrom ? "Cancel" : "Link"}
+                </button>
+                <button onClick={() => setShowNodeList(p => !p)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={{ color: showNodeList ? NT_ACCENT : "#5A6A8A" }}>
+                  <Layers size={10} /> {showNodeList ? "Hide List" : "Show List"}
+                </button>
+              </div>
             </div>
-            <button onClick={addNode} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`} style={{ color: NT_ACCENT }}>
-              <Plus size={11} /> Node
-            </button>
-            <button onClick={() => setConnectingFrom(connectingFrom ? null : "__waiting__")}
-              className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`}
-              style={{ color: connectingFrom ? "#FF6A6A" : "#FFD700" }}>
-              <Link2 size={11} /> {connectingFrom ? "Cancel" : "Link"}
-            </button>
-            <div className="flex-1" />
-            <label className="flex items-center gap-1.5 cursor-pointer text-[9px]" style={S_MUTED}>
-              <input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)} className="w-3 h-3" />
-              Snap
-            </label>
-            <button onClick={() => setShowNodeList(p => !p)} className={`${retro.button} px-2 py-1 text-[9px]`} style={{ color: showNodeList ? NT_ACCENT : "#5A6A8A" }}>
-              <Layers size={10} />
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-1.5 cursor-pointer text-[10px]" style={S_MUTED}>
+                <input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)} className="w-3 h-3" />
+                Snap to grid
+              </label>
+              <span className="text-[9px] px-2 py-0.5" style={{ color: "#7CAFD4", border: "1px solid #1A3A4F", background: "#0A0A28" }}>
+                Drag nodes on the canvas to reposition them
+              </span>
+            </div>
           </div>
 
           {/* Connection mode hint */}

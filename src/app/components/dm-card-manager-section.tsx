@@ -3327,6 +3327,27 @@ export function DMCardManagerSection({
     setDmCardsSubTab(nextTab);
   };
 
+  const renderManagementSummaryCards = (
+    cards: Array<{ label: string; value: string; accent: string; helper?: string }>,
+    columnsClassName = "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3",
+  ) => (
+    <div className={columnsClassName}>
+      {cards.map((card) => (
+        <div
+          key={card.label}
+          className={`${retro.sunken} px-4 py-3`}
+          style={{ ...editorSurfaceStyle(card.accent), borderLeft: `3px solid ${card.accent}66` }}
+        >
+          <div className="text-[9px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>{card.label}</div>
+          <div className="text-[13px] break-words" style={S_TEXT_BOLD}>{card.value}</div>
+          {card.helper ? (
+            <div className="text-[10px] mt-2 leading-relaxed" style={S_SUBTLE}>{card.helper}</div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+
   const updateMagicListTierCards = useCallback((
     listId: string,
     tier: MagicTierKey,
@@ -4704,128 +4725,209 @@ export function DMCardManagerSection({
   const renderMagicManager = () => {
     const selectedPlayer = players.find((player) => player.id === magicSelectedPlayerId);
     const sortedMagicLists = [...magicLists].sort((a, b) => a.order - b.order);
+    const totalSpells = sortedMagicLists.reduce(
+      (sum, list) => sum + MAGIC_TIER_ORDER.reduce((tierSum, tier) => tierSum + (list.tiers[tier]?.length || 0), 0),
+      0,
+    );
+    const occupiedTierCount = sortedMagicLists.reduce(
+      (sum, list) => sum + MAGIC_TIER_ORDER.filter((tier) => (list.tiers[tier] || []).length > 0).length,
+      0,
+    );
 
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER MAGIC LISTS</div>
+        <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER MAGIC LISTS</div>
+              <div className="text-[11px] mt-1 max-w-[720px]" style={S_SUBTLE}>
+                Build spell-style lists per player, organize them by Cantrips through Level 8, and keep those grants separate from direct card assignment.
+              </div>
+            </div>
+            <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#8AB8FF")}>
+              Magic manager
+            </span>
+          </div>
         </div>
-        <p className="text-[10px]" style={S_SUBTLE}>
-          Create named magic lists for each player and place cards into Cantrips and Levels 1 through 8. Magic placement is separate from direct card assignment.
-        </p>
+
+        {renderManagementSummaryCards([
+          {
+            label: "Selected Player",
+            value: selectedPlayer ? selectedPlayer.name : "No player selected",
+            accent: "#8AB8FF",
+            helper: selectedPlayer ? `${selectedPlayer.class || "No class"} | Level ${selectedPlayer.level}` : "Choose a player to load their spell lists.",
+          },
+          {
+            label: "Magic Lists",
+            value: `${sortedMagicLists.length}`,
+            accent: "#5A9AFF",
+            helper: "Each list acts like a separate spell school, tradition, or source.",
+          },
+          {
+            label: "Assigned Spells",
+            value: `${totalSpells}`,
+            accent: "#FFD700",
+            helper: "Counts every spell currently placed into any tier for this player.",
+          },
+          {
+            label: "Occupied Tiers",
+            value: `${occupiedTierCount}`,
+            accent: "#7ACA8A",
+            helper: "Shows how many Cantrip / Level buckets currently have cards in them.",
+          },
+        ])}
 
         {players.length === 0 ? (
           <div className="text-[12px] text-center py-6" style={S_MUTED}>No players created yet. Add players in the Manage Players section first.</div>
         ) : (
-          <div>
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {players.map((player) => {
-                const isActive = magicSelectedPlayerId === player.id;
-                const totalSpells = isActive
-                  ? magicLists.reduce((sum, list) => sum + MAGIC_TIER_ORDER.reduce((tierSum, tier) => tierSum + (list.tiers[tier]?.length || 0), 0), 0)
-                  : 0;
-                return (
-                  <button
-                    key={player.id}
-                    onClick={() => setMagicSelectedPlayerId(player.id)}
-                    className={`${isActive ? retro.sunken + " bg-[#0C0C2E]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
-                    style={{ color: isActive ? "#8AB8FF" : "#8A9ABB", fontWeight: isActive ? 600 : 400, borderBottom: isActive ? "2px solid #8AB8FF" : "2px solid transparent" }}
-                  >
-                    <User size={12} />
-                    {player.name}
-                    {isActive && (
-                      <span className="text-[9px] px-1 py-0.5 ml-0.5" style={{ background: "#0A0A28", color: "#8AB8FF", border: "1px solid #8AB8FF44" }}>
-                        {magicLists.length} list{magicLists.length === 1 ? "" : "s"} | {totalSpells} spells
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+          <div className="grid grid-cols-1 xl:grid-cols-[300px_minmax(0,1fr)] gap-4">
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`} style={editorSurfaceStyle("#5A9AFF")}>
+              <div>
+                <div className="text-[11px]" style={S_SECTION_HDR}>PLAYER ROSTER</div>
+                <div className="text-[10px] mt-1" style={S_SUBTLE}>Pick whose magic lists you want to edit. Each player keeps a separate set.</div>
+              </div>
+              <div className="space-y-2">
+                {players.map((player) => {
+                  const isActive = magicSelectedPlayerId === player.id;
+                  return (
+                    <button
+                      key={player.id}
+                      onClick={() => setMagicSelectedPlayerId(player.id)}
+                      className={`${isActive ? retro.sunken : retro.raised} w-full p-3 text-left transition-colors`}
+                      style={editorSurfaceStyle(isActive ? "#8AB8FF" : "#273357")}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <User size={12} style={{ color: isActive ? "#8AB8FF" : "#5A7BB8" }} />
+                            <span className="text-[12px] truncate" style={{ color: isActive ? "#B7D4FF" : "#C0D0F0", fontWeight: 700 }}>{player.name}</span>
+                          </div>
+                          <div className="text-[10px] mt-1 break-words" style={S_SUBTLE}>
+                            {player.class || "No class"} | Level {player.level}
+                          </div>
+                          {(player.race || "").trim() && (
+                            <div className="text-[10px] mt-1" style={S_MUTED}>{player.race}</div>
+                          )}
+                        </div>
+                        {isActive && <span className="text-[8px] px-2 py-0.5 shrink-0" style={sectionBadgeStyle("#8AB8FF")}>Active</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-              {magicAddingList ? (
-                <div className="flex items-center gap-2">
-                  <input
-                    value={magicNewListName}
-                    onChange={(e) => setMagicNewListName(e.target.value)}
-                    placeholder="Magic list name (e.g. Light Magic)"
-                    className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] flex-1 outline-none`}
-                    style={{ color: "#8AB8FF" }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && magicNewListName.trim()) {
-                        void saveMagicLists([
-                          ...magicLists,
-                          createEmptyMagicList(magicNewListName.trim(), magicLists.length),
-                        ]);
-                        setMagicNewListName("");
-                        setMagicAddingList(false);
-                      }
-                      if (e.key === "Escape") {
-                        setMagicAddingList(false);
-                        setMagicNewListName("");
-                      }
-                    }}
-                    autoFocus
-                  />
-                  <button
-                    onClick={() => {
-                      if (!magicNewListName.trim()) return;
-                      void saveMagicLists([
-                        ...magicLists,
-                        createEmptyMagicList(magicNewListName.trim(), magicLists.length),
-                      ]);
-                      setMagicNewListName("");
-                      setMagicAddingList(false);
-                    }}
-                    className={`${retro.button} px-3 py-2 text-[11px]`}
-                    style={S_GREEN_BTN}
-                  >
-                    <Save size={12} className="inline mr-1" />Add
-                  </button>
-                  <button onClick={() => { setMagicAddingList(false); setMagicNewListName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}><X size={12} className="inline mr-1" />Cancel</button>
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-4`} style={editorSurfaceStyle("#8AB8FF")}>
+              <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px]" style={S_SECTION_HDR}>LIST WORKSPACE</div>
+                    <div className="text-[10px] mt-1" style={S_SUBTLE}>
+                      {selectedPlayer ? `Editing spell lists for ${selectedPlayer.name}.` : "Select a player to begin."}
+                    </div>
+                  </div>
+                  {!magicAddingList ? (
+                    <button onClick={() => setMagicAddingList(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+                      <Plus size={14} /> Add Magic List
+                    </button>
+                  ) : null}
                 </div>
-              ) : (
-                <button onClick={() => setMagicAddingList(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 mb-4`} style={S_GREEN_BTN}>
-                  <Plus size={14} /> Add Magic List
-                </button>
-              )}
+                {magicAddingList ? (
+                  <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
+                    <input
+                      value={magicNewListName}
+                      onChange={(e) => setMagicNewListName(e.target.value)}
+                      placeholder="Magic list name (e.g. Light Magic)"
+                      className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] flex-1 outline-none`}
+                      style={{ color: "#8AB8FF" }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && magicNewListName.trim()) {
+                          void saveMagicLists([
+                            ...magicLists,
+                            createEmptyMagicList(magicNewListName.trim(), magicLists.length),
+                          ]);
+                          setMagicNewListName("");
+                          setMagicAddingList(false);
+                        }
+                        if (e.key === "Escape") {
+                          setMagicAddingList(false);
+                          setMagicNewListName("");
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          if (!magicNewListName.trim()) return;
+                          void saveMagicLists([
+                            ...magicLists,
+                            createEmptyMagicList(magicNewListName.trim(), magicLists.length),
+                          ]);
+                          setMagicNewListName("");
+                          setMagicAddingList(false);
+                        }}
+                        className={`${retro.button} px-3 py-2 text-[11px]`}
+                        style={S_GREEN_BTN}
+                      >
+                        <Save size={12} className="inline mr-1" />Add
+                      </button>
+                      <button onClick={() => { setMagicAddingList(false); setMagicNewListName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}><X size={12} className="inline mr-1" />Cancel</button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
 
-              {sortedMagicLists.length === 0 ? (
-                <div className="text-[11px] text-center py-6" style={S_MUTED}>
-                  {selectedPlayer ? `No magic lists yet for ${selectedPlayer.name}.` : "Select a player to manage magic lists."}
+              {magicAddingList ? (
+                <div className="text-[11px] text-center py-6" style={S_MUTED}>Saving new list...</div>
+              ) : sortedMagicLists.length === 0 ? (
+                <div className={`${retro.raised} bg-[#0E0E35] p-6 text-center`} style={editorSurfaceStyle("#8AB8FF")}>
+                  <div className="text-[11px]" style={S_MUTED}>
+                    {selectedPlayer ? `No magic lists yet for ${selectedPlayer.name}. Start with one named list and then sort spells into tiers.` : "Select a player to manage magic lists."}
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {sortedMagicLists.map((list, listIdx) => {
                     const isCollapsed = magicCollapsedLists.has(list.id);
                     const listCardIds = new Set(MAGIC_TIER_ORDER.flatMap((tier) => list.tiers[tier] || []));
+                    const tierCount = MAGIC_TIER_ORDER.filter((tier) => (list.tiers[tier] || []).length > 0).length;
                     return (
-                      <div key={list.id} className={`${retro.sunken} bg-[#0C0C2E]`}>
+                      <div key={list.id} className={`${retro.sunken} bg-[#0C0C2E]`} style={editorSurfaceStyle("#8AB8FF")}>
                         <div
-                          className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-[#0E0E35] transition-colors"
+                          className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-[#0E0E35] transition-colors"
                           style={{ borderBottom: isCollapsed ? "none" : "1px solid #1A1A4B" }}
                           onClick={() => setMagicCollapsedLists((prev) => { const next = new Set(prev); if (next.has(list.id)) next.delete(list.id); else next.add(list.id); return next; })}
                         >
-                          <ChevronRight size={14} style={{ color: "#8AB8FF", transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)", transition: "transform 0.2s ease" }} />
-                          {magicEditingList === list.id ? (
-                            <input
-                              value={list.name}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, name: e.target.value } : entry))}
-                              onBlur={() => setMagicEditingList(null)}
-                              onKeyDown={(e) => { if (e.key === "Enter") setMagicEditingList(null); }}
-                              className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[13px] flex-1 outline-none`}
-                              style={{ color: "#8AB8FF" }}
-                              autoFocus
-                            />
-                          ) : (
-                            <span className="text-[13px] flex-1" style={{ color: "#8AB8FF", fontWeight: 600 }}>{list.name}</span>
-                          )}
-                          <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#0A0A28", color: "#7A8AAA", border: "1px solid #1A1A4B" }}>
-                            {Array.from(listCardIds).length} spells
-                          </span>
-                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <ChevronRight size={14} style={{ color: "#8AB8FF", marginTop: 2, transform: isCollapsed ? "rotate(0deg)" : "rotate(90deg)", transition: "transform 0.2s ease" }} />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {magicEditingList === list.id ? (
+                                <input
+                                  value={list.name}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, name: e.target.value } : entry))}
+                                  onBlur={() => setMagicEditingList(null)}
+                                  onKeyDown={(e) => { if (e.key === "Enter") setMagicEditingList(null); }}
+                                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[13px] flex-1 outline-none`}
+                                  style={{ color: "#8AB8FF" }}
+                                  autoFocus
+                                />
+                              ) : (
+                                <span className="text-[13px] break-words" style={{ color: "#8AB8FF", fontWeight: 700 }}>{list.name}</span>
+                              )}
+                              <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle("#8AB8FF")}>
+                                {Array.from(listCardIds).length} spells
+                              </span>
+                              <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle("#FFD700")}>
+                                {tierCount} tier{tierCount === 1 ? "" : "s"} used
+                              </span>
+                            </div>
+                            <div className="text-[10px] leading-relaxed" style={S_SUBTLE}>
+                              {(list.description || "").trim() || "No description yet. Add quick notes for theme, source, or learning rules."}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                             {listIdx > 0 && (
                               <button onClick={() => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, order: sortedMagicLists[listIdx - 1].order } : entry.id === sortedMagicLists[listIdx - 1].id ? { ...entry, order: list.order } : entry))} className="hover:brightness-150 px-1 py-0.5" style={{ color: "#7A8AAA" }} title="Move up"><ChevronUp size={12} /></button>
                             )}
@@ -4869,31 +4971,36 @@ export function DMCardManagerSection({
 
                                 return (
                                   <div key={`${list.id}-${tier}`} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-2`} style={{ border: "1px solid #1A1A4B" }}>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <div className="text-[11px]" style={S_SECTION_HDR}>{MAGIC_TIER_LABELS[tier]}</div>
-                                      <div className="text-[9px]" style={S_SUBTLE}>{tierCards.length} card{tierCards.length === 1 ? "" : "s"}</div>
-                                    </div>
-                                    {tierCards.length === 0 ? (
-                                      <div className="text-[10px]" style={S_MUTED}>No spells assigned to this tier.</div>
-                                    ) : (
-                                      <div className="space-y-1">
-                                        {tierCards.map((card) => (
-                                          <div key={`${list.id}-${tier}-${card.id}`} className={`${retro.raised} bg-[#11163D] p-2 flex items-center justify-between gap-2`}>
-                                            <div>
-                                              <div className="text-[12px]" style={S_TEXT_BOLD}>{card.name}</div>
-                                              <div className="text-[10px]" style={S_MUTED}>{card.type} | {card.actionCost}</div>
-                                            </div>
-                                            <button
-                                              onClick={() => updateMagicListTierCards(list.id, tier, (list.tiers[tier] || []).filter((cardId) => cardId !== card.id))}
-                                              className={`${retro.button} px-2 py-1 text-[10px] shrink-0`}
-                                              style={S_RED}
-                                            >
-                                              <X size={10} className="inline mr-0.5" />Remove
-                                            </button>
-                                          </div>
-                                        ))}
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="text-[11px]" style={S_SECTION_HDR}>{MAGIC_TIER_LABELS[tier]}</div>
+                                        <div className="text-[9px]" style={S_SUBTLE}>{tierCards.length} card{tierCards.length === 1 ? "" : "s"}</div>
                                       </div>
-                                    )}
+                                      {tierCards.length === 0 ? (
+                                        <div className="text-[10px]" style={S_MUTED}>No spells assigned to this tier.</div>
+                                      ) : (
+                                        <div className="space-y-1">
+                                          {tierCards.map((card) => (
+                                            <div key={`${list.id}-${tier}-${card.id}`} className={`${retro.raised} bg-[#11163D] p-2 flex items-center justify-between gap-2`} style={editorSurfaceStyle("#273357")}>
+                                              <div className="min-w-0">
+                                                <div className="flex flex-wrap items-center gap-1.5">
+                                                  <div className="text-[12px] break-words" style={S_TEXT_BOLD}>{card.name}</div>
+                                                  {card.customFields["Level"] && parseInt(card.customFields["Level"] || "0", 10) > 0 && (
+                                                    <span className="text-[8px] px-1.5 py-0.5" style={DM_LEVEL_BADGE}>Lv.{card.customFields["Level"]}</span>
+                                                  )}
+                                                </div>
+                                                <div className="text-[10px] break-words" style={S_MUTED}>{card.type} | {card.actionCost || "No action cost"}</div>
+                                              </div>
+                                              <button
+                                                onClick={() => updateMagicListTierCards(list.id, tier, (list.tiers[tier] || []).filter((cardId) => cardId !== card.id))}
+                                                className={`${retro.button} px-2 py-1 text-[10px] shrink-0`}
+                                                style={S_RED}
+                                              >
+                                                <X size={10} className="inline mr-0.5" />Remove
+                                              </button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
 
                                     {availableCards.length > 0 && (
                                       <select
@@ -4944,7 +5051,7 @@ export function DMCardManagerSection({
     <div className="space-y-4">
       <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Cards</h2>
 
-      <div className="flex gap-2 mb-2">
+      <div className="flex flex-wrap gap-2 mb-2">
         {([
           { id: "cards" as const, label: "Player Cards", icon: CreditCard, accent: "#4A7BFF" },
           { id: "magic" as const, label: "Magic", icon: Sparkles, accent: "#8AB8FF" },
@@ -4960,6 +5067,27 @@ export function DMCardManagerSection({
           </button>
         ))}
       </div>
+
+      {renderManagementSummaryCards(
+        dmCardsSubTab === "cards"
+          ? [
+              { label: "Library Cards", value: `${managedCards.length}`, accent: "#4A7BFF", helper: "Open, sort, and edit the full card library." },
+              { label: "Assigned Node Trees", value: `${nodeTrees.length}`, accent: "#FFD700", helper: "Use the delivery stage to place cards into progression trees." },
+              { label: "Players", value: `${players.length}`, accent: "#7ACA8A", helper: "Direct assignment, Magic, and Level rewards all route through these player profiles." },
+            ]
+          : dmCardsSubTab === "magic"
+            ? [
+                { label: "Selected Player", value: players.find((player) => player.id === magicSelectedPlayerId)?.name || "None", accent: "#8AB8FF", helper: "Magic lists are stored per player." },
+                { label: "Magic Lists", value: `${magicLists.length}`, accent: "#5A9AFF", helper: "Each list behaves like its own spell catalog." },
+                { label: "Placed Spells", value: `${magicLists.reduce((sum, list) => sum + MAGIC_TIER_ORDER.reduce((tierSum, tier) => tierSum + (list.tiers[tier]?.length || 0), 0), 0)}`, accent: "#FFD700", helper: "These spells can later appear in Personal Files Magic Lists." },
+              ]
+            : [
+                { label: "Selected Player", value: players.find((player) => player.id === laSelectedPlayerId)?.name || "None", accent: "#FFD700", helper: "Level sections are also stored per player." },
+                { label: "Sections", value: `${levelCategories.length}`, accent: "#5A9AFF", helper: "Race, Level 1, and later milestones all live here." },
+                { label: "Reward Cards", value: `${levelCategories.reduce((sum, level) => sum + getLevelCategoryEntries(level).length, 0)}`, accent: "#FF9A7A", helper: "Use passive-only or show-in-cards reward modes." },
+              ],
+        "grid grid-cols-1 md:grid-cols-3 gap-3",
+      )}
 
       {dmCardsSubTab === "cards" && renderCardsWorkspace()}
       {dmCardsSubTab === "magic" && renderMagicManager()}
@@ -6398,68 +6526,144 @@ export function DMCardManagerSection({
       {dmCardsSubTab === "levelabilities" && (() => {
         const sortedLevels = [...levelCategories].sort((a, b) => a.order - b.order);
         const selectedPlayer = players.find((p) => p.id === laSelectedPlayerId);
+        const totalRewardCards = levelCategories.reduce((sum, level) => sum + getLevelCategoryEntries(level).length, 0);
+        const describedSections = levelCategories.filter((level) => (level.description || "").trim()).length;
         return (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="text-[12px]" style={S_SECTION_HDR}>LEVEL CATEGORIES</div>
+            <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-[12px]" style={S_SECTION_HDR}>LEVEL CATEGORIES</div>
+                  <div className="text-[11px] mt-1 max-w-[760px]" style={S_SUBTLE}>
+                    Create rich-text progression sections per player, including Race, Level 1, and later milestones. Each section can hold formatted notes plus attached reward cards.
+                  </div>
+                </div>
+                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>
+                  Level manager
+                </span>
+              </div>
             </div>
-            <p className="text-[10px]" style={S_SUBTLE}>
-              Create rich-text progression sections per player, including Race, Level 1, and any later levels. Each player has their own set of Level categories and attached reward cards.
-            </p>
+
+            {renderManagementSummaryCards([
+              {
+                label: "Selected Player",
+                value: selectedPlayer ? selectedPlayer.name : "No player selected",
+                accent: "#FFD700",
+                helper: selectedPlayer ? `${selectedPlayer.class || "No class"} | Level ${selectedPlayer.level}` : "Choose a player to load their progression sections.",
+              },
+              {
+                label: "Sections",
+                value: `${levelCategories.length}`,
+                accent: "#5A9AFF",
+                helper: "Includes Race plus every created level or milestone section.",
+              },
+              {
+                label: "Reward Cards",
+                value: `${totalRewardCards}`,
+                accent: "#FF9A7A",
+                helper: "Counts all passive and show-in-cards rewards attached to this player.",
+              },
+              {
+                label: "Written Sections",
+                value: `${describedSections}`,
+                accent: "#7ACA8A",
+                helper: "Sections with rich text, lists, or progression notes already filled out.",
+              },
+            ])}
 
             {players.length === 0 ? (
               <div className="text-[12px] text-center py-6" style={S_MUTED}>No players created yet. Add players in the Manage Players section first.</div>
             ) : (
               <div>
-                <div className="flex flex-wrap gap-1.5 mb-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 mb-4">
                   {players.map((p) => {
                     const isActive = laSelectedPlayerId === p.id;
-                    const totalCards = isActive ? levelCategories.reduce((sum, c) => sum + getLevelCategoryEntries(c).length, 0) : 0;
+                    const totalCards = isActive ? totalRewardCards : 0;
                     return (
                       <button
                         key={p.id}
                         onClick={() => setLaSelectedPlayerId(p.id)}
-                        className={`${isActive ? retro.sunken + " bg-[#0C0C2E]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
-                        style={{ color: isActive ? "#FFD700" : "#8A9ABB", fontWeight: isActive ? 600 : 400, borderBottom: isActive ? "2px solid #FFD700" : "2px solid transparent" }}
+                        className={`${isActive ? retro.sunken : retro.raised} p-3 text-left transition-colors`}
+                        style={editorSurfaceStyle(isActive ? "#FFD700" : "#273357")}
                       >
-                        <User size={12} />
-                        {p.name}
-                        {isActive && (
-                          <span className="text-[9px] px-1 py-0.5 ml-0.5" style={{ background: "#0A0A28", color: "#FFD700", border: "1px solid #FFD70044" }}>
-                            {levelCategories.length} lvl | {totalCards} cards
-                          </span>
-                        )}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <User size={12} style={{ color: isActive ? "#FFD700" : "#7A8AAA" }} />
+                              <span className="text-[12px] truncate" style={{ color: isActive ? "#FFE38A" : "#C0D0F0", fontWeight: 700 }}>{p.name}</span>
+                            </div>
+                            <div className="text-[10px] mt-1 break-words" style={S_SUBTLE}>
+                              {p.class || "No class"} | Level {p.level}
+                            </div>
+                            {(p.race || "").trim() && (
+                              <div className="text-[10px] mt-1" style={S_MUTED}>{p.race}</div>
+                            )}
+                          </div>
+                          {isActive ? (
+                            <div className="text-right shrink-0">
+                              <div className="text-[8px] px-2 py-0.5 mb-1" style={sectionBadgeStyle("#FFD700")}>Active</div>
+                              <div className="text-[9px]" style={S_SUBTLE}>{levelCategories.length} sections</div>
+                              <div className="text-[9px]" style={S_SUBTLE}>{totalCards} rewards</div>
+                            </div>
+                          ) : null}
+                        </div>
                       </button>
                     );
                   })}
                 </div>
 
                 {selectedPlayer && (
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className={`${retro.raised} p-4 mb-3`} style={editorSurfaceStyle("#C4A0FF")}>
                     {!laCopyConfirm ? (
-                      <button
-                        onClick={() => setLaCopyConfirm(true)}
-                        className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
-                        style={{ color: "#C4A0FF", border: "1px solid #C4A0FF33" }}
-                        title={`Copy ${selectedPlayer.name}'s level categories to all other players`}
-                      >
-                        <Copy size={11} /> Copy {selectedPlayer.name}'s Levels to All Players
-                      </button>
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div>
+                          <div className="text-[11px]" style={S_SECTION_HDR}>COPY THIS PROGRESSION</div>
+                          <div className="text-[10px] mt-1" style={S_SUBTLE}>
+                            Use {selectedPlayer.name}'s Race and Level setup as the template for everyone else when you need a shared progression baseline.
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setLaCopyConfirm(true)}
+                          className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+                          style={{ color: "#C4A0FF", border: "1px solid #C4A0FF33" }}
+                          title={`Copy ${selectedPlayer.name}'s level categories to all other players`}
+                        >
+                          <Copy size={11} /> Copy {selectedPlayer.name}'s Levels to All Players
+                        </button>
+                      </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px]" style={{ color: "#FF9A4A" }}>
+                      <div className="flex flex-col md:flex-row md:items-center gap-3">
+                        <span className="text-[10px] leading-relaxed" style={{ color: "#FF9A4A" }}>
                           This will overwrite all other players' level categories with {selectedPlayer.name}'s. Continue?
                         </span>
-                        <button onClick={copyLevelCategoriesToAllPlayers} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_GREEN_BTN}>Yes, Copy</button>
-                        <button onClick={() => setLaCopyConfirm(false)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>Cancel</button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={copyLevelCategoriesToAllPlayers} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_GREEN_BTN}>Yes, Copy</button>
+                          <button onClick={() => setLaCopyConfirm(false)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>Cancel</button>
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
 
-                <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+                <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-4`} style={editorSurfaceStyle("#FFD700")}>
+                  <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle("#FFD700")}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[11px]" style={S_SECTION_HDR}>SECTION WORKSPACE</div>
+                        <div className="text-[10px] mt-1" style={S_SUBTLE}>
+                          Add Race, Level, or milestone sections, then attach cards as passive or usable rewards.
+                        </div>
+                      </div>
+                      {!laAddingLevel ? (
+                        <button onClick={() => setLaAddingLevel(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+                          <Plus size={14} /> Add Level Section
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
                   {laAddingLevel ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2">
                       <input
                         value={laNewLevelName}
                         onChange={(e) => setLaNewLevelName(e.target.value)}
@@ -6480,33 +6684,31 @@ export function DMCardManagerSection({
                         }}
                         autoFocus
                       />
-                      <button
-                        onClick={() => {
-                          if (!laNewLevelName.trim()) return;
-                          const newCat: LevelCategory = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardEntries: [], description: "" };
-                          void saveLevelCategories([...levelCategories, newCat]);
-                          setLaNewLevelName("");
-                          setLaAddingLevel(false);
-                        }}
-                        className={`${retro.button} px-3 py-2 text-[11px]`}
-                        style={S_GREEN_BTN}
-                      >
-                        <Save size={12} className="inline mr-1" />Add
-                      </button>
-                      <button onClick={() => { setLaAddingLevel(false); setLaNewLevelName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}><X size={12} className="inline mr-1" />Cancel</button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (!laNewLevelName.trim()) return;
+                            const newCat: LevelCategory = { id: `lvl-${Date.now()}`, name: laNewLevelName.trim(), order: levelCategories.length, cardEntries: [], description: "" };
+                            void saveLevelCategories([...levelCategories, newCat]);
+                            setLaNewLevelName("");
+                            setLaAddingLevel(false);
+                          }}
+                          className={`${retro.button} px-3 py-2 text-[11px]`}
+                          style={S_GREEN_BTN}
+                        >
+                          <Save size={12} className="inline mr-1" />Add
+                        </button>
+                        <button onClick={() => { setLaAddingLevel(false); setLaNewLevelName(""); }} className={`${retro.button} px-3 py-2 text-[11px]`} style={S_RED}><X size={12} className="inline mr-1" />Cancel</button>
+                      </div>
                     </div>
-                  ) : (
-                      <button onClick={() => setLaAddingLevel(true)} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 mb-4`} style={S_GREEN_BTN}>
-                      <Plus size={14} /> Add Level Section
-                    </button>
-                  )}
+                  ) : null}
 
                   {levelCategories.length === 0 ? (
                     <div className="text-[11px] text-center py-6" style={S_MUTED}>No level categories yet for this player.</div>
                   ) : (() => {
                     const availableLevelCards = managedCards;
                     return (<>
-                      <div className="text-[10px] mb-3" style={S_SUBTLE}>
+                      <div className="text-[10px]" style={S_SUBTLE}>
                         {selectedPlayer?.name} has <span style={S_TEXT}>{availableLevelCards.length}</span> total card{availableLevelCards.length !== 1 ? "s" : ""} available for level rewards.
                       </div>
                       <div className="space-y-3">
