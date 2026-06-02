@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate, useParams } from "react-router";
+import { Resizable } from "re-resizable";
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
@@ -25,6 +26,36 @@ import {
   saveWikiCustomPanelStyles,
   saveWikiSites,
 } from "@/lib/player-state-api";
+import {
+  getWikiPanelMediaPosition,
+  getWikiPanelPlacement,
+  getWikiPanelWidth,
+  groupBodyPanelsIntoRows,
+  normalizeWikiPanel,
+  normalizeWikiPanels,
+  type WikiPanelMediaPosition,
+  type WikiPanelPlacement,
+  type WikiPanelWidth,
+} from "@/lib/wiki-panel-layout";
+import {
+  WIKI_BLOCK_COLUMNS,
+  WIKI_BLOCK_LAYOUT_VERSION,
+  clampWikiBlockLayout,
+  collectWikiBlockHtmlStrings,
+  compactWikiArticleBlocks,
+  compareWikiBlocksForLayout,
+  createDefaultBlock,
+  getNextWikiBlockRow,
+  getWikiBlockHtml,
+  migrateLegacyArticleToBlocks,
+  normalizeWikiArticleBlock,
+  normalizeWikiArticleBlocks,
+  placeWikiBlock,
+  resolveWikiBlockCollisions,
+  serializeWikiBlocksToLegacyContent,
+  type WikiArticleBlock,
+  type WikiBlockType,
+} from "@/lib/wiki-article-blocks";
 import type { TagField, TagDefinition, PlayerData } from "./types";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
 
@@ -51,10 +82,16 @@ interface WikiPanel {
   title: string;
   subtitle?: string;
   content: string;
-  assignedTo: string[]; // player ids — empty = visible to all
+  assignedTo: string[]; // player ids - empty = visible to all
   visibilityMode?: "spoiler" | "hidden"; // how restriction manifests: spoiler = click to reveal, hidden = invisible
   collapsed?: boolean;
   style?: string;
+  placement?: WikiPanelPlacement;
+  width?: WikiPanelWidth;
+  mediaUrl?: string;
+  mediaCaption?: string;
+  mediaAlt?: string;
+  mediaPosition?: WikiPanelMediaPosition;
 }
 
 interface CustomPanelStyle {
@@ -101,6 +138,8 @@ interface SitePage {
   references: string[];
   lastEditSummary: string;
   panels?: WikiPanel[];
+  layoutVersion?: number;
+  blocks?: WikiArticleBlock[];
   wikiTags?: string[];
   wikiTagFields?: Record<string, string>;
   playerVisibility?: Record<string, "visible" | "spoiler" | "hidden">;
@@ -133,7 +172,7 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
-  const existingPanels = pg.panels || [];
+  const existingPanels = normalizeWikiPanels(pg.panels);
   const legacySections = pg.sections || [];
   if (legacySections.length === 0) return existingPanels;
   const converted: WikiPanel[] = legacySections.map((sec) => ({
@@ -143,6 +182,12 @@ function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
     content: sec.body || "",
     assignedTo: [],
     style: "blank",
+    placement: "body",
+    width: "full",
+    mediaUrl: "",
+    mediaCaption: "",
+    mediaAlt: "",
+    mediaPosition: "top",
   }));
   return [...converted, ...existingPanels];
 }
@@ -196,6 +241,8 @@ function createBlankSitePage(): SitePage {
     underConstruction: false, showHitCounter: false, showDividers: true, hitCount: 1337,
     infobox: [], articleQuality: "start" as const, tags: [], relatedArticleIds: [],
     seeAlso: [], disambiguationNote: "", references: [], lastEditSummary: "",
+    layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
+    blocks: [],
     panels: [],
     wikiTags: [], wikiTagFields: {}, playerVisibility: {},
   };
@@ -295,7 +342,12 @@ export function WikiEditor() {
 
   // ─── UI State ───
   const [activePanel, setActivePanel] = useState<"preview" | "settings" | "content" | "metadata" | "appearance">("preview");
+  const [workspaceRailTab, setWorkspaceRailTab] = useState<"outline" | "library" | "article">("outline");
+  const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "article">("content");
   const [editingPanelId, setEditingPanelId] = useState<string | null>(null);
+  const [selectedPreviewPanelId, setSelectedPreviewPanelId] = useState<string | null>(null);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [inlinePreviewEditorTarget, setInlinePreviewEditorTarget] = useState<"body" | string | null>(null);
   const [editSummary, setEditSummary] = useState("");
   const [saveFlash, setSaveFlash] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
@@ -313,6 +365,15 @@ export function WikiEditor() {
   // ─── Template State ───
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const blockCanvasRef = useRef<HTMLDivElement>(null);
+  const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
+  const [draggedBlockType, setDraggedBlockType] = useState<WikiBlockType | null>(null);
+  const [canvasDropPreview, setCanvasDropPreview] = useState<{
+    colStart: number;
+    rowStart: number;
+    colSpan: number;
+    rowSpan: number;
+  } | null>(null);
 
   // ─── Auto-save Draft State ───
   const [showDraftRestore, setShowDraftRestore] = useState(false);
@@ -414,10 +475,14 @@ export function WikiEditor() {
     if (isNew) {
       if (hydratedPageRef.current === "new") return;
       const blank = createBlankSitePage();
+      blank.blocks = migrateLegacyArticleToBlocks(blank);
       setPage(blank);
       setEditSummary("");
       setHasUnsaved(true);
       setShowTemplatePicker(true);
+      setSelectedPreviewPanelId(null);
+      setSelectedBlockId(blank.blocks[0]?.id || null);
+      setInlinePreviewEditorTarget(null);
       urlManuallyEdited.current = false;
       hydratedPageRef.current = "new";
       return;
@@ -427,10 +492,14 @@ export function WikiEditor() {
     if (hydratedPageRef.current === existingPage.id) return;
 
     const migrated = migrateSectionsToPanels(existingPage);
-    setPage({ ...existingPage, panels: migrated, sections: [] });
+    const migratedBlocks = migrateLegacyArticleToBlocks({ ...existingPage, panels: migrated, sections: [] });
+    setPage({ ...existingPage, panels: migrated, sections: [], layoutVersion: WIKI_BLOCK_LAYOUT_VERSION, blocks: migratedBlocks });
     setEditSummary(existingPage.lastEditSummary || "");
     setHasUnsaved(false);
     setShowTemplatePicker(false);
+    setSelectedPreviewPanelId(null);
+    setSelectedBlockId(migratedBlocks[0]?.id || null);
+    setInlinePreviewEditorTarget(null);
     urlManuallyEdited.current = !!existingPage.url;
     hydratedPageRef.current = existingPage.id;
   }, [existingPage, isNew, wikiLoading]);
@@ -508,7 +577,9 @@ export function WikiEditor() {
     const remoteDraft = existingPage ? remoteDrafts[existingPage.id] : undefined;
     if (remoteDraft) {
       const migrated = migrateSectionsToPanels(remoteDraft);
-      setPage({ ...remoteDraft, panels: migrated, sections: [] });
+      const migratedBlocks = migrateLegacyArticleToBlocks({ ...remoteDraft, panels: migrated, sections: [] });
+      setPage({ ...remoteDraft, panels: migrated, sections: [], layoutVersion: WIKI_BLOCK_LAYOUT_VERSION, blocks: migratedBlocks });
+      setSelectedBlockId(migratedBlocks[0]?.id || null);
       setHasUnsaved(true);
       setShowDraftRestore(false);
       return;
@@ -518,7 +589,9 @@ export function WikiEditor() {
       if (draftRaw) {
         const draft = JSON.parse(draftRaw);
         const migrated = migrateSectionsToPanels(draft);
-        setPage({ ...draft, panels: migrated, sections: [] });
+        const migratedBlocks = migrateLegacyArticleToBlocks({ ...draft, panels: migrated, sections: [] });
+        setPage({ ...draft, panels: migrated, sections: [], layoutVersion: WIKI_BLOCK_LAYOUT_VERSION, blocks: migratedBlocks });
+        setSelectedBlockId(migratedBlocks[0]?.id || null);
         setHasUnsaved(true);
       }
     } catch {}
@@ -565,7 +638,18 @@ export function WikiEditor() {
 
     const now = new Date();
     const autoDate = `${DATE_MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
-    const data: SitePage = { ...page, lastEditSummary: editSummary.trim(), dateAdded: autoDate };
+    const normalizedBlocks = compactWikiArticleBlocks(normalizeWikiArticleBlocks(page.blocks || migrateLegacyArticleToBlocks(page)));
+    const legacySnapshot = serializeWikiBlocksToLegacyContent(normalizedBlocks);
+    const data: SitePage = {
+      ...page,
+      lastEditSummary: editSummary.trim(),
+      dateAdded: autoDate,
+      layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
+      blocks: normalizedBlocks,
+      body: legacySnapshot.body,
+      panels: normalizeWikiPanels(legacySnapshot.panels as WikiPanel[]),
+      sections: [],
+    };
     const stored: SitePage[] = [...allPages];
     const idx = stored.findIndex((p) => p.id === data.id);
     if (idx >= 0) {
@@ -609,19 +693,32 @@ export function WikiEditor() {
   };
 
   // ─── Panel/Section helpers (unified) ───
-  const panels = page.panels || [];
-  const addPanel = (style?: string) => {
-    const p: WikiPanel = { id: `panel-${uid()}`, title: "", subtitle: "", content: "", assignedTo: [], style: style || "blank" };
+  const panels = normalizeWikiPanels(page.panels);
+  const addPanel = (style?: string, placement: WikiPanelPlacement = "body") => {
+    const p: WikiPanel = normalizeWikiPanel({
+      id: `panel-${uid()}`,
+      title: "",
+      subtitle: "",
+      content: "",
+      assignedTo: [],
+      style: style || "blank",
+      placement,
+      width: placement === "sidebar" ? "full" : "full",
+    });
     update("panels", [...panels, p]);
     setEditingPanelId(p.id);
-    setActivePanel("content");
+    setSelectedPreviewPanelId(p.id);
+    setInlinePreviewEditorTarget(p.id);
+    setActivePanel("preview");
   };
   const updatePanel = (panelId: string, changes: Partial<WikiPanel>) => {
-    update("panels", panels.map((p) => p.id === panelId ? { ...p, ...changes } : p));
+    update("panels", panels.map((p) => p.id === panelId ? normalizeWikiPanel({ ...p, ...changes }) : p));
   };
   const removePanel = (panelId: string) => {
     update("panels", panels.filter((p) => p.id !== panelId));
     if (editingPanelId === panelId) setEditingPanelId(null);
+    if (selectedPreviewPanelId === panelId) setSelectedPreviewPanelId(null);
+    if (inlinePreviewEditorTarget === panelId) setInlinePreviewEditorTarget(null);
   };
   const togglePanelPlayer = (panelId: string, playerId: string) => {
     const panel = panels.find((p) => p.id === panelId);
@@ -636,6 +733,35 @@ export function WikiEditor() {
     if (to < 0 || to >= panels.length) return;
     update("panels", reorder(panels, from, to));
   };
+
+  const movePanelToPlacement = useCallback((fromIdx: number, placement: WikiPanelPlacement, beforePanelId?: string | null) => {
+    if (fromIdx < 0 || fromIdx >= panels.length) return;
+    const next = [...panels];
+    const [moved] = next.splice(fromIdx, 1);
+    const normalizedMoved = normalizeWikiPanel({
+      ...moved,
+      placement,
+      width: placement === "sidebar" ? "full" : moved.width,
+    });
+    let insertIdx = next.length;
+    if (beforePanelId) {
+      const beforeIdx = next.findIndex((panel) => panel.id === beforePanelId);
+      if (beforeIdx >= 0) {
+        insertIdx = beforeIdx;
+      }
+    } else {
+      const regionIndexes = next
+        .map((panel, index) => ({ panel, index }))
+        .filter(({ panel }) => getWikiPanelPlacement(panel) === placement)
+        .map(({ index }) => index);
+      if (regionIndexes.length > 0) {
+        insertIdx = regionIndexes[regionIndexes.length - 1] + 1;
+      }
+    }
+    next.splice(insertIdx, 0, normalizedMoved);
+    update("panels", next);
+    setSelectedPreviewPanelId(normalizedMoved.id);
+  }, [panels, update]);
 
   const handleDragStart = (idx: number) => (e: React.DragEvent) => {
     setDragType("panel");
@@ -658,6 +784,16 @@ export function WikiEditor() {
     setDragType(null);
   };
   const handleDragEnd = () => { setDragIdx(null); setDragOverIdx(null); setDragType(null); };
+
+  const handlePreviewRegionDrop = (placement: WikiPanelPlacement, beforePanelId?: string | null) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragIdx !== null && dragType === "panel") {
+      movePanelToPlacement(dragIdx, placement, beforePanelId);
+    }
+    setDragIdx(null);
+    setDragOverIdx(null);
+    setDragType(null);
+  };
 
   // ─── Undo / Redo ───
   const handleUndo = useCallback(() => {
@@ -717,14 +853,21 @@ export function WikiEditor() {
       content: s.body || "",
       assignedTo: [],
       style: "blank",
+      placement: "body",
+      width: "full",
+      mediaUrl: "",
+      mediaCaption: "",
+      mediaAlt: "",
+      mediaPosition: "top",
     }));
-    const templatePanels: WikiPanel[] = (data.panels || []).map((p) => ({ ...p, id: `panel-${uid()}` }));
-    setPage((prev) => ({
-      ...prev,
+    const templatePanels: WikiPanel[] = normalizeWikiPanels((data.panels || []).map((p) => ({ ...p, id: `panel-${uid()}` })));
+    setPage((prev) => {
+      const nextPage: SitePage = {
+        ...prev,
       category: data.category || prev.category,
       tags: data.tags || prev.tags,
       sections: [],
-      panels: [...templateSectionPanels, ...templatePanels],
+      panels: normalizeWikiPanels([...templateSectionPanels, ...templatePanels]),
       infobox: data.infobox || prev.infobox,
       body: data.body || prev.body,
       bodyTitle: data.bodyTitle || prev.bodyTitle,
@@ -732,9 +875,16 @@ export function WikiEditor() {
       underConstruction: data.underConstruction ?? prev.underConstruction,
       showDividers: data.showDividers ?? prev.showDividers,
       articleQuality: data.articleQuality || prev.articleQuality,
-    }));
+      };
+      nextPage.layoutVersion = WIKI_BLOCK_LAYOUT_VERSION;
+      nextPage.blocks = migrateLegacyArticleToBlocks(nextPage);
+      return nextPage;
+    });
     setHasUnsaved(true);
     setShowTemplatePicker(false);
+    setSelectedPreviewPanelId(null);
+    setInlinePreviewEditorTarget(null);
+    setSelectedBlockId(null);
   }, []);
 
   // ─── Wiki Link Insertion ───
@@ -838,8 +988,672 @@ export function WikiEditor() {
 
   const bodyParagraphs = (page.body || "").trim();
   const hasBody = bodyParagraphs.length > 0;
-  const hasPanelContent = panels.length > 0 && panels.some((p) => p.title || p.content);
+  const hasPanelContent = panels.length > 0 && panels.some((p) => p.title || p.content || p.mediaUrl);
   const hasContent = hasBody || hasPanelContent;
+  const selectedPreviewPanel = selectedPreviewPanelId ? panels.find((panel) => panel.id === selectedPreviewPanelId) || null : null;
+  const previewVisiblePanels = panels.filter((panel) => {
+    const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
+    const vMode = panel.visibilityMode || "spoiler";
+    if (hasRestriction && vMode === "hidden" && previewAsPlayerId && !panel.assignedTo.includes(previewAsPlayerId)) {
+      return false;
+    }
+    return true;
+  });
+  const bodyPanels = previewVisiblePanels.filter((panel) => getWikiPanelPlacement(panel) === "body");
+  const sidebarPanels = previewVisiblePanels.filter((panel) => getWikiPanelPlacement(panel) === "sidebar");
+  const bodyPanelRows = groupBodyPanelsIntoRows(bodyPanels);
+  const pageBlocks = useMemo(
+    () => compactWikiArticleBlocks(
+      normalizeWikiArticleBlocks(
+        page.blocks && page.blocks.length > 0
+          ? page.blocks
+          : migrateLegacyArticleToBlocks(page),
+      ),
+    ),
+    [page],
+  );
+  const blockIdToPage = useMemo(() => new Map(allPages.map((article) => [article.id, article])), [allPages]);
+  const selectedBlock = selectedBlockId ? pageBlocks.find((block) => block.id === selectedBlockId) || null : null;
+  const articleLinkChoices = useMemo(
+    () => allPages.filter((article) => article.id !== page.id).sort((a, b) => a.title.localeCompare(b.title)),
+    [allPages, page.id],
+  );
+  const canvasRowHeight = 44;
+  const canvasBottomRow = useMemo(
+    () => Math.max(12, ...pageBlocks.map((block) => block.layout.rowStart + block.layout.rowSpan + 1)),
+    [pageBlocks],
+  );
+  const blockCountLabel = `${pageBlocks.length} block${pageBlocks.length === 1 ? "" : "s"}`;
+
+  useEffect(() => {
+    if (!selectedBlockId && pageBlocks.length > 0) {
+      setSelectedBlockId(pageBlocks[0].id);
+      return;
+    }
+    if (selectedBlockId && !pageBlocks.some((block) => block.id === selectedBlockId)) {
+      setSelectedBlockId(pageBlocks[0]?.id || null);
+    }
+  }, [pageBlocks, selectedBlockId]);
+
+  useEffect(() => {
+    setRevealedPanels(new Set());
+  }, [previewAsPlayerId, page.id]);
+
+  const updateBlocks = useCallback((nextBlocks: WikiArticleBlock[]) => {
+    update("blocks", compactWikiArticleBlocks(nextBlocks));
+  }, [update]);
+
+  const updateSingleBlock = useCallback((blockId: string, updater: (block: WikiArticleBlock) => WikiArticleBlock) => {
+    const nextBlocks = pageBlocks.map((block) => (
+      block.id === blockId
+        ? normalizeWikiArticleBlock(updater(block))
+        : normalizeWikiArticleBlock(block)
+    ));
+    updateBlocks(resolveWikiBlockCollisions(nextBlocks, blockId));
+  }, [pageBlocks, updateBlocks]);
+
+  const addBlock = useCallback((type: WikiBlockType, seed?: Partial<WikiArticleBlock>) => {
+    const rowStart = seed?.layout?.rowStart || getNextWikiBlockRow(pageBlocks);
+    const nextBlock = normalizeWikiArticleBlock({
+      ...createDefaultBlock(type, rowStart),
+      ...seed,
+      id: `wiki-block-${uid()}`,
+      layout: {
+        ...createDefaultBlock(type, rowStart).layout,
+        ...(seed?.layout || {}),
+      },
+    });
+    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, nextBlock], nextBlock.id));
+    setSelectedBlockId(nextBlock.id);
+    setInspectorTab("content");
+  }, [pageBlocks, updateBlocks]);
+
+  const duplicateBlock = useCallback((blockId: string) => {
+    const source = pageBlocks.find((block) => block.id === blockId);
+    if (!source) return;
+    const clone = normalizeWikiArticleBlock({
+      ...source,
+      id: `wiki-block-${uid()}`,
+      title: source.title ? `${source.title} Copy` : source.title,
+      layout: {
+        ...source.layout,
+        rowStart: source.layout.rowStart + source.layout.rowSpan,
+      },
+    });
+    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, clone], clone.id));
+    setSelectedBlockId(clone.id);
+  }, [pageBlocks, updateBlocks]);
+
+  const removeBlock = useCallback((blockId: string) => {
+    updateBlocks(pageBlocks.filter((block) => block.id !== blockId));
+    if (selectedBlockId === blockId) {
+      setSelectedBlockId(pageBlocks.find((block) => block.id !== blockId)?.id || null);
+    }
+  }, [pageBlocks, selectedBlockId, updateBlocks]);
+
+  const nudgeBlock = useCallback((blockId: string, deltaCol: number, deltaRow: number) => {
+    const block = pageBlocks.find((entry) => entry.id === blockId);
+    if (!block) return;
+    const nextLayout = {
+      colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - block.layout.colSpan + 1, block.layout.colStart + deltaCol)),
+      rowStart: Math.max(1, block.layout.rowStart + deltaRow),
+    };
+    updateBlocks(placeWikiBlock(pageBlocks, blockId, nextLayout));
+  }, [pageBlocks, updateBlocks]);
+
+  const addArticleTemplate = useCallback((templateId: "spell-directory" | "creature-reference" | "location-page" | "rules-reference") => {
+    const startRow = getNextWikiBlockRow(pageBlocks);
+    const blockSeed: WikiArticleBlock[] = [];
+
+    if (templateId === "spell-directory") {
+      blockSeed.push(
+        normalizeWikiArticleBlock({ ...createDefaultBlock("heading", startRow), title: "Spell Directory", subtitle: "A quick-reference spell index", headingLevel: 2 }),
+        normalizeWikiArticleBlock({
+          ...createDefaultBlock("referenceTable", startRow + 2),
+          title: "Cantrips",
+          columns: ["Spell", "School", "Casting Time", "Range", "Duration", "Components"],
+          rows: [{ id: `row-${uid()}`, cells: ["Sample Spell", "Evocation", "1 Action", "Self", "Instant", "V, S"] }],
+        }),
+        normalizeWikiArticleBlock({
+          ...createDefaultBlock("referenceTable", startRow + 9),
+          title: "Level 1",
+          columns: ["Spell", "School", "Casting Time", "Range", "Duration", "Components"],
+          rows: [{ id: `row-${uid()}`, cells: ["Sample Spell", "Abjuration", "1 Action", "60 ft", "1 minute", "V, S, M"] }],
+        }),
+      );
+    } else if (templateId === "creature-reference") {
+      blockSeed.push(
+        normalizeWikiArticleBlock({ ...createDefaultBlock("keyValueBox", startRow), title: "Creature Profile", items: [
+          { id: `item-${uid()}`, label: "Type", value: "" },
+          { id: `item-${uid()}`, label: "Disposition", value: "" },
+          { id: `item-${uid()}`, label: "Region", value: "" },
+        ] }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("richText", startRow), title: "Overview", html: "<p>Describe the creature here.</p>", layout: { ...createDefaultBlock("richText", startRow).layout, colStart: 5, colSpan: 8 } }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("referenceTable", startRow + 5), title: "Traits and Actions", columns: ["Name", "Type", "Effect"], rows: [{ id: `row-${uid()}`, cells: ["Trait Name", "Trait", "Describe the behavior."] }] }),
+      );
+    } else if (templateId === "location-page") {
+      blockSeed.push(
+        normalizeWikiArticleBlock({ ...createDefaultBlock("image", startRow), title: "Feature Image", imageCaption: "Location overview", layout: { ...createDefaultBlock("image", startRow).layout, colSpan: 5 } }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("richText", startRow), title: "Overview", html: "<p>Describe the location and its major purpose.</p>", layout: { ...createDefaultBlock("richText", startRow).layout, colStart: 6, colSpan: 7 } }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("keyValueBox", startRow + 6), title: "Location Details", items: [
+          { id: `item-${uid()}`, label: "Region", value: "" },
+          { id: `item-${uid()}`, label: "Danger Level", value: "" },
+          { id: `item-${uid()}`, label: "Notable Trait", value: "" },
+        ] }),
+      );
+    } else {
+      blockSeed.push(
+        normalizeWikiArticleBlock({ ...createDefaultBlock("heading", startRow), title: "Rules Reference", subtitle: "System notes and rulings", headingLevel: 2 }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("richText", startRow + 2), title: "Summary", html: "<p>State the rule or ruling in a clean summary paragraph.</p>" }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("calloutPanel", startRow + 7), title: "DM Note", html: "<p>Use this callout for exceptions or reminders.</p>", layout: { ...createDefaultBlock("calloutPanel", startRow + 7).layout, colSpan: 4 } }),
+        normalizeWikiArticleBlock({ ...createDefaultBlock("referenceTable", startRow + 7), title: "Examples", layout: { ...createDefaultBlock("referenceTable", startRow + 7).layout, colStart: 5, colSpan: 8 }, columns: ["Case", "Outcome"], rows: [{ id: `row-${uid()}`, cells: ["Example", "Result"] }] }),
+      );
+    }
+
+    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, ...blockSeed], blockSeed[0]?.id));
+    setSelectedBlockId(blockSeed[0]?.id || null);
+  }, [pageBlocks, updateBlocks]);
+
+  const renderWikiBlockSummary = useCallback((block: WikiArticleBlock) => {
+    switch (block.type) {
+      case "heading":
+        return block.title || "Heading";
+      case "image":
+        return block.imageCaption || block.imageUrl || "Image block";
+      case "referenceTable":
+        return `${block.columns?.length || 0} columns, ${block.rows?.length || 0} rows`;
+      case "keyValueBox":
+        return `${block.items?.length || 0} key values`;
+      case "wikiLinksList":
+        return `${block.articleIds?.length || 0} linked articles`;
+      case "divider":
+        return block.dividerLabel || "Divider";
+      case "spacer":
+        return `Spacer x${block.spacerHeight || 1}`;
+      default: {
+        const plain = collectWikiBlockHtmlStrings([block]).join(" ").replace(/\s+/g, " ").trim();
+        return plain.slice(0, 80) || "No content yet";
+      }
+    }
+  }, []);
+  const canvasHeight = canvasBottomRow * canvasRowHeight;
+
+  const handleLibraryDragStart = useCallback((event: React.DragEvent, type: WikiBlockType) => {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("application/wiki-block-type", type);
+    setDraggedBlockType(type);
+    setDraggedBlockId(null);
+  }, []);
+
+  const handleCanvasBlockDragStart = useCallback((event: React.DragEvent, blockId: string) => {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/wiki-block-id", blockId);
+    setDraggedBlockId(blockId);
+    setDraggedBlockType(null);
+  }, []);
+
+  const clearCanvasDragState = useCallback(() => {
+    setDraggedBlockId(null);
+    setDraggedBlockType(null);
+    setCanvasDropPreview(null);
+  }, []);
+
+  const updateCanvasDropPreview = useCallback((event: React.DragEvent) => {
+    const rect = blockCanvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+    const rowStart = Math.max(1, Math.floor(y / canvasRowHeight) + 1);
+    const blockSeed = draggedBlockId
+      ? pageBlocks.find((block) => block.id === draggedBlockId)
+      : draggedBlockType
+        ? createDefaultBlock(draggedBlockType, rowStart)
+        : null;
+    if (!blockSeed) {
+      setCanvasDropPreview(null);
+      return;
+    }
+    const colSpan = blockSeed.layout.colSpan;
+    const rowSpan = blockSeed.layout.rowSpan;
+    const colStart = Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.floor(x / Math.max(colWidth, 1)) + 1));
+    setCanvasDropPreview({ colStart, rowStart, colSpan, rowSpan });
+  }, [canvasRowHeight, draggedBlockId, draggedBlockType, pageBlocks]);
+
+  const handleCanvasDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    const rect = blockCanvasRef.current?.getBoundingClientRect();
+    if (!rect) {
+      clearCanvasDragState();
+      return;
+    }
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+    const rowStart = Math.max(1, Math.floor(y / canvasRowHeight) + 1);
+    const draggedBlockId = event.dataTransfer.getData("application/wiki-block-id");
+    const draggedBlockType = event.dataTransfer.getData("application/wiki-block-type") as WikiBlockType | "";
+    const blockSeed = draggedBlockId
+      ? pageBlocks.find((block) => block.id === draggedBlockId)
+      : draggedBlockType
+        ? createDefaultBlock(draggedBlockType, rowStart)
+        : null;
+    const colSpan = blockSeed?.layout.colSpan || 1;
+    const colStart = Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.floor(x / Math.max(colWidth, 1)) + 1));
+
+    if (draggedBlockId) {
+      updateBlocks(placeWikiBlock(pageBlocks, draggedBlockId, { colStart, rowStart }));
+      setSelectedBlockId(draggedBlockId);
+      clearCanvasDragState();
+      return;
+    }
+
+    if (draggedBlockType) {
+      addBlock(draggedBlockType, { layout: { colStart, rowStart } as WikiArticleBlock["layout"] });
+    }
+    clearCanvasDragState();
+  }, [addBlock, canvasRowHeight, clearCanvasDragState, pageBlocks, updateBlocks]);
+
+  const resolveBlockPalette = useCallback((block: WikiArticleBlock) => {
+    const styleDef = block.style ? allPanelStyles.find((entry) => entry.id === block.style) : null;
+    return {
+      accent: block.appearance.accentColor || styleDef?.accent || accent,
+      background: block.appearance.backgroundColor || (styleDef?.bg && styleDef.bg !== "transparent" ? styleDef.bg : "rgba(8, 13, 33, 0.96)"),
+      border: block.appearance.borderColor || styleDef?.border || "#20335B",
+    };
+  }, [accent, allPanelStyles]);
+
+  const updateReferenceTableCell = useCallback((blockId: string, rowId: string, cellIndex: number, value: string) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      rows: (block.rows || []).map((row) => (
+        row.id === rowId
+          ? { ...row, cells: row.cells.map((cell, index) => (index === cellIndex ? value : cell)) }
+          : row
+      )),
+    }));
+  }, [updateSingleBlock]);
+
+  const moveReferenceTableRow = useCallback((blockId: string, rowId: string, direction: -1 | 1) => {
+    updateSingleBlock(blockId, (block) => {
+      const rows = block.rows || [];
+      const rowIndex = rows.findIndex((row) => row.id === rowId);
+      if (rowIndex < 0) return block;
+      const nextIndex = rowIndex + direction;
+      if (nextIndex < 0 || nextIndex >= rows.length) return block;
+      return { ...block, rows: reorder(rows, rowIndex, nextIndex) };
+    });
+  }, [updateSingleBlock]);
+
+  const removeReferenceTableRow = useCallback((blockId: string, rowId: string) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      rows: (block.rows || []).filter((row) => row.id !== rowId),
+    }));
+  }, [updateSingleBlock]);
+
+  const moveReferenceTableColumn = useCallback((blockId: string, columnIndex: number, direction: -1 | 1) => {
+    updateSingleBlock(blockId, (block) => {
+      const columns = block.columns || [];
+      const nextIndex = columnIndex + direction;
+      if (nextIndex < 0 || nextIndex >= columns.length) return block;
+      return {
+        ...block,
+        columns: reorder(columns, columnIndex, nextIndex),
+        rows: (block.rows || []).map((row) => ({
+          ...row,
+          cells: reorder(row.cells, columnIndex, nextIndex),
+        })),
+      };
+    });
+  }, [updateSingleBlock]);
+
+  const removeReferenceTableColumn = useCallback((blockId: string, columnIndex: number) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      columns: (block.columns || []).filter((_, index) => index !== columnIndex),
+      rows: (block.rows || []).map((row) => ({
+        ...row,
+        cells: row.cells.filter((_, index) => index !== columnIndex),
+      })),
+    }));
+  }, [updateSingleBlock]);
+
+  const moveKeyValueItem = useCallback((blockId: string, itemId: string, direction: -1 | 1) => {
+    updateSingleBlock(blockId, (block) => {
+      const items = block.items || [];
+      const itemIndex = items.findIndex((item) => item.id === itemId);
+      if (itemIndex < 0) return block;
+      const nextIndex = itemIndex + direction;
+      if (nextIndex < 0 || nextIndex >= items.length) return block;
+      return { ...block, items: reorder(items, itemIndex, nextIndex) };
+    });
+  }, [updateSingleBlock]);
+
+  const removeKeyValueItem = useCallback((blockId: string, itemId: string) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      items: (block.items || []).filter((item) => item.id !== itemId),
+    }));
+  }, [updateSingleBlock]);
+
+  const moveWikiLinkItem = useCallback((blockId: string, articleId: string, direction: -1 | 1) => {
+    updateSingleBlock(blockId, (block) => {
+      const articleIds = block.articleIds || [];
+      const articleIndex = articleIds.findIndex((entry) => entry === articleId);
+      if (articleIndex < 0) return block;
+      const nextIndex = articleIndex + direction;
+      if (nextIndex < 0 || nextIndex >= articleIds.length) return block;
+      return { ...block, articleIds: reorder(articleIds, articleIndex, nextIndex) };
+    });
+  }, [updateSingleBlock]);
+
+  const removeWikiLinkItem = useCallback((blockId: string, articleId: string) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      articleIds: (block.articleIds || []).filter((entry) => entry !== articleId),
+    }));
+  }, [updateSingleBlock]);
+
+  const renderEditableWikiBlock = useCallback((block: WikiArticleBlock) => {
+    const palette = resolveBlockPalette(block);
+    const isSelected = selectedBlockId === block.id;
+    const hasRestriction = block.visibility.assignedTo.length > 0;
+    const previewAllowed = !previewAsPlayerId || !hasRestriction || block.visibility.assignedTo.includes(previewAsPlayerId);
+    const previewHidden = !!previewAsPlayerId && hasRestriction && block.visibility.mode === "hidden" && !previewAllowed;
+    const requiresPreviewReveal = !!previewAsPlayerId && block.visibility.mode === "spoiler" && ((!hasRestriction) || !previewAllowed);
+    const previewRevealed = revealedPanels.has(block.id);
+
+    if (previewHidden) {
+      return (
+        <div className="h-full flex items-center justify-center text-center px-4" style={{ color: "#A67A7A", background: "rgba(14, 8, 8, 0.92)" }}>
+          <div>
+            <EyeOff size={18} className="mx-auto mb-2" />
+            <div className="text-[12px] font-bold">Hidden Block</div>
+            <div className="text-[10px] mt-1">
+              This block is hidden for the current previewed player.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (requiresPreviewReveal && !previewRevealed) {
+      return (
+        <div className="h-full flex items-center justify-center text-center px-4" style={{ color: "#FFAA6A", background: "rgba(18, 10, 10, 0.88)" }}>
+          <div>
+            <Shield size={18} className="mx-auto mb-2" />
+            <div className="text-[12px] font-bold">Spoiler Block</div>
+            <div className="text-[10px] mt-1" style={{ color: "#A67A7A" }}>
+              This block is restricted in the current preview mode.
+            </div>
+            <button
+              onClick={() => setRevealedPanels((prev) => new Set([...prev, block.id]))}
+              className="mt-3 px-3 py-1 text-[10px] hover:opacity-90"
+              style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600 }}
+            >
+              Show Anyway
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const richEditor = (placeholder: string, html: string, onChange: (nextHtml: string) => void) => (
+      isSelected || inlinePreviewEditorTarget === block.id
+        ? (
+          <RichTextEditor
+            value={html}
+            onChange={onChange}
+            placeholder={placeholder}
+            minHeight={150}
+            enableWikiLayouts
+          />
+        )
+        : (
+          <RenderFormattedText text={html || `<p style="opacity:.55">${placeholder}</p>`} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
+        )
+    );
+
+    switch (block.type) {
+      case "heading":
+        return (
+          <div className="h-full flex flex-col justify-center gap-1">
+            <InlineEdit
+              tag={(block.headingLevel === 1 ? "h1" : block.headingLevel === 3 ? "h3" : "h2")}
+              value={block.title}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+              placeholder="Heading title"
+              style={{ color: palette.accent, fontWeight: 700, fontSize: block.headingLevel === 1 ? 28 : block.headingLevel === 3 ? 18 : 22 }}
+            />
+            <InlineEdit
+              tag="p"
+              value={block.subtitle || ""}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
+              placeholder="Optional subtitle"
+              style={{ color: mutedText, fontStyle: "italic", fontSize: 12 }}
+            />
+          </div>
+        );
+      case "image":
+        return (
+          <div className="h-full flex flex-col gap-3">
+            {block.imageUrl ? (
+              <img
+                src={block.imageUrl}
+                alt={block.imageAlt || block.title || "Article media"}
+                className="w-full rounded-md border"
+                style={{ borderColor: palette.border, objectFit: block.cropMode === "cover" ? "cover" : "contain", maxHeight: "100%", minHeight: 120, background: "#050518" }}
+              />
+            ) : (
+              <div className="rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ minHeight: 140, borderColor: palette.border, color: mutedText }}>
+                Add an image URL in the inspector to place media here.
+              </div>
+            )}
+            <InlineEdit
+              tag="div"
+              value={block.imageCaption || ""}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, imageCaption: value }))}
+              placeholder="Image caption"
+              style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
+            />
+          </div>
+        );
+      case "calloutPanel":
+      case "spoilerBlock":
+        return (
+          <div className="h-full flex flex-col gap-3">
+            <div className="space-y-1">
+              <InlineEdit
+                tag="h2"
+                value={block.title || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+                placeholder="Block title"
+                style={{ color: palette.accent, fontWeight: 700, fontSize: 18 }}
+              />
+              <InlineEdit
+                tag="p"
+                value={block.subtitle || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
+                placeholder="Optional subtitle"
+                style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {richEditor("Write callout content...", block.html, (nextHtml) => updateSingleBlock(block.id, (entry) => ({ ...entry, html: nextHtml })))}
+            </div>
+          </div>
+        );
+      case "referenceTable":
+        return (
+          <div className="h-full flex flex-col gap-2">
+            <InlineEdit
+              tag="h2"
+              value={block.title || ""}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+              placeholder="Table title"
+              style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+            />
+            <div className="overflow-auto rounded-md border" style={{ borderColor: palette.border }}>
+              <table className="w-full text-[11px]" style={{ borderCollapse: "collapse" }}>
+                <thead style={{ background: "rgba(255,255,255,0.04)" }}>
+                  <tr>
+                    {(block.columns || []).map((column, columnIndex) => (
+                      <th key={`${block.id}-column-${columnIndex}`} className="p-2 text-left align-top border-b" style={{ borderBottomColor: palette.border, color: palette.accent }}>
+                        {isSelected ? (
+                          <input
+                            value={column}
+                            onChange={(event) => updateSingleBlock(block.id, (entry) => ({ ...entry, columns: (entry.columns || []).map((value, index) => (index === columnIndex ? event.target.value : value)) }))}
+                            className={`${retro.sunken} w-full bg-[#080A24] px-1.5 py-1 text-[10px]`}
+                            style={{ color: txt }}
+                          />
+                        ) : column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(block.rows || []).map((row) => (
+                    <tr key={row.id}>
+                      {row.cells.map((cell, cellIndex) => (
+                        <td key={`${row.id}-${cellIndex}`} className="p-2 align-top border-b" style={{ borderBottomColor: `${palette.border}66`, color: txt }}>
+                          {isSelected ? (
+                            <textarea
+                              value={cell}
+                              onChange={(event) => updateReferenceTableCell(block.id, row.id, cellIndex, event.target.value)}
+                              rows={2}
+                              className={`${retro.sunken} w-full bg-[#080A24] px-1.5 py-1 text-[10px] resize-y`}
+                              style={{ color: txt }}
+                            />
+                          ) : (
+                            cell || <span style={{ color: mutedText }}>Empty</span>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      case "keyValueBox":
+        return (
+          <div className="h-full flex flex-col gap-2">
+            <InlineEdit
+              tag="h2"
+              value={block.title || ""}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+              placeholder="Key-value box title"
+              style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+            />
+            <div className="space-y-2">
+              {(block.items || []).map((item) => (
+                <div key={item.id} className="grid grid-cols-[minmax(90px,0.9fr)_1fr] gap-2 items-start">
+                  {isSelected ? (
+                    <>
+                      <input
+                        value={item.label}
+                        onChange={(event) => updateSingleBlock(block.id, (entry) => ({ ...entry, items: (entry.items || []).map((row) => (row.id === item.id ? { ...row, label: event.target.value } : row)) }))}
+                        className={`${retro.sunken} bg-[#080A24] px-2 py-1 text-[10px]`}
+                        style={{ color: palette.accent }}
+                      />
+                      <input
+                        value={item.value}
+                        onChange={(event) => updateSingleBlock(block.id, (entry) => ({ ...entry, items: (entry.items || []).map((row) => (row.id === item.id ? { ...row, value: event.target.value } : row)) }))}
+                        className={`${retro.sunken} bg-[#080A24] px-2 py-1 text-[10px]`}
+                        style={{ color: txt }}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: palette.accent, fontWeight: 700 }}>{item.label}</span>
+                      <span style={{ color: txt }}>{item.value}</span>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      case "wikiLinksList":
+        return (
+          <div className="h-full flex flex-col gap-2">
+            <InlineEdit
+              tag="h2"
+              value={block.title || ""}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+              placeholder="Related links"
+              style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+            />
+            <div className="space-y-1 text-[11px]">
+              {(block.articleIds || []).length === 0 && (
+                <div style={{ color: mutedText }}>No linked articles yet.</div>
+              )}
+              {(block.articleIds || []).map((articleId) => {
+                const article = blockIdToPage.get(articleId);
+                return (
+                  <button
+                    key={articleId}
+                    onClick={() => article && window.open(`/interface/inet-page/${article.id}`, "_blank")}
+                    className="w-full text-left px-2 py-1 rounded-md border hover:opacity-85"
+                    style={{ color: txt, borderColor: `${palette.border}77`, background: "rgba(255,255,255,0.03)" }}
+                  >
+                    {article?.title || articleId}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      case "divider":
+        return (
+          <div className="h-full flex flex-col justify-center gap-2">
+            <div style={{ height: 1, background: `linear-gradient(90deg, ${palette.border}, ${palette.accent}, ${palette.border})` }} />
+            <InlineEdit
+              tag="div"
+              value={block.dividerLabel || ""}
+              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, dividerLabel: value }))}
+              placeholder="Optional divider label"
+              style={{ color: mutedText, fontSize: 10, textAlign: "center", textTransform: "uppercase", letterSpacing: "0.18em" }}
+            />
+          </div>
+        );
+      case "spacer":
+        return (
+          <div className="h-full rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ borderColor: `${palette.border}99`, color: mutedText }}>
+            Spacer block
+          </div>
+        );
+      case "richText":
+      default:
+        return (
+          <div className="h-full flex flex-col gap-3">
+            {(block.title || block.subtitle) && (
+              <div className="space-y-1">
+                <InlineEdit
+                  tag="h2"
+                  value={block.title || ""}
+                  onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+                  placeholder="Section title"
+                  style={{ color: palette.accent, fontWeight: 700, fontSize: 18 }}
+                />
+                <InlineEdit
+                  tag="p"
+                  value={block.subtitle || ""}
+                  onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
+                  placeholder="Section subtitle"
+                  style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
+                />
+              </div>
+            )}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {richEditor("Write article text here...", block.html, (nextHtml) => updateSingleBlock(block.id, (entry) => ({ ...entry, html: nextHtml })))}
+            </div>
+          </div>
+        );
+    }
+  }, [blockIdToPage, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockId, txt, updateReferenceTableCell, updateSingleBlock]);
 
   const iconMode = page.pageIcon || "globe";
   const PageIcon = getPageIcon(iconMode === "none" || iconMode === "custom" ? undefined : iconMode);
@@ -868,6 +1682,304 @@ export function WikiEditor() {
   const inputStyle: React.CSSProperties = { color: "#C0D0F0" };
   const labelStyle: React.CSSProperties = { color: "#5A6A8A", fontSize: 11, fontWeight: 600 };
 
+  const renderPreviewPanelCard = (panel: WikiPanel, zone: WikiPanelPlacement) => {
+    const globalIdx = panels.findIndex((entry) => entry.id === panel.id);
+    const ps = allPanelStyles.find((styleEntry) => styleEntry.id === panel.style) || allPanelStyles[0];
+    const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
+    const vMode = panel.visibilityMode || "spoiler";
+    const isPlayerAllowed = !hasRestriction || !previewAsPlayerId || panel.assignedTo.includes(previewAsPlayerId);
+    const isRevealed = revealedPanels.has(panel.id);
+    if (hasRestriction && vMode === "hidden" && previewAsPlayerId && !isPlayerAllowed) {
+      return null;
+    }
+    const showContent = !previewAsPlayerId || isPlayerAllowed || isRevealed;
+    const isSelected = selectedPreviewPanelId === panel.id;
+    const isInlineEditing = inlinePreviewEditorTarget === panel.id;
+    const panelPlacement = getWikiPanelPlacement(panel);
+    const panelWidth = getWikiPanelWidth(panel);
+    const mediaPosition = getWikiPanelMediaPosition(panel);
+    const mediaFigure = panel.mediaUrl ? (
+      <figure className="m-0 shrink-0" style={{ width: zone === "sidebar" || panelWidth === "half" || mediaPosition === "top" ? "100%" : 260 }}>
+        <img
+          src={panel.mediaUrl}
+          alt={panel.mediaAlt || panel.title || "Panel media"}
+          className="w-full object-cover"
+          style={{ maxHeight: zone === "sidebar" ? 200 : 260, borderRadius: 6, border: `1px solid ${ps.border}`, background: "#050518" }}
+          onError={(event) => {
+            (event.target as HTMLImageElement).style.display = "none";
+          }}
+        />
+        {panel.mediaCaption && (
+          <figcaption className="mt-1 text-[10px] leading-relaxed" style={{ color: mutedText, fontStyle: "italic" }}>
+            {panel.mediaCaption}
+          </figcaption>
+        )}
+      </figure>
+    ) : null;
+    const contentBlock = isInlineEditing ? (
+      <div className="space-y-2">
+        <RichTextEditor
+          value={panel.content}
+          onChange={(html) => updatePanel(panel.id, { content: html })}
+          placeholder="Write section content directly in the preview..."
+          minHeight={160}
+          enableWikiLayouts
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              setInlinePreviewEditorTarget(null);
+              setEditingPanelId(panel.id);
+            }}
+            className="text-[10px] px-2 py-1 hover:opacity-80"
+            style={{ color: "#4AFF6A", border: "1px solid #1A3A1A" }}
+          >
+            Done Editing
+          </button>
+          <button
+            onClick={() => {
+              setLinkInsertTarget(panel.id);
+              setShowLinkDialog(true);
+            }}
+            className="text-[10px] px-2 py-1 hover:opacity-80"
+            style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}
+          >
+            Insert Wiki Link
+          </button>
+        </div>
+      </div>
+    ) : panel.content ? (
+      <div onClick={() => setInlinePreviewEditorTarget(panel.id)} style={DISPLAY_CONTENTS}>
+        <RenderFormattedText text={panel.content} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} sectionRevealed={showContent} />
+      </div>
+    ) : (
+      <button
+        onClick={() => setInlinePreviewEditorTarget(panel.id)}
+        className="w-full text-left px-3 py-3 text-[11px] hover:opacity-90"
+        style={{ color: mutedText, border: `1px dashed ${ps.border}`, background: "rgba(10, 10, 40, 0.45)" }}
+      >
+        Add section text here...
+      </button>
+    );
+
+    const contentWithMedia = showContent ? (
+      <div className="space-y-3">
+        {!isPlayerAllowed && isRevealed && (
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[10px]" style={{ background: "#1A0A0A", border: "1px solid #3A1A1A", color: "#FF8A6A" }}>
+            <AlertTriangle size={10} />
+            <span>This section was revealed through a spoiler gate.</span>
+          </div>
+        )}
+        {mediaFigure && mediaPosition === "top" && mediaFigure}
+        {mediaFigure && mediaPosition !== "top" && zone === "body" && panelWidth === "full" ? (
+          <div className={`flex flex-col gap-3 ${mediaPosition === "right" ? "md:flex-row-reverse" : "md:flex-row"}`}>
+            {mediaFigure}
+            <div className="min-w-0 flex-1">{contentBlock}</div>
+          </div>
+        ) : (
+          <div className="min-w-0">{contentBlock}</div>
+        )}
+      </div>
+    ) : (
+      <div className="relative overflow-hidden" style={{ minHeight: 120 }}>
+        <div style={{ filter: "blur(8px)", opacity: 0.15, padding: "16px 20px", pointerEvents: "none", userSelect: "none" }}>
+          <div style={{ color: txt, fontFamily: font, fontSize: 13 }}>This content is hidden behind a spoiler or restriction warning...</div>
+        </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: ps.bg === "transparent" ? "linear-gradient(180deg, #0C0C2EEE 0%, #0C0C2EFF 100%)" : `linear-gradient(180deg, ${darken(ps.bg, 5)}EE 0%, ${ps.bg}FF 100%)`, backdropFilter: "blur(4px)" }}>
+          <div className="flex items-center gap-2">
+            <Shield size={18} style={S_RED} />
+            <div>
+              <div className="text-[12px]" style={{ color: "#FF6A6A", fontWeight: 700, fontFamily: font }}>Spoiler / Metagame Warning</div>
+              <div className="text-[10px] mt-0.5" style={{ color: "#8A5A5A", fontFamily: font }}>This section is restricted for {previewPlayer?.name || "this player"}.</div>
+            </div>
+          </div>
+          <button
+            onClick={() => setRevealedPanels((prev) => new Set([...prev, panel.id]))}
+            className="px-4 py-1.5 text-[11px] flex items-center gap-2 hover:opacity-90"
+            style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600, fontFamily: font }}
+          >
+            <Eye size={11} /> Show Anyway
+          </button>
+        </div>
+      </div>
+    );
+
+    return (
+      <div
+        key={panel.id}
+        draggable
+        onDragStart={handleDragStart(globalIdx)}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }}
+        onDrop={handlePreviewRegionDrop(zone, panel.id)}
+        onDragEnd={handleDragEnd}
+        onClick={() => {
+          setSelectedPreviewPanelId(panel.id);
+          setEditingPanelId(panel.id);
+        }}
+        className="group rounded-[6px] transition-all"
+        style={{
+          border: `1px solid ${isSelected ? accent : ps.border}`,
+          background: ps.bg === "transparent" ? "rgba(8, 10, 34, 0.55)" : ps.bg,
+          boxShadow: isSelected ? `0 0 0 1px ${accent}55` : "none",
+          opacity: dragIdx === globalIdx && dragType === "panel" ? 0.45 : 1,
+        }}
+      >
+        <div
+          className="px-3 py-2 flex flex-wrap items-center gap-2 border-b"
+          style={{
+            borderBottomColor: ps.border,
+            background: ps.bg === "transparent" ? "rgba(8, 10, 34, 0.75)" : darken(ps.bg, 5),
+          }}
+        >
+          <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: ps.accent, fontWeight: 700 }}>
+            {panelPlacement === "sidebar" ? "Sidebar Box" : panelWidth === "half" ? "Half Block" : "Body Block"}
+          </span>
+          {hasRestriction ? (
+            <span className="text-[9px] px-2 py-0.5 flex items-center gap-1" style={{ color: vMode === "hidden" ? "#FF6A6A" : "#FF6ABB", background: "#1A0A1A", border: "1px solid #3A1A3B" }}>
+              {vMode === "hidden" ? <EyeOff size={8} /> : <Lock size={8} />}
+              {vMode === "hidden" ? "Hidden" : "Spoiler"}
+            </span>
+          ) : (
+            <span className="text-[9px] px-2 py-0.5 flex items-center gap-1" style={{ color: "#4A9A5A", background: "#0A1A0A", border: "1px solid #1A3A1A" }}>
+              <Unlock size={8} /> Public
+            </span>
+          )}
+          <div className="ml-auto flex flex-wrap items-center gap-1">
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setInlinePreviewEditorTarget(isInlineEditing ? null : panel.id);
+                setSelectedPreviewPanelId(panel.id);
+              }}
+              className="text-[9px] px-2 py-1 hover:opacity-80"
+              style={{ color: "#C0D0F0", border: "1px solid #2A3A5B", background: "#0A102E" }}
+            >
+              {isInlineEditing ? "Hide Editor" : "Edit In Place"}
+            </button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setSelectedPreviewPanelId(panel.id);
+                setEditingPanelId(panel.id);
+                setActivePanel("content");
+              }}
+              className="text-[9px] px-2 py-1 hover:opacity-80"
+              style={{ color: "#6A9AFF", border: "1px solid #1A3A6B" }}
+            >
+              Full Settings
+            </button>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 space-y-3">
+          <div className="space-y-1">
+            <InlineEdit
+              value={panel.title}
+              onChange={(value) => updatePanel(panel.id, { title: value })}
+              placeholder="Section title"
+              tag="h2"
+              style={{ color: zone === "sidebar" ? ps.accent : accent, fontWeight: 600, fontFamily: font, fontSize: zone === "sidebar" ? 15 : 18 }}
+            />
+            {(panel.subtitle || isSelected) && (
+              <InlineEdit
+                value={panel.subtitle || ""}
+                onChange={(value) => updatePanel(panel.id, { subtitle: value })}
+                placeholder="Optional subtitle..."
+                tag="p"
+                style={{ color: mutedText, fontFamily: font, fontSize: 11, fontStyle: "italic" }}
+              />
+            )}
+          </div>
+
+          {isSelected && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3" style={{ background: "#081125", border: "1px solid #1A2A4B" }}>
+              <div>
+                <label style={labelStyle}>Place In</label>
+                <select
+                  value={panelPlacement}
+                  onChange={(event) => updatePanel(panel.id, { placement: event.target.value as WikiPanelPlacement, width: event.target.value === "sidebar" ? "full" : panel.width })}
+                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                  style={inputStyle}
+                >
+                  <option value="body">Main Article Body</option>
+                  <option value="sidebar">Sidebar Box Rail</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Block Width</label>
+                <select
+                  value={panelPlacement === "sidebar" ? "full" : panelWidth}
+                  onChange={(event) => updatePanel(panel.id, { width: event.target.value as WikiPanelWidth })}
+                  disabled={panelPlacement === "sidebar"}
+                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                  style={{ ...inputStyle, opacity: panelPlacement === "sidebar" ? 0.45 : 1 }}
+                >
+                  <option value="full">Full Width</option>
+                  <option value="half">Half Width</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label style={labelStyle}>Section Style</label>
+                <select
+                  value={panel.style || "blank"}
+                  onChange={(event) => updatePanel(panel.id, { style: event.target.value })}
+                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                  style={inputStyle}
+                >
+                  {allPanelStyles.map((styleEntry) => (
+                    <option key={styleEntry.id} value={styleEntry.id}>
+                      {styleEntry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label style={labelStyle}>Panel Image URL</label>
+                <input
+                  type="text"
+                  value={panel.mediaUrl || ""}
+                  onChange={(event) => updatePanel(panel.id, { mediaUrl: event.target.value })}
+                  placeholder="https://... image to place in this panel"
+                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Image Caption</label>
+                <input
+                  type="text"
+                  value={panel.mediaCaption || ""}
+                  onChange={(event) => updatePanel(panel.id, { mediaCaption: event.target.value })}
+                  placeholder="Caption..."
+                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Image Position</label>
+                <select
+                  value={mediaPosition}
+                  onChange={(event) => updatePanel(panel.id, { mediaPosition: event.target.value as WikiPanelMediaPosition })}
+                  className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                  style={inputStyle}
+                >
+                  <option value="top">Top</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {contentWithMedia}
+        </div>
+      </div>
+    );
+  };
+
   if (wikiLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center px-6" style={{ background: "#080828" }}>
@@ -877,6 +1989,915 @@ export function WikiEditor() {
             {wikiLoadError || "Loading articles, players, wiki tags, and custom panel styles from Supabase."}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  const usingBlockWorkspace = true;
+  if (usingBlockWorkspace) {
+    return (
+      <div className="min-h-screen flex flex-col" style={{ background: "#07071F", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
+        <div className={`${retro.toolbar} flex items-center justify-between`} style={{ borderBottom: "2px solid #050520" }}>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                if (hasUnsaved && !window.confirm("You have unsaved changes. Leave anyway?")) return;
+                navigate("/interface/dm-area");
+              }}
+              className="text-[11px] hover:opacity-80 flex items-center gap-1"
+              style={S_ACCENT}
+            >
+              <ArrowLeft size={12} /> Back to DM Area
+            </button>
+            <span className="text-[11px]" style={S_DIM}>|</span>
+            <span className="text-[11px] flex items-center gap-1" style={S_LINK}>
+              <Globe size={11} /> Wiki Block Editor
+            </span>
+            <span className="text-[10px] px-2 py-0.5" style={{ color: "#7A9ABB", border: "1px solid #1A345B", background: "#09132A" }}>
+              Snap Grid | 12 Columns | Responsive Reflow
+            </span>
+            {hasUnsaved && (
+              <span className="text-[9px] px-2 py-0.5 animate-pulse" style={{ color: "#FFAA4A", background: "#1A1A0A", border: "1px solid #3A3A1A" }}>
+                UNSAVED CHANGES
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {saveFlash && (
+              <span className="text-[11px] px-3 py-1" style={{ color: "#4AFF6A", background: "#0A1A0A", border: "1px solid #1A3A1A" }}>
+                Saved!
+              </span>
+            )}
+            {error && (
+              <span className="text-[11px] px-3 py-1 flex items-center gap-1" style={{ color: "#FF6A6A", background: "#1A0A0A", border: "1px solid #3A1A1A" }}>
+                <AlertTriangle size={10} /> {error}
+              </span>
+            )}
+            <button onClick={handleUndo} disabled={undoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Undo (Ctrl+Z)" style={{ opacity: undoStack.length === 0 ? 0.3 : 1 }}>
+              <Undo2 size={11} style={S_LINK} />
+            </button>
+            <button onClick={handleRedo} disabled={redoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Redo (Ctrl+Y)" style={{ opacity: redoStack.length === 0 ? 0.3 : 1 }}>
+              <Redo2 size={11} style={S_LINK} />
+            </button>
+            <button onClick={() => setShowTemplatePicker(true)} className={`${retro.button} px-2 py-1`} title="Templates">
+              <BookOpen size={11} style={S_WARN} />
+            </button>
+            <button onClick={() => setShowTemplateManager(true)} className={`${retro.button} px-2 py-1`} title="Manage Templates">
+              <FolderOpen size={11} style={S_ACCENT} />
+            </button>
+            <button onClick={() => navigate("/interface/wiki-graph")} className={`${retro.button} px-2 py-1`} title="Article Graph">
+              <Network size={11} style={{ color: "#9A7ABB" }} />
+            </button>
+            <button
+              onClick={handleSave}
+              className={`${retro.button} px-4 py-1 text-[11px] flex items-center gap-1`}
+              style={{ color: "#FFFFFF", background: "#2A5ABB", borderColor: "#4A7BFF" }}
+              title="Publish (Ctrl+S)"
+            >
+              <Save size={11} /> Publish
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 flex">
+          <div className="w-[300px] shrink-0 border-r flex flex-col" style={{ borderRightColor: "#15264B", background: "#081129" }}>
+            <div className="grid grid-cols-3 border-b" style={{ borderBottomColor: "#15264B" }}>
+              {([
+                { id: "outline", label: "Outline" },
+                { id: "library", label: "Library" },
+                { id: "article", label: "Article" },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setWorkspaceRailTab(tab.id)}
+                  className="px-3 py-2 text-[10px]"
+                  style={{
+                    color: workspaceRailTab === tab.id ? "#D3E1FF" : "#617290",
+                    background: workspaceRailTab === tab.id ? "#0C1735" : "transparent",
+                    borderBottom: workspaceRailTab === tab.id ? `2px solid ${accent}` : "2px solid transparent",
+                    fontWeight: workspaceRailTab === tab.id ? 700 : 500,
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#19345E", background: "#09142D", color: "#7A9ABB" }}>
+                {blockCountLabel} active. The canvas uses the same block document the published article now renders.
+              </div>
+
+              {workspaceRailTab === "outline" && (
+                <div className="space-y-3">
+                  {pageBlocks.map((block, index) => (
+                    <div
+                      key={block.id}
+                      className="rounded-md border px-3 py-3 transition-colors"
+                      style={{
+                        borderColor: selectedBlockId === block.id ? accent : "#1A2E55",
+                        background: selectedBlockId === block.id ? "#0C1735" : "#081027",
+                      }}
+                    >
+                      <button
+                        onClick={() => {
+                          setSelectedBlockId(block.id);
+                          setInspectorTab("content");
+                        }}
+                        className="w-full text-left"
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[9px] uppercase tracking-[0.2em]" style={{ color: "#6A9AFF" }}>{block.type}</span>
+                          <span className="text-[9px] ml-auto" style={{ color: "#506382" }}>
+                            {index + 1} | C{block.layout.colStart}-{block.layout.colStart + block.layout.colSpan - 1}
+                          </span>
+                        </div>
+                        <div className="text-[12px] font-bold" style={{ color: "#D3E1FF" }}>
+                          {block.title || `Untitled ${block.type}`}
+                        </div>
+                        <div className="text-[10px] mt-1 leading-relaxed" style={{ color: "#8091AE" }}>
+                          {renderWikiBlockSummary(block)}
+                        </div>
+                      </button>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button onClick={() => duplicateBlock(block.id)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_ACCENT}>Duplicate</button>
+                        <button onClick={() => updateSingleBlock(block.id, (entry) => ({ ...entry, locked: !entry.locked }))} className={`${retro.button} px-2 py-1 text-[9px]`} style={block.locked ? S_WARN : S_SUBTLE}>
+                          {block.locked ? "Unlock" : "Lock"}
+                        </button>
+                        <button onClick={() => removeBlock(block.id)} className={`${retro.button} px-2 py-1 text-[9px] ml-auto`} style={S_RED}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {workspaceRailTab === "library" && (
+                <div className="space-y-4">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>Block Palette</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ["richText", "Rich Text"],
+                        ["heading", "Heading"],
+                        ["image", "Image"],
+                        ["calloutPanel", "Callout"],
+                        ["referenceTable", "Ref Table"],
+                        ["keyValueBox", "Key-Value"],
+                        ["spoilerBlock", "Spoiler"],
+                        ["wikiLinksList", "Wiki Links"],
+                        ["divider", "Divider"],
+                        ["spacer", "Spacer"],
+                      ] as [WikiBlockType, string][]).map(([type, label]) => (
+                        <button
+                          key={type}
+                          draggable
+                          onDragStart={(event) => handleLibraryDragStart(event, type)}
+                          onDragEnd={clearCanvasDragState}
+                          onClick={() => addBlock(type)}
+                          className="rounded-md border px-2 py-2 text-left text-[10px] hover:opacity-90"
+                          style={{ borderColor: "#1A345B", background: "#09142D", color: "#D3E1FF" }}
+                        >
+                          <div className="font-bold">{label}</div>
+                          <div style={{ color: "#7386A5" }}>Click or drag onto the canvas</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>Reference Templates</div>
+                    <div className="space-y-2">
+                      {([
+                        ["spell-directory", "Spell Directory", "Cantrips, levels, and quick-reference tables"],
+                        ["creature-reference", "Creature / NPC", "Profile box, overview, and traits"],
+                        ["location-page", "Location", "Feature image, overview, and keyed details"],
+                        ["rules-reference", "Rules Reference", "Structured rulings and examples"],
+                      ] as const).map(([templateId, label, desc]) => (
+                        <button
+                          key={templateId}
+                          onClick={() => addArticleTemplate(templateId)}
+                          className="w-full rounded-md border px-3 py-2 text-left hover:opacity-90"
+                          style={{ borderColor: "#2B365C", background: "#0A1228", color: "#D3E1FF" }}
+                        >
+                          <div className="text-[11px] font-bold">{label}</div>
+                          <div className="text-[10px]" style={{ color: "#8091AE" }}>{desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {workspaceRailTab === "article" && (
+                <div className="space-y-3">
+                  <div>
+                    <label style={labelStyle}>Title *</label>
+                    <input value={page.title} onChange={(event) => { update("title", event.target.value); if (!urlManuallyEdited.current) update("url", toSlug(event.target.value)); }} className={inputClass} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Subtitle</label>
+                    <input value={page.subtitle} onChange={(event) => update("subtitle", event.target.value)} className={inputClass} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Description *</label>
+                    <textarea value={page.description} onChange={(event) => update("description", event.target.value)} rows={3} className={`${inputClass} resize-none`} style={inputStyle} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label style={labelStyle}>URL *</label>
+                      <input value={page.url} onChange={(event) => { urlManuallyEdited.current = true; update("url", event.target.value); }} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Category</label>
+                      <input value={page.category} onChange={(event) => update("category", event.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Tags</label>
+                    <input
+                      value={tagDraft}
+                      onChange={(event) => setTagDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          const next = tagDraft.trim();
+                          if (!next || (page.tags || []).includes(next)) return;
+                          update("tags", [...(page.tags || []), next]);
+                          setTagDraft("");
+                        }
+                      }}
+                      placeholder="Press Enter to add a tag"
+                      className={inputClass}
+                      style={inputStyle}
+                    />
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {(page.tags || []).map((tag) => (
+                        <button key={tag} onClick={() => update("tags", (page.tags || []).filter((entry) => entry !== tag))} className="text-[10px] px-2 py-1" style={{ color: "#D3E1FF", background: "#0C1735", border: "1px solid #1A345B" }}>
+                          {tag} <X size={10} className="inline ml-1" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${darken(bg, 10)} 0%, ${bg} 100%)` }}>
+            <div className="border-b px-5 py-4 flex flex-wrap items-center justify-between gap-3" style={{ borderBottomColor: "#172B52", background: "rgba(7,12,31,0.9)" }}>
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.22em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Live Article Canvas</div>
+                <div className="text-[12px] mt-1" style={{ color: "#9FB0CC" }}>
+                  Drag blocks into place, resize them by snapped handles, and edit text directly in the canvas.
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <select value={previewAsPlayerId || ""} onChange={(event) => setPreviewAsPlayerId(event.target.value || null)} className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[11px]`} style={inputStyle}>
+                  <option value="">DM View (see all)</option>
+                  {players.map((player) => (
+                    <option key={player.id} value={player.id}>
+                      {player.name} ({player.class || "No class"} Lv{player.level || 1})
+                    </option>
+                  ))}
+                </select>
+                <button onClick={() => setPreviewAsPlayerId(null)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Reset View</button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-5">
+              <div className="mx-auto max-w-[1220px] rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ background: hdr, borderColor }}>
+                <div className="border-b px-6 py-5" style={{ borderBottomColor }}>
+                  <InlineEdit
+                    tag="h1"
+                    value={page.title}
+                    onChange={(value) => { update("title", value); if (!urlManuallyEdited.current) update("url", toSlug(value)); }}
+                    placeholder="Article title"
+                    style={{ color: txt, fontWeight: 700, fontSize: 28 }}
+                  />
+                  <InlineEdit
+                    tag="p"
+                    value={page.subtitle || ""}
+                    onChange={(value) => update("subtitle", value)}
+                    placeholder="Subtitle"
+                    style={{ color: mutedText, fontSize: 14, fontStyle: "italic", marginTop: 4 }}
+                  />
+                  <div className="mt-3 max-w-[850px]">
+                    <InlineEdit
+                      tag="div"
+                      value={page.description || ""}
+                      onChange={(value) => update("description", value)}
+                      placeholder="Article description"
+                      multiline
+                      style={{ color: txt, fontSize: 13, lineHeight: 1.6 }}
+                    />
+                  </div>
+                </div>
+
+                <div className="px-6 py-6">
+                  <div
+                    ref={blockCanvasRef}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      updateCanvasDropPreview(event);
+                    }}
+                    onDragLeave={(event) => {
+                      if (event.currentTarget === event.target) {
+                        setCanvasDropPreview(null);
+                      }
+                    }}
+                    onDrop={handleCanvasDrop}
+                    className="relative rounded-lg border overflow-hidden"
+                    style={{
+                      minHeight: canvasHeight,
+                      borderColor: "#20335B",
+                      background: `
+                        linear-gradient(90deg, rgba(74,123,255,0.08) 1px, transparent 1px),
+                        linear-gradient(180deg, rgba(74,123,255,0.05) 1px, transparent 1px),
+                        linear-gradient(180deg, rgba(12,18,44,0.92) 0%, rgba(9,14,34,0.98) 100%)
+                      `,
+                      backgroundSize: `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
+                    }}
+                  >
+                    <div className="absolute inset-x-0 top-0 z-[1] grid" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, pointerEvents: "none" }}>
+                      {Array.from({ length: WIKI_BLOCK_COLUMNS }, (_, index) => (
+                        <div key={`canvas-col-${index + 1}`} className="border-r px-1 py-1 text-right text-[9px]" style={{ borderRightColor: "rgba(74,123,255,0.12)", color: "#58729D" }}>
+                          {index + 1}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="absolute left-0 top-0 bottom-0 z-[1] flex flex-col" style={{ width: 28, pointerEvents: "none" }}>
+                      {Array.from({ length: Math.max(12, canvasBottomRow) }, (_, index) => (
+                        <div key={`canvas-row-${index + 1}`} className="pr-1 pt-0.5 text-right text-[9px]" style={{ height: canvasRowHeight, color: "#4D6188" }}>
+                          {index + 1}
+                        </div>
+                      ))}
+                    </div>
+                    {canvasDropPreview && (
+                      <div
+                        className="absolute z-[2] rounded-md border-2 border-dashed"
+                        style={{
+                          left: `${((canvasDropPreview.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`,
+                          width: `${(canvasDropPreview.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`,
+                          top: (canvasDropPreview.rowStart - 1) * canvasRowHeight,
+                          height: canvasDropPreview.rowSpan * canvasRowHeight,
+                          borderColor: "#6A9AFF",
+                          background: "rgba(74, 123, 255, 0.10)",
+                          boxShadow: "0 0 0 1px rgba(74,123,255,0.2) inset",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    )}
+                    {pageBlocks.map((block) => {
+                      const palette = resolveBlockPalette(block);
+                      const blockLeft = `${((block.layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`;
+                      const blockWidth = `${(block.layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`;
+                      const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
+                      const blockHeight = block.layout.rowSpan * canvasRowHeight;
+                      const isSelected = selectedBlockId === block.id;
+
+                      return (
+                        <div
+                          key={block.id}
+                          className="absolute p-1.5"
+                          style={{
+                            left: blockLeft,
+                            width: blockWidth,
+                            top: blockTop,
+                            height: blockHeight,
+                          }}
+                        >
+                          <Resizable
+                            size={{ width: "100%", height: "100%" }}
+                            minWidth="100%"
+                            minHeight={Math.max((block.layout.minRowSpan || 1) * canvasRowHeight, 48)}
+                            enable={block.locked ? { top: false, right: false, bottom: false, left: false, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false } : { right: true, bottom: true, bottomRight: true }}
+                            handleStyles={{
+                              right: { width: 10, right: -4, cursor: "ew-resize" },
+                              bottom: { height: 10, bottom: -4, cursor: "ns-resize" },
+                              bottomRight: { width: 12, height: 12, right: -5, bottom: -5, cursor: "nwse-resize" },
+                            }}
+                            onResizeStop={(_event, _direction, ref, delta) => {
+                              const rect = blockCanvasRef.current?.getBoundingClientRect();
+                              if (!rect) return;
+                              const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+                              const nextColSpan = Math.max(block.layout.minColSpan || 1, Math.round(ref.offsetWidth / Math.max(colWidth, 1)));
+                              const nextRowSpan = Math.max(block.layout.minRowSpan || 1, Math.round(ref.offsetHeight / canvasRowHeight));
+                              updateBlocks(placeWikiBlock(pageBlocks, block.id, { colSpan: nextColSpan, rowSpan: nextRowSpan }));
+                            }}
+                            style={{
+                              border: `1px solid ${isSelected ? accent : palette.border}`,
+                              background: palette.background,
+                              boxShadow: isSelected ? `0 0 0 1px ${accent}, 0 12px 24px rgba(0,0,0,0.28)` : "0 8px 18px rgba(0,0,0,0.24)",
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div className="h-full flex flex-col" onClick={() => setSelectedBlockId(block.id)}>
+                              <div className="flex items-center gap-2 px-3 py-2 border-b cursor-move" style={{ borderBottomColor: `${palette.border}88`, background: "rgba(0,0,0,0.18)" }}>
+                                <button
+                                  draggable
+                                  onDragStart={(event) => handleCanvasBlockDragStart(event, block.id)}
+                                  onDragEnd={clearCanvasDragState}
+                                  className="cursor-grab"
+                                  title="Drag block"
+                                >
+                                  <GripVertical size={13} style={{ color: palette.accent }} />
+                                </button>
+                                <span className="text-[9px] uppercase tracking-[0.18em]" style={{ color: "#8EA9D7", fontWeight: 700 }}>Drag</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: palette.accent, fontWeight: 700 }}>{block.type}</div>
+                                  <div className="text-[11px] truncate" style={{ color: "#D3E1FF" }}>
+                                    {block.title || block.subtitle || `Untitled ${block.type}`}
+                                  </div>
+                                </div>
+                                {block.locked && <Lock size={12} style={{ color: "#FFAA4A" }} />}
+                                <button onClick={(event) => { event.stopPropagation(); duplicateBlock(block.id); }} className="hover:opacity-80" title="Duplicate">
+                                  <Plus size={12} style={{ color: "#8AB4FF" }} />
+                                </button>
+                                <button onClick={(event) => { event.stopPropagation(); removeBlock(block.id); }} className="hover:opacity-80" title="Delete">
+                                  <Trash2 size={12} style={{ color: "#FF8A8A" }} />
+                                </button>
+                              </div>
+                              <div className="min-h-0 flex-1 overflow-auto p-3">
+                                {renderEditableWikiBlock(block)}
+                              </div>
+                            </div>
+                          </Resizable>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
+                    <span>Desktop canvas keeps your authored 12-column layout.</span>
+                    <span>|</span>
+                    <span>Tablet and mobile automatically stack blocks by row and column order.</span>
+                    <span>|</span>
+                    <span>Saving also refreshes legacy body/panel snapshots for compatibility.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-[360px] shrink-0 border-l flex flex-col" style={{ borderLeftColor: "#15264B", background: "#081129" }}>
+            <div className="grid grid-cols-3 border-b" style={{ borderBottomColor: "#15264B" }}>
+              {([
+                { id: "content", label: "Block" },
+                { id: "layout", label: "Layout" },
+                { id: "article", label: "Article" },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setInspectorTab(tab.id)}
+                  className="px-3 py-2 text-[10px]"
+                  style={{
+                    color: inspectorTab === tab.id ? "#D3E1FF" : "#617290",
+                    background: inspectorTab === tab.id ? "#0C1735" : "transparent",
+                    borderBottom: inspectorTab === tab.id ? `2px solid ${accent}` : "2px solid transparent",
+                    fontWeight: inspectorTab === tab.id ? 700 : 500,
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {selectedBlock && (
+                <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Selected Block</div>
+                      <div className="text-[13px] font-bold" style={{ color: "#D3E1FF" }}>{selectedBlock.title || `Untitled ${selectedBlock.type}`}</div>
+                    </div>
+                    <button onClick={() => removeBlock(selectedBlock.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_RED}>Delete</button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button onClick={() => duplicateBlock(selectedBlock.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Duplicate</button>
+                    <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, locked: !block.locked }))} className={`${retro.button} px-2 py-1 text-[10px]`} style={selectedBlock.locked ? S_WARN : S_SUBTLE}>
+                      {selectedBlock.locked ? "Unlock" : "Lock"}
+                    </button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, -1, 0)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Left</button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, 1, 0)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Right</button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, 0, -1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Up</button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, 0, 1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Down</button>
+                  </div>
+                </div>
+              )}
+
+              {inspectorTab === "content" && selectedBlock && (
+                <div className="space-y-3">
+                  <div>
+                    <label style={labelStyle}>Block Type</label>
+                    <div className="text-[11px] px-3 py-2 rounded-md border" style={{ borderColor: "#1A345B", background: "#09142D", color: "#D3E1FF" }}>
+                      {selectedBlock.type}
+                    </div>
+                  </div>
+                  {(selectedBlock.type === "image") && (
+                    <>
+                      <div>
+                        <label style={labelStyle}>Image URL</label>
+                        <input value={selectedBlock.imageUrl || ""} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageUrl: event.target.value }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label style={labelStyle}>Alt Text</label>
+                          <input value={selectedBlock.imageAlt || ""} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageAlt: event.target.value }))} className={inputClass} style={inputStyle} />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Crop Mode</label>
+                          <select value={selectedBlock.cropMode || "cover"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, cropMode: event.target.value as WikiArticleBlock["cropMode"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="cover">Cover</option>
+                            <option value="contain">Contain</option>
+                          </select>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {selectedBlock.type === "heading" && (
+                    <div>
+                      <label style={labelStyle}>Heading Level</label>
+                      <select value={selectedBlock.headingLevel || 2} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, headingLevel: Number(event.target.value) as 1 | 2 | 3 | 4 }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                        <option value={1}>H1</option>
+                        <option value={2}>H2</option>
+                        <option value={3}>H3</option>
+                        <option value={4}>H4</option>
+                      </select>
+                    </div>
+                  )}
+                  {selectedBlock.type === "referenceTable" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label style={labelStyle}>Reference Rows</label>
+                        <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, rows: [...(block.rows || []), { id: `row-${uid()}`, cells: Array.from({ length: block.columns?.length || 1 }, () => "") }] }))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Add Row</button>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <label style={labelStyle}>Reference Columns</label>
+                        <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, columns: [...(block.columns || []), "New Column"], rows: (block.rows || []).map((row) => ({ ...row, cells: [...row.cells, ""] })) }))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Add Column</button>
+                      </div>
+                      <div className="rounded-md border p-2 space-y-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                        <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Column Order</div>
+                        {(selectedBlock.columns || []).map((column, columnIndex, columns) => (
+                          <div key={`${selectedBlock.id}-column-order-${columnIndex}`} className="flex items-center gap-2 rounded-md border px-2 py-1.5" style={{ borderColor: "#15315A", background: "#071126" }}>
+                            <span className="flex-1 text-[10px] truncate" style={{ color: "#D3E1FF" }}>
+                              {column || `Column ${columnIndex + 1}`}
+                            </span>
+                            <button
+                              onClick={() => moveReferenceTableColumn(selectedBlock.id, columnIndex, -1)}
+                              disabled={columnIndex === 0}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Left
+                            </button>
+                            <button
+                              onClick={() => moveReferenceTableColumn(selectedBlock.id, columnIndex, 1)}
+                              disabled={columnIndex === columns.length - 1}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Right
+                            </button>
+                            <button
+                              onClick={() => removeReferenceTableColumn(selectedBlock.id, columnIndex)}
+                              disabled={columns.length <= 1}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_RED}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-md border p-2 space-y-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                        <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Row Order</div>
+                        {(selectedBlock.rows || []).length === 0 && (
+                          <div className="text-[10px]" style={{ color: "#7A9ABB" }}>
+                            Add a row to start building this reference table.
+                          </div>
+                        )}
+                        {(selectedBlock.rows || []).map((row, rowIndex, rows) => (
+                          <div key={row.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5" style={{ borderColor: "#15315A", background: "#071126" }}>
+                            <span className="flex-1 text-[10px] truncate" style={{ color: "#D3E1FF" }}>
+                              Row {rowIndex + 1}
+                              {row.cells.some(Boolean) ? ` | ${row.cells.filter(Boolean).slice(0, 2).join(" | ")}` : " | Empty"}
+                            </span>
+                            <button
+                              onClick={() => moveReferenceTableRow(selectedBlock.id, row.id, -1)}
+                              disabled={rowIndex === 0}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Up
+                            </button>
+                            <button
+                              onClick={() => moveReferenceTableRow(selectedBlock.id, row.id, 1)}
+                              disabled={rowIndex === rows.length - 1}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Down
+                            </button>
+                            <button
+                              onClick={() => removeReferenceTableRow(selectedBlock.id, row.id)}
+                              className={`${retro.button} px-2 py-1 text-[9px]`}
+                              style={S_RED}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {selectedBlock.type === "keyValueBox" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label style={labelStyle}>Key-Value Items</label>
+                        <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, items: [...(block.items || []), { id: `item-${uid()}`, label: "Label", value: "Value" }] }))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Add Item</button>
+                      </div>
+                      <div className="rounded-md border p-2 space-y-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                        {(selectedBlock.items || []).length === 0 && (
+                          <div className="text-[10px]" style={{ color: "#7A9ABB" }}>
+                            Add stats, traits, or field-value pairs for a cleaner wiki infobox.
+                          </div>
+                        )}
+                        {(selectedBlock.items || []).map((item, itemIndex, items) => (
+                          <div key={item.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5" style={{ borderColor: "#15315A", background: "#071126" }}>
+                            <span className="flex-1 text-[10px] truncate" style={{ color: "#D3E1FF" }}>
+                              {item.label || `Item ${itemIndex + 1}`}
+                              {item.value ? ` | ${item.value}` : ""}
+                            </span>
+                            <button
+                              onClick={() => moveKeyValueItem(selectedBlock.id, item.id, -1)}
+                              disabled={itemIndex === 0}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Up
+                            </button>
+                            <button
+                              onClick={() => moveKeyValueItem(selectedBlock.id, item.id, 1)}
+                              disabled={itemIndex === items.length - 1}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Down
+                            </button>
+                            <button
+                              onClick={() => removeKeyValueItem(selectedBlock.id, item.id)}
+                              className={`${retro.button} px-2 py-1 text-[9px]`}
+                              style={S_RED}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {selectedBlock.type === "wikiLinksList" && (
+                    <div className="space-y-2">
+                      <label style={labelStyle}>Add Linked Article</label>
+                      <select
+                        value=""
+                        onChange={(event) => {
+                          if (!event.target.value) return;
+                          const nextId = event.target.value;
+                          updateSingleBlock(selectedBlock.id, (block) => ({ ...block, articleIds: Array.from(new Set([...(block.articleIds || []), nextId])) }));
+                          event.target.value = "";
+                        }}
+                        className={`${inputClass} cursor-pointer`}
+                        style={inputStyle}
+                      >
+                        <option value="">Select an article</option>
+                        {articleLinkChoices.map((article) => (
+                          <option key={article.id} value={article.id}>{article.title}</option>
+                        ))}
+                      </select>
+                      <div className="space-y-1">
+                        {(selectedBlock.articleIds || []).length === 0 && (
+                          <div className="rounded-md border px-2 py-2 text-[10px]" style={{ borderColor: "#1A345B", background: "#09142D", color: "#7A9ABB" }}>
+                            Add linked articles to build a related reading block or guide players through a reference trail.
+                          </div>
+                        )}
+                        {(selectedBlock.articleIds || []).map((articleId, articleIndex, articleIds) => (
+                          <div key={articleId} className="flex items-center gap-2 rounded-md border px-2 py-1.5" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                            <span className="flex-1 text-[10px]" style={{ color: "#D3E1FF" }}>{blockIdToPage.get(articleId)?.title || articleId}</span>
+                            <button
+                              onClick={() => moveWikiLinkItem(selectedBlock.id, articleId, -1)}
+                              disabled={articleIndex === 0}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Up
+                            </button>
+                            <button
+                              onClick={() => moveWikiLinkItem(selectedBlock.id, articleId, 1)}
+                              disabled={articleIndex === articleIds.length - 1}
+                              className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
+                              style={S_SUBTLE}
+                            >
+                              Down
+                            </button>
+                            <button
+                              onClick={() => removeWikiLinkItem(selectedBlock.id, articleId)}
+                              className={`${retro.button} px-2 py-1 text-[9px]`}
+                              style={S_RED}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {inspectorTab === "layout" && selectedBlock && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label style={labelStyle}>Column Start</label>
+                      <input type="number" min={1} max={WIKI_BLOCK_COLUMNS} value={selectedBlock.layout.colStart} onChange={(event) => updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { colStart: Number(event.target.value) || 1 }))} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Column Span</label>
+                      <input type="number" min={selectedBlock.layout.minColSpan || 1} max={WIKI_BLOCK_COLUMNS} value={selectedBlock.layout.colSpan} onChange={(event) => updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { colSpan: Number(event.target.value) || selectedBlock.layout.colSpan }))} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Row Start</label>
+                      <input type="number" min={1} value={selectedBlock.layout.rowStart} onChange={(event) => updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { rowStart: Number(event.target.value) || 1 }))} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Row Span</label>
+                      <input type="number" min={selectedBlock.layout.minRowSpan || 1} value={selectedBlock.layout.rowSpan} onChange={(event) => updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { rowSpan: Number(event.target.value) || selectedBlock.layout.rowSpan }))} className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    <button onClick={() => nudgeBlock(selectedBlock.id, -1, 0)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Left</button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, 1, 0)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Right</button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, 0, -1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Up</button>
+                    <button onClick={() => nudgeBlock(selectedBlock.id, 0, 1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Down</button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label style={labelStyle}>Padding</label>
+                      <select value={selectedBlock.appearance.padding || "normal"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, padding: event.target.value as WikiArticleBlock["appearance"]["padding"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                        <option value="tight">Tight</option>
+                        <option value="normal">Normal</option>
+                        <option value="loose">Loose</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Border Style</label>
+                      <select value={selectedBlock.appearance.borderStyle || "solid"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderStyle: event.target.value as WikiArticleBlock["appearance"]["borderStyle"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                        <option value="solid">Solid</option>
+                        <option value="dashed">Dashed</option>
+                        <option value="none">None</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label style={labelStyle}>Accent</label>
+                      <input type="color" value={selectedBlock.appearance.accentColor || accent} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, accentColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Background</label>
+                      <input type="color" value={selectedBlock.appearance.backgroundColor || "#081025"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, backgroundColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Border</label>
+                      <input type="color" value={selectedBlock.appearance.borderColor || "#20335B"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Visibility Mode</label>
+                    <select value={selectedBlock.visibility.mode} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, visibility: { ...block.visibility, mode: event.target.value as WikiArticleBlock["visibility"]["mode"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                      <option value="visible">Visible</option>
+                      <option value="spoiler">Spoiler</option>
+                      <option value="hidden">Hidden</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Allowed Players</label>
+                    <div className="space-y-1 mt-1">
+                      {players.map((player) => {
+                        const active = selectedBlock.visibility.assignedTo.includes(player.id);
+                        return (
+                          <button
+                            key={player.id}
+                            onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({
+                              ...block,
+                              visibility: {
+                                ...block.visibility,
+                                assignedTo: active
+                                  ? block.visibility.assignedTo.filter((entry) => entry !== player.id)
+                                  : [...block.visibility.assignedTo, player.id],
+                              },
+                            }))}
+                            className="w-full text-left px-2 py-1.5 text-[10px] rounded-md border"
+                            style={{ color: active ? "#D3E1FF" : "#7A8CAA", borderColor: active ? "#2A5ABB" : "#1A345B", background: active ? "#0C1735" : "#081027" }}
+                          >
+                            {player.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between rounded-md border px-3 py-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <span className="text-[11px]" style={{ color: "#D3E1FF" }}>Lock block position</span>
+                    <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, locked: !block.locked }))} className={`${retro.button} px-2 py-1 text-[10px]`} style={selectedBlock.locked ? S_WARN : S_SUBTLE}>
+                      {selectedBlock.locked ? "Locked" : "Unlocked"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {inspectorTab === "article" && (
+                <div className="space-y-3">
+                  <div>
+                    <label style={labelStyle}>Article Quality</label>
+                    <select value={page.articleQuality} onChange={(event) => update("articleQuality", event.target.value as SitePage["articleQuality"])} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                      <option value="featured">Featured</option>
+                      <option value="good">Good</option>
+                      <option value="start">Start</option>
+                      <option value="stub">Stub</option>
+                      <option value="draft">Draft</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label style={labelStyle}>Background</label>
+                      <input type="color" value={page.bgColor} onChange={(event) => update("bgColor", event.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Header</label>
+                      <input type="color" value={page.headerColor} onChange={(event) => update("headerColor", event.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Accent</label>
+                      <input type="color" value={page.accentColor} onChange={(event) => update("accentColor", event.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Text</label>
+                      <input type="color" value={page.textColor} onChange={(event) => update("textColor", event.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Page Icon</label>
+                    <select value={page.pageIcon} onChange={(event) => update("pageIcon", event.target.value)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                      <option value="globe">Globe</option>
+                      <option value="book">Book</option>
+                      <option value="folder">Folder</option>
+                      <option value="custom">Custom</option>
+                      <option value="none">None</option>
+                    </select>
+                  </div>
+                  {page.pageIcon === "custom" && (
+                    <div>
+                      <label style={labelStyle}>Custom Icon URL</label>
+                      <input value={page.pageIconUrl} onChange={(event) => update("pageIconUrl", event.target.value)} className={inputClass} style={inputStyle} />
+                    </div>
+                  )}
+                  <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#1A345B", background: "#09142D", color: "#7A9ABB" }}>
+                    Layout version {WIKI_BLOCK_LAYOUT_VERSION} is active. Saving keeps <code>blocks</code> as the source of truth and refreshes legacy <code>body</code> and <code>panels</code> snapshots for search, graph, and older article consumers.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {showDraftRestore && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(3px)" }}>
+            <div className="w-[400px] p-6" style={{ background: "#0C0C2E", border: "2px solid #2A2A5B" }}>
+              <div className="flex items-center gap-2 mb-3">
+                <AlertTriangle size={16} style={S_WARN} />
+                <span className="text-[14px]" style={{ ...S_TEXT, fontWeight: 600 }}>Restore Draft?</span>
+              </div>
+              <p className="text-[12px] mb-4" style={S_SUBTLE}>
+                A previously auto-saved draft was found for this article. Would you like to restore it?
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button onClick={discardDraft} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_RED}>Discard Draft</button>
+                <button onClick={restoreDraft} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={{ color: "#FFFFFF", background: "#2A5ABB", borderColor: "#4A7BFF" }}>Restore Draft</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <TemplatePickerModal
+          open={showTemplatePicker}
+          onClose={() => setShowTemplatePicker(false)}
+          onSelect={applyTemplate}
+          onManage={() => { setShowTemplatePicker(false); setShowTemplateManager(true); }}
+        />
+
+        <TemplateManagerModal
+          open={showTemplateManager}
+          onClose={() => setShowTemplateManager(false)}
+        />
       </div>
     );
   }
@@ -985,8 +3006,78 @@ export function WikiEditor() {
               <div className="space-y-4">
                 <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
                   <Eye size={13} className="shrink-0 mt-0.5" style={S_LINK} />
-                  <span>Click any text in the preview to edit it inline. Use the other tabs for advanced settings.</span>
+                  <span>Use the live preview like a canvas. Click article text to edit it in place, drag boxes between the body and sidebar, and open a selected box for layout and image controls.</span>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => addPanel("blank", "body")}
+                    className="text-[10px] px-3 py-2 flex items-center justify-center gap-1 hover:opacity-80"
+                    style={{ color: "#C0D0F0", border: "1px solid #1A2A4B", background: "#0A102E" }}
+                  >
+                    <Plus size={10} /> Add Body Section
+                  </button>
+                  <button
+                    onClick={() => addPanel("info", "sidebar")}
+                    className="text-[10px] px-3 py-2 flex items-center justify-center gap-1 hover:opacity-80"
+                    style={{ color: "#6A9AFF", border: "1px solid #1A3A6B", background: "#09162B" }}
+                  >
+                    <Plus size={10} /> Add Sidebar Box
+                  </button>
+                </div>
+                {selectedPreviewPanel && (
+                  <div className="p-3 space-y-2" style={{ background: "#081125", border: "1px solid #1A2A4B" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accent, fontWeight: 700 }}>
+                        Selected Box
+                      </span>
+                      <button
+                        onClick={() => setSelectedPreviewPanelId(null)}
+                        className="text-[9px] hover:opacity-80"
+                        style={S_DIM}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="text-[12px]" style={{ color: "#C0D0F0", fontWeight: 600 }}>
+                      {selectedPreviewPanel.title || "Untitled section"}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      <span className="text-[9px] px-2 py-0.5" style={{ color: "#6A9AFF", border: "1px solid #1A3A6B", background: "#09162B" }}>
+                        {getWikiPanelPlacement(selectedPreviewPanel) === "sidebar" ? "Sidebar" : "Body"}
+                      </span>
+                      <span className="text-[9px] px-2 py-0.5" style={{ color: "#4AFF6A", border: "1px solid #1A3A1A", background: "#081808" }}>
+                        {getWikiPanelPlacement(selectedPreviewPanel) === "sidebar" ? "Full Width" : getWikiPanelWidth(selectedPreviewPanel) === "half" ? "Half Width" : "Full Width"}
+                      </span>
+                      {selectedPreviewPanel.mediaUrl && (
+                        <span className="text-[9px] px-2 py-0.5" style={{ color: "#FFAA4A", border: "1px solid #3A2A1A", background: "#1A1208" }}>
+                          Image Attached
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setInlinePreviewEditorTarget(selectedPreviewPanel.id);
+                          setActivePanel("preview");
+                        }}
+                        className="text-[10px] px-2 py-1 hover:opacity-80"
+                        style={{ color: "#C0D0F0", border: "1px solid #2A3A5B" }}
+                      >
+                        Edit In Preview
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingPanelId(selectedPreviewPanel.id);
+                          setActivePanel("content");
+                        }}
+                        className="text-[10px] px-2 py-1 hover:opacity-80"
+                        style={{ color: "#6A9AFF", border: "1px solid #1A3A6B" }}
+                      >
+                        Open Full Controls
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {/* Quick edit fields */}
                 <div>
                   <label style={labelStyle}>Title *</label>
@@ -1021,9 +3112,9 @@ export function WikiEditor() {
                 </div>
                 <div>
                   <label style={labelStyle}>Main Body</label>
-                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={200} enableWikiLayouts />
+                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={180} enableWikiLayouts />
                   <div className="mt-1 text-[9px]" style={S_DIM}>
-                    Use bullet or numbered lists, or open Wiki Layouts in the toolbar for spell directories and reference tables.
+                    The same content can also be edited directly in the preview canvas below.
                   </div>
                   <div className="flex gap-1 mt-1">
                     <button onClick={() => { setLinkInsertTarget("body"); setShowLinkDialog(true); }} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}>
@@ -1179,7 +3270,7 @@ export function WikiEditor() {
                         </select>
                         {sc.type === "article" && (
                           <select value={sc.articleId || ""} onChange={(e) => updateSubcategory(sc.id, "articleId", e.target.value)} className="text-[9px] bg-[#0A0A28] px-1 py-0.5 outline-none max-w-[100px]" style={{ color: "#6A9AFF", border: "1px solid #1A2A4B" }}>
-                            <option value="">— Link —</option>
+                            <option value="">- Link -</option>
                             {allPages.filter((p) => p.id !== page.id).map((p) => (
                               <option key={p.id} value={p.id}>{p.title}</option>
                             ))}
@@ -1302,6 +3393,69 @@ export function WikiEditor() {
                             )}
                           </div>
                           {/* Content */}
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                            <div>
+                              <label className="text-[10px] block mb-1" style={S_MUTED}>Placement</label>
+                              <select
+                                value={getWikiPanelPlacement(panel)}
+                                onChange={(e) => updatePanel(panel.id, { placement: e.target.value as WikiPanelPlacement, width: e.target.value === "sidebar" ? "full" : panel.width })}
+                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                                style={inputStyle}
+                              >
+                                <option value="body">Main Article Body</option>
+                                <option value="sidebar">Sidebar Rail</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-[10px] block mb-1" style={S_MUTED}>Width</label>
+                              <select
+                                value={getWikiPanelPlacement(panel) === "sidebar" ? "full" : getWikiPanelWidth(panel)}
+                                onChange={(e) => updatePanel(panel.id, { width: e.target.value as WikiPanelWidth })}
+                                disabled={getWikiPanelPlacement(panel) === "sidebar"}
+                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                                style={{ ...inputStyle, opacity: getWikiPanelPlacement(panel) === "sidebar" ? 0.45 : 1 }}
+                              >
+                                <option value="full">Full Width</option>
+                                <option value="half">Half Width</option>
+                              </select>
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="text-[10px] block mb-1" style={S_MUTED}>Panel Image URL</label>
+                              <input
+                                type="text"
+                                value={panel.mediaUrl || ""}
+                                onChange={(e) => updatePanel(panel.id, { mediaUrl: e.target.value })}
+                                placeholder="https://... image for this panel"
+                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                                style={inputStyle}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] block mb-1" style={S_MUTED}>Image Caption</label>
+                              <input
+                                type="text"
+                                value={panel.mediaCaption || ""}
+                                onChange={(e) => updatePanel(panel.id, { mediaCaption: e.target.value })}
+                                placeholder="Caption..."
+                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                                style={inputStyle}
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] block mb-1" style={S_MUTED}>Image Position</label>
+                              <select
+                                value={getWikiPanelMediaPosition(panel)}
+                                onChange={(e) => updatePanel(panel.id, { mediaPosition: e.target.value as WikiPanelMediaPosition })}
+                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
+                                style={inputStyle}
+                              >
+                                <option value="top">Top</option>
+                                <option value="left">Left</option>
+                                <option value="right">Right</option>
+                              </select>
+                            </div>
+                          </div>
+                          {/* Content */}
                           <div>
                             <label className="text-[10px] block mb-1" style={S_MUTED}>Content</label>
                             <RichTextEditor value={panel.content} onChange={(html) => updatePanel(panel.id, { content: html })} placeholder="Section content..." minHeight={100} enableWikiLayouts />
@@ -1392,9 +3546,14 @@ export function WikiEditor() {
                     </div>
                   );
                 })}
-                <button onClick={() => addPanel()} className={`${retro.button} px-4 py-2 text-[11px] w-full flex items-center justify-center gap-1`} style={S_LINK}>
-                  <Plus size={11} /> Add Section
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => addPanel("blank", "body")} className={`${retro.button} px-4 py-2 text-[11px] w-full flex items-center justify-center gap-1`} style={S_LINK}>
+                    <Plus size={11} /> Add Body Section
+                  </button>
+                  <button onClick={() => addPanel("info", "sidebar")} className={`${retro.button} px-4 py-2 text-[11px] w-full flex items-center justify-center gap-1`} style={{ color: "#6A9AFF" }}>
+                    <Plus size={11} /> Add Sidebar Box
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1517,7 +3676,7 @@ export function WikiEditor() {
                     >
                       <option value="">+ Add wiki tag...</option>
                       {wikiTagDefs.filter((d) => !(page.wikiTags || []).includes(d.name)).map((d) => (
-                        <option key={d.id} value={d.name}>{d.name} — {d.description.slice(0, 50)}</option>
+                        <option key={d.id} value={d.name}>{d.name} - {d.description.slice(0, 50)}</option>
                       ))}
                     </select>
                   ) : (
@@ -1792,9 +3951,9 @@ export function WikiEditor() {
                 className="text-[10px] bg-[#0A0A28] px-2 py-1 outline-none cursor-pointer"
                 style={{ color: previewAsPlayerId ? "#FF6ABB" : "#5A6A8A", border: "1px solid #1A2A4B", minWidth: 130 }}
               >
-                <option value="">👁️ DM View (see all)</option>
+                <option value="">DM View (see all)</option>
                 {players.map((p) => (
-                  <option key={p.id} value={p.id}>👤 {p.name} ({p.class} Lv{p.level})</option>
+                  <option key={p.id} value={p.id}>{p.name} ({p.class} Lv{p.level})</option>
                 ))}
               </select>
             </div>
@@ -1994,13 +4153,45 @@ export function WikiEditor() {
                       <div className="py-2">
                         {(page.subcategories || []).map((sc) => (
                           <div key={sc.id} className="flex items-center gap-1.5 px-3 py-1 text-[11px]" style={{ color: sc.type === "folder" ? mutedText : accent }}>
-                            <span style={{ fontSize: 10 }}>{sc.type === "folder" ? "📁" : "📄"}</span>
+                            <span style={{ fontSize: 10 }}>{sc.type === "folder" ? "[Folder]" : "[Article]"}</span>
                             <span>{sc.name || (sc.type === "folder" ? "Unnamed" : "Unlinked")}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
+
+                  <div
+                    className="mb-4 rounded-[6px] px-3 py-3"
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={handlePreviewRegionDrop("sidebar")}
+                    style={{ background: "#081125", border: "1px dashed #1A3A5B" }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#6A9AFF", fontWeight: 700 }}>
+                        Sidebar Layout Rail
+                      </span>
+                      <button
+                        onClick={() => addPanel("info", "sidebar")}
+                        className="text-[9px] px-2 py-1 hover:opacity-80"
+                        style={{ color: "#6A9AFF", border: "1px solid #1A3A6B" }}
+                      >
+                        <Plus size={8} className="inline mr-1" /> Add Box
+                      </button>
+                    </div>
+                    <div className="text-[10px] leading-relaxed" style={S_DIM}>
+                      Drag any section into this rail to turn it into a sidebar box. Sidebar boxes keep the same text, image, and spoiler settings.
+                    </div>
+                  </div>
+
+                  {sidebarPanels.map((panel) => (
+                    <div key={`sidebar-preview-${panel.id}`} className="mb-4">
+                      {renderPreviewPanelCard(panel, "sidebar")}
+                    </div>
+                  ))}
                 </div>
 
                 {/* Main article body */}
@@ -2042,8 +4233,133 @@ export function WikiEditor() {
                     />
                   </div>
 
+                  <div className="mb-5 px-3 py-3 rounded-[6px]" style={{ background: "#081125", border: "1px solid #1A2A4B" }}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accent, fontWeight: 700 }}>
+                        Live Article Canvas
+                      </span>
+                      <button
+                        onClick={() => addPanel("blank", "body")}
+                        className="text-[9px] px-2 py-1 hover:opacity-80"
+                        style={{ color: "#C0D0F0", border: "1px solid #2A3A5B" }}
+                      >
+                        <Plus size={8} className="inline mr-1" /> Add Body Section
+                      </button>
+                    </div>
+                    <div className="text-[10px] leading-relaxed" style={S_DIM}>
+                      Click into the main text to edit it directly, drag article boxes to rearrange them, and drop sections into the sidebar rail when they should behave like infobox-style modules.
+                    </div>
+                  </div>
+
+                  <div
+                    id="article-body"
+                    className="mb-6 rounded-[6px] overflow-hidden"
+                    onClick={() => setInlinePreviewEditorTarget("body")}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={handlePreviewRegionDrop("body")}
+                    style={{ border: `1px solid ${inlinePreviewEditorTarget === "body" ? accent : borderColor}`, background: "rgba(8, 10, 34, 0.55)" }}
+                  >
+                    <div className="px-4 py-2 flex items-center justify-between gap-2 border-b" style={{ borderBottomColor: borderColor, background: darken(hdr, 10) }}>
+                      <div>
+                        <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accent, fontWeight: 700 }}>
+                          Main Text Flow
+                        </span>
+                        <div className="text-[10px] mt-1" style={S_DIM}>
+                          Use this for the article narrative, reference copy, inline links, and longer formatted sections.
+                        </div>
+                      </div>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setInlinePreviewEditorTarget(inlinePreviewEditorTarget === "body" ? null : "body");
+                        }}
+                        className="text-[9px] px-2 py-1 hover:opacity-80"
+                        style={{ color: "#C0D0F0", border: "1px solid #2A3A5B" }}
+                      >
+                        {inlinePreviewEditorTarget === "body" ? "Hide Editor" : "Edit Body"}
+                      </button>
+                    </div>
+                    <div className="px-4 py-4">
+                      {(page.bodyTitle || page.bodySubtitle || inlinePreviewEditorTarget === "body") && (
+                        <div className="mb-3 pb-2" style={{ borderBottom: page.showDividers ? `1px solid ${borderColor}` : "none" }}>
+                          <InlineEdit
+                            value={page.bodyTitle}
+                            onChange={(value) => update("bodyTitle", value)}
+                            placeholder="Overview, Introduction..."
+                            tag="h2"
+                            style={{ color: accent, fontWeight: 600, fontFamily: font, fontSize: 18 }}
+                          />
+                          <InlineEdit
+                            value={page.bodySubtitle}
+                            onChange={(value) => update("bodySubtitle", value)}
+                            placeholder="Optional subheading..."
+                            tag="p"
+                            style={{ color: mutedText, fontFamily: font, fontSize: 12, fontStyle: "italic", marginTop: 4 }}
+                          />
+                        </div>
+                      )}
+                      {inlinePreviewEditorTarget === "body" ? (
+                        <div className="space-y-2">
+                          <RichTextEditor
+                            value={page.body}
+                            onChange={(html) => update("body", html)}
+                            placeholder="Write the main article content..."
+                            minHeight={220}
+                            enableWikiLayouts
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setInlinePreviewEditorTarget(null);
+                              }}
+                              className="text-[10px] px-2 py-1 hover:opacity-80"
+                              style={{ color: "#4AFF6A", border: "1px solid #1A3A1A" }}
+                            >
+                              Done Editing
+                            </button>
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setLinkInsertTarget("body");
+                                setShowLinkDialog(true);
+                              }}
+                              className="text-[10px] px-2 py-1 hover:opacity-80"
+                              style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}
+                            >
+                              Insert Wiki Link
+                            </button>
+                          </div>
+                        </div>
+                      ) : hasBody ? (
+                        <RenderFormattedText text={bodyParagraphs} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
+                      ) : (
+                        <button
+                          onClick={() => setInlinePreviewEditorTarget("body")}
+                          className="w-full text-left px-3 py-4 text-[11px] hover:opacity-90"
+                          style={{ color: mutedText, border: `1px dashed ${borderColor}`, background: "rgba(10, 10, 40, 0.35)" }}
+                        >
+                          Add the article's main text here...
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {bodyPanelRows.map((row, rowIdx) => (
+                    <div key={`body-row-${rowIdx}`} className={`mb-6 grid gap-4 ${row.length === 2 ? "md:grid-cols-2" : "grid-cols-1"}`}>
+                      {row.map((panel) => (
+                        <div key={panel.id} id={`panel-${panel.id}`}>
+                          {renderPreviewPanelCard(panel, "body")}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
                   {/* Main body */}
-                  {hasBody && (
+                  {false && hasBody && (
                     <div id="article-body" className="mb-6">
                       {(page.bodyTitle || page.bodySubtitle) && (
                         <div className="mb-3 pb-2" style={{ borderBottom: page.showDividers ? `1px solid ${borderColor}` : "none" }}>
@@ -2060,7 +4376,7 @@ export function WikiEditor() {
                   )}
 
                   {/* ═══ Unified Sections/Panels ═══ */}
-                  {panels.length > 0 && panels.map((panel, idx) => {
+                  {false && panels.length > 0 && panels.map((panel, idx) => {
                     if (!panel.title && !panel.content) return null;
                     const ps = allPanelStyles.find((s) => s.id === panel.style) || allPanelStyles[0];
                     const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
@@ -2251,7 +4567,7 @@ export function WikiEditor() {
                       <span className="text-[10px]" style={{ color: mutedText, fontFamily: font }}>{page.footerText}</span>
                     ) : (
                       <span className="text-[10px]" style={{ color: mutedText }}>
-                        I-Net Wiki &middot; Category: {page.category || "Uncategorized"} &middot; Last updated: {page.dateAdded}
+                        I-Net Wiki | Category: {page.category || "Uncategorized"} | Last updated: {page.dateAdded}
                       </span>
                     )}
                   </div>

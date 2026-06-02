@@ -10,6 +10,24 @@ import {
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { getPageIcon } from "./page-icons";
 import { RenderFormattedText } from "./render-text";
+import {
+  WIKI_BLOCK_COLUMNS,
+  WIKI_BLOCK_LAYOUT_VERSION,
+  compareWikiBlocksForLayout,
+  migrateLegacyArticleToBlocks,
+  normalizeWikiArticleBlocks,
+  type WikiArticleBlock,
+} from "@/lib/wiki-article-blocks";
+import {
+  getWikiPanelMediaPosition,
+  getWikiPanelPlacement,
+  getWikiPanelWidth,
+  groupBodyPanelsIntoRows,
+  normalizeWikiPanels,
+  type WikiPanelMediaPosition,
+  type WikiPanelPlacement,
+  type WikiPanelWidth,
+} from "@/lib/wiki-panel-layout";
 
 interface PageSection {
   id: string;
@@ -62,6 +80,8 @@ interface SitePage {
   references: string[];
   lastEditSummary: string;
   panels?: WikiPanel[];
+  layoutVersion?: number;
+  blocks?: WikiArticleBlock[];
   wikiTags?: string[];
   wikiTagFields?: Record<string, string>;
   playerVisibility?: Record<string, "visible" | "spoiler" | "hidden">;
@@ -76,10 +96,16 @@ interface WikiPanel {
   visibilityMode?: "spoiler" | "hidden";
   collapsed?: boolean;
   style?: string;
+  placement?: WikiPanelPlacement;
+  width?: WikiPanelWidth;
+  mediaUrl?: string;
+  mediaCaption?: string;
+  mediaAlt?: string;
+  mediaPosition?: WikiPanelMediaPosition;
 }
 
 function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
-  const existingPanels = pg.panels || [];
+  const existingPanels = normalizeWikiPanels(pg.panels);
   const legacySections = pg.sections || [];
   if (legacySections.length === 0) return existingPanels;
   const converted: WikiPanel[] = legacySections.map((sec) => ({
@@ -89,6 +115,12 @@ function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
     content: sec.body || "",
     assignedTo: [],
     style: "blank",
+    placement: "body",
+    width: "full",
+    mediaUrl: "",
+    mediaCaption: "",
+    mediaAlt: "",
+    mediaPosition: "top",
   }));
   return [...converted, ...existingPanels];
 }
@@ -231,7 +263,7 @@ export function InetPage() {
               <Search size={12} className="inline mr-1" /> Return to Wiki
             </button>
           </div>
-          <span className="text-[9px] mt-6" style={{ color: "#2A3A5A" }}>I-Net™ Wiki · An Intelli Corporation Product © 2026</span>
+          <span className="text-[9px] mt-6" style={{ color: "#2A3A5A" }}>I-Net Wiki | An Intelli Corporation Product | 2026</span>
         </div>
       </div>
     );
@@ -250,24 +282,350 @@ export function InetPage() {
 
   const bodyParagraphs = (page.body || "").trim();
   const hasBody = bodyParagraphs.length > 0;
-  const hasPanelContent = panels.length > 0 && panels.some((p) => p.title || p.content);
+  const hasPanelContent = panels.length > 0 && panels.some((p) => p.title || p.content || p.mediaUrl);
   const hasContent = hasBody || hasPanelContent;
+  const visiblePanels = panels.filter((panel) => {
+    const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
+    const vMode = panel.visibilityMode || "spoiler";
+    if (hasRestriction && vMode === "hidden" && !isDM && !panel.assignedTo.includes(currentUserId)) {
+      return false;
+    }
+    return true;
+  });
+  const bodyPanels = visiblePanels.filter((panel) => getWikiPanelPlacement(panel) === "body");
+  const sidebarPanels = visiblePanels.filter((panel) => getWikiPanelPlacement(panel) === "sidebar");
+  const bodyPanelRows = groupBodyPanelsIntoRows(bodyPanels);
+  const blocks = normalizeWikiArticleBlocks(page.blocks && page.blocks.length > 0
+    ? (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION ? page.blocks : migrateLegacyArticleToBlocks(page))
+    : migrateLegacyArticleToBlocks(page));
+  const hasBlockLayout = blocks.length > 0 && (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION || (page.blocks && page.blocks.length > 0));
+  const visibleBlocks = blocks
+    .filter((block) => {
+      const hasRestriction = block.visibility.assignedTo.length > 0;
+      if (hasRestriction && block.visibility.mode === "hidden" && !isDM && !block.visibility.assignedTo.includes(currentUserId)) {
+        return false;
+      }
+      return true;
+    })
+    .sort(compareWikiBlocksForLayout);
+  const mobileBlocks = [...visibleBlocks].sort(compareWikiBlocksForLayout);
+  const pageTitleLookup = new Map(pages.map((entry) => [entry.id, entry.title]));
 
   const iconMode = page.pageIcon || "globe";
   const PageIcon = getPageIcon(iconMode === "none" || iconMode === "custom" ? undefined : iconMode);
 
   // Build table of contents (skip hidden panels for non-DM/non-allowed users)
   const tocItems: { id: string; label: string }[] = [];
-  if (hasBody) {
-    tocItems.push({ id: "article-body", label: page.bodyTitle || "Overview" });
+  if (hasBlockLayout) {
+    visibleBlocks.forEach((block) => {
+      const label = block.title || (block.type === "heading" ? "Heading" : "");
+      if (!label) return;
+      tocItems.push({ id: `block-${block.id}`, label });
+    });
+  } else {
+    if (hasBody) {
+      tocItems.push({ id: "article-body", label: page.bodyTitle || "Overview" });
+    }
+    panels.forEach((p) => {
+      if (!p.title) return;
+      const hasRestriction = p.assignedTo && p.assignedTo.length > 0;
+      const vMode = p.visibilityMode || "spoiler";
+      if (hasRestriction && vMode === "hidden" && !isDM && !p.assignedTo.includes(currentUserId)) return;
+      tocItems.push({ id: `panel-${p.id}`, label: p.title });
+    });
   }
-  panels.forEach((p) => {
-    if (!p.title) return;
-    const hasRestriction = p.assignedTo && p.assignedTo.length > 0;
-    const vMode = p.visibilityMode || "spoiler";
-    if (hasRestriction && vMode === "hidden" && !isDM && !p.assignedTo.includes(currentUserId)) return;
-    tocItems.push({ id: `panel-${p.id}`, label: p.title });
-  });
+
+  const renderArticlePanel = (panel: WikiPanel, zone: WikiPanelPlacement) => {
+    if (!panel.title && !panel.content && !panel.mediaUrl) return null;
+    const ps = getPanelStyle(panel.style);
+    const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
+    const vMode = panel.visibilityMode || "spoiler";
+    const isAllowed = !hasRestriction || isDM || panel.assignedTo.includes(currentUserId);
+    if (hasRestriction && vMode === "hidden" && !isAllowed) return null;
+    const isRevealed = revealedPanels.has(panel.id);
+    const showPanelContent = isAllowed || isRevealed;
+    const panelWidth = getWikiPanelWidth(panel);
+    const mediaPosition = getWikiPanelMediaPosition(panel);
+    const mediaFigure = panel.mediaUrl ? (
+      <figure className="m-0 shrink-0" style={{ width: zone === "sidebar" || panelWidth === "half" || mediaPosition === "top" ? "100%" : 260 }}>
+        <img
+          src={panel.mediaUrl}
+          alt={panel.mediaAlt || panel.title || "Panel media"}
+          className="w-full object-cover"
+          style={{ maxHeight: zone === "sidebar" ? 220 : 280, borderRadius: 6, border: `1px solid ${ps.border}`, background: "#050518" }}
+          onError={(event) => {
+            (event.target as HTMLImageElement).style.display = "none";
+          }}
+        />
+        {panel.mediaCaption && (
+          <figcaption className="mt-1 text-[10px] leading-relaxed" style={{ color: mutedText, fontStyle: "italic" }}>
+            {panel.mediaCaption}
+          </figcaption>
+        )}
+      </figure>
+    ) : null;
+
+    const contentBlock = panel.content ? (
+      <RenderFormattedText text={panel.content} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} sectionRevealed={showPanelContent} />
+    ) : (
+      <span className="text-[12px] italic" style={{ color: mutedText }}>
+        This section has no content yet.
+      </span>
+    );
+
+    const contentWithMedia = showPanelContent ? (
+      <div className="space-y-3">
+        {!isAllowed && isRevealed && (
+          <div className="flex items-center gap-2 px-3 py-1.5 text-[10px]" style={{ background: "#1A0A0A", border: "1px solid #3A1A1A", color: "#FF8A6A" }}>
+            <AlertTriangle size={10} />
+            <span>You chose to reveal this section. This content may not be intended for your character.</span>
+          </div>
+        )}
+        {mediaFigure && mediaPosition === "top" && mediaFigure}
+        {mediaFigure && mediaPosition !== "top" && zone === "body" && panelWidth === "full" ? (
+          <div className={`flex flex-col gap-3 ${mediaPosition === "right" ? "md:flex-row-reverse" : "md:flex-row"}`}>
+            {mediaFigure}
+            <div className="min-w-0 flex-1">{contentBlock}</div>
+          </div>
+        ) : (
+          <div className="min-w-0">{contentBlock}</div>
+        )}
+      </div>
+    ) : (
+      <div className="relative overflow-hidden" style={{ minHeight: 120 }}>
+        <div style={{ filter: "blur(8px)", opacity: 0.15, padding: "16px 20px", pointerEvents: "none", userSelect: "none" }}>
+          <div style={{ color: txt, fontFamily: font, fontSize: 13 }}>This content is hidden behind a spoiler or metagame warning...</div>
+        </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: ps.bg === "transparent" ? "linear-gradient(180deg, #0C0C2EEE 0%, #0C0C2EFF 100%)" : `linear-gradient(180deg, ${darken(ps.bg, 5)}EE 0%, ${ps.bg}FF 100%)`, backdropFilter: "blur(4px)" }}>
+          <div className="flex items-center gap-2">
+            <Shield size={20} style={S_RED} />
+            <div>
+              <div className="text-[13px]" style={{ color: "#FF6A6A", fontWeight: 700, fontFamily: font }}>Spoiler / Metagame Warning</div>
+              <div className="text-[11px] mt-0.5" style={{ color: "#8A5A5A", fontFamily: font }}>This section contains information not intended for your character.</div>
+            </div>
+          </div>
+          <button onClick={() => setRevealedPanels((prev) => new Set([...prev, panel.id]))} className="px-5 py-2 text-[12px] flex items-center gap-2 hover:opacity-90" style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600, fontFamily: font }}>
+            <Eye size={12} /> Show Anyway
+          </button>
+        </div>
+      </div>
+    );
+
+    return (
+      <div style={{ border: `1px solid ${ps.border}`, background: ps.bg === "transparent" ? "rgba(8, 10, 34, 0.55)" : ps.bg }}>
+        <div className="px-4 py-2.5 flex flex-col gap-0.5 border-b" style={{ borderBottomColor: ps.border, background: ps.bg === "transparent" ? "transparent" : darken(ps.bg, 5) }}>
+          <div className="flex items-center gap-2">
+            <span className="text-[14px] flex-1" style={{ color: ps.accent, fontWeight: 600, fontFamily: font }}>{panel.title || "Untitled Section"}</span>
+            {hasRestriction && isAllowed && isDM && (
+              <span className="text-[9px] px-2 py-0.5 flex items-center gap-1" style={{ color: vMode === "hidden" ? "#FF6A6A" : "#FF6ABB", background: "#1A0A1A", border: "1px solid #3A1A3B" }}>
+                {vMode === "hidden" ? <EyeOff size={8} /> : <Lock size={8} />} Restricted
+              </span>
+            )}
+          </div>
+          {panel.subtitle && (
+            <span className="text-[11px]" style={{ color: ps.accent, opacity: 0.65, fontFamily: font }}>{panel.subtitle}</span>
+          )}
+        </div>
+        <div className="px-4 py-3">
+          {contentWithMedia}
+        </div>
+      </div>
+    );
+  };
+
+  const renderArticleBlock = (block: WikiArticleBlock, mode: "desktop" | "mobile") => {
+    const hasRestriction = block.visibility.assignedTo.length > 0;
+    const isAllowed = !hasRestriction || isDM || block.visibility.assignedTo.includes(currentUserId);
+    if (hasRestriction && block.visibility.mode === "hidden" && !isAllowed) return null;
+
+    const isRevealed = revealedPanels.has(block.id);
+    const requiresGlobalReveal = block.visibility.mode === "spoiler" && !hasRestriction && !isDM;
+    const showBlockContent = requiresGlobalReveal
+      ? isRevealed
+      : isDM || isAllowed || block.visibility.mode === "visible" || isRevealed;
+    const ps = getPanelStyle(block.style);
+    const accentColor = block.appearance.accentColor || ps.accent || accent;
+    const borderTone = block.appearance.borderColor || ps.border || borderColor;
+    const backgroundTone = block.appearance.backgroundColor || (ps.bg === "transparent" ? "rgba(8, 10, 34, 0.68)" : ps.bg || bg);
+    const blockShellStyle: React.CSSProperties = {
+      border: block.appearance.borderStyle === "none" ? "none" : `1px ${block.appearance.borderStyle === "dashed" ? "dashed" : "solid"} ${borderTone}`,
+      background: backgroundTone,
+      padding: block.type === "divider" || block.type === "spacer"
+        ? 0
+        : block.appearance.padding === "tight"
+          ? 10
+          : block.appearance.padding === "loose"
+            ? 20
+            : 14,
+    };
+
+    const spoilerOverlay = !showBlockContent ? (
+      <div className="relative overflow-hidden rounded-md" style={{ minHeight: 120 }}>
+        <div style={{ filter: "blur(8px)", opacity: 0.15, padding: "16px 20px", pointerEvents: "none", userSelect: "none" }}>
+          <div style={{ color: txt, fontFamily: font, fontSize: 13 }}>This block is hidden behind a spoiler or metagame warning...</div>
+        </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: "linear-gradient(180deg, rgba(12,12,46,0.94) 0%, rgba(12,12,46,1) 100%)", backdropFilter: "blur(4px)" }}>
+          <div className="flex items-center gap-2">
+            <Shield size={18} style={S_RED} />
+            <div>
+              <div className="text-[13px]" style={{ color: "#FF6A6A", fontWeight: 700, fontFamily: font }}>Spoiler / Metagame Warning</div>
+              <div className="text-[11px] mt-0.5" style={{ color: "#8A5A5A", fontFamily: font }}>This block contains information not intended for your character.</div>
+            </div>
+          </div>
+          <button onClick={() => setRevealedPanels((prev) => new Set([...prev, block.id]))} className="px-5 py-2 text-[12px] flex items-center gap-2 hover:opacity-90" style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600, fontFamily: font }}>
+            <Eye size={12} /> Show Anyway
+          </button>
+        </div>
+      </div>
+    ) : null;
+
+    switch (block.type) {
+      case "heading": {
+        const HeadingTag = (`h${block.headingLevel || 2}` as keyof JSX.IntrinsicElements);
+        return (
+          <div style={{ padding: block.appearance.padding === "tight" ? "2px 0" : "10px 0" }}>
+            {React.createElement(HeadingTag, {
+              className: "mb-1",
+              style: { color: accentColor, fontWeight: 700, fontFamily: font, fontSize: block.headingLevel === 1 ? 28 : block.headingLevel === 3 ? 18 : 22 },
+            }, block.title || "Heading")}
+            {block.subtitle && (
+              <p className="text-[12px] italic" style={{ color: mutedText, fontFamily: font }}>{block.subtitle}</p>
+            )}
+          </div>
+        );
+      }
+      case "image":
+        return (
+          <figure style={blockShellStyle}>
+            {block.imageUrl ? (
+              <img
+                src={block.imageUrl}
+                alt={block.imageAlt || block.title || "Article media"}
+                className="w-full"
+                style={{ borderRadius: 6, maxHeight: mode === "mobile" ? 280 : 420, objectFit: block.cropMode === "cover" ? "cover" : "contain", background: "#050518" }}
+              />
+            ) : (
+              <div className="rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ minHeight: 160, borderColor: borderTone, color: mutedText }}>
+                No image provided yet.
+              </div>
+            )}
+            {(block.imageCaption || block.title) && (
+              <figcaption className="mt-2 text-[11px]" style={{ color: mutedText, fontStyle: "italic", fontFamily: font }}>
+                {block.imageCaption || block.title}
+              </figcaption>
+            )}
+          </figure>
+        );
+      case "referenceTable":
+        return (
+          <div style={blockShellStyle}>
+            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px]" style={{ borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {(block.columns || []).map((column, columnIndex) => (
+                      <th key={`${block.id}-head-${columnIndex}`} className="text-left p-2 border-b" style={{ color: accentColor, borderBottomColor: borderTone }}>
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(block.rows || []).map((row) => (
+                    <tr key={row.id}>
+                      {row.cells.map((cell, cellIndex) => (
+                        <td key={`${row.id}-${cellIndex}`} className="p-2 align-top border-b" style={{ color: txt, borderBottomColor: `${borderTone}66` }}>
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      case "keyValueBox":
+        return (
+          <div style={blockShellStyle}>
+            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
+            <div className="space-y-2">
+              {(block.items || []).map((item) => (
+                <div key={item.id} className="grid grid-cols-[minmax(110px,0.9fr)_1fr] gap-2">
+                  <span style={{ color: accentColor, fontWeight: 700 }}>{item.label}</span>
+                  <span style={{ color: txt }}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      case "wikiLinksList":
+        return (
+          <div style={blockShellStyle}>
+            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
+            <div className="space-y-1">
+              {(block.articleIds || []).map((articleId) => (
+                <button
+                  key={articleId}
+                  onClick={() => navigate(`/interface/inet-page/${articleId}`)}
+                  className="block w-full text-left px-2 py-1 rounded-md hover:opacity-85"
+                  style={{ color: accent, background: "rgba(255,255,255,0.03)", border: `1px solid ${borderTone}77` }}
+                >
+                  {pageTitleLookup.get(articleId) || articleId}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      case "divider":
+        return (
+          <div className="py-2">
+            <div style={{ height: 1, background: `linear-gradient(90deg, ${borderTone}, ${accentColor}66, ${borderTone})` }} />
+            {block.dividerLabel && <div className="text-[10px] mt-2 text-center uppercase tracking-[0.18em]" style={{ color: mutedText }}>{block.dividerLabel}</div>}
+          </div>
+        );
+      case "spacer":
+        return <div style={{ height: Math.max(1, block.spacerHeight || 1) * 12 }} />;
+      case "calloutPanel":
+      case "spoilerBlock": {
+        return (
+          <div style={blockShellStyle}>
+            {(block.title || block.subtitle) && (
+              <div className="mb-3">
+                {block.title && <h3 className="text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
+                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>{block.subtitle}</p>}
+              </div>
+            )}
+            {!showBlockContent ? spoilerOverlay : (
+              <div className="space-y-3">
+                {!isAllowed && isRevealed && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 text-[10px]" style={{ background: "#1A0A0A", border: "1px solid #3A1A1A", color: "#FF8A6A" }}>
+                    <AlertTriangle size={10} />
+                    <span>You chose to reveal this block. This content may not be intended for your character.</span>
+                  </div>
+                )}
+                <RenderFormattedText text={block.html || ""} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} sectionRevealed={showBlockContent} />
+              </div>
+            )}
+          </div>
+        );
+      }
+      case "richText":
+      default:
+        return (
+          <div style={blockShellStyle}>
+            {(block.title || block.subtitle) && (
+              <div className="mb-3">
+                {block.title && <h3 className="text-[18px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
+                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>{block.subtitle}</p>}
+              </div>
+            )}
+            <RenderFormattedText text={block.html || ""} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
+          </div>
+        );
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: darken(bg, 15), fontFamily: font }}>
@@ -365,7 +723,7 @@ export function InetPage() {
         <div className="px-4 py-2 flex items-center justify-center gap-2" style={{ background: "#2A1A00", borderBottom: "2px solid #5A3A00" }}>
           <AlertTriangle size={14} style={S_WARN} />
           <span className="text-[12px] tracking-wider" style={{ color: "#FFCC44", fontWeight: 600, fontFamily: font }}>
-            THIS ARTICLE IS A STUB — HELP EXPAND IT!
+            THIS ARTICLE IS A STUB - HELP EXPAND IT!
           </span>
           <AlertTriangle size={14} style={S_WARN} />
         </div>
@@ -674,6 +1032,12 @@ export function InetPage() {
                 );
               })()}
 
+              {!hasBlockLayout && sidebarPanels.map((panel) => (
+                <div key={`sidebar-panel-${panel.id}`} className="mb-4" id={`panel-${panel.id}`}>
+                  {renderArticlePanel(panel, "sidebar")}
+                </div>
+              ))}
+
             </div>
 
             {/* Main article body */}
@@ -705,29 +1069,68 @@ export function InetPage() {
                 )}
               </div>
 
-              {/* Main Body */}
-              {hasBody && (
-                <div id="article-body" className="mb-6">
-                  {(page.bodyTitle || page.bodySubtitle) && (
-                    <div className="mb-3 pb-2" style={{ borderBottom: showDividers ? `1px solid ${borderColor}` : "none" }}>
-                      {page.bodyTitle && (
-                        <h2 className="text-[18px]" style={{ color: accent, fontWeight: 600, fontFamily: font }}>
-                          {page.bodyTitle}
-                        </h2>
+              {hasBlockLayout ? (
+                <>
+                  <div className="hidden md:grid gap-4 mb-6" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, gridAutoRows: "minmax(30px, auto)" }}>
+                    {visibleBlocks.map((block) => (
+                      <div
+                        key={block.id}
+                        id={`block-${block.id}`}
+                        style={{
+                          gridColumn: `${block.layout.colStart} / span ${block.layout.colSpan}`,
+                          gridRow: `${block.layout.rowStart} / span ${block.layout.rowSpan}`,
+                          minHeight: block.layout.rowSpan * 28,
+                        }}
+                      >
+                        {renderArticleBlock(block, "desktop")}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="md:hidden space-y-4 mb-6">
+                    {mobileBlocks.map((block) => (
+                      <div key={`mobile-${block.id}`} id={`block-${block.id}`}>
+                        {renderArticleBlock(block, "mobile")}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Main Body */}
+                  {hasBody && (
+                    <div id="article-body" className="mb-6">
+                      {(page.bodyTitle || page.bodySubtitle) && (
+                        <div className="mb-3 pb-2" style={{ borderBottom: showDividers ? `1px solid ${borderColor}` : "none" }}>
+                          {page.bodyTitle && (
+                            <h2 className="text-[18px]" style={{ color: accent, fontWeight: 600, fontFamily: font }}>
+                              {page.bodyTitle}
+                            </h2>
+                          )}
+                          {page.bodySubtitle && (
+                            <p className="text-[12px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>
+                              {page.bodySubtitle}
+                            </p>
+                          )}
+                        </div>
                       )}
-                      {page.bodySubtitle && (
-                        <p className="text-[12px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>
-                          {page.bodySubtitle}
-                        </p>
-                      )}
+                      <RenderFormattedText text={bodyParagraphs} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
                     </div>
                   )}
-                  <RenderFormattedText text={bodyParagraphs} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
-                </div>
+
+                  {bodyPanelRows.map((row, rowIdx) => (
+                    <div key={`body-row-${rowIdx}`} className={`mb-6 grid gap-4 ${row.length === 2 ? "md:grid-cols-2" : "grid-cols-1"}`}>
+                      {row.map((panel) => (
+                        <div key={panel.id} id={`panel-${panel.id}`}>
+                          {renderArticlePanel(panel, "body")}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </>
               )}
 
               {/* ═══ Unified Sections/Panels ═══ */}
-              {panels.map((panel, idx) => {
+              {false && panels.map((panel, idx) => {
                 if (!panel.title && !panel.content) return null;
                 const ps = getPanelStyle(panel.style);
                 const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
@@ -886,7 +1289,7 @@ export function InetPage() {
                             {sa.title}
                           </button>
                           {sa.description && (
-                            <span style={{ color: mutedText }}> — {sa.description.length > 60 ? sa.description.slice(0, 60) + "..." : sa.description}</span>
+                            <span style={{ color: mutedText }}> - {sa.description.length > 60 ? sa.description.slice(0, 60) + "..." : sa.description}</span>
                           )}
                         </li>
                       ))}
@@ -950,12 +1353,12 @@ export function InetPage() {
               <span className="text-[10px]" style={{ color: mutedText, fontFamily: font }}>{page.footerText}</span>
             ) : (
               <span className="text-[10px]" style={{ color: mutedText }}>
-                This article is part of the I-Net™ Wiki · Category: {page.category} · Last updated: {page.dateAdded}
+                This article is part of the I-Net Wiki | Category: {page.category} | Last updated: {page.dateAdded}
               </span>
             )}
             <br />
             <span className="text-[9px]" style={{ color: darken(mutedText, 20) }}>
-              I-Net™ Wiki · An Intelli Corporation Product © 2026
+              I-Net Wiki | An Intelli Corporation Product | 2026
             </span>
           </div>
         </div>

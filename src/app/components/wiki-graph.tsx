@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_MUTED, S_SUBTLE } from "./shared-styles";
+import { collectWikiBlockHtmlStrings, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
 
 // ═══════════════════════════════════════════
 // Types
@@ -23,6 +24,8 @@ interface SitePage {
   body: string;
   sections: { id: string; heading: string; body: string }[];
   panels?: { id: string; title: string; content: string; assignedTo: string[]; style?: string }[];
+  layoutVersion?: number;
+  blocks?: WikiArticleBlock[];
   wikiTags?: string[];
 }
 
@@ -109,6 +112,7 @@ function extractAllWikiLinks(page: SitePage, titleToId: Map<string, string>): st
   const texts = [
     page.body || "",
     ...allPanels.map((p) => p.content || ""),
+    ...collectWikiBlockHtmlStrings(page.blocks || []),
   ];
   for (const text of texts) {
     extractWikiLinks(text).forEach((id) => ids.add(id));

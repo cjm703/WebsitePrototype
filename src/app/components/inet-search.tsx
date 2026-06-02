@@ -12,6 +12,7 @@ import {
 import gnarpyImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { SUNKEN_INPUT, S_MUTED, S_DIM, S_ACCENT, S_TEXT, S_SUBTLE, S_LINK, S_ACCENT_HDR, S_TEXT_BOLD, S_WARN_HDR, S_WARN, S_LABEL, S_GREEN_BTN } from "./shared-styles";
+import { getWikiBlockSearchText, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
 
 // ========================
 // Types
@@ -47,6 +48,8 @@ interface SitePage {
   references?: string[];
   lastEditSummary?: string;
   subtitle?: string;
+  layoutVersion?: number;
+  blocks?: WikiArticleBlock[];
   underConstruction?: boolean;
   pageIcon?: string;
   pageIconUrl?: string;
@@ -236,7 +239,8 @@ export function InetSearch() {
   const didYouKnow = useMemo(() => {
     const shuffled = [...allPages].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, 3).map((p) => {
-      const plainBody = stripHtml(p.body || "");
+      const blockText = (p.blocks || []).map((block) => getWikiBlockSearchText(block)).join(" ");
+      const plainBody = stripHtml([p.body || "", blockText].filter(Boolean).join(" "));
       const excerpt = plainBody.length > 100 ? plainBody.slice(0, 100) + "..." : plainBody;
       return { page: p, excerpt };
     });
@@ -248,7 +252,7 @@ export function InetSearch() {
     const featured = allPages.filter(p => p.articleQuality === "featured").length;
     const good = allPages.filter(p => p.articleQuality === "good").length;
     const stubs = allPages.filter(p => p.articleQuality === "stub" || p.underConstruction).length;
-    const withContent = allPages.filter(p => p.body || (p.sections && p.sections.length > 0)).length;
+    const withContent = allPages.filter(p => p.body || (p.sections && p.sections.length > 0) || (p.blocks && p.blocks.length > 0)).length;
     return { total, featured, good, stubs, withContent };
   }, [allPages]);
 
@@ -281,12 +285,15 @@ export function InetSearch() {
       results = [...allResults];
     } else {
       results = allResults.filter((r) => {
+        const page = allPages.find((entry) => entry.id === r.pageId);
+        const blockText = page ? (page.blocks || []).map((block) => getWikiBlockSearchText(block)).join(" ").toLowerCase() : "";
         return (
           r.title.toLowerCase().includes(q) ||
           r.description.toLowerCase().includes(q) ||
           r.category.toLowerCase().includes(q) ||
           r.tags.some((t) => t.toLowerCase().includes(q)) ||
-          r.meta.toLowerCase().includes(q)
+          r.meta.toLowerCase().includes(q) ||
+          blockText.includes(q)
         );
       });
     }
@@ -1067,7 +1074,7 @@ export function InetSearch() {
                     {featuredArticle.body && (
                       <p className="text-[12px] leading-relaxed" style={S_MUTED}>
                         {(() => {
-                          const plain = stripHtml(featuredArticle.body);
+                      const plain = stripHtml([featuredArticle.body || "", ...(featuredArticle.blocks || []).map((block) => getWikiBlockSearchText(block))].join(" "));
                           return plain.length > 200 ? plain.slice(0, 200) + "..." : plain;
                         })()}
                       </p>
