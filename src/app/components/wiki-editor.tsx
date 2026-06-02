@@ -2265,7 +2265,7 @@ export function WikiEditor() {
 
             <div className="flex-1 overflow-y-auto px-5 py-5">
               <div className="mx-auto max-w-[1220px] rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ background: hdr, borderColor }}>
-                <div className="border-b px-6 py-5" style={{ borderBottomColor }}>
+                <div className="border-b px-6 py-5" style={{ borderBottomColor: borderColor }}>
                   <InlineEdit
                     tag="h1"
                     value={page.title}
