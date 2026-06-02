@@ -181,6 +181,7 @@ export function createEmptyMagicList(
     order,
     description: "",
     tiers: createEmptyMagicTiers(),
+    learnedCardIds: [],
   };
 }
 
@@ -213,12 +214,18 @@ export function normalizeMagicLists(raw: unknown): PlayerMagicList[] {
           : [];
       }
 
+      const tierCardIds = new Set(MAGIC_TIER_ORDER.flatMap((tier) => tiers[tier] || []));
+      const learnedCardIds = Array.isArray(source.learnedCardIds)
+        ? source.learnedCardIds.filter((entry): entry is string => typeof entry === "string" && tierCardIds.has(entry))
+        : [];
+
       return {
         id,
         name,
         order,
         description,
         tiers,
+        learnedCardIds,
       } satisfies PlayerMagicList;
     })
     .filter(Boolean)
@@ -229,10 +236,25 @@ export function getMagicListCardIds(list: PlayerMagicList) {
   return MAGIC_TIER_ORDER.flatMap((tier) => list.tiers[tier] || []);
 }
 
+export function getMagicListLearnedCardIds(list: PlayerMagicList) {
+  const available = new Set(getMagicListCardIds(list));
+  return (list.learnedCardIds || []).filter((cardId) => available.has(cardId));
+}
+
 export function collectMagicCardIds(lists: PlayerMagicList[]) {
   const ids = new Set<string>();
   for (const list of lists) {
     for (const cardId of getMagicListCardIds(list)) {
+      ids.add(cardId);
+    }
+  }
+  return ids;
+}
+
+export function collectLearnedMagicCardIds(lists: PlayerMagicList[]) {
+  const ids = new Set<string>();
+  for (const list of lists) {
+    for (const cardId of getMagicListLearnedCardIds(list)) {
       ids.add(cardId);
     }
   }

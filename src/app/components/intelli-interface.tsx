@@ -373,7 +373,6 @@ export function IntelliInterface() {
       icon: FileText,
       description: "Character sheet, inventory, and progression tools",
       details: sectionDetails.personalFiles,
-      badge: "Character",
     },
     {
       name: "Commerce",
@@ -381,7 +380,6 @@ export function IntelliInterface() {
       icon: Store,
       description: "Shops, trade, and currency exchange",
       details: `Marketplace for buying and selling goods.`,
-      badge: "Trade",
     },
     {
       name: loadOfficeName(),
@@ -389,7 +387,6 @@ export function IntelliInterface() {
       icon: Building2,
       description: "Company headquarters and operations",
       details: sectionDetails.nexusNomad,
-      badge: "Office",
     },
     {
       name: "Intelli Maps",
@@ -397,7 +394,6 @@ export function IntelliInterface() {
       icon: Map,
       description: "The Inner City - Hexagonal deep city map",
       details: sectionDetails.intelliMaps,
-      badge: "Travel",
     },
     {
       name: "DM Area",
@@ -405,7 +401,6 @@ export function IntelliInterface() {
       icon: ShieldAlert,
       description: "Campaign management tools",
       details: sectionDetails.dmArea,
-      badge: "Admin",
       dmOnly: true,
     },
   ];
@@ -575,20 +570,6 @@ export function IntelliInterface() {
                           <h3 className="text-[18px]" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
                             {section.name}
                           </h3>
-                          {"badge" in section && section.badge ? (
-                            <span
-                              className="text-[9px] px-2 py-0.5"
-                              style={{
-                                color: firstColor(theme.accentColor),
-                                background: `${firstColor(theme.accentColor)}14`,
-                                border: `1px solid ${firstColor(theme.accentColor)}40`,
-                                fontWeight: 700,
-                                letterSpacing: "0.04em",
-                              }}
-                            >
-                              {section.badge}
-                            </span>
-                          ) : null}
                         </div>
                         <p className="text-[13px] mb-2" style={S_SUBTLE}>
                           {normalizeInterfaceText(section.description)}

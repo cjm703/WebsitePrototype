@@ -92,6 +92,7 @@ export interface PlayerMagicList {
   order: number;
   description?: string;
   tiers: Record<MagicTierKey, string[]>;
+  learnedCardIds?: string[];
 }
 
 export interface LevelAbilityEntry {

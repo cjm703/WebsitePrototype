@@ -15,6 +15,7 @@ import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
 import {
+  collectLearnedMagicCardIds,
   collectLevelCardsForCards,
   collectMagicCardIds,
   getLevelCategoryCardIds,
@@ -82,6 +83,18 @@ interface SourceUsageEntry { id: string; cardName: string; sourceType: string; a
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 type CardSourceFilter = "all" | "direct" | "node" | "magic" | "level";
 type CardSourceLabel = "Direct" | "Node" | "Magic" | "Level";
+type CardPrimarySort = "all" | "spell" | "skill" | "ability";
+type CardSecondarySort =
+  | "default"
+  | "level"
+  | "actionType"
+  | "sourceType"
+  | "attack"
+  | "defensive"
+  | "buff"
+  | "debuff"
+  | "healing";
+type CardSortDirection = "asc" | "desc";
 
 const CARD_TRACKER_BUCKET_KEY = "Tracker::Bucket";
 const CARD_TRACKER_NAME_KEY = "Tracker::Effect Name";
@@ -526,10 +539,11 @@ function isPlayerHiddenCustomFieldKey(key: string): boolean {
 
 export function PersonalFiles() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<"character" | "inventory" | "cards" | "information">("character");
+  const [activeTab, setActiveTab] = useState<"character" | "progression" | "inventory" | "cards" | "information">("character");
   const [inventorySubTab, setInventorySubTab] = useState<"equipment" | "consumables" | "general">("equipment");
   const [equipmentSubTab, setEquipmentSubTab] = useState<"equipped" | "effects">("equipped");
-  const [cardsSubTab, setCardsSubTab] = useState<"cards" | "magic" | "nodetrees" | "levelabilities">("cards");
+  const [progressionSubTab, setProgressionSubTab] = useState<"level" | "magic">("level");
+  const [cardsSubTab, setCardsSubTab] = useState<"cards" | "nodetrees">("cards");
   const [playerNodeTrees, setPlayerNodeTrees] = useState<NodeTree[]>([]);
   const currentUser = safeGetItem("inet-user") || "";
   const currentUserId = safeGetItem("inet-user-id") || "";
@@ -853,8 +867,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     return ids;
   }, [playerAssignedNodeTrees]);
 
-  const magicCardIds = useMemo(
+  const allMagicCardIds = useMemo(
     () => collectMagicCardIds(normalizedMagicLists),
+    [normalizedMagicLists],
+  );
+
+  const learnedMagicCardIds = useMemo(
+    () => collectLearnedMagicCardIds(normalizedMagicLists),
     [normalizedMagicLists],
   );
 
@@ -875,16 +894,33 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     for (const card of directPlayerCards) addSource(card.id, "Direct");
     for (const cardId of nodeGrantedCardIds) addSource(cardId, "Node");
-    for (const cardId of magicCardIds) addSource(cardId, "Magic");
+    for (const cardId of learnedMagicCardIds) addSource(cardId, "Magic");
     for (const cardId of levelCardsForCards) addSource(cardId, "Level");
 
     return next;
-  }, [allCardsById, directPlayerCards, nodeGrantedCardIds, magicCardIds, levelCardsForCards]);
+  }, [allCardsById, directPlayerCards, nodeGrantedCardIds, learnedMagicCardIds, levelCardsForCards]);
 
   const playerCards = useMemo(
     () => allCards.filter((card) => cardSourceMap.has(card.id)),
     [allCards, cardSourceMap],
   );
+
+  const totalCardCount = useMemo(() => {
+    const stats = player?.stats ?? { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 };
+    const totalMods =
+      statModNum(stats.STR) +
+      statModNum(stats.AGI) +
+      statModNum(stats.CON) +
+      statModNum(stats.KNOW) +
+      statModNum(stats.WIS) +
+      statModNum(stats.WILL);
+    const level = Math.max(1, player?.level ?? 1);
+    return Math.max(0, Math.floor((level * totalMods) / 2));
+  }, [player?.level, player?.stats]);
+
+  const currentCardCount = playerCards.length;
+
+  const totalLearnedMagicCount = learnedMagicCardIds.size;
 
   // ========================
   // Editable HP & Wounds — write back to inet-dm-players
@@ -960,7 +996,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   // ========================
   // Character sub-tab (Resources vs Status Effects)
   // ========================
-  const [charSubTab, setCharSubTab] = useState<"sheet" | "level" | "status" | "source">("sheet");
+  const [charSubTab, setCharSubTab] = useState<"sheet" | "status" | "source">("sheet");
   const [buffTooltipKey, setBuffTooltipKey] = useState<string | null>(null);
 
   // ========================
@@ -1164,8 +1200,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [selectedCard, setSelectedCard] = useState<ManagedCard | null>(null);
   const [cardTreeFilter, setCardTreeFilter] = useState<string | null>(null);
   const [cardNodeFilter, setCardNodeFilter] = useState<string | null>(null);
-  const [cardSortBy, setCardSortBy] = useState<"default" | "level" | "actionType" | "sourceType">("default");
+  const [cardPrimarySort, setCardPrimarySort] = useState<CardPrimarySort>("all");
+  const [cardSecondarySort, setCardSecondarySort] = useState<CardSecondarySort>("default");
+  const [cardSortDirection, setCardSortDirection] = useState<CardSortDirection>("asc");
   const [cardSourceFilter, setCardSourceFilter] = useState<CardSourceFilter>("all");
+  const [cardTagSearch, setCardTagSearch] = useState("");
 
   const [magicSearch, setMagicSearch] = useState("");
   const [magicActiveTags, setMagicActiveTags] = useState<string[]>([]);
@@ -1216,7 +1255,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const allInvTags = useMemo(() => getAllTags(playerItems), [playerItems]);
   const allCardTags = useMemo(() => getAllTags(playerCards), [playerCards]);
-  const allMagicTags = useMemo(() => getAllTags(playerCards.filter((card) => magicCardIds.has(card.id))), [playerCards, magicCardIds]);
+  const allMagicTags = useMemo(
+    () => getAllTags(allCards.filter((card) => allMagicCardIds.has(card.id))),
+    [allCards, allMagicCardIds],
+  );
 
   useEffect(() => {
     if (normalizedMagicLists.length === 0) {
@@ -1233,9 +1275,109 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     [normalizedMagicLists, selectedMagicListId],
   );
 
+  const selectedMagicListCardCount = useMemo(
+    () => selectedMagicList ? MAGIC_TIER_ORDER.reduce((sum, tier) => sum + (selectedMagicList.tiers[tier]?.length || 0), 0) : 0,
+    [selectedMagicList],
+  );
+
+  const nodeTreeCardCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const tree of playerAssignedNodeTrees) {
+      for (const node of tree.nodes) {
+        for (const cardId of node.cardIds) {
+          if (allCardsById.has(cardId)) ids.add(cardId);
+        }
+      }
+    }
+    return ids.size;
+  }, [allCardsById, playerAssignedNodeTrees]);
+
   const getCardSourceLabels = useCallback((cardId: string) => {
     return Array.from(cardSourceMap.get(cardId) || []);
   }, [cardSourceMap]);
+
+  const getCardPrimaryFamily = useCallback((card: ManagedCard): CardPrimarySort => {
+    const family = String(card.customFields["Card Family"] || "").trim().toLowerCase();
+    if (family === "spell" || family === "skill" || family === "ability") {
+      return family as CardPrimarySort;
+    }
+
+    const sourceType = String(card.customFields["Source Type"] || "").trim().toLowerCase();
+    const type = String(card.type || "").trim().toLowerCase();
+    const text = `${card.name} ${card.effect} ${card.tags.join(" ")}`.toLowerCase();
+
+    if (/spell|cantrip|ritual/.test(sourceType) || /spell|cantrip|ritual/.test(type)) return "spell";
+    if (/skill|technique|maneuver/.test(sourceType) || /skill|technique|maneuver/.test(type)) return "skill";
+    if (/ability|passive|talent|feat/.test(sourceType) || /ability|passive|talent|feat/.test(type) || /passive|innate/.test(text)) return "ability";
+    return "ability";
+  }, []);
+
+  const matchesCardSecondaryCategory = useCallback((card: ManagedCard, category: CardSecondarySort) => {
+    if (category === "default" || category === "level" || category === "actionType" || category === "sourceType") {
+      return true;
+    }
+
+    const sourceType = String(card.customFields["Source Type"] || "").trim().toLowerCase();
+    const type = String(card.type || "").trim().toLowerCase();
+    const action = String(card.actionCost || "").trim().toLowerCase();
+    const tagsBlob = card.tags.join(" ").toLowerCase();
+    const effectBlob = card.effect.replace(/<[^>]*>/g, " ").toLowerCase();
+    const blob = `${card.name} ${type} ${sourceType} ${action} ${tagsBlob} ${effectBlob}`;
+
+    switch (category) {
+      case "attack":
+        return /attack|strike|damage|weapon|offense|offensive|projectile/.test(blob);
+      case "defensive":
+        return /defen|shield|guard|ward|barrier|resist|armor|protect/.test(blob);
+      case "buff":
+        return /buff|boost|increase|bonus|enhance|augment|empower/.test(blob);
+      case "debuff":
+        return /debuff|weaken|slow|stun|poison|bleed|burn|curse|reduce|penalty/.test(blob);
+      case "healing":
+        return /heal|healing|restore|recovery|recover|regain/.test(blob);
+      default:
+        return true;
+    }
+  }, []);
+
+  const additionalCardTagSuggestions = useMemo(() => {
+    const query = cardTagSearch.trim().toLowerCase();
+    return allCardTags
+      .filter((tag) => !cardActiveTags.includes(tag))
+      .filter((tag) => query === "" || getDisplayCardTagName(tag).toLowerCase().includes(query))
+      .slice(0, 16);
+  }, [allCardTags, cardActiveTags, cardTagSearch]);
+
+  const addCardTagFilter = useCallback((tag: string) => {
+    if (!cardActiveTags.includes(tag)) {
+      setCardActiveTags((prev) => [...prev, tag]);
+    }
+    setCardTagSearch("");
+  }, [cardActiveTags]);
+
+  const toggleLearnedMagicCard = useCallback((listId: string, cardId: string) => {
+    setMagicLists((prev) =>
+      normalizeMagicLists(
+        prev.map((list) => {
+          if (list.id !== listId) return list;
+          const learned = new Set(list.learnedCardIds || []);
+          if (learned.has(cardId)) learned.delete(cardId);
+          else learned.add(cardId);
+          return { ...list, learnedCardIds: Array.from(learned) };
+        }),
+      ),
+    );
+  }, []);
+
+  const getMagicListLearnedCount = useCallback((list: PlayerMagicList) => {
+    const available = new Set(MAGIC_TIER_ORDER.flatMap((tier) => list.tiers[tier] || []));
+    return (list.learnedCardIds || []).filter((cardId) => available.has(cardId)).length;
+  }, []);
+
+  const selectedMagicListLearnedCount = useMemo(
+    () => selectedMagicList ? getMagicListLearnedCount(selectedMagicList) : 0,
+    [getMagicListLearnedCount, selectedMagicList],
+  );
 
   const filteredItems = useMemo(() => {
     return playerItems.filter((item) => {
@@ -1631,24 +1773,54 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         card.tags.some((t) => t.toLowerCase().includes(cardSearch.toLowerCase()));
       const matchesTags =
         cardActiveTags.length === 0 || cardActiveTags.every((t) => card.tags.includes(t));
+      const matchesPrimary =
+        cardPrimarySort === "all" || getCardPrimaryFamily(card) === cardPrimarySort;
       const sourceLabels = getCardSourceLabels(card.id);
       const matchesSource =
         cardSourceFilter === "all" ||
         sourceLabels.some((source) => source.toLowerCase() === cardSourceFilter);
       const matchesTree = !cardTreeFilter || card.nodeTreeId === cardTreeFilter;
       const matchesNode = !cardNodeFilter || card.nodeId === cardNodeFilter;
-      return matchesSearch && matchesTags && matchesSource && matchesTree && matchesNode;
+      const matchesSecondaryCategory = matchesCardSecondaryCategory(card, cardSecondarySort);
+      return matchesSearch && matchesTags && matchesPrimary && matchesSource && matchesTree && matchesNode && matchesSecondaryCategory;
     }).sort((a, b) => {
-      if (cardSortBy === "level") {
+      const sortDirection = cardSortDirection === "asc" ? 1 : -1;
+      if (cardSecondarySort === "level") {
         const aLvl = parseInt(a.customFields["Level"] || "0") || 0;
         const bLvl = parseInt(b.customFields["Level"] || "0") || 0;
-        return aLvl - bLvl;
+        if (aLvl !== bLvl) return (aLvl - bLvl) * sortDirection;
       }
-      if (cardSortBy === "actionType") return (a.actionCost || "").localeCompare(b.actionCost || "");
-      if (cardSortBy === "sourceType") return (a.customFields["Source Type"] || a.type || "").localeCompare(b.customFields["Source Type"] || b.type || "");
-      return 0;
+      if (cardSecondarySort === "actionType") {
+        const actionCompare = (a.actionCost || "").localeCompare(b.actionCost || "", undefined, { sensitivity: "base" });
+        if (actionCompare !== 0) return actionCompare * sortDirection;
+      }
+      if (cardSecondarySort === "sourceType") {
+        const sourceCompare = (a.customFields["Source Type"] || a.type || "").localeCompare(
+          b.customFields["Source Type"] || b.type || "",
+          undefined,
+          { sensitivity: "base" },
+        );
+        if (sourceCompare !== 0) return sourceCompare * sortDirection;
+      }
+
+      const nameCompare = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      if (nameCompare !== 0) return nameCompare * sortDirection;
+      return (a.id.localeCompare(b.id) || 0) * sortDirection;
     });
-  }, [cardSearch, cardActiveTags, playerCards, cardTreeFilter, cardNodeFilter, cardSortBy, cardSourceFilter, getCardSourceLabels]);
+  }, [
+    cardActiveTags,
+    cardNodeFilter,
+    cardPrimarySort,
+    cardSearch,
+    cardSecondarySort,
+    cardSortDirection,
+    cardSourceFilter,
+    cardTreeFilter,
+    getCardPrimaryFamily,
+    getCardSourceLabels,
+    matchesCardSecondaryCategory,
+    playerCards,
+  ]);
 
   const filteredMagicCardsByTier = useMemo(() => {
     if (!selectedMagicList) return {} as Record<MagicTierKey, ManagedCard[]>;
@@ -1682,6 +1854,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const tabs = [
     { id: "character" as const, label: "Character", icon: User },
+    { id: "progression" as const, label: "Progression", icon: Crown },
     { id: "inventory" as const, label: "Inventory", icon: Package },
     { id: "cards" as const, label: "Cards", icon: CreditCard },
     { id: "information" as const, label: "Information", icon: Info },
@@ -1696,12 +1869,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             accent: "#5A9AFF",
             text: "Core stats, current resources, equipped load, and the main character snapshot.",
           };
-        case "level":
-          return {
-            label: "Level Progression",
-            accent: "#FFD700",
-            text: "Race traits, level rewards, and progression cards are grouped here in the order they were earned.",
-          };
         case "status":
           return {
             label: "Active Effects",
@@ -1713,6 +1880,23 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             label: "Source Tracking",
             accent: "#C4A0FF",
             text: "Watch source gain and spend activity without mixing it into inventory management.",
+          };
+      }
+    }
+
+    if (activeTab === "progression") {
+      switch (progressionSubTab) {
+        case "level":
+          return {
+            label: "Level Progression",
+            accent: "#FFD700",
+            text: "Race traits, level rewards, and progression cards are grouped in a vertical history of what this character gained.",
+          };
+        case "magic":
+          return {
+            label: "Magic Lists",
+            accent: "#8AB8FF",
+            text: "Browse large spell lists by school or source, and mark spells as learned before they enter the main card loadout.",
           };
       }
     }
@@ -1748,13 +1932,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           return {
             label: "Ability Cards",
             accent: "#FF7A5A",
-            text: "Direct cards, node rewards, and any level rewards that are meant to appear in the main card list.",
-          };
-        case "magic":
-          return {
-            label: "Magic Lists",
-            accent: "#8AB8FF",
-            text: "Spell-style lists organized by magic type and tier, separate from the broader card index.",
+            text: "Direct cards, learned magic, node rewards, and any level rewards that are meant to appear in the main card list.",
           };
         case "nodetrees":
           return {
@@ -2988,6 +3166,31 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     </div>
   );
 
+  const renderCardCountStrip = (current: number, total: number, accent: string, note?: string) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mb-4">
+      {[
+        { label: "Current Card Count", value: `${current}` },
+        { label: "Total Card Count", value: `${total}` },
+        note ? { label: "Card Capacity Status", value: note } : null,
+      ]
+        .filter(Boolean)
+        .map((stat) => (
+          <div
+            key={(stat as { label: string }).label}
+            className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3`}
+            style={{ borderLeft: `3px solid ${accent}66` }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>
+              {(stat as { label: string }).label}
+            </div>
+            <div className="text-[13px] break-words" style={{ color: theme.textColor, fontWeight: 600 }}>
+              {(stat as { value: string }).value}
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+
   // ========================
   // Render
   // ========================
@@ -3131,7 +3334,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             <div className="flex flex-wrap items-center gap-1.5 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
               {([
                 { id: "sheet" as const, label: "Character Sheet", icon: User, accent: "#5A9AFF" },
-                { id: "level" as const, label: "Level", icon: Crown, accent: "#FFD700" },
                 { id: "status" as const, label: "Status Effect Tracker", icon: Zap, accent: "#AA77FF" },
                 { id: "source" as const, label: "Source Tracker", icon: Flame, accent: "#C4A0FF" },
               ]).map((sub) => {
@@ -3141,6 +3343,39 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   <button
                     key={sub.id}
                     onClick={() => { playTabClick(); setCharSubTab(sub.id); setSelectedItem(null); setViewingQuickItem(null); }}
+                    className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors whitespace-nowrap`}
+                    style={{
+                      background: isActive ? theme.panelBg : theme.cardBg,
+                      color: isActive ? sub.accent : theme.labelColor,
+                      fontWeight: isActive ? 600 : 400,
+                    }}
+                  >
+                    <SubIcon size={12} />
+                    {sub.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Progression sub-tabs */}
+          {activeTab === "progression" && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
+              {([
+                { id: "level" as const, label: "Level", icon: Crown, accent: "#FFD700" },
+                { id: "magic" as const, label: "Magic Lists", icon: Sparkles, accent: "#8AB8FF" },
+              ]).map((sub) => {
+                const isActive = progressionSubTab === sub.id;
+                const SubIcon = sub.icon;
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => {
+                      playTabClick();
+                      setProgressionSubTab(sub.id);
+                      setMagicSelectedCard(null);
+                      setLaSelectedCard(null);
+                    }}
                     className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors whitespace-nowrap`}
                     style={{
                       background: isActive ? theme.panelBg : theme.cardBg,
@@ -3218,7 +3453,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             <div className="flex flex-wrap items-center gap-1.5 mt-2 ml-1 pl-4" style={{ borderLeft: `2px solid ${firstColor(theme.accentColor)}22` }}>
               {([
                 { id: "cards" as const, label: "Cards", icon: CreditCard, accent: "#FF7A5A" },
-                { id: "magic" as const, label: "Magic", icon: Sparkles, accent: "#8AB8FF" },
                 { id: "nodetrees" as const, label: "Node Trees", icon: GitBranch, accent: "#5AE0B0" },
               ]).map((sub) => {
                 const isActive = cardsSubTab === sub.id;
@@ -5314,7 +5548,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           })()}
 
           {/* CARDS TAB */}
-          {player && (activeTab === "cards" || (activeTab === "character" && charSubTab === "level")) && (
+          {player && (activeTab === "cards" || activeTab === "progression") && (
             <div className="space-y-4">
               {/* ═══ CARDS SUB-TAB ═══ */}
               {activeTab === "cards" && cardsSubTab === "cards" && (
@@ -5336,6 +5570,15 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           {filteredCards.length} card{filteredCards.length !== 1 ? "s" : ""}
                         </span>
                       </div>
+
+                      {renderCardCountStrip(
+                        currentCardCount,
+                        totalCardCount,
+                        "#FF7A5A",
+                        currentCardCount > totalCardCount
+                          ? `Over capacity by ${currentCardCount - totalCardCount}`
+                          : `${Math.max(totalCardCount - currentCardCount, 0)} open card slot${Math.max(totalCardCount - currentCardCount, 0) === 1 ? "" : "s"}`,
+                      )}
 
                       {/* Breadcrumb */}
                       <div className="flex items-center gap-1.5 mb-3 text-[11px] flex-wrap">
@@ -5395,44 +5638,177 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       )}
 
-                      {renderSearchBar(cardSearch, setCardSearch, allCardTags, cardActiveTags, toggleCardTag, "Search ability cards...")}
+                      {renderSearchBar(cardSearch, setCardSearch, [], [], () => undefined, "Search ability cards...")}
 
-                      <div className="flex flex-wrap items-center gap-2 mb-3">
-                        <span className="text-[9px]" style={S_MUTED}>Sources:</span>
-                        {([
-                          { id: "all" as const, label: "All" },
-                          { id: "direct" as const, label: "Direct" },
-                          { id: "node" as const, label: "Node" },
-                          { id: "magic" as const, label: "Magic" },
-                          { id: "level" as const, label: "Level" },
-                        ]).map((source) => (
-                          <button
-                            key={source.id}
-                            onClick={() => setCardSourceFilter(source.id)}
-                            className="text-[9px] px-1.5 py-0.5"
-                            style={{
-                              color: cardSourceFilter === source.id ? firstColor(theme.accentColor) : "#5A6A8A",
-                              background: cardSourceFilter === source.id ? `${firstColor(theme.accentColor)}15` : "transparent",
-                              border: `1px solid ${cardSourceFilter === source.id ? firstColor(theme.accentColor) + "40" : "#1A1A4B"}`,
-                              fontWeight: cardSourceFilter === source.id ? 600 : 400,
-                            }}
-                          >
-                            {source.label}
-                          </button>
-                        ))}
-                      </div>
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-4">
+                        <div className={`${retro.sunken} bg-[#0C0C2E] p-3 space-y-3`}>
+                          <div>
+                            <div className="text-[9px] uppercase tracking-[0.06em] mb-1.5" style={S_MUTED}>Primary Sort</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {([
+                                { id: "all" as const, label: "All Cards" },
+                                { id: "spell" as const, label: "Spell" },
+                                { id: "skill" as const, label: "Skill" },
+                                { id: "ability" as const, label: "Ability" },
+                              ]).map((option) => (
+                                <button
+                                  key={option.id}
+                                  onClick={() => setCardPrimarySort(option.id)}
+                                  className="text-[10px] px-2.5 py-1"
+                                  style={{
+                                    color: cardPrimarySort === option.id ? "#FF7A5A" : "#7C8FB8",
+                                    background: cardPrimarySort === option.id ? "rgba(255,122,90,0.12)" : "transparent",
+                                    border: `1px solid ${cardPrimarySort === option.id ? "#FF7A5A55" : "#1A1A4B"}`,
+                                    fontWeight: cardPrimarySort === option.id ? 600 : 400,
+                                  }}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
 
-                      {/* Sort Options */}
-                      <div className="flex items-center gap-1.5 mb-3">
-                        <span className="text-[9px]" style={S_MUTED}>Sort:</span>
-                        {(["default", "level", "actionType", "sourceType"] as const).map(s => (
-                          <button
-                            key={s}
-                            onClick={() => setCardSortBy(s)}
-                            className="text-[9px] px-1.5 py-0.5"
-                            style={{ color: cardSortBy === s ? firstColor(theme.accentColor) : "#5A6A8A", background: cardSortBy === s ? `${firstColor(theme.accentColor)}15` : "transparent", border: `1px solid ${cardSortBy === s ? firstColor(theme.accentColor) + "40" : "#1A1A4B"}`, fontWeight: cardSortBy === s ? 600 : 400 }}
-                          >{s === "default" ? "Default" : s === "level" ? "Level" : s === "actionType" ? "Action Type" : "Source Type"}</button>
-                        ))}
+                          <div>
+                            <div className="text-[9px] uppercase tracking-[0.06em] mb-1.5" style={S_MUTED}>Secondary Sort</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {([
+                                { id: "default" as const, label: "Default" },
+                                { id: "level" as const, label: "Level" },
+                                { id: "actionType" as const, label: "Action Type" },
+                                { id: "sourceType" as const, label: "Source Type" },
+                                { id: "attack" as const, label: "Attack" },
+                                { id: "defensive" as const, label: "Defensive" },
+                                { id: "buff" as const, label: "Buff" },
+                                { id: "debuff" as const, label: "Debuff" },
+                                { id: "healing" as const, label: "Healing" },
+                              ]).map((option) => (
+                                <button
+                                  key={option.id}
+                                  onClick={() => setCardSecondarySort(option.id)}
+                                  className="text-[10px] px-2.5 py-1"
+                                  style={{
+                                    color: cardSecondarySort === option.id ? "#8AB8FF" : "#7C8FB8",
+                                    background: cardSecondarySort === option.id ? "rgba(138,184,255,0.12)" : "transparent",
+                                    border: `1px solid ${cardSecondarySort === option.id ? "#8AB8FF55" : "#1A1A4B"}`,
+                                    fontWeight: cardSecondarySort === option.id ? 600 : 400,
+                                  }}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[9px] uppercase tracking-[0.06em] mb-1.5" style={S_MUTED}>Sort By</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {([
+                                { id: "asc" as const, label: "Top Down" },
+                                { id: "desc" as const, label: "Down to Top" },
+                              ]).map((option) => (
+                                <button
+                                  key={option.id}
+                                  onClick={() => setCardSortDirection(option.id)}
+                                  className="text-[10px] px-2.5 py-1"
+                                  style={{
+                                    color: cardSortDirection === option.id ? "#C4A0FF" : "#7C8FB8",
+                                    background: cardSortDirection === option.id ? "rgba(196,160,255,0.12)" : "transparent",
+                                    border: `1px solid ${cardSortDirection === option.id ? "#C4A0FF55" : "#1A1A4B"}`,
+                                    fontWeight: cardSortDirection === option.id ? 600 : 400,
+                                  }}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className={`${retro.sunken} bg-[#0C0C2E] p-3 space-y-3`}>
+                          <div>
+                            <div className="text-[9px] uppercase tracking-[0.06em] mb-1.5" style={S_MUTED}>Sources</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {([
+                                { id: "all" as const, label: "All" },
+                                { id: "direct" as const, label: "Direct" },
+                                { id: "node" as const, label: "Node" },
+                                { id: "magic" as const, label: "Magic" },
+                                { id: "level" as const, label: "Level" },
+                              ]).map((source) => (
+                                <button
+                                  key={source.id}
+                                  onClick={() => setCardSourceFilter(source.id)}
+                                  className="text-[10px] px-2.5 py-1"
+                                  style={{
+                                    color: cardSourceFilter === source.id ? firstColor(theme.accentColor) : "#7C8FB8",
+                                    background: cardSourceFilter === source.id ? `${firstColor(theme.accentColor)}15` : "transparent",
+                                    border: `1px solid ${cardSourceFilter === source.id ? firstColor(theme.accentColor) + "40" : "#1A1A4B"}`,
+                                    fontWeight: cardSourceFilter === source.id ? 600 : 400,
+                                  }}
+                                >
+                                  {source.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="text-[9px] uppercase tracking-[0.06em] mb-1.5" style={S_MUTED}>Additional Tags</div>
+                            <div className={`${retro.sunken} bg-[#080820] flex items-center`}>
+                              <Tag size={12} className="ml-3 shrink-0" style={{ color: "#3A5A9B" }} />
+                              <input
+                                type="text"
+                                value={cardTagSearch}
+                                onChange={(event) => setCardTagSearch(event.target.value)}
+                                placeholder="Search tags and add them one at a time..."
+                                className="flex-1 px-3 py-2 bg-transparent outline-none text-[11px]"
+                                style={{ color: "#C0D0F0" }}
+                              />
+                              {cardTagSearch && (
+                                <button onClick={() => setCardTagSearch("")} className="mr-2 hover:opacity-80">
+                                  <X size={12} style={S_MUTED} />
+                                </button>
+                              )}
+                            </div>
+                            {cardActiveTags.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {cardActiveTags.map((tag) => (
+                                  <button
+                                    key={tag}
+                                    onClick={() => toggleCardTag(tag)}
+                                    className="text-[9px] px-2 py-1"
+                                    style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+                                  >
+                                    {getDisplayCardTagName(tag)} x
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {additionalCardTagSuggestions.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {additionalCardTagSuggestions.map((tag) => (
+                                  <button
+                                    key={tag}
+                                    onClick={() => addCardTagFilter(tag)}
+                                    className="text-[9px] px-2 py-1 hover:brightness-110"
+                                    style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}
+                                  >
+                                    + {getDisplayCardTagName(tag)}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {cardActiveTags.length > 0 && (
+                              <button
+                                onClick={() => setCardActiveTags([])}
+                                className="text-[9px] mt-2 hover:opacity-80"
+                                style={S_RED}
+                              >
+                                Clear selected tags
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       {filteredCards.length === 0 ? (
@@ -5515,7 +5891,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               )}
 
               {/* ═══ LEVEL ABILITIES SUB-TAB ═══ */}
-              {activeTab === "cards" && cardsSubTab === "magic" && (
+              {activeTab === "progression" && progressionSubTab === "magic" && (
                 <div style={DISPLAY_CONTENTS}>
                   {magicSelectedCard ? (
                     <div style={DISPLAY_CONTENTS}>
@@ -5523,7 +5899,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         onClick={() => setMagicSelectedCard(null)}
                         className={`${retro.raised} px-3 py-1.5 text-[11px] flex items-center gap-1.5 mb-3 hover:brightness-110`}
                         style={{ background: theme.cardBg, color: theme.labelColor }}
-                      ><ChevronLeft size={12} />Back to Magic</button>
+                      ><ChevronLeft size={12} />Back to Magic Lists</button>
                       {renderCardDetail(magicSelectedCard, { showBackButton: false })}
                     </div>
                   ) : (
@@ -5531,12 +5907,21 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       <div className="flex items-center gap-2 mb-2">
                         <Sparkles size={18} style={{ color: "#8AB8FF" }} />
                         <h2 className="text-[16px]" style={{ color: "#8AB8FF", fontWeight: 600 }}>
-                          Magic
+                          Magic Lists
                         </h2>
                         <span className="text-[10px] px-1.5 py-0.5 ml-1" style={SUNKEN_INPUT_DIM}>
                           {normalizedMagicLists.length} magic list{normalizedMagicLists.length !== 1 ? "s" : ""}
                         </span>
                       </div>
+
+                      {renderCardCountStrip(
+                        totalLearnedMagicCount,
+                        totalCardCount,
+                        "#8AB8FF",
+                        selectedMagicList
+                          ? `${selectedMagicListLearnedCount} learned in ${selectedMagicList.name}`
+                          : "Mark spells as learned before they count toward Cards",
+                      )}
 
                       {normalizedMagicLists.length === 0 ? (
                         <div className="text-[12px] text-center py-6" style={S_MUTED}>
@@ -5544,15 +5929,21 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       ) : (
                         <>
-                          <div className="flex flex-wrap gap-1.5 mb-3">
+                          <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-4 mb-3">
+                            <div className="space-y-2">
+                              <div className="text-[10px] uppercase tracking-[0.06em]" style={S_MUTED}>
+                                Magic Lists
+                              </div>
+                              <div className={`${retro.sunken} bg-[#0C0C2E] p-2 space-y-2`}>
                             {normalizedMagicLists.map((list) => {
                               const isActive = selectedMagicListId === list.id;
                               const totalSpells = MAGIC_TIER_ORDER.reduce((sum, tier) => sum + (list.tiers[tier]?.length || 0), 0);
+                              const learnedSpells = getMagicListLearnedCount(list);
                               return (
                                 <button
                                   key={list.id}
                                   onClick={() => setSelectedMagicListId(list.id)}
-                                  className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} px-3 py-1.5 text-[11px] flex items-center gap-1.5 transition-colors`}
+                                  className={`${isActive ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} w-full px-3 py-2.5 text-[11px] transition-colors text-left`}
                                   style={{
                                     background: isActive ? theme.panelBg : theme.cardBg,
                                     color: isActive ? "#8AB8FF" : theme.labelColor,
@@ -5560,109 +5951,163 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                     fontWeight: isActive ? 600 : 400,
                                   }}
                                 >
-                                  <Sparkles size={11} />
-                                  {list.name}
-                                  <span className="text-[8px] px-1 py-0.5" style={SUNKEN_INPUT_DIM}>{totalSpells}</span>
+                                  <div className="flex items-start gap-2">
+                                    <Sparkles size={13} style={{ marginTop: 2 }} />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-[12px] truncate" style={{ color: isActive ? "#B7D4FF" : theme.textColor, fontWeight: 700 }}>
+                                        {list.name}
+                                      </div>
+                                      <div className="text-[9px] mt-1 flex flex-wrap items-center gap-2" style={S_SUBTLE}>
+                                        <span>{learnedSpells} learned</span>
+                                        <span>|</span>
+                                        <span>{totalSpells} total spells</span>
+                                      </div>
+                                    </div>
+                                  </div>
                                 </button>
                               );
                             })}
-                          </div>
-
-                          {selectedMagicList && (
-                            <>
-                              {renderSearchBar(magicSearch, setMagicSearch, allMagicTags, magicActiveTags, toggleMagicTag, `Search ${selectedMagicList.name} spells...`)}
-
-                              {(selectedMagicList.description || "").trim() && (
-                                <div className={`${retro.sunken} bg-[#0C0C2E] px-3 py-2 mb-4`} style={{ borderLeft: "3px solid #8AB8FF66" }}>
-                                  <div className="text-[10px] mb-1" style={S_SUBTLE}>Magic Notes</div>
-                                  <div className="text-[11px]" style={{ color: theme.textColor }}>{selectedMagicList.description}</div>
-                                </div>
-                              )}
-
-                              <div className="space-y-4">
-                                {(() => {
-                                  const hasAnySpells = MAGIC_TIER_ORDER.some((tier) => (selectedMagicList.tiers[tier] || []).length > 0);
-                                  const hasFilteredSpells = MAGIC_TIER_ORDER.some((tier) => (filteredMagicCardsByTier[tier] || []).length > 0);
-
-                                  if (!hasAnySpells) {
-                                    return (
-                                      <div className="text-[12px] text-center py-6" style={S_MUTED}>
-                                        This magic list does not have any spells assigned yet.
-                                      </div>
-                                    );
-                                  }
-
-                                  if (!hasFilteredSpells) {
-                                    return (
-                                      <div className="text-[12px] text-center py-6" style={S_MUTED}>
-                                        No spells in this magic list match your search or filters.
-                                      </div>
-                                    );
-                                  }
-
-                                  return MAGIC_TIER_ORDER.map((tier) => {
-                                    const tierCards = filteredMagicCardsByTier[tier] || [];
-                                    const tierHasCards = (selectedMagicList.tiers[tier] || []).length > 0;
-                                    if (!tierHasCards) return null;
-
-                                    return (
-                                      <div key={tier} className={`${retro.sunken} bg-[#0C0C2E] overflow-hidden`}>
-                                        <div className="px-4 py-3 border-b" style={{ borderColor: "#223358", background: "rgba(18,28,66,0.9)" }}>
-                                          <div className="flex items-center justify-between gap-3">
-                                            <div className="text-[13px]" style={{ color: "#8AB8FF", fontWeight: 700 }}>
-                                              {MAGIC_TIER_LABELS[tier]}
-                                            </div>
-                                            <div className="text-[10px]" style={S_SUBTLE}>
-                                              {tierCards.length} spell{tierCards.length !== 1 ? "s" : ""}
-                                            </div>
-                                          </div>
-                                        </div>
-                                        {tierCards.length === 0 ? (
-                                          <div className="px-4 py-4 text-[11px]" style={S_MUTED}>
-                                            No spells in this tier match your current filters.
-                                          </div>
-                                        ) : (
-                                          <div>
-                                            {tierCards.map((card) => (
-                                              <button
-                                                key={`${tier}-${card.id}`}
-                                                onClick={() => setMagicSelectedCard(card)}
-                                                className="w-full text-left px-4 py-3 hover:bg-[#121C42] transition-colors border-b last:border-b-0"
-                                                style={{ borderColor: "#182748" }}
-                                              >
-                                                <div className="flex flex-wrap items-center gap-2 mb-1">
-                                                  <span className="text-[13px]" style={{ color: "#B7D4FF", fontWeight: 700 }}>
-                                                    {card.name}
-                                                  </span>
-                                                  <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}>
-                                                    {card.type || "Spell"}
-                                                  </span>
-                                                  <span className="text-[9px]" style={S_SUBTLE}>
-                                                    {card.actionCost || "No action cost"}
-                                                  </span>
-                                                  {(card.customFields["Source Type"] || "").trim() && (
-                                                    <span className="text-[9px]" style={{ color: "#C4A0FF" }}>
-                                                      {card.customFields["Source Type"]}
-                                                    </span>
-                                                  )}
-                                                </div>
-                                                <div className="text-[11px] leading-relaxed" style={{ color: theme.textColor }}>
-                                                  {(() => {
-                                                    const plain = card.effect.replace(/<[^>]*>/g, "");
-                                                    return plain.length > 180 ? `${plain.slice(0, 180)}...` : plain;
-                                                  })()}
-                                                </div>
-                                              </button>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  });
-                                })()}
                               </div>
-                            </>
-                          )}
+                            </div>
+
+                            {selectedMagicList && (
+                              <div className="space-y-4">
+                                {renderSearchBar(magicSearch, setMagicSearch, allMagicTags, magicActiveTags, toggleMagicTag, `Search ${selectedMagicList.name} spells...`)}
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                  <div className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3`}>
+                                    <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>Selected List</div>
+                                    <div className="text-[13px]" style={{ color: "#B7D4FF", fontWeight: 700 }}>{selectedMagicList.name}</div>
+                                  </div>
+                                  <div className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3`}>
+                                    <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>Learned In List</div>
+                                    <div className="text-[13px]" style={{ color: theme.textColor, fontWeight: 700 }}>
+                                      {selectedMagicListLearnedCount} / {selectedMagicListCardCount}
+                                    </div>
+                                  </div>
+                                  <div className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3`}>
+                                    <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>Cards Tab Rule</div>
+                                    <div className="text-[11px] leading-relaxed" style={{ color: theme.textColor }}>
+                                      Check a spell when it is learned to add it to the main Cards list.
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {(selectedMagicList.description || "").trim() && (
+                                  <div className={`${retro.sunken} bg-[#0C0C2E] px-3 py-2`} style={{ borderLeft: "3px solid #8AB8FF66" }}>
+                                    <div className="text-[10px] mb-1" style={S_SUBTLE}>Magic Notes</div>
+                                    <div className="text-[11px]" style={{ color: theme.textColor }}>{selectedMagicList.description}</div>
+                                  </div>
+                                )}
+
+                                <div className="space-y-4">
+                                  {(() => {
+                                    const hasAnySpells = MAGIC_TIER_ORDER.some((tier) => (selectedMagicList.tiers[tier] || []).length > 0);
+                                    const hasFilteredSpells = MAGIC_TIER_ORDER.some((tier) => (filteredMagicCardsByTier[tier] || []).length > 0);
+
+                                    if (!hasAnySpells) {
+                                      return (
+                                        <div className="text-[12px] text-center py-6" style={S_MUTED}>
+                                          This magic list does not have any spells assigned yet.
+                                        </div>
+                                      );
+                                    }
+
+                                    if (!hasFilteredSpells) {
+                                      return (
+                                        <div className="text-[12px] text-center py-6" style={S_MUTED}>
+                                          No spells in this magic list match your search or filters.
+                                        </div>
+                                      );
+                                    }
+
+                                    return MAGIC_TIER_ORDER.map((tier) => {
+                                      const tierCards = filteredMagicCardsByTier[tier] || [];
+                                      const tierHasCards = (selectedMagicList.tiers[tier] || []).length > 0;
+                                      if (!tierHasCards) return null;
+
+                                      return (
+                                        <div key={tier} className={`${retro.sunken} bg-[#0C0C2E] overflow-hidden`}>
+                                          <div className="px-4 py-3 border-b" style={{ borderColor: "#223358", background: "rgba(18,28,66,0.9)" }}>
+                                            <div className="flex items-center justify-between gap-3">
+                                              <div className="text-[13px]" style={{ color: "#8AB8FF", fontWeight: 700 }}>
+                                                {MAGIC_TIER_LABELS[tier]}
+                                              </div>
+                                              <div className="text-[10px]" style={S_SUBTLE}>
+                                                {tierCards.length} spell{tierCards.length !== 1 ? "s" : ""}
+                                              </div>
+                                            </div>
+                                          </div>
+                                          {tierCards.length === 0 ? (
+                                            <div className="px-4 py-4 text-[11px]" style={S_MUTED}>
+                                              No spells in this tier match your current filters.
+                                            </div>
+                                          ) : (
+                                            <div className="divide-y" style={{ borderColor: "#182748" }}>
+                                              {tierCards.map((card) => {
+                                                const isLearned = (selectedMagicList.learnedCardIds || []).includes(card.id);
+                                                const plain = card.effect.replace(/<[^>]*>/g, "");
+                                                return (
+                                                  <div
+                                                    key={`${tier}-${card.id}`}
+                                                    className="px-4 py-3 hover:bg-[#121C42] transition-colors"
+                                                    style={{ borderColor: "#182748" }}
+                                                  >
+                                                    <div className="flex items-start gap-3">
+                                                      <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                                                        <input
+                                                          type="checkbox"
+                                                          checked={isLearned}
+                                                          onChange={() => toggleLearnedMagicCard(selectedMagicList.id, card.id)}
+                                                          className="w-4 h-4"
+                                                        />
+                                                        <span className="text-[9px]" style={{ color: isLearned ? "#7CF0BE" : "#7C8FB8", fontWeight: 700 }}>
+                                                          {isLearned ? "Learned" : "Learn"}
+                                                        </span>
+                                                      </label>
+                                                      <button
+                                                        onClick={() => setMagicSelectedCard(card)}
+                                                        className="flex-1 text-left"
+                                                      >
+                                                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                                                          <span className="text-[13px]" style={{ color: "#B7D4FF", fontWeight: 700 }}>
+                                                            {card.name}
+                                                          </span>
+                                                          <span className="text-[9px] px-1.5 py-0.5" style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}>
+                                                            {card.type || "Spell"}
+                                                          </span>
+                                                          <span className="text-[9px]" style={S_SUBTLE}>
+                                                            {card.actionCost || "No action cost"}
+                                                          </span>
+                                                          {(card.customFields["Source Type"] || "").trim() && (
+                                                            <span className="text-[9px]" style={{ color: "#C4A0FF" }}>
+                                                              {card.customFields["Source Type"]}
+                                                            </span>
+                                                          )}
+                                                          {card.customFields["Level"] && (
+                                                            <span className="text-[9px]" style={{ color: "#FFD700" }}>
+                                                              Lv. {card.customFields["Level"]}
+                                                            </span>
+                                                          )}
+                                                        </div>
+                                                        <div className="text-[11px] leading-relaxed" style={{ color: theme.textColor }}>
+                                                          {plain.length > 200 ? `${plain.slice(0, 200)}...` : plain}
+                                                        </div>
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </>
                       )}
                     </div>
@@ -5670,7 +6115,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
               )}
 
-              {((activeTab === "cards" && cardsSubTab === "levelabilities") || (activeTab === "character" && charSubTab === "level")) && (() => {
+              {(activeTab === "progression" && progressionSubTab === "level") && (() => {
                 const orderedLevelCategories = sortLevelCategories(normalizedLevelCategories);
                 const categoriesByLevel = new Map<number, LevelCategory[]>();
                 const raceCategories: LevelCategory[] = [];
@@ -5735,6 +6180,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           { label: "TP", value: `${player?.tp ?? 0}` },
                           { label: "Race", value: player?.race?.trim() || "Not set" },
                           { label: "Class", value: player?.class?.trim() || "Not set" },
+                          { label: "Current Card Count", value: `${currentCardCount}` },
+                          { label: "Total Card Count", value: `${totalCardCount}` },
                           { label: "HP Increase per Level", value: player?.hpIncreasePerLevel?.trim() || "Not set" },
                           { label: "Wound Dice", value: player?.woundDice?.trim() || "Not set" },
                           { label: "Wound Dice Increases", value: woundIncreaseLabel },
@@ -6166,6 +6613,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       Node Trees
                     </h2>
                   </div>
+                  {renderCardCountStrip(
+                    nodeTreeCardCount,
+                    totalCardCount,
+                    "#5AE0B0",
+                    `${playerAssignedNodeTrees.length} assigned tree${playerAssignedNodeTrees.length === 1 ? "" : "s"}`,
+                  )}
                   {player && (
                     <PlayerNodeTreeViewer
                       playerId={player.id}

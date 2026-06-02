@@ -1,14 +1,11 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+﻿import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { retro } from "./retro-styles";
 import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight } from "lucide-react";
 import { appStore } from "@/lib/app-store";
 import { loadDMNodeTrees, loadPlayerState, saveDMNodeTrees, savePlayerState } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 
-// ═══════════════════════════════════════════════
-// Shared Data Types
-// ═══════════════════════════════════════════════
-
+// Shared data types
 export type NodeShape = "circle" | "diamond" | "hexagon" | "square" | "star" | "triangle";
 
 export interface NodeTreeNode {
@@ -35,10 +32,7 @@ export interface NodeTree {
 }
 
 
-// ═══════════════════════════════════════════════
 // Card type for display
-// ═══════════════════════════════════════════════
-
 interface CardRef {
   id: string;
   name: string;
@@ -57,7 +51,7 @@ function nodeY(rank: number, maxRank: number) {
 }
 function nodeX(x: number) { return x * 4.6 + 20; }
 
-// ── Shape path generators ──
+// Shape path generators
 const ALL_SHAPES: NodeShape[] = ["circle", "diamond", "hexagon", "square", "star", "triangle"];
 
 function shapePath(cx: number, cy: number, r: number, shape: NodeShape): string {
@@ -152,10 +146,7 @@ function ShapePreviewMini({ shape, color, size = 14, selected }: { shape: NodeSh
   );
 }
 
-// ═══════════════════════════════════════════════
-// PLAYER NODE TREE VIEWER
-// ═══════════════════════════════════════════════
-
+// Player node tree viewer
 interface PlayerNodeTreeViewerProps {
   playerId: string;
   theme: {
@@ -283,6 +274,14 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
     () => (activeTree ? Math.max(0, ...activeTree.nodes.map((n) => n.rank)) : 0),
     [activeTree],
   );
+  const activeTreeCardCount = useMemo(
+    () => (activeTree ? new Set(activeTree.nodes.flatMap((node) => node.cardIds)).size : 0),
+    [activeTree],
+  );
+  const unlockableNodeCount = useMemo(
+    () => (activeTree ? activeTree.nodes.filter((node) => !isNodeUnlocked(node.id) && canUnlockNode(node)).length : 0),
+    [activeTree, canUnlockNode, isNodeUnlocked],
+  );
 
   if (loading) {
     return (
@@ -318,7 +317,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
     );
   }
 
-  // ── Card detail overlay ──
+  // Card detail overlay
   if (viewingCard) {
     return (
       <div className="space-y-3">
@@ -376,187 +375,219 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
       </div>
 
       {activeTree && (
-        <div className="flex gap-3 flex-col lg:flex-row">
-          {/* Tree canvas */}
-          <div className={`${retro.sunken} flex-1 relative`} style={{ background: "#080820", minHeight: 400 }}>
-            <svg viewBox="0 0 500 500" className="w-full h-full" style={{ minHeight: 400 }} preserveAspectRatio="xMidYMid meet">
-              {[1, 2, 3, 4].map(i => (
-                <line key={`hg${i}`} x1={0} y1={i * 100} x2={500} y2={i * 100} stroke="#1A1A3A" strokeWidth={0.5} />
-              ))}
-
-              {/* Connections */}
-              {activeTree.connections.map((conn, ci) => {
-                const fromN = activeTree.nodes.find(n => n.id === conn.from);
-                const toN = activeTree.nodes.find(n => n.id === conn.to);
-                if (!fromN || !toN) return null;
-                const fromUnlocked = isNodeUnlocked(fromN.id);
-                const toUnlocked = isNodeUnlocked(toN.id);
-                const bothUnlocked = fromUnlocked && toUnlocked;
-                const lineColor = bothUnlocked ? (fromN.color || toN.color || NT_ACCENT) : "#2A3A5B";
-                return (
-                  <line
-                    key={`c${ci}`}
-                    x1={nodeX(fromN.x)} y1={nodeY(fromN.rank, maxRank)} x2={nodeX(toN.x)} y2={nodeY(toN.rank, maxRank)}
-                    stroke={lineColor}
-                    strokeWidth={bothUnlocked ? 2.5 : 1.5}
-                    strokeDasharray={bothUnlocked ? undefined : "6 4"}
-                    opacity={bothUnlocked ? 0.8 : 0.4}
-                  />
-                );
-              })}
-
-              {/* Nodes */}
-              {activeTree.nodes.map(node => {
-                const ny = nodeY(node.rank, maxRank);
-                const nx = nodeX(node.x);
-                const unlocked = isNodeUnlocked(node.id);
-                const canUnlock = canUnlockNode(node);
-                const isSelected = selectedNodeId === node.id;
-                const isShrouded = node.shrouded;
-                const r = isSelected ? 20 : 16;
-                const nColor = resolveNodeColor(node);
-                const nShape = node.shape || "circle";
-                const darkColor = nColor + "33";
-
-                return (
-                  <g key={node.id} style={{ cursor: "pointer" }} onClick={() => setSelectedNodeId(node.id === selectedNodeId ? null : node.id)}>
-                    {canUnlock && !unlocked && (
-                      <circle cx={nx} cy={ny} r={r + 6} fill="none" stroke={nColor} strokeWidth={1} opacity={0.4}>
-                        <animate attributeName="r" values={`${r + 4};${r + 8};${r + 4}`} dur="2s" repeatCount="indefinite" />
-                        <animate attributeName="opacity" values="0.4;0.15;0.4" dur="2s" repeatCount="indefinite" />
-                      </circle>
-                    )}
-                    {isSelected && <NodeShapeOutline cx={nx} cy={ny} r={r + 3} shape={nShape} stroke="#FFF" strokeWidth={1.5} opacity={0.6} />}
-                    <NodeShapeSvg
-                      cx={nx} cy={ny} r={r} shape={nShape}
-                      fill={unlocked ? nColor : isShrouded ? "#1A1A3A" : canUnlock ? darkColor : "#0E0E30"}
-                      stroke={unlocked ? nColor : isShrouded ? SHROUD_COLOR : canUnlock ? nColor : "#2A3A5B"}
-                      strokeWidth={2}
-                      opacity={unlocked ? 1 : canUnlock ? 0.9 : 0.5}
-                    />
-                    {!unlocked && !canUnlock && !isShrouded && (
-                      <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#3A4A6A" fontSize={12}>🔒</text>
-                    )}
-                    {isShrouded && !unlocked && (
-                      <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill={SHROUD_COLOR} fontSize={11}>?</text>
-                    )}
-                    {unlocked && <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#080820" fontSize={14} fontWeight={800}>✓</text>}
-                    {canUnlock && !unlocked && !isShrouded && (
-                      <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill={nColor} fontSize={11}>◆</text>
-                    )}
-                    <text
-                      x={nx} y={ny + r + 14} textAnchor="middle"
-                      fill={isShrouded && !unlocked ? SHROUD_COLOR : unlocked ? "#C0F0D0" : canUnlock ? nColor : "#4A5A7A"}
-                      fontSize={9} fontWeight={unlocked ? 600 : 400}
-                    >
-                      {isShrouded && !unlocked ? "???" : node.label.length > 14 ? node.label.slice(0, 13) + "…" : node.label}
-                    </text>
-                    {node.cardIds.length > 0 && (
-                      <g>
-                        <circle cx={nx + r - 2} cy={ny - r + 2} r={6} fill={isShrouded && !unlocked ? SHROUD_COLOR : "#FF7A5A"} />
-                        <text x={nx + r - 2} y={ny - r + 2.5} textAnchor="middle" dominantBaseline="middle" fill="#FFF" fontSize={8} fontWeight={700}>
-                          {isShrouded && !unlocked ? "?" : node.cardIds.length}
-                        </text>
-                      </g>
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {[
+              { label: "Active Tree", value: activeTree.name, accent: NT_ACCENT },
+              { label: "Unlocked Nodes", value: `${treeUnlocks.length} / ${activeTree.nodes.length}`, accent: "#8AB8FF" },
+              { label: "Ready To Unlock", value: `${unlockableNodeCount}`, accent: "#FFD700" },
+              { label: "Cards In Tree", value: `${activeTreeCardCount}`, accent: "#FF7A5A" },
+            ].map((summary) => (
+              <div
+                key={summary.label}
+                className={`${retro.sunken} px-4 py-3`}
+                style={{ background: "#0C0C2E", borderLeft: `3px solid ${summary.accent}66` }}
+              >
+                <div className="text-[9px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>{summary.label}</div>
+                <div className="text-[13px] break-words" style={{ color: theme.textColor, fontWeight: 700 }}>{summary.value}</div>
+              </div>
+            ))}
           </div>
 
-          {/* Node detail panel */}
-          <div className="w-full lg:w-72 shrink-0 space-y-3">
-            {selectedNode ? (
-              <div style={DISPLAY_CONTENTS}>
-                <div className={`${retro.raised} p-3`} style={{ background: theme.panelBg }}>
-                  {selectedNode.shrouded && !isNodeUnlocked(selectedNode.id) ? (
-                    <div style={DISPLAY_CONTENTS}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <EyeOff size={14} style={{ color: SHROUD_COLOR }} />
-                        <div className="text-[13px]" style={{ color: SHROUD_COLOR, fontWeight: 600 }}>Shrouded Node</div>
-                      </div>
-                      <div className="text-[10px]" style={{ color: "#5A4A7A" }}>
-                        This node's contents are hidden until unlocked. Its rank and requirements are unknown.
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={DISPLAY_CONTENTS}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <ShapePreviewMini shape={selectedNode.shape || "circle"} color={resolveNodeColor(selectedNode)} size={18} />
-                        <div className="text-[13px]" style={{ color: resolveNodeColor(selectedNode), fontWeight: 600 }}>{selectedNode.label}</div>
-                      </div>
-                      {selectedNode.description && (
-                        <div className="text-[10px] mb-2 italic" style={{ color: theme.textColor }}>{selectedNode.description}</div>
-                      )}
-                      <div className="text-[10px] mb-2" style={{ color: theme.labelColor }}>
-                        Rank {selectedNode.rank} · {selectedNode.cardIds.length} card{selectedNode.cardIds.length !== 1 ? "s" : ""}
-                      </div>
-                      {isNodeUnlocked(selectedNode.id) ? (
-                        <div className="flex items-center gap-1.5 text-[11px] px-2 py-1" style={{ background: `${resolveNodeColor(selectedNode)}15`, color: resolveNodeColor(selectedNode), border: `1px solid ${resolveNodeColor(selectedNode)}33` }}>
-                          <Unlock size={12} /> Unlocked
-                        </div>
-                      ) : canUnlockNode(selectedNode) ? (
-                        <button onClick={async () => { await handleUnlockNode(selectedNode.id); }} className={`${retro.button} w-full text-[11px] flex items-center justify-center gap-1.5 py-2`} style={{ color: "#080820", background: resolveNodeColor(selectedNode) }}>
-                          <Unlock size={12} /> Unlock Node
-                        </button>
-                      ) : (
-                        <div className="text-[10px] px-2 py-1" style={{ background: "#FF6A6A11", color: "#FF6A6A", border: "1px solid #FF6A6A33" }}>
-                          <Lock size={10} className="inline mr-1" />
-                          Requires: {selectedNode.prerequisites.map(pId => {
-                            const preNode = activeTree.nodes.find(n => n.id === pId);
-                            return preNode?.shrouded && !isNodeUnlocked(preNode.id) ? "???" : preNode?.label || "?";
-                          }).join(", ")}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+          <div className="flex gap-3 flex-col lg:flex-row">
+            <div className={`${retro.sunken} flex-1 relative`} style={{ background: "#080820", minHeight: 400 }}>
+              <svg viewBox="0 0 500 500" className="w-full h-full" style={{ minHeight: 400 }} preserveAspectRatio="xMidYMid meet">
+                {[1, 2, 3, 4].map((i) => (
+                  <line key={`hg${i}`} x1={0} y1={i * 100} x2={500} y2={i * 100} stroke="#1A1A3A" strokeWidth={0.5} />
+                ))}
 
-                {/* Cards in this node — clickable */}
-                {!(selectedNode.shrouded && !isNodeUnlocked(selectedNode.id)) && nodeCards.length > 0 && (
-                  <div className="space-y-2">
-                    <div className="text-[10px]" style={{ color: theme.labelColor }}>Cards ({nodeCards.length}):</div>
-                    {nodeCards.map(card => (
-                      <button
-                        key={card.id}
-                        onClick={() => setViewingCard(card)}
-                        className={`${retro.raised} p-3 w-full text-left hover:brightness-110 transition-all cursor-pointer`}
-                        style={{ background: theme.cardBg }}
+                {activeTree.connections.map((conn, ci) => {
+                  const fromN = activeTree.nodes.find((n) => n.id === conn.from);
+                  const toN = activeTree.nodes.find((n) => n.id === conn.to);
+                  if (!fromN || !toN) return null;
+                  const fromUnlocked = isNodeUnlocked(fromN.id);
+                  const toUnlocked = isNodeUnlocked(toN.id);
+                  const bothUnlocked = fromUnlocked && toUnlocked;
+                  const lineColor = bothUnlocked ? (fromN.color || toN.color || NT_ACCENT) : "#2A3A5B";
+                  return (
+                    <line
+                      key={`c${ci}`}
+                      x1={nodeX(fromN.x)}
+                      y1={nodeY(fromN.rank, maxRank)}
+                      x2={nodeX(toN.x)}
+                      y2={nodeY(toN.rank, maxRank)}
+                      stroke={lineColor}
+                      strokeWidth={bothUnlocked ? 2.5 : 1.5}
+                      strokeDasharray={bothUnlocked ? undefined : "6 4"}
+                      opacity={bothUnlocked ? 0.8 : 0.4}
+                    />
+                  );
+                })}
+
+                {activeTree.nodes.map((node) => {
+                  const ny = nodeY(node.rank, maxRank);
+                  const nx = nodeX(node.x);
+                  const unlocked = isNodeUnlocked(node.id);
+                  const canUnlock = canUnlockNode(node);
+                  const isSelected = selectedNodeId === node.id;
+                  const isShrouded = node.shrouded;
+                  const r = isSelected ? 20 : 16;
+                  const nColor = resolveNodeColor(node);
+                  const nShape = node.shape || "circle";
+                  const darkColor = `${nColor}33`;
+                  const labelText = isShrouded && !unlocked
+                    ? "???"
+                    : node.label.length > 14
+                      ? `${node.label.slice(0, 13)}...`
+                      : node.label;
+
+                  return (
+                    <g key={node.id} style={{ cursor: "pointer" }} onClick={() => setSelectedNodeId(node.id === selectedNodeId ? null : node.id)}>
+                      {canUnlock && !unlocked && (
+                        <circle cx={nx} cy={ny} r={r + 6} fill="none" stroke={nColor} strokeWidth={1} opacity={0.4}>
+                          <animate attributeName="r" values={`${r + 4};${r + 8};${r + 4}`} dur="2s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.4;0.15;0.4" dur="2s" repeatCount="indefinite" />
+                        </circle>
+                      )}
+                      {isSelected && <NodeShapeOutline cx={nx} cy={ny} r={r + 3} shape={nShape} stroke="#FFF" strokeWidth={1.5} opacity={0.6} />}
+                      <NodeShapeSvg
+                        cx={nx}
+                        cy={ny}
+                        r={r}
+                        shape={nShape}
+                        fill={unlocked ? nColor : isShrouded ? "#1A1A3A" : canUnlock ? darkColor : "#0E0E30"}
+                        stroke={unlocked ? nColor : isShrouded ? SHROUD_COLOR : canUnlock ? nColor : "#2A3A5B"}
+                        strokeWidth={2}
+                        opacity={unlocked ? 1 : canUnlock ? 0.9 : 0.5}
+                      />
+                      {!unlocked && !canUnlock && !isShrouded && (
+                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#3A4A6A" fontSize={12}>X</text>
+                      )}
+                      {isShrouded && !unlocked && (
+                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill={SHROUD_COLOR} fontSize={11}>?</text>
+                      )}
+                      {unlocked && (
+                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#080820" fontSize={9} fontWeight={800}>OK</text>
+                      )}
+                      {canUnlock && !unlocked && !isShrouded && (
+                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill={nColor} fontSize={11}>+</text>
+                      )}
+                      <text
+                        x={nx}
+                        y={ny + r + 14}
+                        textAnchor="middle"
+                        fill={isShrouded && !unlocked ? SHROUD_COLOR : unlocked ? "#C0F0D0" : canUnlock ? nColor : "#4A5A7A"}
+                        fontSize={9}
+                        fontWeight={unlocked ? 600 : 400}
                       >
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <CreditCard size={12} style={{ color: "#FF7A5A" }} />
-                          <span className="text-[12px]" style={{ color: "#FF7A5A", fontWeight: 600 }}>{card.name}</span>
-                          <ChevronRight size={10} className="ml-auto" style={{ color: "#4A5A7A" }} />
+                        {labelText}
+                      </text>
+                      {node.cardIds.length > 0 && (
+                        <g>
+                          <circle cx={nx + r - 2} cy={ny - r + 2} r={6} fill={isShrouded && !unlocked ? SHROUD_COLOR : "#FF7A5A"} />
+                          <text x={nx + r - 2} y={ny - r + 2.5} textAnchor="middle" dominantBaseline="middle" fill="#FFF" fontSize={8} fontWeight={700}>
+                            {isShrouded && !unlocked ? "?" : node.cardIds.length}
+                          </text>
+                        </g>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+
+            <div className="w-full lg:w-72 shrink-0 space-y-3">
+              {selectedNode ? (
+                <div style={DISPLAY_CONTENTS}>
+                  <div className={`${retro.raised} p-3`} style={{ background: theme.panelBg }}>
+                    {selectedNode.shrouded && !isNodeUnlocked(selectedNode.id) ? (
+                      <div style={DISPLAY_CONTENTS}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <EyeOff size={14} style={{ color: SHROUD_COLOR }} />
+                          <div className="text-[13px]" style={{ color: SHROUD_COLOR, fontWeight: 600 }}>Shrouded Node</div>
                         </div>
-                        <div className="text-[9px] mb-1" style={{ color: theme.labelColor }}>
-                          {card.type}{card.actionCost ? ` · ${card.actionCost}` : ""}
+                        <div className="text-[10px]" style={{ color: "#5A4A7A" }}>
+                          This node's contents are hidden until unlocked. Its rank and requirements are unknown.
                         </div>
-                        {card.effect && (
-                          <div className="text-[10px]" style={{ color: theme.textColor, opacity: 0.8 }}>
-                            {card.effect.replace(/<[^>]*>/g, "").slice(0, 80)}{card.effect.replace(/<[^>]*>/g, "").length > 80 ? "…" : ""}
+                      </div>
+                    ) : (
+                      <div style={DISPLAY_CONTENTS}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <ShapePreviewMini shape={selectedNode.shape || "circle"} color={resolveNodeColor(selectedNode)} size={18} />
+                          <div className="text-[13px]" style={{ color: resolveNodeColor(selectedNode), fontWeight: 600 }}>{selectedNode.label}</div>
+                        </div>
+                        {selectedNode.description && (
+                          <div className="text-[10px] mb-2 italic" style={{ color: theme.textColor }}>{selectedNode.description}</div>
+                        )}
+                        <div className="text-[10px] mb-2" style={{ color: theme.labelColor }}>
+                          Rank {selectedNode.rank} | {selectedNode.cardIds.length} card{selectedNode.cardIds.length !== 1 ? "s" : ""}
+                        </div>
+                        {isNodeUnlocked(selectedNode.id) ? (
+                          <div className="flex items-center gap-1.5 text-[11px] px-2 py-1" style={{ background: `${resolveNodeColor(selectedNode)}15`, color: resolveNodeColor(selectedNode), border: `1px solid ${resolveNodeColor(selectedNode)}33` }}>
+                            <Unlock size={12} /> Unlocked
+                          </div>
+                        ) : canUnlockNode(selectedNode) ? (
+                          <button onClick={() => void handleUnlockNode(selectedNode.id)} className={`${retro.button} w-full text-[11px] flex items-center justify-center gap-1.5 py-2`} style={{ color: "#080820", background: resolveNodeColor(selectedNode) }}>
+                            <Unlock size={12} /> Unlock Node
+                          </button>
+                        ) : (
+                          <div className="text-[10px] px-2 py-1" style={{ background: "#FF6A6A11", color: "#FF6A6A", border: "1px solid #FF6A6A33" }}>
+                            <Lock size={10} className="inline mr-1" />
+                            Requires: {selectedNode.prerequisites.map((pId) => {
+                              const preNode = activeTree.nodes.find((n) => n.id === pId);
+                              return preNode?.shrouded && !isNodeUnlocked(preNode.id) ? "???" : preNode?.label || "?";
+                            }).join(", ")}
                           </div>
                         )}
-                      </button>
-                    ))}
+                      </div>
+                    )}
                   </div>
-                )}
-                {selectedNode.shrouded && !isNodeUnlocked(selectedNode.id) && selectedNode.cardIds.length > 0 && (
-                  <div className={`${retro.sunken} p-3 text-center`} style={{ background: "#1A1A3A" }}>
-                    <EyeOff size={16} style={{ color: SHROUD_COLOR, margin: "0 auto 6px" }} />
-                    <div className="text-[10px]" style={{ color: SHROUD_COLOR }}>Cards hidden — unlock this node to reveal</div>
-                  </div>
-                )}
-                {nodeCards.length === 0 && !(selectedNode.shrouded && !isNodeUnlocked(selectedNode.id)) && (
-                  <div className="text-[10px] text-center py-3" style={S_DIM}>No cards assigned to this node</div>
-                )}
-              </div>
-            ) : (
-              <div className={`${retro.sunken} p-4 text-center`} style={{ background: "#080820" }}>
-                <Circle size={24} style={{ color: "#2A3A5B", margin: "0 auto 8px" }} />
-                <div className="text-[11px]" style={S_DIM}>Click a node to view details</div>
-              </div>
-            )}
+
+                  {!(selectedNode.shrouded && !isNodeUnlocked(selectedNode.id)) && nodeCards.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[10px]" style={{ color: theme.labelColor }}>Cards ({nodeCards.length}):</div>
+                      {nodeCards.map((card) => (
+                        <button
+                          key={card.id}
+                          onClick={() => setViewingCard(card)}
+                          className={`${retro.raised} p-3 w-full text-left hover:brightness-110 transition-all cursor-pointer`}
+                          style={{ background: theme.cardBg }}
+                        >
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <CreditCard size={12} style={{ color: "#FF7A5A" }} />
+                            <span className="text-[12px]" style={{ color: "#FF7A5A", fontWeight: 600 }}>{card.name}</span>
+                            <ChevronRight size={10} className="ml-auto" style={{ color: "#4A5A7A" }} />
+                          </div>
+                          <div className="text-[9px] mb-1" style={{ color: theme.labelColor }}>
+                            {card.type}{card.actionCost ? ` | ${card.actionCost}` : ""}
+                          </div>
+                          {card.effect && (
+                            <div className="text-[10px]" style={{ color: theme.textColor, opacity: 0.8 }}>
+                              {card.effect.replace(/<[^>]*>/g, "").slice(0, 80)}
+                              {card.effect.replace(/<[^>]*>/g, "").length > 80 ? "..." : ""}
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {selectedNode.shrouded && !isNodeUnlocked(selectedNode.id) && selectedNode.cardIds.length > 0 && (
+                    <div className={`${retro.sunken} p-3 text-center`} style={{ background: "#1A1A3A" }}>
+                      <EyeOff size={16} style={{ color: SHROUD_COLOR, margin: "0 auto 6px" }} />
+                      <div className="text-[10px]" style={{ color: SHROUD_COLOR }}>Cards hidden - unlock this node to reveal</div>
+                    </div>
+                  )}
+                  {nodeCards.length === 0 && !(selectedNode.shrouded && !isNodeUnlocked(selectedNode.id)) && (
+                    <div className="text-[10px] text-center py-3" style={S_DIM}>No cards assigned to this node</div>
+                  )}
+                </div>
+              ) : (
+                <div className={`${retro.sunken} p-4 text-center`} style={{ background: "#080820" }}>
+                  <Circle size={24} style={{ color: "#2A3A5B", margin: "0 auto 8px" }} />
+                  <div className="text-[11px]" style={S_DIM}>Click a node to view details</div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -565,10 +596,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
 }
 
 
-// ═══════════════════════════════════════════════
-// DM NODE TREE BUILDER
-// ═════════════���═════════════════════════════════
-
+// DM node tree builder
 interface DMNodeTreeBuilderProps {
   players: { id: string; name: string }[];
   cards: CardRef[];
@@ -665,7 +693,7 @@ useEffect(() => {
   };
 }, []);
 
-  // ── Tree CRUD ──
+  // Tree CRUD
   const createTree = useCallback(async () => {
     const name = newTreeName.trim();
     if (!name) return;
@@ -758,7 +786,7 @@ useEffect(() => {
   }, [selectedTreeId]);
 
 
-  // ─��� Node CRUD ──
+  // Node CRUD
   const addNode = useCallback(() => {
     const existingRanks = selectedTree?.nodes.map(n => n.rank) || [];
     const nextRank = existingRanks.length > 0 ? Math.max(...existingRanks) + 1 : 0;
@@ -831,7 +859,7 @@ useEffect(() => {
     });
   }, [selectedTreeId]);
 
-  // ── Connections ──
+  // Connections
   const toggleConnection = useCallback((fromId: string, toId: string) => {
     if (fromId === toId) return;
     updateTree(t => {
@@ -859,7 +887,7 @@ useEffect(() => {
 
   const maxRank = useMemo(() => selectedTree ? Math.max(0, ...selectedTree.nodes.map(n => n.rank)) : 0, [selectedTree]);
 
-  // ── Drag ──
+  // Drag
   const handleSvgMouseDown = useCallback((e: React.MouseEvent, nodeId: string) => {
     e.stopPropagation();
     if (connectingFrom === "__waiting__") { setConnectingFrom(nodeId); return; }
@@ -900,14 +928,14 @@ useEffect(() => {
     await persistTrees(latestTrees);
   }, [draggingNode]);
 
-  // ── Card search ──
+  // Card search
   const filteredCards = useMemo(() => {
     if (!cardSearch) return cards;
     const q = cardSearch.toLowerCase();
     return cards.filter(c => c.name.toLowerCase().includes(q) || c.type.toLowerCase().includes(q));
   }, [cards, cardSearch]);
 
-  // ── Node connections for the editing node ──
+  // Node connections for the editing node
   const editingNodeConnections = useMemo(() => {
     if (!editingNode || !selectedTree) return [];
     return selectedTree.connections
@@ -919,7 +947,7 @@ useEffect(() => {
       });
   }, [editingNode, selectedTree]);
 
-  // ── Node list filter ──
+  // Node list filter
   const filteredNodes = useMemo(() => {
     if (!selectedTree) return [];
     const sorted = [...selectedTree.nodes].sort((a, b) => b.rank - a.rank);
@@ -1004,7 +1032,7 @@ useEffect(() => {
                 )}
                 <span className="text-[9px] shrink-0" style={{ color: "#4A5A7A" }}>{t.nodes.length}n</span>
                 <span className="text-[9px] shrink-0" style={{ color: t.assignedTo.length > 0 ? "#5A9AFF" : "#3A4A6A" }}>
-                  {t.assignedTo.length === 0 ? "—" : t.assignedTo.includes("all") ? "All" : `${t.assignedTo.length}p`}
+                  {t.assignedTo.length === 0 ? "None" : t.assignedTo.includes("all") ? "All" : `${t.assignedTo.length}p`}
                 </span>
                 <button onClick={e => { e.stopPropagation(); setRenamingTreeId(t.id); setRenameValue(t.name); }} className="hover:opacity-80 p-0.5" title="Rename"><Pencil size={10} style={S_MUTED} /></button>
                 <button onClick={e => { e.stopPropagation(); duplicateTree(t.id); }} className="hover:opacity-80 p-0.5" title="Duplicate"><Copy size={11} style={S_MUTED} /></button>
@@ -1022,9 +1050,27 @@ useEffect(() => {
         )}
       </div>
 
-      {/* ── Selected tree editor ── */}
+      {/* Selected tree editor */}
       {selectedTree && (
         <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {[
+              { label: "Assigned Players", value: selectedTree.assignedTo.includes("all") ? "All Players" : `${selectedTree.assignedTo.length}`, accent: "#5A9AFF" },
+              { label: "Node Count", value: `${selectedTree.nodes.length}`, accent: NT_ACCENT },
+              { label: "Connection Count", value: `${selectedTree.connections.length}`, accent: "#FFD700" },
+              { label: "Card Count", value: `${new Set(selectedTree.nodes.flatMap((node) => node.cardIds)).size}`, accent: "#FF7A5A" },
+            ].map((summary) => (
+              <div
+                key={summary.label}
+                className={`${retro.sunken} px-4 py-3`}
+                style={{ background: "#0C0C2E", borderLeft: `3px solid ${summary.accent}66` }}
+              >
+                <div className="text-[9px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>{summary.label}</div>
+                <div className="text-[13px] break-words" style={{ color: "#C0D0F0", fontWeight: 700 }}>{summary.value}</div>
+              </div>
+            ))}
+          </div>
+
           {/* Toolbar */}
           <div className={`${retro.raised} p-3 flex items-center gap-2 flex-wrap`} style={{ background: "#0E0E35" }}>
             <span className="text-[12px] mr-1" style={{ color: NT_ACCENT, fontWeight: 600 }}>{selectedTree.name}</span>
@@ -1184,7 +1230,7 @@ useEffect(() => {
                         </text>
                       )}
                       <text x={nx} y={ny + r + 14} textAnchor="middle" fill={node.shrouded ? "#6A5A8A" : "#8A9ABB"} fontSize={8}>
-                        {node.label.length > 14 ? node.label.slice(0, 13) + "…" : node.label}
+                        {node.label.length > 14 ? `${node.label.slice(0, 13)}...` : node.label}
                       </text>
                       {node.cardIds.length > 0 && (
                         <g>
@@ -1234,7 +1280,7 @@ useEffect(() => {
                     ))}
                   </div>
 
-                  {/* ─ Properties tab ─ */}
+                  {/* Properties tab */}
                   {editorTab === "properties" && (
                     <div className={`${retro.raised} p-3 space-y-2`} style={{ background: "#0E0E35" }}>
                       <label className="text-[9px] block" style={S_MUTED}>Label:</label>
@@ -1317,7 +1363,7 @@ useEffect(() => {
                     </div>
                   )}
 
-                  {/* ─ Prerequisites tab ─ */}
+                  {/* Prerequisites tab */}
                   {editorTab === "prereqs" && (
                     <div className={`${retro.raised} p-3`} style={{ background: "#0E0E35" }}>
                       <div className="text-[10px] mb-2" style={{ color: "#FFD700", fontWeight: 600 }}>
@@ -1346,7 +1392,7 @@ useEffect(() => {
                     </div>
                   )}
 
-                  {/* ─ Cards tab ─ */}
+                  {/* Cards tab */}
                   {editorTab === "cards" && (
                     <div className={`${retro.raised} p-3`} style={{ background: "#0E0E35" }}>
                       <div className="text-[10px] mb-2" style={{ color: "#FF7A5A", fontWeight: 600 }}>
@@ -1402,7 +1448,7 @@ useEffect(() => {
                     </div>
                   )}
 
-                  {/* ─ Connections tab ─ */}
+                  {/* Connections tab */}
                   {editorTab === "connections" && (
                     <div className={`${retro.raised} p-3`} style={{ background: "#0E0E35" }}>
                       <div className="text-[10px] mb-2" style={{ color: "#FFD700", fontWeight: 600 }}>
@@ -1457,3 +1503,5 @@ useEffect(() => {
     </div>
   );
 }
+
+
