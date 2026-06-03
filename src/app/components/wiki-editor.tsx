@@ -74,6 +74,7 @@ import {
   type WikiArticleRevision,
   type WikiBlockLayout,
   type WikiBlockPreset,
+  type WikiBlockStylePreset,
   type WikiBlockType,
   type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
@@ -185,9 +186,6 @@ type ResponsiveFrameMode = "desktop" | "tablet" | "mobile";
 type SitePageRevision = WikiArticleRevision<SitePage>;
 
 // Inline editor helpers.
-// Helpers
-// ═══════════════════════════════════════════
-
 function darken(hex: string, amount: number): string {
   const n = parseInt(hex.replace("#", ""), 16);
   const r = Math.max(0, ((n >> 16) & 0xff) - amount);
@@ -202,6 +200,115 @@ function lighten(hex: string, amount: number): string {
   const g = Math.min(255, ((n >> 8) & 0xff) + amount);
   const b = Math.min(255, (n & 0xff) + amount);
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+function blockBorderCss(
+  borderStyle: WikiArticleBlock["appearance"]["borderStyle"] | undefined,
+  borderColor: string,
+  borderWidth = 1,
+) {
+  if (borderStyle === "none" || borderWidth <= 0) return "none";
+  return `${borderWidth}px ${borderStyle || "solid"} ${borderColor}`;
+}
+
+function blockSurfaceBackground(
+  surfaceStyle: WikiArticleBlock["appearance"]["surfaceStyle"] | undefined,
+  backgroundColor: string,
+  accentColor: string,
+  backgroundTreatment: WikiArticleBlock["appearance"]["backgroundTreatment"] | undefined = "solid",
+) {
+  const canTint = /^#[0-9a-f]{6}$/i.test(backgroundColor);
+  const lighter = canTint ? lighten(backgroundColor, 10) : backgroundColor;
+  const darker = canTint ? darken(backgroundColor, 8) : backgroundColor;
+  const deep = canTint ? darken(backgroundColor, 14) : backgroundColor;
+  const soft = canTint ? lighten(backgroundColor, 5) : backgroundColor;
+  const glassBase = canTint ? `${backgroundColor}D9` : backgroundColor;
+  const glassEnd = canTint ? `${backgroundColor}E6` : backgroundColor;
+  const flatEnd = canTint ? darken(backgroundColor, 4) : backgroundColor;
+  if (backgroundTreatment === "none" || surfaceStyle === "none") return "transparent";
+  if (backgroundTreatment === "terminal") {
+    return `linear-gradient(180deg, rgba(255,255,255,0.03), transparent 34%), repeating-linear-gradient(180deg, transparent 0 7px, ${accentColor}12 8px), ${backgroundColor}`;
+  }
+  if (backgroundTreatment === "scanline") {
+    return `repeating-linear-gradient(180deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 7px), linear-gradient(180deg, ${deep} 0%, ${backgroundColor} 65%, ${soft} 100%)`;
+  }
+  switch (surfaceStyle) {
+    case "glass":
+      return `linear-gradient(135deg, ${glassBase} 0%, rgba(255,255,255,0.08) 48%, ${glassEnd} 100%)`;
+    case "raised":
+      return `linear-gradient(180deg, ${lighter} 0%, ${backgroundColor} 58%, ${darker} 100%)`;
+    case "inset":
+      return `linear-gradient(180deg, ${deep} 0%, ${backgroundColor} 62%, ${soft} 100%)`;
+    case "none":
+      return "transparent";
+    default:
+      return backgroundTreatment === "gradient"
+        ? `linear-gradient(180deg, ${lighter} 0%, ${backgroundColor} 60%, ${darker} 100%)`
+        : `linear-gradient(180deg, ${backgroundColor} 0%, ${flatEnd} 100%)`;
+  }
+}
+
+function blockSurfaceShadow(
+  surfaceStyle: WikiArticleBlock["appearance"]["surfaceStyle"] | undefined,
+  borderColor: string,
+  accentColor: string,
+  selected = false,
+  shadowDepth = 1,
+  glowIntensity = 0,
+) {
+  const selectedRing = selected ? `0 0 0 1px ${accentColor}` : "";
+  const depth = Math.max(0, Math.min(5, shadowDepth));
+  const glow = Math.max(0, Math.min(100, glowIntensity));
+  const glowCss = glow > 0 ? `0 0 ${Math.round(8 + glow * 0.34)}px ${accentColor}${Math.round(18 + glow * 0.52).toString(16).padStart(2, "0")}` : "";
+  const dropCss = depth > 0 ? `0 ${Math.round(5 + depth * 4)}px ${Math.round(12 + depth * 5)}px rgba(0,0,0,${Math.min(0.58, 0.18 + depth * 0.07)})` : "";
+  const joinShadows = (...parts: (string | undefined)[]) => parts.filter(Boolean).join(", ") || "none";
+  switch (surfaceStyle) {
+    case "raised":
+      return joinShadows(selectedRing, "inset 0 1px 0 rgba(255,255,255,0.16)", dropCss, `0 2px 0 ${borderColor}99`, glowCss);
+    case "inset":
+      return joinShadows(selectedRing, `inset 0 ${Math.round(3 + depth)}px ${Math.round(10 + depth * 3)}px rgba(0,0,0,0.62)`, `inset 0 0 0 1px ${borderColor}88`, glowCss);
+    case "glass":
+      return joinShadows(selectedRing, "inset 0 1px 0 rgba(255,255,255,0.18)", dropCss, `0 0 24px ${accentColor}24`, glowCss);
+    case "none":
+      return joinShadows(selectedRing, glow > 0 ? `0 0 ${Math.round(8 + glow * 0.28)}px ${accentColor}55` : "");
+    default:
+      return joinShadows(selectedRing, dropCss, glowCss);
+  }
+}
+
+function dividerLineElement(
+  dividerStyle: WikiArticleBlock["appearance"]["dividerStyle"] | undefined,
+  borderColor: string,
+  accentColor: string,
+) {
+  const style = dividerStyle || "line";
+  if (style === "notched") {
+    return (
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1" style={{ background: `linear-gradient(90deg, transparent, ${borderColor}, ${accentColor})` }} />
+        <div style={{ width: 8, height: 8, transform: "rotate(45deg)", border: `1px solid ${accentColor}`, background: `${accentColor}33` }} />
+        <div className="h-px flex-1" style={{ background: `linear-gradient(90deg, ${accentColor}, ${borderColor}, transparent)` }} />
+      </div>
+    );
+  }
+  if (style === "double") {
+    return (
+      <div className="space-y-1">
+        <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${accentColor}, transparent)` }} />
+        <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${borderColor}, transparent)` }} />
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        height: style === "glow" ? 2 : 1,
+        borderTop: style === "dashed" ? `1px dashed ${accentColor}` : undefined,
+        background: style === "dashed" ? "transparent" : `linear-gradient(90deg, ${borderColor}, ${accentColor}, ${borderColor})`,
+        boxShadow: style === "glow" ? `0 0 16px ${accentColor}` : undefined,
+      }}
+    />
+  );
 }
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -272,6 +379,7 @@ const DEFAULT_STYLE = {
 };
 
 const WIKI_BLOCK_PRESETS_LOCAL_KEY = "inet-wiki-block-presets";
+const WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY = "inet-wiki-block-style-presets";
 const WIKI_ARTICLE_REVISIONS_LOCAL_KEY = "inet-wiki-article-revisions";
 const MAX_WIKI_REVISIONS_PER_ARTICLE = 25;
 const RESPONSIVE_FRAME_OPTIONS: Record<ResponsiveFrameMode, { label: string; width: number; description: string }> = {
@@ -279,6 +387,179 @@ const RESPONSIVE_FRAME_OPTIONS: Record<ResponsiveFrameMode, { label: string; wid
   tablet: { label: "Tablet", width: 900, description: "Stacked tablet reading frame" },
   mobile: { label: "Mobile", width: 430, description: "Single-column player frame" },
 };
+
+const BUILTIN_WIKI_BLOCK_STYLE_PRESETS: WikiBlockStylePreset[] = [
+  {
+    id: "style-terminal-panel",
+    name: "Terminal Panel",
+    description: "Dense green terminal readout with scanline depth.",
+    category: "Retro",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "inset",
+      backgroundTreatment: "terminal",
+      backgroundColor: "#06150E",
+      accentColor: "#54FF9B",
+      borderColor: "#1E6F4B",
+      borderStyle: "solid",
+      borderWidth: 1,
+      borderRadius: 8,
+      glowIntensity: 22,
+      shadowDepth: 2,
+      titleColor: "#78FFB2",
+      bodyColor: "#B7FFD4",
+    },
+    behavior: { overflowMode: "scroll", mobileDensity: "compact", mobileFullWidth: true },
+  },
+  {
+    id: "style-raised-screen",
+    name: "Raised Screen",
+    description: "A beveled surface that sits above the article canvas.",
+    category: "Panels",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "raised",
+      backgroundTreatment: "gradient",
+      backgroundColor: "#0C1B3D",
+      accentColor: "#8AB4FF",
+      borderColor: "#385E9D",
+      borderStyle: "solid",
+      borderWidth: 2,
+      borderRadius: 14,
+      glowIntensity: 10,
+      shadowDepth: 4,
+    },
+    behavior: { overflowMode: "clip", mobileDensity: "comfortable", mobileFullWidth: true },
+  },
+  {
+    id: "style-inset-monitor",
+    name: "Inset Monitor",
+    description: "A recessed display well for stats, lore, and hidden monitors.",
+    category: "Panels",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "inset",
+      backgroundTreatment: "scanline",
+      backgroundColor: "#050A1C",
+      accentColor: "#67D3FF",
+      borderColor: "#1A456B",
+      borderStyle: "solid",
+      borderWidth: 2,
+      borderRadius: 12,
+      glowIntensity: 12,
+      shadowDepth: 1,
+    },
+    behavior: { overflowMode: "scroll", mobileDensity: "compact", mobileFullWidth: true },
+  },
+  {
+    id: "style-glass-hologram",
+    name: "Glass Hologram",
+    description: "Translucent cyan glass with a stronger holographic glow.",
+    category: "Effects",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "glass",
+      backgroundTreatment: "gradient",
+      backgroundColor: "#08283A",
+      accentColor: "#5CE8FF",
+      borderColor: "#2CAFD2",
+      borderStyle: "solid",
+      borderWidth: 1,
+      borderRadius: 16,
+      opacity: 88,
+      glowIntensity: 42,
+      shadowDepth: 3,
+    },
+    behavior: { overflowMode: "clip", mobileDensity: "comfortable", mobileFullWidth: true },
+  },
+  {
+    id: "style-warning-callout",
+    name: "Warning Callout",
+    description: "Amber warning surface for dangerous rules or urgent lore.",
+    category: "Callouts",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "raised",
+      backgroundTreatment: "gradient",
+      backgroundColor: "#2A1604",
+      accentColor: "#FFB84A",
+      borderColor: "#8A5318",
+      borderStyle: "double",
+      borderWidth: 2,
+      borderRadius: 10,
+      glowIntensity: 24,
+      shadowDepth: 3,
+      titleColor: "#FFD58A",
+      bodyColor: "#FFE7BC",
+    },
+    behavior: { overflowMode: "clip", mobileDensity: "comfortable", mobileFullWidth: true },
+  },
+  {
+    id: "style-lore-box",
+    name: "Lore Box",
+    description: "Warm archive panel for narrative and worldbuilding passages.",
+    category: "Lore",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "raised",
+      backgroundTreatment: "gradient",
+      backgroundColor: "#1B1327",
+      accentColor: "#D6B7FF",
+      borderColor: "#74579B",
+      borderStyle: "solid",
+      borderWidth: 1,
+      borderRadius: 18,
+      glowIntensity: 12,
+      shadowDepth: 2,
+      titleColor: "#E2CFFF",
+      bodyColor: "#EBDFFF",
+    },
+    behavior: { overflowMode: "clip", mobileDensity: "comfortable", mobileFullWidth: true },
+  },
+  {
+    id: "style-reference-table",
+    name: "Reference Table",
+    description: "Compact readable table style with striped rows and sticky header.",
+    category: "Reference",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "flat",
+      backgroundTreatment: "solid",
+      backgroundColor: "#071126",
+      accentColor: "#A7D7FF",
+      borderColor: "#25446E",
+      borderStyle: "solid",
+      borderWidth: 1,
+      borderRadius: 8,
+      glowIntensity: 6,
+      shadowDepth: 1,
+    },
+    behavior: { overflowMode: "scroll", mobileDensity: "dense", mobileFullWidth: true },
+    typeDefaults: { tableDensity: "compact", tableStripedRows: true, tableStickyHeader: true, tableLinkedCells: true },
+  },
+  {
+    id: "style-clean-divider",
+    name: "Clean Divider",
+    description: "Transparent divider with a crisp line and centered label.",
+    category: "Structure",
+    builtIn: true,
+    appearance: {
+      surfaceStyle: "none",
+      backgroundTreatment: "none",
+      accentColor: "#8AB4FF",
+      borderColor: "#315B8D",
+      borderStyle: "none",
+      borderWidth: 0,
+      borderRadius: 0,
+      dividerStyle: "line",
+      dividerLabelPosition: "center",
+      glowIntensity: 0,
+      shadowDepth: 0,
+      padding: "tight",
+    },
+    behavior: { overflowMode: "clip", mobileDensity: "compact", mobileFullWidth: true },
+  },
+];
 
 function createBlankSitePage(): SitePage {
   return {
@@ -300,8 +581,6 @@ function createBlankSitePage(): SitePage {
   };
 }
 
-// ═══════════════════════════════════════════
-// Inline editable text component
 // End inline editor helpers.
 function InlineEdit({
   value, onChange, placeholder, tag: Tag = "span", style, className, multiline,
@@ -370,10 +649,6 @@ function InlineEdit({
   );
 }
 
-// ═══════════════════════════════════════════
-// Main Wiki Editor Component
-// ═══════════════════════════════════════════
-
 export function WikiEditor() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -389,13 +664,13 @@ export function WikiEditor() {
 
   const existingPage = useMemo(() => (isNew ? null : allPages.find((p) => p.id === id) || null), [allPages, id, isNew]);
 
-  // ─── Article State ───
+  // --- Article State ---
   const [page, setPage] = useState<SitePage>(() => createBlankSitePage());
 
-  // ─── UI State ───
+  // --- UI State ---
   const [activePanel, setActivePanel] = useState<"preview" | "settings" | "content" | "metadata" | "appearance">("preview");
   const [workspaceRailTab, setWorkspaceRailTab] = useState<"outline" | "library" | "presets" | "article">("outline");
-  const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "article">("content");
+  const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "style" | "article">("content");
   const [editorCanvasMode, setEditorCanvasMode] = useState<EditorCanvasMode>("edit");
   const [responsiveFrameMode, setResponsiveFrameMode] = useState<ResponsiveFrameMode>("desktop");
   const editorPreviewMode = editorCanvasMode !== "edit";
@@ -416,6 +691,7 @@ export function WikiEditor() {
   const [dragType, setDragType] = useState<"panel" | null>(null);
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
   const [wikiBlockPresets, setWikiBlockPresets] = useState<WikiBlockPreset[]>([]);
+  const [wikiBlockStylePresets, setWikiBlockStylePresets] = useState<WikiBlockStylePreset[]>(() => safeGetJson<WikiBlockStylePreset[]>(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, []));
   const [wikiArticleRevisions, setWikiArticleRevisions] = useState<SitePageRevision[]>([]);
   const [sharedImageStorageFallback, setSharedImageStorageFallback] = useState(false);
   const [sharedPresetFallback, setSharedPresetFallback] = useState(false);
@@ -484,22 +760,22 @@ export function WikiEditor() {
   const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
   const minimapDragActiveRef = useRef(false);
 
-  // ─── Auto-save Draft State ───
+  // --- Auto-save Draft State ---
   const [showDraftRestore, setShowDraftRestore] = useState(false);
   const [remoteDrafts, setRemoteDrafts] = useState<Record<string, SitePage>>({});
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const draftKey = `inet-wiki-draft-${page.id}`;
 
-  // ─── Undo/Redo State ───
+  // --- Undo/Redo State ---
   const [undoStack, setUndoStack] = useState<SitePage[]>([]);
   const [redoStack, setRedoStack] = useState<SitePage[]>([]);
   const undoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ─── Wiki Link Dialog State ───
+  // --- Wiki Link Dialog State ---
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [linkInsertTarget, setLinkInsertTarget] = useState<"body" | string>("body");
 
-  // ─── Image Embed Dialog State ───
+  // --- Image Embed Dialog State ---
   const [showImageEmbed, setShowImageEmbed] = useState(false);
   const [showSpoilerInsert, setShowSpoilerInsert] = useState(false);
   const [spoilerInsertTarget, setSpoilerInsertTarget] = useState<"body" | string>("body");
@@ -513,7 +789,7 @@ export function WikiEditor() {
   const [imageAlign, setImageAlign] = useState<"left" | "center" | "right">("center");
   const [imageWidth, setImageWidth] = useState("100");
 
-  // ─── Custom Panel Styles ───
+  // --- Custom Panel Styles ---
   const [showNewStyleForm, setShowNewStyleForm] = useState(false);
   const [newStyleLabel, setNewStyleLabel] = useState("");
   const [newStyleAccent, setNewStyleAccent] = useState("#6ABAFF");
@@ -734,11 +1010,11 @@ export function WikiEditor() {
   }, [showCommandPalette]);
 
 
-  // ─── Category/Tag Helpers ───
+  // --- Category/Tag Helpers ---
   const allCategories = useMemo(() => Array.from(new Set(allPages.map((p) => p.category).filter(Boolean))), [allPages]);
   const allTags = useMemo(() => Array.from(new Set(allPages.flatMap((p) => p.tags || []).filter(Boolean))), [allPages]);
 
-  // ─── Check for draft on mount ───
+  // --- Check for draft on mount ---
   useEffect(() => {
     if (!draftsLoaded || !existingPage) return;
     const remoteDraft = remoteDrafts[existingPage.id];
@@ -755,7 +1031,7 @@ export function WikiEditor() {
     } catch {}
   }, [draftKey, draftsLoaded, existingPage, remoteDrafts]);
 
-  // ─── Auto-save draft every 30 seconds (only for existing articles) ───
+  // --- Auto-save draft every 30 seconds (only for existing articles) ---
   useEffect(() => {
     if (!hasUnsaved || isNew || !currentUserId || !draftsLoaded) return;
     const interval = setInterval(() => {
@@ -770,7 +1046,7 @@ export function WikiEditor() {
     return () => clearInterval(interval);
   }, [hasUnsaved, isNew, currentUserId, draftsLoaded, page]);
 
-  // ─── Restore draft handler ───
+  // --- Restore draft handler ---
   const restoreDraft = useCallback(() => {
     const remoteDraft = existingPage ? remoteDrafts[existingPage.id] : undefined;
     if (remoteDraft) {
@@ -841,7 +1117,7 @@ export function WikiEditor() {
     setHasUnsaved(true);
   }, []);
 
-  // ─── Save ───
+  // --- Save ---
   const normalizePageForStorage = useCallback((sourcePage: SitePage): SitePage => {
     const normalizedBlocks = compactWikiArticleBlocks(
       normalizeWikiArticleBlocks(sourcePage.blocks || migrateLegacyArticleToBlocks(sourcePage)),
@@ -1018,7 +1294,7 @@ export function WikiEditor() {
     }
   };
 
-  // ─── Panel/Section helpers (unified) ───
+  // --- Panel/Section helpers (unified) ---
   const panels = normalizeWikiPanels(page.panels);
   const addPanel = (style?: string, placement: WikiPanelPlacement = "body") => {
     const p: WikiPanel = normalizeWikiPanel({
@@ -1054,7 +1330,7 @@ export function WikiEditor() {
     updatePanel(panelId, { assignedTo: next });
   };
 
-  // ─── Reorder helpers ───
+  // --- Reorder helpers ---
   const movePanel = (from: number, to: number) => {
     if (to < 0 || to >= panels.length) return;
     update("panels", reorder(panels, from, to));
@@ -1121,7 +1397,7 @@ export function WikiEditor() {
     setDragType(null);
   };
 
-  // ─── Undo / Redo ───
+  // --- Undo / Redo ---
   const handleUndo = useCallback(() => {
     if (undoStack.length === 0) return;
     const prev = undoStack[undoStack.length - 1];
@@ -1140,11 +1416,11 @@ export function WikiEditor() {
     setHasUnsaved(true);
   }, [redoStack, page]);
 
-  // ─── Keyboard Shortcuts ───
+  // --- Keyboard Shortcuts ---
   const handleSaveRef = useRef<() => void>(() => {});
   handleSaveRef.current = handleSave;
 
-  // ─── Template Application ───
+  // --- Template Application ---
   const applyTemplate = useCallback((template: WikiTemplate) => {
     const data = template.data;
     // Convert template sections to panels (migration)
@@ -1189,7 +1465,7 @@ export function WikiEditor() {
     setSelectedBlockIds([]);
   }, []);
 
-  // ─── Wiki Link Insertion ───
+  // --- Wiki Link Insertion ---
   const handleInsertWikiLink = useCallback((articleId: string, articleTitle: string, displayText: string) => {
     const linkHtml = `<a href="/interface/inet-page/${articleId}" class="wiki-link" data-article-id="${articleId}" style="color:#6A9AFF;text-decoration:underline;cursor:pointer;" title="${articleTitle}">${displayText}</a>`;
     if (linkInsertTarget === "body") {
@@ -1203,7 +1479,7 @@ export function WikiEditor() {
     setShowLinkDialog(false);
   }, [page.body, panels, linkInsertTarget, update]);
 
-  // ─── Image Embed Handler ───
+  // --- Image Embed Handler ---
   const handleInsertImage = useCallback(() => {
     if (!imageUrl.trim()) return;
     const alignStyle = imageAlign === "center" ? "margin:12px auto;display:block;text-align:center;" : imageAlign === "left" ? "float:left;margin:0 16px 12px 0;" : "float:right;margin:0 0 12px 16px;";
@@ -1223,7 +1499,7 @@ export function WikiEditor() {
     setShowImageEmbed(false);
   }, [imageUrl, imageCaption, imageAlign, imageWidth, page.body, update]);
 
-  // ─── Spoiler Box Insert Handler ───
+  // --- Spoiler Box Insert Handler ---
   const handleInsertSpoiler = useCallback(() => {
     if (!spoilerContent.trim()) return;
     const playerStr = spoilerPlayerIds.join(",");
@@ -1242,7 +1518,7 @@ export function WikiEditor() {
     setShowSpoilerInsert(false);
   }, [spoilerContent, spoilerPlayerIds, spoilerLabel, spoilerInsertTarget, page.body, panels, update]);
 
-  // ─── Preview-as-player helpers ───
+  // --- Preview-as-player helpers ---
   const previewPlayer = useMemo(() => previewAsPlayerId ? players.find((p) => p.id === previewAsPlayerId) : null, [previewAsPlayerId, players]);
   const playerPreviewArticleVisibility = previewAsPlayerId ? (page.playerVisibility || {})[previewAsPlayerId] || "visible" : "visible";
   const playerPreviewArticleBlocked = isPlayerPreviewMode && !!previewAsPlayerId && (
@@ -1250,7 +1526,7 @@ export function WikiEditor() {
     (playerPreviewArticleVisibility === "spoiler" && !revealedPanels.has("article-spoiler-gate"))
   );
 
-  // ─── Infobox helpers ───
+  // --- Infobox helpers ---
   const addInfoboxRow = () => update("infobox", [...(page.infobox || []), { label: "", value: "" }]);
   const updateInfoboxRow = (idx: number, field: "label" | "value", val: string) => {
     const next = [...(page.infobox || [])];
@@ -1259,7 +1535,7 @@ export function WikiEditor() {
   };
   const removeInfoboxRow = (idx: number) => update("infobox", (page.infobox || []).filter((_, i) => i !== idx));
 
-  // ─── Subcategory helpers ───
+  // --- Subcategory helpers ---
   const addSubcategory = (type: "folder" | "article") => {
     const node: SubCategory = { id: `sc-${uid()}`, name: "", type, children: [] };
     update("subcategories", [...(page.subcategories || []), node]);
@@ -1388,6 +1664,13 @@ export function WikiEditor() {
     ],
     [wikiBlockPresets],
   );
+  const stylePresetLibrary = useMemo(
+    () => [
+      ...BUILTIN_WIKI_BLOCK_STYLE_PRESETS,
+      ...wikiBlockStylePresets.filter((preset) => !preset.builtIn),
+    ],
+    [wikiBlockStylePresets],
+  );
   const articleLinkChoices = useMemo(
     () => allPages.filter((article) => article.id !== page.id).sort((a, b) => a.title.localeCompare(b.title)),
     [allPages, page.id],
@@ -1410,10 +1693,10 @@ export function WikiEditor() {
     () => Math.max(12, ...articleChromeFields.map((field) => articleChromeLayouts[field].rowStart + articleChromeLayouts[field].rowSpan + 1)),
     [articleChromeFields, articleChromeLayouts],
   );
-  const articleChromeCanvasHeight = articleChromeBottomRow * canvasRowHeight;
+  const contentCanvasRowOffset = articleChromeBottomRow;
   const canvasBottomRow = useMemo(
-    () => Math.max(48, ...renderedPageBlocks.map((block) => block.layout.rowStart + block.layout.rowSpan + 2)),
-    [renderedPageBlocks],
+    () => Math.max(contentCanvasRowOffset + 48, ...renderedPageBlocks.map((block) => contentCanvasRowOffset + block.layout.rowStart + block.layout.rowSpan + 2)),
+    [contentCanvasRowOffset, renderedPageBlocks],
   );
   const blockCountLabel = `${pageBlocks.length} block${pageBlocks.length === 1 ? "" : "s"}`;
   const canvasContentHeight = canvasBottomRow * canvasRowHeight;
@@ -1559,7 +1842,7 @@ export function WikiEditor() {
       const bottom = Math.max(state.startY, state.currentY);
       const hits = renderedPageBlocks.filter((block) => {
         const blockLeft = (block.layout.colStart - 1) * colWidth;
-        const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
+        const blockTop = (contentCanvasRowOffset + block.layout.rowStart - 1) * canvasRowHeight;
         const blockRight = blockLeft + (block.layout.colSpan * colWidth);
         const blockBottom = blockTop + (block.layout.rowSpan * canvasRowHeight);
         return left <= blockRight && right >= blockLeft && top <= blockBottom && bottom >= blockTop;
@@ -1574,7 +1857,7 @@ export function WikiEditor() {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [canvasRowHeight, marqueeSelection, renderedPageBlocks]);
+  }, [canvasRowHeight, contentCanvasRowOffset, marqueeSelection, renderedPageBlocks]);
 
   const updateBlocks = useCallback((nextBlocks: WikiArticleBlock[]) => {
     update("blocks", compactWikiArticleBlocks(nextBlocks));
@@ -1646,6 +1929,124 @@ export function WikiEditor() {
       throw err;
     }
   }, [refreshSharedAssetFallbackState]);
+
+  const persistWikiBlockStylePresets = useCallback((nextPresets: WikiBlockStylePreset[], successMessage?: string) => {
+    const normalized = nextPresets
+      .filter((preset) => !preset.builtIn)
+      .map((preset) => ({
+        ...preset,
+        builtIn: false,
+        appearance: { ...(preset.appearance || {}) },
+        behavior: { ...(preset.behavior || {}) },
+        typeDefaults: { ...(preset.typeDefaults || {}) },
+      }));
+    setWikiBlockStylePresets(normalized);
+    safeSetJson(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, normalized);
+    if (successMessage) setPresetStatus(successMessage);
+  }, []);
+
+  const applyBlockStylePreset = useCallback((blockId: string, preset: WikiBlockStylePreset) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      appearance: {
+        ...block.appearance,
+        ...(preset.appearance || {}),
+        stylePresetId: preset.id,
+      },
+      behavior: {
+        ...(block.behavior || {}),
+        ...(preset.behavior || {}),
+      },
+      ...(preset.typeDefaults || {}),
+    }));
+    setPresetStatus(`Applied style: ${preset.name}`);
+  }, [updateSingleBlock]);
+
+  const saveSelectedBlockStylePreset = useCallback(() => {
+    if (!selectedBlock) return;
+    const name = window.prompt("Style preset name", selectedBlock.title || "Custom Block Style")?.trim();
+    if (!name) return;
+    const description = window.prompt("Style preset description", "Reusable visual settings for wiki blocks")?.trim() || "";
+    const preset: WikiBlockStylePreset = {
+      id: `style-custom-${uid()}`,
+      name,
+      description,
+      category: selectedBlock.type === "referenceTable" ? "Reference" : selectedBlock.type === "divider" ? "Structure" : "Custom",
+      builtIn: false,
+      appearance: { ...selectedBlock.appearance, stylePresetId: undefined },
+      behavior: { ...(selectedBlock.behavior || {}) },
+      typeDefaults: {
+        imageFrameStyle: selectedBlock.imageFrameStyle,
+        imageCaptionStyle: selectedBlock.imageCaptionStyle,
+        tableDensity: selectedBlock.tableDensity,
+        tableStripedRows: selectedBlock.tableStripedRows,
+        tableStickyHeader: selectedBlock.tableStickyHeader,
+        tableLinkedCells: selectedBlock.tableLinkedCells,
+        keyValueDensity: selectedBlock.keyValueDensity,
+        keyValueLabelAlign: selectedBlock.keyValueLabelAlign,
+        keyValueRowDividers: selectedBlock.keyValueRowDividers,
+        wikiLinksDisplayMode: selectedBlock.wikiLinksDisplayMode,
+      },
+    };
+    persistWikiBlockStylePresets([...wikiBlockStylePresets, preset], `Saved style preset: ${name}`);
+  }, [persistWikiBlockStylePresets, selectedBlock, wikiBlockStylePresets]);
+
+  const duplicateStylePresetToLibrary = useCallback((preset: WikiBlockStylePreset) => {
+    const duplicate: WikiBlockStylePreset = {
+      ...preset,
+      id: `style-custom-${uid()}`,
+      name: `${preset.name} Copy`,
+      builtIn: false,
+      appearance: { ...(preset.appearance || {}) },
+      behavior: { ...(preset.behavior || {}) },
+      typeDefaults: { ...(preset.typeDefaults || {}) },
+    };
+    persistWikiBlockStylePresets([...wikiBlockStylePresets, duplicate], `Copied style preset: ${preset.name}`);
+  }, [persistWikiBlockStylePresets, wikiBlockStylePresets]);
+
+  const renameStoredStylePreset = useCallback((presetId: string) => {
+    const target = wikiBlockStylePresets.find((preset) => preset.id === presetId);
+    if (!target) return;
+    const nextName = window.prompt("Rename style preset", target.name)?.trim();
+    if (!nextName) return;
+    persistWikiBlockStylePresets(
+      wikiBlockStylePresets.map((preset) => preset.id === presetId ? { ...preset, name: nextName } : preset),
+      `Renamed style preset: ${nextName}`,
+    );
+  }, [persistWikiBlockStylePresets, wikiBlockStylePresets]);
+
+  const deleteStoredStylePreset = useCallback((presetId: string) => {
+    const target = wikiBlockStylePresets.find((preset) => preset.id === presetId);
+    if (!target) return;
+    if (!window.confirm(`Delete style preset "${target.name}"?`)) return;
+    persistWikiBlockStylePresets(
+      wikiBlockStylePresets.filter((preset) => preset.id !== presetId),
+      `Deleted style preset: ${target.name}`,
+    );
+  }, [persistWikiBlockStylePresets, wikiBlockStylePresets]);
+
+  const resetSelectedBlockStyle = useCallback(() => {
+    if (!selectedBlock) return;
+    updateSingleBlock(selectedBlock.id, (block) => {
+      const defaults = createDefaultBlock(block.type);
+      return {
+        ...block,
+        appearance: defaults.appearance,
+        behavior: defaults.behavior,
+        imageFrameStyle: defaults.imageFrameStyle,
+        imageCaptionStyle: defaults.imageCaptionStyle,
+        tableDensity: defaults.tableDensity,
+        tableStripedRows: defaults.tableStripedRows,
+        tableStickyHeader: defaults.tableStickyHeader,
+        tableLinkedCells: defaults.tableLinkedCells,
+        keyValueDensity: defaults.keyValueDensity,
+        keyValueLabelAlign: defaults.keyValueLabelAlign,
+        keyValueRowDividers: defaults.keyValueRowDividers,
+        wikiLinksDisplayMode: defaults.wikiLinksDisplayMode,
+      };
+    });
+    setPresetStatus("Reset block style to default.");
+  }, [selectedBlock, updateSingleBlock]);
 
   const openImageStoragePicker = useCallback((target: { mode: "embed" | "block"; blockId?: string }) => {
     setImagePickerTarget(target);
@@ -1733,15 +2134,16 @@ export function WikiEditor() {
     if (!metrics) return null;
     const colSpan = layoutSeed?.colSpan || 1;
     const rowSpan = layoutSeed?.rowSpan || 1;
+    const rawRow = Math.floor((clientY - metrics.rect.top) / metrics.rowHeight) + 1;
     return {
       left: clientX - metrics.rect.left,
       top: clientY - metrics.rect.top,
       colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.floor((clientX - metrics.rect.left) / Math.max(metrics.colWidth, 1)) + 1)),
-      rowStart: Math.max(1, Math.floor((clientY - metrics.rect.top) / metrics.rowHeight) + 1),
+      rowStart: Math.max(1, rawRow - contentCanvasRowOffset),
       colSpan,
       rowSpan,
     };
-  }, [getCanvasGridMetrics]);
+  }, [contentCanvasRowOffset, getCanvasGridMetrics]);
 
   const clampArticleChromeLayout = useCallback((layout: Partial<WikiBlockLayout>, fallback: WikiBlockLayout): WikiBlockLayout => {
     const minColSpan = fallback.minColSpan || 6;
@@ -2623,6 +3025,16 @@ export function WikiEditor() {
     const previewHidden = !!previewAsPlayerId && hasRestriction && block.visibility.mode === "hidden" && !previewAllowed;
     const requiresPreviewReveal = !!previewAsPlayerId && block.visibility.mode === "spoiler" && ((!hasRestriction) || !previewAllowed);
     const previewRevealed = revealedPanels.has(block.id);
+    const collapseKey = `collapse-${block.id}`;
+    const collapseRevealed = revealedPanels.has(collapseKey);
+    const isCollapsedForPreview = editorPreviewMode && !!block.behavior?.collapsible && !!block.behavior?.defaultCollapsed && !collapseRevealed;
+    const titleColor = block.appearance.titleColor || palette.accent;
+    const bodyColor = block.appearance.bodyColor || txt;
+    const titleAlign = (block.appearance.titleAlign || "left") as React.CSSProperties["textAlign"];
+    const bodyAlign = (block.appearance.bodyAlign || "left") as React.CSSProperties["textAlign"];
+    const contentOverflow = block.behavior?.overflowMode === "scroll" ? "auto" : "hidden";
+    const tablePad = block.tableDensity === "dense" ? 4 : block.tableDensity === "compact" ? 6 : 8;
+    const linkDisplayMode = block.wikiLinksDisplayMode || "list";
 
     if (previewHidden) {
       return (
@@ -2635,6 +3047,26 @@ export function WikiEditor() {
             </div>
           </div>
         </div>
+      );
+    }
+
+    if (isCollapsedForPreview) {
+      return (
+        <button
+          onClick={() => setRevealedPanels((prev) => new Set([...prev, collapseKey]))}
+          className="h-full w-full px-4 text-left hover:opacity-90"
+          style={{ color: bodyColor, textAlign: bodyAlign, background: "rgba(0,0,0,0.14)" }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: palette.accent, fontWeight: 700 }}>
+            Collapsed Block
+          </div>
+          <div className="mt-1 text-[15px] font-bold" style={{ color: titleColor, textAlign: titleAlign }}>
+            {block.title || block.subtitle || `Collapsed ${block.type}`}
+          </div>
+          <div className="mt-2 text-[11px]" style={{ color: mutedText }}>
+            Click to expand this block in preview.
+          </div>
+        </button>
       );
     }
 
@@ -2664,12 +3096,17 @@ export function WikiEditor() {
     const verticalPad = paddingMode === "tight" ? 6 : paddingMode === "loose" ? 14 : 9;
     const blockShellStyle: React.CSSProperties = {
       padding: `${verticalPad}px ${horizontalPad}px`,
+      color: bodyColor,
+      textAlign: bodyAlign,
     };
     const blockHeaderStyle: React.CSSProperties = {
       padding: `${verticalPad}px ${horizontalPad}px ${Math.max(8, verticalPad - 1)}px`,
+      textAlign: titleAlign,
     };
     const blockContentStyle: React.CSSProperties = {
       padding: `${block.title || block.subtitle ? 0 : verticalPad}px ${horizontalPad}px ${verticalPad}px`,
+      color: bodyColor,
+      textAlign: bodyAlign,
     };
 
     const richEditor = (placeholder: string, html: string, onChange: (nextHtml: string) => void) => (
@@ -2686,7 +3123,7 @@ export function WikiEditor() {
           />
         )
         : (
-          <RenderFormattedText text={html || `<p style="opacity:.55">${placeholder}</p>`} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
+          <RenderFormattedText text={html || `<p style="opacity:.55">${placeholder}</p>`} color={bodyColor} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
         )
     );
 
@@ -2699,21 +3136,28 @@ export function WikiEditor() {
               value={block.title}
               onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
               placeholder="Heading title"
-              style={{ color: palette.accent, fontWeight: 700, fontSize: block.headingLevel === 1 ? 28 : block.headingLevel === 3 ? 18 : 22 }}
+              style={{ color: titleColor, fontWeight: 700, fontSize: block.headingLevel === 1 ? 28 : block.headingLevel === 3 ? 18 : 22, textAlign: titleAlign }}
             />
             <InlineEdit
               tag="p"
               value={block.subtitle || ""}
               onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
               placeholder="Optional subtitle"
-              style={{ color: mutedText, fontStyle: "italic", fontSize: 12 }}
+              style={{ color: mutedText, fontStyle: "italic", fontSize: 12, textAlign: titleAlign }}
             />
           </div>
         );
       case "image":
         return (
           <div className="h-full flex flex-col gap-2" style={blockShellStyle}>
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border" style={{ borderColor: palette.border, background: "#050518" }}>
+            <div
+              className="relative min-h-0 flex-1 overflow-hidden rounded-md"
+              style={{
+                border: block.imageFrameStyle === "none" ? "none" : `${block.imageFrameStyle === "thick" ? 3 : 1}px solid ${palette.border}`,
+                background: "#050518",
+                padding: block.imageFrameStyle === "polaroid" ? 8 : block.imageFrameStyle === "terminal" ? 4 : 0,
+              }}
+            >
               {block.imageUrl ? (
                 <img
                   src={block.imageUrl}
@@ -2731,7 +3175,7 @@ export function WikiEditor() {
                 </div>
               )}
               {(block.imageCaption || block.title) && block.imageCaptionPlacement === "overlay" && (
-                <div className="absolute inset-x-0 bottom-0 px-3 py-2 text-[11px]" style={{ color: "#E8F0FF", background: "linear-gradient(180deg, transparent, rgba(0,0,0,0.82))", fontStyle: "italic" }}>
+                <div className="absolute inset-x-0 bottom-0 px-3 py-2 text-[11px]" style={{ color: "#E8F0FF", background: "linear-gradient(180deg, transparent, rgba(0,0,0,0.82))", fontStyle: block.imageCaptionStyle === "terminal" ? undefined : "italic" }}>
                   {block.imageCaption || block.title}
                 </div>
               )}
@@ -2743,7 +3187,7 @@ export function WikiEditor() {
                 value={block.imageCaption || ""}
                 onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, imageCaption: value }))}
                 placeholder="Image caption"
-                style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
+                style={{ color: block.imageCaptionStyle === "terminal" ? palette.accent : mutedText, fontSize: 11, fontStyle: block.imageCaptionStyle === "plain" ? "italic" : undefined, textAlign: bodyAlign }}
               />
             </div>
             )}
@@ -2759,17 +3203,17 @@ export function WikiEditor() {
                 value={block.title || ""}
                 onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
                 placeholder="Block title"
-                style={{ color: palette.accent, fontWeight: 700, fontSize: 18 }}
+                style={{ color: titleColor, fontWeight: 700, fontSize: 18, textAlign: titleAlign }}
               />
               <InlineEdit
                 tag="p"
                 value={block.subtitle || ""}
                 onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
                 placeholder="Optional subtitle"
-                style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
+                style={{ color: mutedText, fontSize: 11, fontStyle: "italic", textAlign: titleAlign }}
               />
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden" style={blockContentStyle}>
+            <div className="min-h-0 flex-1" style={{ ...blockContentStyle, overflow: contentOverflow }}>
               {richEditor("Write callout content...", block.html, (nextHtml) => updateSingleBlock(block.id, (entry) => ({ ...entry, html: nextHtml })))}
             </div>
           </div>
@@ -2783,7 +3227,7 @@ export function WikiEditor() {
                 value={block.title || ""}
                 onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
                 placeholder="Table title"
-                style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+                style={{ color: titleColor, fontWeight: 700, fontSize: 16, textAlign: titleAlign }}
               />
             </div>
             <div className="min-h-0 flex-1 overflow-auto rounded-md border" style={{ borderColor: palette.border }}>
@@ -2791,7 +3235,7 @@ export function WikiEditor() {
                 <thead style={{ background: "rgba(255,255,255,0.04)" }}>
                   <tr>
                     {(block.columns || []).map((column, columnIndex) => (
-                      <th key={`${block.id}-column-${columnIndex}`} className="p-2 text-left align-top border-b" style={{ borderBottomColor: palette.border, color: palette.accent }}>
+                      <th key={`${block.id}-column-${columnIndex}`} className="text-left align-top border-b" style={{ padding: tablePad, position: block.tableStickyHeader ? "sticky" : undefined, top: block.tableStickyHeader ? 0 : undefined, background: block.tableStickyHeader ? "#071126" : undefined, borderBottomColor: palette.border, color: titleColor }}>
                         {isSelected ? (
                           <input
                             value={column}
@@ -2805,10 +3249,10 @@ export function WikiEditor() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(block.rows || []).map((row) => (
-                    <tr key={row.id}>
+                  {(block.rows || []).map((row, rowIndex) => (
+                    <tr key={row.id} style={{ background: block.tableStripedRows && rowIndex % 2 === 1 ? "rgba(255,255,255,0.035)" : undefined }}>
                       {row.cells.map((cell, cellIndex) => (
-                        <td key={`${row.id}-${cellIndex}`} className="p-2 align-top border-b" style={{ borderBottomColor: `${palette.border}66`, color: txt }}>
+                        <td key={`${row.id}-${cellIndex}`} className="align-top border-b" style={{ padding: tablePad, borderBottomColor: `${palette.border}66`, color: bodyColor }}>
                           {isSelected ? (
                             <textarea
                               value={cell}
@@ -2818,7 +3262,11 @@ export function WikiEditor() {
                               style={{ color: txt }}
                             />
                           ) : (
-                            cell || <span style={{ color: mutedText }}>Empty</span>
+                            cell
+                              ? block.tableLinkedCells
+                                ? <RenderFormattedText text={cell} color={bodyColor} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
+                                : cell
+                              : <span style={{ color: mutedText }}>Empty</span>
                           )}
                         </td>
                       ))}
@@ -2838,12 +3286,12 @@ export function WikiEditor() {
                 value={block.title || ""}
                 onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
                 placeholder="Key-value box title"
-                style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+                style={{ color: titleColor, fontWeight: 700, fontSize: 16, textAlign: titleAlign }}
               />
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-auto">
+            <div className="min-h-0 flex-1 overflow-auto" style={{ display: "flex", flexDirection: "column", gap: block.keyValueDensity === "dense" ? 4 : block.keyValueDensity === "compact" ? 6 : 8 }}>
               {(block.items || []).map((item) => (
-                <div key={item.id} className="grid grid-cols-[minmax(90px,0.9fr)_1fr] gap-2 items-start">
+                <div key={item.id} className="grid grid-cols-[minmax(90px,0.9fr)_1fr] gap-2 items-start" style={{ borderBottom: block.keyValueRowDividers ? `1px solid ${palette.border}55` : undefined, paddingBottom: block.keyValueRowDividers ? 6 : undefined }}>
                   {isSelected ? (
                     <>
                       <input
@@ -2861,8 +3309,8 @@ export function WikiEditor() {
                     </>
                   ) : (
                     <>
-                      <span style={{ color: palette.accent, fontWeight: 700 }}>{item.label}</span>
-                      <span style={{ color: txt }}>{item.value}</span>
+                      <span style={{ color: titleColor, fontWeight: 700, textAlign: block.keyValueLabelAlign }}>{item.label}</span>
+                      <span style={{ color: bodyColor }}>{item.value}</span>
                     </>
                   )}
                 </div>
@@ -2879,10 +3327,10 @@ export function WikiEditor() {
                 value={block.title || ""}
                 onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
                 placeholder="Related links"
-                style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+                style={{ color: titleColor, fontWeight: 700, fontSize: 16, textAlign: titleAlign }}
               />
             </div>
-            <div className="min-h-0 flex-1 space-y-1 overflow-auto text-[11px]">
+            <div className="min-h-0 flex-1 overflow-auto text-[11px]" style={{ display: "flex", flexDirection: linkDisplayMode === "chips" ? "row" : "column", flexWrap: linkDisplayMode === "chips" ? "wrap" : undefined, gap: linkDisplayMode === "cards" ? 8 : 4 }}>
               {(block.articleIds || []).length === 0 && (
                 <div style={{ color: mutedText }}>No linked articles yet.</div>
               )}
@@ -2892,8 +3340,8 @@ export function WikiEditor() {
                   <button
                     key={articleId}
                     onClick={() => article && window.open(`/interface/inet-page/${article.id}`, "_blank")}
-                    className="w-full text-left px-2 py-1 rounded-md border hover:opacity-85"
-                    style={{ color: txt, borderColor: `${palette.border}77`, background: "rgba(255,255,255,0.03)" }}
+                    className="text-left px-2 py-1 rounded-md border hover:opacity-85"
+                    style={{ width: linkDisplayMode === "chips" ? "auto" : "100%", color: bodyColor, borderColor: `${palette.border}77`, background: linkDisplayMode === "cards" ? "rgba(255,255,255,0.055)" : "rgba(255,255,255,0.03)" }}
                   >
                     {article?.title || articleId}
                   </button>
@@ -2905,7 +3353,7 @@ export function WikiEditor() {
       case "divider":
         return (
           <div className="h-full flex flex-col justify-center gap-2" style={blockShellStyle}>
-            <div style={{ height: 1, background: `linear-gradient(90deg, ${palette.border}, ${palette.accent}, ${palette.border})` }} />
+            {dividerLineElement(block.appearance.dividerStyle, palette.border, palette.accent)}
             <InlineEdit
               tag="div"
               value={block.dividerLabel || ""}
@@ -2932,18 +3380,18 @@ export function WikiEditor() {
                   value={block.title || ""}
                   onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
                   placeholder="Section title"
-                  style={{ color: palette.accent, fontWeight: 700, fontSize: 18 }}
+                  style={{ color: titleColor, fontWeight: 700, fontSize: 18, textAlign: titleAlign }}
                 />
                 <InlineEdit
                   tag="p"
                   value={block.subtitle || ""}
                   onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
                   placeholder="Section subtitle"
-                  style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
+                  style={{ color: mutedText, fontSize: 11, fontStyle: "italic", textAlign: titleAlign }}
                 />
               </div>
             )}
-            <div className="min-h-0 flex-1 overflow-hidden" style={blockContentStyle}>
+            <div className="min-h-0 flex-1" style={{ ...blockContentStyle, overflow: contentOverflow }}>
               {richEditor("Write article text here...", block.html, (nextHtml) => updateSingleBlock(block.id, (entry) => ({ ...entry, html: nextHtml })))}
             </div>
           </div>
@@ -3147,7 +3595,7 @@ export function WikiEditor() {
     tocItems.push({ id: `panel-${p.id}`, label: p.title });
   });
 
-  // ─── Sidebar tabs for editor ───
+  // --- Sidebar tabs for editor ---
   const sidebarTabs: { id: typeof activePanel; label: string; icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }> }[] = [
     { id: "preview", label: "Preview", icon: Eye },
     { id: "settings", label: "Article", icon: Settings },
@@ -4086,7 +4534,7 @@ export function WikiEditor() {
                         style={{
                           left: `${((block.layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`,
                           width: `${(block.layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`,
-                          top: `${((block.layout.rowStart - 1) * canvasRowHeight / canvasHeight) * 100}%`,
+                          top: `${(((contentCanvasRowOffset + block.layout.rowStart - 1) * canvasRowHeight) / canvasHeight) * 100}%`,
                           height: `${((block.layout.rowSpan * canvasRowHeight) / canvasHeight) * 100}%`,
                           borderColor: selectedBlockIds.includes(block.id) ? accent : palette.accent,
                           background: selectedBlockIds.includes(block.id) ? `${accent}55` : `${palette.accent}30`,
@@ -4156,16 +4604,7 @@ export function WikiEditor() {
                 ) : isResponsiveReflowMode ? (
                   <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
                     <div className="px-4 py-5">
-                      <div
-                        className="mb-4 rounded-lg border px-4 py-4"
-                        style={{
-                          borderColor,
-                          background: `linear-gradient(180deg, ${darken(hdr, 4)} 0%, ${darken(bg, 6)} 100%)`,
-                        }}
-                      >
-                        <div className="text-[9px] uppercase tracking-[0.2em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>
-                          {responsiveFrame.label} Reflow Preview
-                        </div>
+                      <div className="mb-4 px-1 py-2">
                         <h1 className="m-0 leading-tight" style={{ color: txt, fontSize: responsiveFrameMode === "mobile" ? 24 : 30, fontWeight: 700 }}>
                           {page.title || "Untitled Article"}
                         </h1>
@@ -4180,6 +4619,7 @@ export function WikiEditor() {
                         {responsivePageBlocks.map((block) => {
                           const palette = resolveBlockPalette(block);
                           const behavior = block.fluid?.mobileBehavior || block.mobileCollapseMode || "stack";
+                          const mobileDensity = block.behavior?.mobileDensity || "comfortable";
                           const baseHeight = block.type === "divider"
                             ? 54
                             : block.type === "spacer"
@@ -4192,12 +4632,17 @@ export function WikiEditor() {
                               className="rounded-lg border overflow-hidden"
                               style={{
                                 minHeight: baseHeight,
+                                width: block.behavior?.mobileFullWidth === false ? "auto" : "100%",
+                                paddingInline: mobileDensity === "dense" ? 0 : mobileDensity === "compact" ? 2 : undefined,
                                 height: block.fluid?.heightMode === "fixed" ? baseHeight : undefined,
-                                maxHeight: behavior === "compact" ? (responsiveFrameMode === "mobile" ? 340 : 420) : undefined,
+                                maxHeight: behavior === "compact" || mobileDensity === "dense" ? (responsiveFrameMode === "mobile" ? 340 : 420) : undefined,
                                 overflowX: behavior === "scrollX" ? "auto" : "hidden",
-                                overflowY: behavior === "compact" ? "auto" : "hidden",
-                                borderColor: palette.border,
-                                background: palette.background,
+                                overflowY: behavior === "compact" || mobileDensity === "dense" ? "auto" : "hidden",
+                                border: blockBorderCss(block.appearance.borderStyle, palette.border, block.appearance.borderWidth ?? 1),
+                                background: blockSurfaceBackground(block.appearance.surfaceStyle, palette.background, palette.accent, block.appearance.backgroundTreatment),
+                                boxShadow: blockSurfaceShadow(block.appearance.surfaceStyle, palette.border, palette.accent, false, block.appearance.shadowDepth ?? 1, block.appearance.glowIntensity ?? 0),
+                                borderRadius: block.appearance.borderRadius ?? 12,
+                                opacity: (block.appearance.opacity ?? 100) / 100,
                               }}
                             >
                               {renderEditableWikiBlock(block)}
@@ -4214,28 +4659,8 @@ export function WikiEditor() {
                   </div>
                 ) : (
                 <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
-                <div className="border-b px-6 py-5" style={{ borderBottomColor: borderColor }}>
-                  <div
-                    ref={articleChromeCanvasRef}
-                    className="relative rounded-lg border overflow-visible"
-                    style={{
-                      height: articleChromeCanvasHeight,
-                      borderColor: editorPreviewMode ? "transparent" : "#20335B",
-                      background: editorPreviewMode
-                        ? "transparent"
-                        : `
-                          linear-gradient(90deg, rgba(74,123,255,0.06) 1px, transparent 1px),
-                          linear-gradient(180deg, rgba(74,123,255,0.04) 1px, transparent 1px),
-                          rgba(8, 14, 34, 0.36)
-                        `,
-                      backgroundSize: `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
-                    }}
-                  >
-                    {articleChromeFields.map((field) => renderArticleChromeBox(field))}
-                  </div>
-                </div>
-
                 <div className="px-6 py-6">
+                  {!editorPreviewMode && (
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
                     <div className="flex flex-wrap items-center gap-2">
                       <span>{canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article"}</span>
@@ -4252,8 +4677,12 @@ export function WikiEditor() {
                       </span>
                     )}
                   </div>
+                  )}
                   <div
-                    ref={blockCanvasRef}
+                    ref={(node) => {
+                      blockCanvasRef.current = node;
+                      articleChromeCanvasRef.current = node;
+                    }}
                     onMouseDown={editorPreviewMode ? undefined : handleCanvasMouseDown}
                     onDragOver={(event) => {
                       if (editorPreviewMode) return;
@@ -4281,6 +4710,7 @@ export function WikiEditor() {
                       backgroundSize: editorPreviewMode ? undefined : `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
                     }}
                     >
+                    {articleChromeFields.map((field) => renderArticleChromeBox(field))}
                     {!editorPreviewMode && marqueeSelection && (
                       <div
                         className="absolute z-[3] rounded-md border border-dashed"
@@ -4319,7 +4749,7 @@ export function WikiEditor() {
                         style={{
                           left: `${((canvasDropPreview.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`,
                           width: `${(canvasDropPreview.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`,
-                          top: (canvasDropPreview.rowStart - 1) * canvasRowHeight,
+                          top: (contentCanvasRowOffset + canvasDropPreview.rowStart - 1) * canvasRowHeight,
                           height: canvasDropPreview.rowSpan * canvasRowHeight,
                           borderColor: "#6A9AFF",
                           background: "rgba(74, 123, 255, 0.10)",
@@ -4402,10 +4832,13 @@ export function WikiEditor() {
                       const palette = resolveBlockPalette(block);
                       const blockLeft = `${((block.layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`;
                       const blockWidth = `${(block.layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`;
-                      const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
+                      const blockTop = (contentCanvasRowOffset + block.layout.rowStart - 1) * canvasRowHeight;
                       const blockHeight = block.layout.rowSpan * canvasRowHeight;
                       const isSelected = selectedBlockIds.includes(block.id);
                       const isChromeVisible = !editorPreviewMode && (hoveredBlockId === block.id || movingBlockId === block.id);
+                      const authoredBorder = blockBorderCss(block.appearance.borderStyle, isSelected ? accent : palette.border, block.appearance.borderWidth ?? 1);
+                      const authoredBackground = blockSurfaceBackground(block.appearance.surfaceStyle, palette.background, palette.accent, block.appearance.backgroundTreatment);
+                      const authoredShadow = blockSurfaceShadow(block.appearance.surfaceStyle, palette.border, palette.accent, !editorPreviewMode && isSelected, block.appearance.shadowDepth ?? 1, block.appearance.glowIntensity ?? 0);
 
                       return (
                         <div
@@ -4499,12 +4932,11 @@ export function WikiEditor() {
                               });
                             }}
                             style={{
-                              border: editorPreviewMode ? "1px solid transparent" : `1px solid ${isSelected ? accent : palette.border}`,
+                              border: authoredBorder,
                               background: "transparent",
-                              boxShadow: editorPreviewMode ? "none" : isSelected ? `0 0 0 1px ${accent}, 0 12px 24px rgba(0,0,0,0.28)` : "0 8px 18px rgba(0,0,0,0.24)",
+                              boxShadow: authoredShadow,
                               overflow: "visible",
-                              borderRadius: 14,
-                              borderStyle: block.appearance.borderStyle === "dashed" ? "dashed" : block.appearance.borderStyle === "none" ? "none" : "solid",
+                              borderRadius: block.appearance.borderRadius ?? 14,
                             }}
                           >
                             <div
@@ -4515,9 +4947,11 @@ export function WikiEditor() {
                                 setInspectorTab("content");
                               }}
                               style={{
-                                borderRadius: 13,
-                                background: palette.background,
-                              }}
+                              borderRadius: block.appearance.borderRadius ?? 13,
+                              background: authoredBackground,
+                              backdropFilter: block.appearance.surfaceStyle === "glass" ? "blur(8px)" : undefined,
+                              opacity: (block.appearance.opacity ?? 100) / 100,
+                            }}
                             >
                               <div className="min-h-0 flex-1 overflow-hidden">
                                 {renderEditableWikiBlock(block)}
@@ -4547,10 +4981,11 @@ export function WikiEditor() {
 
           {!editorPreviewMode && (
           <div className="w-[360px] shrink-0 border-l flex flex-col" style={{ borderLeftColor: "#15264B", background: "#081129" }}>
-            <div className="grid grid-cols-3 border-b" style={{ borderBottomColor: "#15264B" }}>
+            <div className="grid grid-cols-4 border-b" style={{ borderBottomColor: "#15264B" }}>
               {([
                 { id: "content", label: "Block" },
                 { id: "layout", label: "Layout" },
+                { id: "style", label: "Style" },
                 { id: "article", label: "Article" },
               ] as const).map((tab) => (
                 <button
@@ -5029,6 +5464,27 @@ export function WikiEditor() {
                       </div>
                     )}
                   </div>
+                  <div>
+                    <label style={labelStyle}>Surface Style</label>
+                    <select
+                      value={selectedBlock.appearance.surfaceStyle || "flat"}
+                      onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                        ...block,
+                        appearance: {
+                          ...block.appearance,
+                          surfaceStyle: event.target.value as WikiArticleBlock["appearance"]["surfaceStyle"],
+                        },
+                      }))}
+                      className={`${inputClass} cursor-pointer`}
+                      style={inputStyle}
+                    >
+                      <option value="flat">Flat Panel</option>
+                      <option value="raised">Raised Above Screen</option>
+                      <option value="inset">Indented Into Screen</option>
+                      <option value="glass">Glass / Hologram</option>
+                      <option value="none">Transparent / No Box</option>
+                    </select>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label style={labelStyle}>Padding</label>
@@ -5043,10 +5499,35 @@ export function WikiEditor() {
                       <select value={selectedBlock.appearance.borderStyle || "solid"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderStyle: event.target.value as WikiArticleBlock["appearance"]["borderStyle"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
                         <option value="solid">Solid</option>
                         <option value="dashed">Dashed</option>
+                        <option value="dotted">Dotted</option>
+                        <option value="double">Double</option>
                         <option value="none">None</option>
                       </select>
                     </div>
                   </div>
+                  {selectedBlock.type === "divider" && (
+                    <div>
+                      <label style={labelStyle}>Divider Line Style</label>
+                      <select
+                        value={selectedBlock.appearance.dividerStyle || "line"}
+                        onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                          ...block,
+                          appearance: {
+                            ...block.appearance,
+                            dividerStyle: event.target.value as WikiArticleBlock["appearance"]["dividerStyle"],
+                          },
+                        }))}
+                        className={`${inputClass} cursor-pointer`}
+                        style={inputStyle}
+                      >
+                        <option value="line">Single Line</option>
+                        <option value="double">Double Line</option>
+                        <option value="dashed">Dashed Line</option>
+                        <option value="glow">Glowing Line</option>
+                        <option value="notched">Notched Divider</option>
+                      </select>
+                    </div>
+                  )}
                   <div className="grid grid-cols-3 gap-2">
                     <div>
                       <label style={labelStyle}>Accent</label>
@@ -5100,6 +5581,357 @@ export function WikiEditor() {
                     <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, locked: !block.locked }))} className={`${retro.button} px-2 py-1 text-[10px]`} style={selectedBlock.locked ? S_WARN : S_SUBTLE}>
                       {selectedBlock.locked ? "Locked" : "Unlocked"}
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {inspectorTab === "style" && selectedBlock && (
+                <div className="space-y-3">
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Preset</div>
+                        <div className="mt-1 text-[10px]" style={{ color: "#8EA9D7" }}>
+                          Apply a reusable visual recipe, or save this block as a new style preset.
+                        </div>
+                      </div>
+                      <button onClick={resetSelectedBlockStyle} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Reset</button>
+                    </div>
+                    <select
+                      value={selectedBlock.appearance.stylePresetId || ""}
+                      onChange={(event) => {
+                        const preset = stylePresetLibrary.find((entry) => entry.id === event.target.value);
+                        if (preset) applyBlockStylePreset(selectedBlock.id, preset);
+                      }}
+                      className={`${inputClass} cursor-pointer`}
+                      style={inputStyle}
+                    >
+                      <option value="">Choose a style preset</option>
+                      {stylePresetLibrary.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name} {preset.builtIn ? "(Built In)" : "(Custom)"}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={saveSelectedBlockStylePreset} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Save From Block</button>
+                      {stylePresetLibrary.find((entry) => entry.id === selectedBlock.appearance.stylePresetId)?.builtIn && (
+                        <button
+                          onClick={() => {
+                            const preset = stylePresetLibrary.find((entry) => entry.id === selectedBlock.appearance.stylePresetId);
+                            if (preset) duplicateStylePresetToLibrary(preset);
+                          }}
+                          className={`${retro.button} px-2 py-1 text-[10px]`}
+                          style={S_SUBTLE}
+                        >
+                          Copy Built In
+                        </button>
+                      )}
+                    </div>
+                    {wikiBlockStylePresets.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="text-[9px] uppercase tracking-[0.16em]" style={{ color: "#6F88B4", fontWeight: 700 }}>Custom Presets</div>
+                        {wikiBlockStylePresets.map((preset) => (
+                          <div key={preset.id} className="flex items-center gap-2 rounded-md border px-2 py-1.5" style={{ borderColor: "#17315A", background: "#071126" }}>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[10px] font-bold" style={{ color: "#D3E1FF" }}>{preset.name}</div>
+                              <div className="truncate text-[9px]" style={{ color: "#7A9ABB" }}>{preset.category}</div>
+                            </div>
+                            <button onClick={() => applyBlockStylePreset(selectedBlock.id, preset)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_ACCENT}>Apply</button>
+                            <button onClick={() => renameStoredStylePreset(preset.id)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_SUBTLE}>Rename</button>
+                            <button onClick={() => deleteStoredStylePreset(preset.id)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>Delete</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Surface</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Surface Style</label>
+                        <select value={selectedBlock.appearance.surfaceStyle || "flat"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, surfaceStyle: event.target.value as WikiArticleBlock["appearance"]["surfaceStyle"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="flat">Flat Panel</option>
+                          <option value="raised">Raised Screen</option>
+                          <option value="inset">Inset Monitor</option>
+                          <option value="glass">Glass / Hologram</option>
+                          <option value="none">Transparent</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Background Treatment</label>
+                        <select value={selectedBlock.appearance.backgroundTreatment || "solid"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, backgroundTreatment: event.target.value as WikiArticleBlock["appearance"]["backgroundTreatment"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="solid">Solid</option>
+                          <option value="gradient">Gradient</option>
+                          <option value="scanline">Scanline</option>
+                          <option value="terminal">Terminal</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label style={labelStyle}>Accent</label>
+                        <input type="color" value={selectedBlock.appearance.accentColor || accent} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, accentColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Background</label>
+                        <input type="color" value={selectedBlock.appearance.backgroundColor || "#081025"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, backgroundColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Opacity</label>
+                        <input type="number" min={10} max={100} value={selectedBlock.appearance.opacity ?? 100} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, opacity: Number(event.target.value) || 100 } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Text</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Title Color</label>
+                        <input type="color" value={selectedBlock.appearance.titleColor || selectedBlock.appearance.accentColor || accent} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, titleColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Body Color</label>
+                        <input type="color" value={selectedBlock.appearance.bodyColor || txt} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, bodyColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Title Alignment</label>
+                        <select value={selectedBlock.appearance.titleAlign || "left"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, titleAlign: event.target.value as WikiArticleBlock["appearance"]["titleAlign"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="left">Left</option>
+                          <option value="center">Center</option>
+                          <option value="right">Right</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Body Alignment</label>
+                        <select value={selectedBlock.appearance.bodyAlign || "left"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, bodyAlign: event.target.value as WikiArticleBlock["appearance"]["bodyAlign"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="left">Left</option>
+                          <option value="center">Center</option>
+                          <option value="right">Right</option>
+                          <option value="justify">Justify</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Spacing And Border</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Padding</label>
+                        <select value={selectedBlock.appearance.padding || "normal"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, padding: event.target.value as WikiArticleBlock["appearance"]["padding"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="tight">Tight</option>
+                          <option value="normal">Normal</option>
+                          <option value="loose">Loose</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Border Style</label>
+                        <select value={selectedBlock.appearance.borderStyle || "solid"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderStyle: event.target.value as WikiArticleBlock["appearance"]["borderStyle"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="solid">Solid</option>
+                          <option value="dashed">Dashed</option>
+                          <option value="dotted">Dotted</option>
+                          <option value="double">Double</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Border Color</label>
+                        <input type="color" value={selectedBlock.appearance.borderColor || "#20335B"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderColor: event.target.value } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Border Width</label>
+                        <input type="number" min={0} max={8} value={selectedBlock.appearance.borderWidth ?? 1} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderWidth: Number(event.target.value) || 0 } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Corner Radius</label>
+                        <input type="number" min={0} max={36} value={selectedBlock.appearance.borderRadius ?? 10} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderRadius: Number(event.target.value) || 0 } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Effects</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Glow Intensity ({selectedBlock.appearance.glowIntensity ?? 0})</label>
+                        <input type="range" min={0} max={100} value={selectedBlock.appearance.glowIntensity ?? 0} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, glowIntensity: Number(event.target.value) } }))} className="w-full" />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Shadow Depth ({selectedBlock.appearance.shadowDepth ?? 1})</label>
+                        <input type="range" min={0} max={5} value={selectedBlock.appearance.shadowDepth ?? 1} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, shadowDepth: Number(event.target.value) } }))} className="w-full" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Behavior</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Overflow</label>
+                        <select value={selectedBlock.behavior?.overflowMode || "clip"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, behavior: { ...block.behavior, overflowMode: event.target.value as NonNullable<WikiArticleBlock["behavior"]>["overflowMode"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="clip">Clip</option>
+                          <option value="scroll">Scroll</option>
+                          <option value="fade">Fade</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Mobile Density</label>
+                        <select value={selectedBlock.behavior?.mobileDensity || "comfortable"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, behavior: { ...block.behavior, mobileDensity: event.target.value as NonNullable<WikiArticleBlock["behavior"]>["mobileDensity"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="comfortable">Comfortable</option>
+                          <option value="compact">Compact</option>
+                          <option value="dense">Dense</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Anchor Label</label>
+                        <input value={selectedBlock.behavior?.anchorLabel || ""} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, behavior: { ...block.behavior, anchorLabel: event.target.value } }))} className={inputClass} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Click Action</label>
+                        <select value={selectedBlock.behavior?.clickAction || "none"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, behavior: { ...block.behavior, clickAction: event.target.value as NonNullable<WikiArticleBlock["behavior"]>["clickAction"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="none">None</option>
+                          <option value="expandImage">Expand Image</option>
+                          <option value="openArticle">Open Linked Article</option>
+                          <option value="toggleCollapse">Toggle Collapse</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        ["collapsible", "Collapsible"],
+                        ["defaultCollapsed", "Collapsed By Default"],
+                        ["includeInToc", "Include In TOC"],
+                        ["mobileFullWidth", "Full Width On Mobile"],
+                      ].map(([key, label]) => {
+                        const active = !!selectedBlock.behavior?.[key as keyof NonNullable<WikiArticleBlock["behavior"]>];
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, behavior: { ...block.behavior, [key]: !active } }))}
+                            className={`${retro.button} px-2 py-1.5 text-[10px]`}
+                            style={active ? S_ACCENT : S_SUBTLE}
+                          >
+                            {label}: {active ? "On" : "Off"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Type Settings</div>
+                    {selectedBlock.type === "image" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label style={labelStyle}>Frame Style</label>
+                          <select value={selectedBlock.imageFrameStyle || "thin"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageFrameStyle: event.target.value as WikiArticleBlock["imageFrameStyle"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="none">None</option>
+                            <option value="thin">Thin</option>
+                            <option value="thick">Thick</option>
+                            <option value="polaroid">Polaroid</option>
+                            <option value="terminal">Terminal</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Caption Style</label>
+                          <select value={selectedBlock.imageCaptionStyle || "plain"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageCaptionStyle: event.target.value as WikiArticleBlock["imageCaptionStyle"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="plain">Plain</option>
+                            <option value="panel">Panel</option>
+                            <option value="terminal">Terminal</option>
+                            <option value="muted">Muted</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                    {selectedBlock.type === "referenceTable" && (
+                      <div className="space-y-2">
+                        <div>
+                          <label style={labelStyle}>Table Density</label>
+                          <select value={selectedBlock.tableDensity || "comfortable"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, tableDensity: event.target.value as WikiArticleBlock["tableDensity"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="comfortable">Comfortable</option>
+                            <option value="compact">Compact</option>
+                            <option value="dense">Dense</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            ["tableStripedRows", "Striped Rows"],
+                            ["tableStickyHeader", "Sticky Header"],
+                            ["tableLinkedCells", "Wiki Link Cells"],
+                          ].map(([key, label]) => {
+                            const active = !!selectedBlock[key as keyof WikiArticleBlock];
+                            return (
+                              <button key={key} onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, [key]: !active }))} className={`${retro.button} px-2 py-1.5 text-[9px]`} style={active ? S_ACCENT : S_SUBTLE}>
+                                {label}: {active ? "On" : "Off"}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {selectedBlock.type === "keyValueBox" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label style={labelStyle}>Density</label>
+                          <select value={selectedBlock.keyValueDensity || "comfortable"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, keyValueDensity: event.target.value as WikiArticleBlock["keyValueDensity"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="comfortable">Comfortable</option>
+                            <option value="compact">Compact</option>
+                            <option value="dense">Dense</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Label Alignment</label>
+                          <select value={selectedBlock.keyValueLabelAlign || "left"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, keyValueLabelAlign: event.target.value as WikiArticleBlock["keyValueLabelAlign"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                          </select>
+                        </div>
+                        <button onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, keyValueRowDividers: !block.keyValueRowDividers }))} className={`${retro.button} px-2 py-1.5 text-[10px]`} style={selectedBlock.keyValueRowDividers ? S_ACCENT : S_SUBTLE}>
+                          Row Dividers: {selectedBlock.keyValueRowDividers ? "On" : "Off"}
+                        </button>
+                      </div>
+                    )}
+                    {selectedBlock.type === "wikiLinksList" && (
+                      <div>
+                        <label style={labelStyle}>Display Mode</label>
+                        <select value={selectedBlock.wikiLinksDisplayMode || "list"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, wikiLinksDisplayMode: event.target.value as WikiArticleBlock["wikiLinksDisplayMode"] }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                          <option value="list">List</option>
+                          <option value="cards">Cards</option>
+                          <option value="chips">Chips</option>
+                        </select>
+                      </div>
+                    )}
+                    {selectedBlock.type === "divider" && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label style={labelStyle}>Divider Style</label>
+                          <select value={selectedBlock.appearance.dividerStyle || "line"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, dividerStyle: event.target.value as WikiArticleBlock["appearance"]["dividerStyle"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="line">Line</option>
+                            <option value="double">Double</option>
+                            <option value="dashed">Dashed</option>
+                            <option value="glow">Glowing</option>
+                            <option value="notched">Notched</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Label Position</label>
+                          <select value={selectedBlock.appearance.dividerLabelPosition || "center"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, dividerLabelPosition: event.target.value as WikiArticleBlock["appearance"]["dividerLabelPosition"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                            <option value="above">Above</option>
+                            <option value="center">Centered</option>
+                            <option value="below">Below</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                    {!["image", "referenceTable", "keyValueBox", "wikiLinksList", "divider"].includes(selectedBlock.type) && (
+                      <div className="rounded-md border px-2 py-2 text-[10px]" style={{ borderColor: "#17315A", background: "#071126", color: "#7A9ABB" }}>
+                        This block type uses the shared surface, text, border, effects, and behavior settings above.
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -5441,7 +6273,6 @@ export function WikiEditor() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#080828", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
-      {/* ═══ Top toolbar ═══ */}
       <div className={`${retro.toolbar} flex items-center justify-between`} style={{ borderBottom: "2px solid #050520" }}>
         <div className="flex items-center gap-3">
           <button
@@ -5509,9 +6340,8 @@ export function WikiEditor() {
         </div>
       </div>
 
-      {/* ═══ Main layout: sidebar editor + live preview ═══ */}
       <div className="flex flex-1 min-h-0">
-        {/* ─── Left sidebar: editor controls ─── */}
+        {/* --- Left sidebar: editor controls --- */}
         <div className="w-[380px] shrink-0 flex flex-col border-r-2" style={{ background: "#0A0A2E", borderRightColor: "#1A1A4B" }}>
           {/* Sidebar tab bar */}
           <div className="flex border-b" style={{ borderBottomColor: "#1A1A4B" }}>
@@ -5538,7 +6368,7 @@ export function WikiEditor() {
 
           {/* Sidebar content */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* ─── PREVIEW TAB ─── */}
+            {/* --- PREVIEW TAB --- */}
             {activePanel === "preview" && (
               <div className="space-y-4">
                 <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
@@ -5799,7 +6629,7 @@ export function WikiEditor() {
                   <div className={`${retro.sunken} bg-[#080820] p-3 mt-1`}>
                     {(page.subcategories || []).map((sc) => (
                       <div key={sc.id} className="flex items-center gap-1 mb-1">
-                        <span className="text-[10px]">{sc.type === "folder" ? "📁" : "📄"}</span>
+                        <span className="text-[10px]">{sc.type === "folder" ? "Folder" : "Article"}</span>
                         <input type="text" value={sc.name} onChange={(e) => updateSubcategory(sc.id, "name", e.target.value)} placeholder={sc.type === "folder" ? "Folder name..." : "Page name..."} className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[10px] flex-1 outline-none`} style={inputStyle} />
                         <select value={sc.type} onChange={(e) => updateSubcategory(sc.id, "type", e.target.value)} className="text-[9px] bg-[#0A0A28] px-1 py-0.5 outline-none" style={{ color: sc.type === "folder" ? "#4A7BFF" : "#4A9A5A", border: "1px solid #1A2A4B" }}>
                           <option value="folder">Folder</option>
@@ -5825,7 +6655,7 @@ export function WikiEditor() {
               </div>
             )}
 
-            {/* ─── CONTENT TAB (Unified Sections) ─── */}
+            {/* --- CONTENT TAB (Unified Sections) --- */}
             {activePanel === "content" && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -6094,7 +6924,7 @@ export function WikiEditor() {
               </div>
             )}
 
-            {/* ─── METADATA TAB ─── */}
+            {/* --- METADATA TAB --- */}
             {activePanel === "metadata" && (
               <div className="space-y-4">
                 <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
@@ -6265,7 +7095,7 @@ export function WikiEditor() {
                     );
                   })}
                 </div>
-                {/* ─── Player Visibility ─── */}
+                {/* --- Player Visibility --- */}
                 <div>
                   <label style={labelStyle}>Article Visibility (per player)</label>
                   <div className="text-[9px] mb-2" style={S_DIM}>
@@ -6413,7 +7243,7 @@ export function WikiEditor() {
               </div>
             )}
 
-            {/* ─── APPEARANCE TAB ─── */}
+            {/* --- APPEARANCE TAB --- */}
             {activePanel === "appearance" && (
               <div className="space-y-4">
                 <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
@@ -6464,7 +7294,7 @@ export function WikiEditor() {
           </div>
         </div>
 
-        {/* ─── Right side: Live wiki preview ─── */}
+        {/* --- Right side: Live wiki preview --- */}
         <div className="flex-1 min-w-0 overflow-y-auto" style={{ background: darken(bg, 15) }}>
           {/* Preview toolbar */}
           <div className="flex items-center justify-between px-4 py-1.5 border-b" style={{ background: "#0A0A30", borderBottomColor: "#1A1A4B" }}>
@@ -6598,7 +7428,6 @@ export function WikiEditor() {
             </div>
           )}
 
-          {/* ═══ Article Content ═══ */}
           <div className="px-4 py-6" style={{ background: bg }}>
             <div className="max-w-[900px] mx-auto">
               <div className="flex flex-col md:flex-row gap-4">
@@ -6912,7 +7741,6 @@ export function WikiEditor() {
                     </div>
                   )}
 
-                  {/* ═══ Unified Sections/Panels ═══ */}
                   {false && panels.length > 0 && panels.map((panel, idx) => {
                     if (!panel.title && !panel.content) return null;
                     const ps = allPanelStyles.find((s) => s.id === panel.style) || allPanelStyles[0];
@@ -7117,7 +7945,6 @@ export function WikiEditor() {
         </div>
       </div>
 
-      {/* ═══ Modals ═══ */}
 
       {/* Draft restore prompt */}
       {showDraftRestore && (

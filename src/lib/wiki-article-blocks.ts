@@ -46,12 +46,27 @@ export type WikiBlockType =
 export type WikiBlockVisibilityMode = "visible" | "spoiler" | "hidden";
 export type WikiBlockCropMode = "contain" | "cover";
 export type WikiBlockPadding = "tight" | "normal" | "loose";
-export type WikiBlockBorderStyle = "solid" | "dashed" | "none";
+export type WikiBlockBorderStyle = "solid" | "dashed" | "dotted" | "double" | "none";
+export type WikiBlockSurfaceStyle = "flat" | "raised" | "inset" | "glass" | "none";
+export type WikiBlockDividerStyle = "line" | "double" | "dashed" | "glow" | "notched";
 export type WikiBlockMobileCollapseMode = "stack" | "scrollX" | "compact";
 export type WikiImageCaptionPlacement = "below" | "overlay" | "hidden";
 export type WikiBlockWidthMode = "fixed" | "fill" | "hug";
 export type WikiBlockHeightMode = "fixed" | "hug" | "fill";
 export type WikiBlockLayoutGroupMode = "manual" | "stack" | "columns" | "wrap";
+export type WikiBlockBackgroundTreatment = "solid" | "gradient" | "scanline" | "terminal" | "none";
+export type WikiBlockTitleAlign = "left" | "center" | "right";
+export type WikiBlockBodyAlign = "left" | "center" | "right" | "justify";
+export type WikiBlockDividerLabelPosition = "above" | "center" | "below";
+export type WikiBlockOverflowMode = "clip" | "scroll" | "fade";
+export type WikiBlockMobileDensity = "comfortable" | "compact" | "dense";
+export type WikiBlockClickAction = "none" | "expandImage" | "openArticle" | "toggleCollapse";
+export type WikiImageFrameStyle = "none" | "thin" | "thick" | "polaroid" | "terminal";
+export type WikiImageCaptionStyle = "plain" | "panel" | "terminal" | "muted";
+export type WikiReferenceTableDensity = "comfortable" | "compact" | "dense";
+export type WikiKeyValueDensity = "comfortable" | "compact" | "dense";
+export type WikiKeyValueLabelAlign = "left" | "right";
+export type WikiLinksDisplayMode = "list" | "cards" | "chips";
 
 export interface WikiBlockLayout {
   colStart: number;
@@ -72,7 +87,32 @@ export interface WikiBlockAppearance {
   backgroundColor?: string;
   borderColor?: string;
   borderStyle?: WikiBlockBorderStyle;
+  borderWidth?: number;
+  borderRadius?: number;
+  opacity?: number;
+  glowIntensity?: number;
+  shadowDepth?: number;
+  titleColor?: string;
+  bodyColor?: string;
+  titleAlign?: WikiBlockTitleAlign;
+  bodyAlign?: WikiBlockBodyAlign;
+  backgroundTreatment?: WikiBlockBackgroundTreatment;
+  dividerStyle?: WikiBlockDividerStyle;
+  dividerLabelPosition?: WikiBlockDividerLabelPosition;
   padding?: WikiBlockPadding;
+  surfaceStyle?: WikiBlockSurfaceStyle;
+  stylePresetId?: string;
+}
+
+export interface WikiBlockBehavior {
+  collapsible?: boolean;
+  defaultCollapsed?: boolean;
+  overflowMode?: WikiBlockOverflowMode;
+  includeInToc?: boolean;
+  anchorLabel?: string;
+  mobileDensity?: WikiBlockMobileDensity;
+  mobileFullWidth?: boolean;
+  clickAction?: WikiBlockClickAction;
 }
 
 export interface WikiBlockFluidSettings {
@@ -102,6 +142,7 @@ export interface WikiArticleBlock {
   html: string;
   layout: WikiBlockLayout;
   appearance: WikiBlockAppearance;
+  behavior?: WikiBlockBehavior;
   visibility: WikiBlockVisibility;
   locked?: boolean;
   style?: string;
@@ -113,14 +154,24 @@ export interface WikiArticleBlock {
   imageFocalX?: number;
   imageFocalY?: number;
   imageCaptionPlacement?: WikiImageCaptionPlacement;
+  imageFrameStyle?: WikiImageFrameStyle;
+  imageCaptionStyle?: WikiImageCaptionStyle;
   cropMode?: WikiBlockCropMode;
   headingLevel?: 1 | 2 | 3 | 4;
   dividerLabel?: string;
   spacerHeight?: number;
   columns?: string[];
   rows?: WikiReferenceTableRow[];
+  tableDensity?: WikiReferenceTableDensity;
+  tableStripedRows?: boolean;
+  tableStickyHeader?: boolean;
+  tableLinkedCells?: boolean;
   items?: WikiKeyValueRow[];
+  keyValueDensity?: WikiKeyValueDensity;
+  keyValueLabelAlign?: WikiKeyValueLabelAlign;
+  keyValueRowDividers?: boolean;
   articleIds?: string[];
+  wikiLinksDisplayMode?: WikiLinksDisplayMode;
   mobilePriority?: number;
   mobileCollapseMode?: WikiBlockMobileCollapseMode;
   fluid?: WikiBlockFluidSettings;
@@ -137,6 +188,29 @@ export interface WikiBlockPreset {
   builtIn: boolean;
   blocks: WikiArticleBlock[];
   previewLabel?: string;
+}
+
+export interface WikiBlockStylePreset {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  builtIn: boolean;
+  appearance?: WikiBlockAppearance;
+  behavior?: WikiBlockBehavior;
+  typeDefaults?: Partial<Pick<
+    WikiArticleBlock,
+    | "imageFrameStyle"
+    | "imageCaptionStyle"
+    | "tableDensity"
+    | "tableStripedRows"
+    | "tableStickyHeader"
+    | "tableLinkedCells"
+    | "keyValueDensity"
+    | "keyValueLabelAlign"
+    | "keyValueRowDividers"
+    | "wikiLinksDisplayMode"
+  >>;
 }
 
 export interface WikiArticleRevision<TSnapshot = unknown> {
@@ -475,6 +549,26 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
     appearance: {
       padding: type === "divider" || type === "spacer" ? "tight" : "normal",
       borderStyle: type === "divider" ? "none" : "solid",
+      borderWidth: type === "divider" || type === "spacer" ? 0 : 1,
+      borderRadius: type === "divider" || type === "spacer" ? 0 : 10,
+      opacity: 100,
+      glowIntensity: 0,
+      shadowDepth: type === "divider" || type === "spacer" ? 0 : 1,
+      titleAlign: "left",
+      bodyAlign: "left",
+      backgroundTreatment: "solid",
+      dividerStyle: type === "divider" ? "line" : undefined,
+      dividerLabelPosition: type === "divider" ? "center" : undefined,
+      surfaceStyle: type === "divider" || type === "spacer" ? "none" : "flat",
+    },
+    behavior: {
+      collapsible: false,
+      defaultCollapsed: false,
+      overflowMode: "clip",
+      includeInToc: type === "heading",
+      mobileDensity: "comfortable",
+      mobileFullWidth: true,
+      clickAction: "none",
     },
     visibility: {
       assignedTo: [],
@@ -486,12 +580,22 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
     imageFocalX: type === "image" ? 50 : undefined,
     imageFocalY: type === "image" ? 50 : undefined,
     imageCaptionPlacement: type === "image" ? "below" : undefined,
+    imageFrameStyle: type === "image" ? "thin" : undefined,
+    imageCaptionStyle: type === "image" ? "plain" : undefined,
     dividerLabel: type === "divider" ? "" : undefined,
     spacerHeight: type === "spacer" ? 1 : undefined,
     columns: type === "referenceTable" ? ["Name", "Type", "Notes"] : undefined,
     rows: type === "referenceTable" ? [{ id: `row-${uid()}`, cells: ["", "", ""] }] : undefined,
+    tableDensity: type === "referenceTable" ? "comfortable" : undefined,
+    tableStripedRows: type === "referenceTable" ? false : undefined,
+    tableStickyHeader: type === "referenceTable" ? false : undefined,
+    tableLinkedCells: type === "referenceTable" ? true : undefined,
     items: type === "keyValueBox" ? [{ id: `item-${uid()}`, label: "Label", value: "Value" }] : undefined,
+    keyValueDensity: type === "keyValueBox" ? "comfortable" : undefined,
+    keyValueLabelAlign: type === "keyValueBox" ? "left" : undefined,
+    keyValueRowDividers: type === "keyValueBox" ? false : undefined,
     articleIds: type === "wikiLinksList" ? [] : undefined,
+    wikiLinksDisplayMode: type === "wikiLinksList" ? "list" : undefined,
     fluid: DEFAULT_FLUID_SETTINGS[type],
   });
 }
@@ -503,6 +607,7 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
   const layout = block.layout || ({} as Partial<WikiBlockLayout>);
   const visibility = block.visibility || { assignedTo: [], mode: "visible" as const };
   const fluid = block.fluid || ({} as Partial<WikiBlockFluidSettings>);
+  const behavior = block.behavior || ({} as WikiBlockBehavior);
   return {
     id: block.id || `wiki-block-${uid()}`,
     type,
@@ -520,9 +625,33 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     appearance: {
       padding: block.appearance?.padding || (type === "divider" || type === "spacer" ? "tight" : "normal"),
       borderStyle: block.appearance?.borderStyle || (type === "divider" ? "none" : "solid"),
+      borderWidth: typeof block.appearance?.borderWidth === "number" ? clampInt(block.appearance.borderWidth, 0, 8) : (type === "divider" || type === "spacer" ? 0 : 1),
+      borderRadius: typeof block.appearance?.borderRadius === "number" ? clampInt(block.appearance.borderRadius, 0, 36) : (type === "divider" || type === "spacer" ? 0 : 10),
+      opacity: typeof block.appearance?.opacity === "number" ? clampInt(block.appearance.opacity, 10, 100) : 100,
+      glowIntensity: typeof block.appearance?.glowIntensity === "number" ? clampInt(block.appearance.glowIntensity, 0, 100) : 0,
+      shadowDepth: typeof block.appearance?.shadowDepth === "number" ? clampInt(block.appearance.shadowDepth, 0, 5) : (type === "divider" || type === "spacer" ? 0 : 1),
+      titleColor: block.appearance?.titleColor,
+      bodyColor: block.appearance?.bodyColor,
+      titleAlign: block.appearance?.titleAlign || "left",
+      bodyAlign: block.appearance?.bodyAlign || "left",
+      backgroundTreatment: block.appearance?.backgroundTreatment || "solid",
+      dividerStyle: block.appearance?.dividerStyle || (type === "divider" ? "line" : undefined),
+      dividerLabelPosition: block.appearance?.dividerLabelPosition || (type === "divider" ? "center" : undefined),
+      surfaceStyle: block.appearance?.surfaceStyle || (type === "divider" || type === "spacer" ? "none" : "flat"),
       accentColor: block.appearance?.accentColor,
       backgroundColor: block.appearance?.backgroundColor,
       borderColor: block.appearance?.borderColor,
+      stylePresetId: block.appearance?.stylePresetId,
+    },
+    behavior: {
+      collapsible: !!behavior.collapsible,
+      defaultCollapsed: !!behavior.defaultCollapsed,
+      overflowMode: behavior.overflowMode || "clip",
+      includeInToc: typeof behavior.includeInToc === "boolean" ? behavior.includeInToc : type === "heading",
+      anchorLabel: behavior.anchorLabel || "",
+      mobileDensity: behavior.mobileDensity || "comfortable",
+      mobileFullWidth: typeof behavior.mobileFullWidth === "boolean" ? behavior.mobileFullWidth : true,
+      clickAction: behavior.clickAction || "none",
     },
     visibility: {
       assignedTo: Array.isArray(visibility.assignedTo) ? visibility.assignedTo : [],
@@ -538,6 +667,8 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     imageFocalX: typeof block.imageFocalX === "number" ? clampInt(block.imageFocalX, 0, 100) : 50,
     imageFocalY: typeof block.imageFocalY === "number" ? clampInt(block.imageFocalY, 0, 100) : 50,
     imageCaptionPlacement: block.imageCaptionPlacement || (type === "image" ? "below" : "hidden"),
+    imageFrameStyle: block.imageFrameStyle || (type === "image" ? "thin" : undefined),
+    imageCaptionStyle: block.imageCaptionStyle || (type === "image" ? "plain" : undefined),
     cropMode: block.cropMode || (type === "image" ? "cover" : "contain"),
     headingLevel: (block.headingLevel || (type === "heading" ? 2 : undefined)) as 1 | 2 | 3 | 4 | undefined,
     dividerLabel: block.dividerLabel || "",
@@ -548,12 +679,20 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
       : type === "referenceTable"
         ? [{ id: `row-${uid()}`, cells: ["", "", ""] }]
         : undefined,
+    tableDensity: block.tableDensity || (type === "referenceTable" ? "comfortable" : undefined),
+    tableStripedRows: typeof block.tableStripedRows === "boolean" ? block.tableStripedRows : type === "referenceTable" ? false : undefined,
+    tableStickyHeader: typeof block.tableStickyHeader === "boolean" ? block.tableStickyHeader : type === "referenceTable" ? false : undefined,
+    tableLinkedCells: typeof block.tableLinkedCells === "boolean" ? block.tableLinkedCells : type === "referenceTable" ? true : undefined,
     items: Array.isArray(block.items)
       ? block.items.map((item) => ({ id: item.id || `item-${uid()}`, label: item.label || "", value: item.value || "" }))
       : type === "keyValueBox"
         ? []
         : undefined,
+    keyValueDensity: block.keyValueDensity || (type === "keyValueBox" ? "comfortable" : undefined),
+    keyValueLabelAlign: block.keyValueLabelAlign || (type === "keyValueBox" ? "left" : undefined),
+    keyValueRowDividers: typeof block.keyValueRowDividers === "boolean" ? block.keyValueRowDividers : type === "keyValueBox" ? false : undefined,
     articleIds: Array.isArray(block.articleIds) ? block.articleIds : type === "wikiLinksList" ? [] : undefined,
+    wikiLinksDisplayMode: block.wikiLinksDisplayMode || (type === "wikiLinksList" ? "list" : undefined),
     mobilePriority: typeof block.mobilePriority === "number" ? block.mobilePriority : undefined,
     mobileCollapseMode: block.mobileCollapseMode || (type === "referenceTable" ? "scrollX" : "stack"),
     fluid: {

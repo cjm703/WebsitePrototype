@@ -175,6 +175,113 @@ function lighten(hex: string, amount: number): string {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
+function blockBorderCss(
+  borderStyle: WikiArticleBlock["appearance"]["borderStyle"] | undefined,
+  borderColor: string,
+  borderWidth = 1,
+) {
+  if (borderStyle === "none" || borderWidth <= 0) return "none";
+  return `${borderWidth}px ${borderStyle || "solid"} ${borderColor}`;
+}
+
+function blockSurfaceBackground(
+  surfaceStyle: WikiArticleBlock["appearance"]["surfaceStyle"] | undefined,
+  backgroundColor: string,
+  accentColor: string,
+  backgroundTreatment: WikiArticleBlock["appearance"]["backgroundTreatment"] | undefined = "solid",
+) {
+  const canTint = /^#[0-9a-f]{6}$/i.test(backgroundColor);
+  const lighter = canTint ? lighten(backgroundColor, 10) : backgroundColor;
+  const darker = canTint ? darken(backgroundColor, 8) : backgroundColor;
+  const deep = canTint ? darken(backgroundColor, 14) : backgroundColor;
+  const soft = canTint ? lighten(backgroundColor, 5) : backgroundColor;
+  const glassBase = canTint ? `${backgroundColor}D9` : backgroundColor;
+  const glassEnd = canTint ? `${backgroundColor}E6` : backgroundColor;
+  const flatEnd = canTint ? darken(backgroundColor, 4) : backgroundColor;
+  if (backgroundTreatment === "none" || surfaceStyle === "none") return "transparent";
+  if (backgroundTreatment === "terminal") {
+    return `linear-gradient(180deg, rgba(255,255,255,0.03), transparent 34%), repeating-linear-gradient(180deg, transparent 0 7px, ${accentColor}12 8px), ${backgroundColor}`;
+  }
+  if (backgroundTreatment === "scanline") {
+    return `repeating-linear-gradient(180deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 7px), linear-gradient(180deg, ${deep} 0%, ${backgroundColor} 65%, ${soft} 100%)`;
+  }
+  switch (surfaceStyle) {
+    case "glass":
+      return `linear-gradient(135deg, ${glassBase} 0%, rgba(255,255,255,0.08) 48%, ${glassEnd} 100%)`;
+    case "raised":
+      return `linear-gradient(180deg, ${lighter} 0%, ${backgroundColor} 58%, ${darker} 100%)`;
+    case "inset":
+      return `linear-gradient(180deg, ${deep} 0%, ${backgroundColor} 62%, ${soft} 100%)`;
+    case "none":
+      return "transparent";
+    default:
+      return backgroundTreatment === "gradient"
+        ? `linear-gradient(180deg, ${lighter} 0%, ${backgroundColor} 60%, ${darker} 100%)`
+        : `linear-gradient(180deg, ${backgroundColor} 0%, ${flatEnd} 100%)`;
+  }
+}
+
+function blockSurfaceShadow(
+  surfaceStyle: WikiArticleBlock["appearance"]["surfaceStyle"] | undefined,
+  borderColor: string,
+  accentColor: string,
+  shadowDepth = 1,
+  glowIntensity = 0,
+) {
+  const depth = Math.max(0, Math.min(5, shadowDepth));
+  const glow = Math.max(0, Math.min(100, glowIntensity));
+  const glowCss = glow > 0 ? `0 0 ${Math.round(8 + glow * 0.34)}px ${accentColor}${Math.round(18 + glow * 0.52).toString(16).padStart(2, "0")}` : "";
+  const dropCss = depth > 0 ? `0 ${Math.round(5 + depth * 4)}px ${Math.round(12 + depth * 5)}px rgba(0,0,0,${Math.min(0.58, 0.18 + depth * 0.07)})` : "";
+  const joinShadows = (...parts: (string | undefined)[]) => parts.filter(Boolean).join(", ") || "none";
+  switch (surfaceStyle) {
+    case "raised":
+      return joinShadows("inset 0 1px 0 rgba(255,255,255,0.16)", dropCss, `0 2px 0 ${borderColor}99`, glowCss);
+    case "inset":
+      return joinShadows(`inset 0 ${Math.round(3 + depth)}px ${Math.round(10 + depth * 3)}px rgba(0,0,0,0.62)`, `inset 0 0 0 1px ${borderColor}88`, glowCss);
+    case "glass":
+      return joinShadows("inset 0 1px 0 rgba(255,255,255,0.18)", dropCss, `0 0 24px ${accentColor}24`, glowCss);
+    case "none":
+      return glow > 0 ? `0 0 ${Math.round(8 + glow * 0.28)}px ${accentColor}55` : "none";
+    default:
+      return joinShadows(dropCss, glowCss);
+  }
+}
+
+function dividerLineElement(
+  dividerStyle: WikiArticleBlock["appearance"]["dividerStyle"] | undefined,
+  borderColor: string,
+  accentColor: string,
+) {
+  const style = dividerStyle || "line";
+  if (style === "notched") {
+    return (
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1" style={{ background: `linear-gradient(90deg, transparent, ${borderColor}, ${accentColor})` }} />
+        <div style={{ width: 8, height: 8, transform: "rotate(45deg)", border: `1px solid ${accentColor}`, background: `${accentColor}33` }} />
+        <div className="h-px flex-1" style={{ background: `linear-gradient(90deg, ${accentColor}, ${borderColor}, transparent)` }} />
+      </div>
+    );
+  }
+  if (style === "double") {
+    return (
+      <div className="space-y-1">
+        <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${accentColor}, transparent)` }} />
+        <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${borderColor}, transparent)` }} />
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        height: style === "glow" ? 2 : 1,
+        borderTop: style === "dashed" ? `1px dashed ${accentColor}` : undefined,
+        background: style === "dashed" ? "transparent" : `linear-gradient(90deg, ${borderColor}, ${accentColor}, ${borderColor})`,
+        boxShadow: style === "glow" ? `0 0 16px ${accentColor}` : undefined,
+      }}
+    />
+  );
+}
+
 export function InetPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -339,7 +446,8 @@ export function InetPage() {
   const tocItems: { id: string; label: string }[] = [];
   if (hasBlockLayout) {
     visibleBlocks.forEach((block) => {
-      const label = block.title || (block.type === "heading" ? "Heading" : "");
+      if (!block.behavior?.includeInToc) return;
+      const label = block.behavior.anchorLabel || block.title || (block.type === "heading" ? "Heading" : "");
       if (!label) return;
       tocItems.push({ id: `block-${block.id}`, label });
     });
@@ -468,9 +576,23 @@ export function InetPage() {
     const accentColor = block.appearance.accentColor || ps.accent || accent;
     const borderTone = block.appearance.borderColor || ps.border || borderColor;
     const backgroundTone = block.appearance.backgroundColor || (ps.bg === "transparent" ? "rgba(8, 10, 34, 0.68)" : ps.bg || bg);
+    const titleColor = block.appearance.titleColor || accentColor;
+    const bodyColor = block.appearance.bodyColor || txt;
+    const titleAlign = (block.appearance.titleAlign || "left") as React.CSSProperties["textAlign"];
+    const bodyAlign = (block.appearance.bodyAlign || "left") as React.CSSProperties["textAlign"];
+    const overflowMode = block.behavior?.overflowMode || "clip";
+    const tablePad = block.tableDensity === "dense" ? 4 : block.tableDensity === "compact" ? 6 : 8;
+    const linkDisplayMode = block.wikiLinksDisplayMode || "list";
     const blockShellStyle: React.CSSProperties = {
-      border: block.appearance.borderStyle === "none" ? "none" : `1px ${block.appearance.borderStyle === "dashed" ? "dashed" : "solid"} ${borderTone}`,
-      background: backgroundTone,
+      border: blockBorderCss(block.appearance.borderStyle, borderTone, block.appearance.borderWidth ?? 1),
+      background: blockSurfaceBackground(block.appearance.surfaceStyle, backgroundTone, accentColor, block.appearance.backgroundTreatment),
+      boxShadow: blockSurfaceShadow(block.appearance.surfaceStyle, borderTone, accentColor, block.appearance.shadowDepth ?? 1, block.appearance.glowIntensity ?? 0),
+      backdropFilter: block.appearance.surfaceStyle === "glass" ? "blur(8px)" : undefined,
+      borderRadius: block.appearance.surfaceStyle === "none" ? 0 : block.appearance.borderRadius ?? 8,
+      opacity: (block.appearance.opacity ?? 100) / 100,
+      color: bodyColor,
+      textAlign: bodyAlign,
+      overflow: overflowMode === "scroll" ? "auto" : "hidden",
       padding: block.type === "divider" || block.type === "spacer"
         ? 0
         : block.appearance.padding === "tight"
@@ -479,6 +601,28 @@ export function InetPage() {
             ? 20
             : 14,
     };
+    const collapseKey = `collapse-${block.id}`;
+    const isCollapsed = !!block.behavior?.collapsible && !!block.behavior?.defaultCollapsed && !revealedPanels.has(collapseKey);
+
+    if (showBlockContent && isCollapsed) {
+      return (
+        <button
+          onClick={() => setRevealedPanels((prev) => new Set([...prev, collapseKey]))}
+          className="block w-full text-left hover:opacity-90"
+          style={{ ...blockShellStyle, minHeight: 96 }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>
+            Collapsed Section
+          </div>
+          <div className="mt-1 text-[15px] font-bold" style={{ color: titleColor, textAlign: titleAlign, fontFamily: font }}>
+            {block.title || block.subtitle || "Expandable wiki block"}
+          </div>
+          <div className="mt-2 text-[11px]" style={{ color: mutedText, fontFamily: font }}>
+            Click to expand.
+          </div>
+        </button>
+      );
+    }
 
     const spoilerOverlay = !showBlockContent ? (
       <div className="relative overflow-hidden rounded-md" style={{ minHeight: 120 }}>
@@ -507,24 +651,30 @@ export function InetPage() {
           <div style={{ padding: block.appearance.padding === "tight" ? "2px 0" : "10px 0" }}>
             {React.createElement(HeadingTag, {
               className: "mb-1",
-              style: { color: accentColor, fontWeight: 700, fontFamily: font, fontSize: block.headingLevel === 1 ? 28 : block.headingLevel === 3 ? 18 : 22 },
+              style: { color: titleColor, fontWeight: 700, fontFamily: font, fontSize: block.headingLevel === 1 ? 28 : block.headingLevel === 3 ? 18 : 22, textAlign: titleAlign },
             }, block.title || "Heading")}
             {block.subtitle && (
-              <p className="text-[12px] italic" style={{ color: mutedText, fontFamily: font }}>{block.subtitle}</p>
+              <p className="text-[12px] italic" style={{ color: mutedText, fontFamily: font, textAlign: titleAlign }}>{block.subtitle}</p>
             )}
           </div>
         );
       }
       case "image":
         return (
-          <figure style={{ ...blockShellStyle, position: "relative", overflow: block.imageCaptionPlacement === "overlay" ? "hidden" : undefined }}>
+          <figure style={{ ...blockShellStyle, position: "relative", overflow: block.imageCaptionPlacement === "overlay" || overflowMode === "clip" ? "hidden" : blockShellStyle.overflow }}>
             {block.imageUrl ? (
               <img
                 src={block.imageUrl}
                 alt={block.imageAlt || block.title || "Article media"}
                 className="w-full"
+                onClick={() => {
+                  if (block.behavior?.clickAction === "expandImage" && block.imageUrl) window.open(block.imageUrl, "_blank");
+                }}
                 style={{
-                  borderRadius: 6,
+                  border: block.imageFrameStyle === "none" ? undefined : `${block.imageFrameStyle === "thick" ? 3 : 1}px solid ${borderTone}`,
+                  borderRadius: block.imageFrameStyle === "polaroid" ? 3 : 6,
+                  padding: block.imageFrameStyle === "polaroid" ? 8 : block.imageFrameStyle === "terminal" ? 4 : 0,
+                  cursor: block.behavior?.clickAction === "expandImage" ? "zoom-in" : undefined,
                   maxHeight: mode === "mobile" ? (block.fluid?.mobileBehavior === "compact" ? 220 : 280) : 420,
                   aspectRatio: block.fluid?.keepAspectRatio ? "16 / 9" : undefined,
                   objectFit: block.cropMode === "cover" ? "cover" : "contain",
@@ -542,8 +692,14 @@ export function InetPage() {
                 className={block.imageCaptionPlacement === "overlay" ? "absolute inset-x-0 bottom-0 px-3 py-2 text-[11px]" : "mt-2 text-[11px]"}
                 style={{
                   color: block.imageCaptionPlacement === "overlay" ? "#E8F0FF" : mutedText,
-                  background: block.imageCaptionPlacement === "overlay" ? "linear-gradient(180deg, transparent, rgba(0,0,0,0.78))" : undefined,
-                  fontStyle: "italic",
+                  background: block.imageCaptionPlacement === "overlay"
+                    ? "linear-gradient(180deg, transparent, rgba(0,0,0,0.78))"
+                    : block.imageCaptionStyle === "panel"
+                      ? "rgba(255,255,255,0.05)"
+                      : undefined,
+                  border: block.imageCaptionStyle === "panel" ? `1px solid ${borderTone}55` : undefined,
+                  padding: block.imageCaptionStyle === "panel" ? "6px 8px" : undefined,
+                  fontStyle: block.imageCaptionStyle === "terminal" ? undefined : "italic",
                   fontFamily: font,
                 }}
               >
@@ -555,24 +711,26 @@ export function InetPage() {
       case "referenceTable":
         return (
           <div style={blockShellStyle}>
-            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
+            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
             <div className="overflow-x-auto">
               <table className="w-full text-[11px]" style={{ borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     {(block.columns || []).map((column, columnIndex) => (
-                      <th key={`${block.id}-head-${columnIndex}`} className="text-left p-2 border-b" style={{ color: accentColor, borderBottomColor: borderTone }}>
+                      <th key={`${block.id}-head-${columnIndex}`} className="text-left border-b" style={{ padding: tablePad, position: block.tableStickyHeader ? "sticky" : undefined, top: block.tableStickyHeader ? 0 : undefined, background: block.tableStickyHeader ? backgroundTone : undefined, color: titleColor, borderBottomColor: borderTone }}>
                         {column}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {(block.rows || []).map((row) => (
-                    <tr key={row.id}>
+                  {(block.rows || []).map((row, rowIndex) => (
+                    <tr key={row.id} style={{ background: block.tableStripedRows && rowIndex % 2 === 1 ? "rgba(255,255,255,0.035)" : undefined }}>
                       {row.cells.map((cell, cellIndex) => (
-                        <td key={`${row.id}-${cellIndex}`} className="p-2 align-top border-b" style={{ color: txt, borderBottomColor: `${borderTone}66` }}>
-                          {cell}
+                        <td key={`${row.id}-${cellIndex}`} className="align-top border-b" style={{ padding: tablePad, color: bodyColor, borderBottomColor: `${borderTone}66` }}>
+                          {block.tableLinkedCells
+                            ? <RenderFormattedText text={cell || ""} color={bodyColor} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
+                            : cell}
                         </td>
                       ))}
                     </tr>
@@ -585,12 +743,12 @@ export function InetPage() {
       case "keyValueBox":
         return (
           <div style={blockShellStyle}>
-            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
-            <div className="space-y-2">
+            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
+            <div style={{ display: "flex", flexDirection: "column", gap: block.keyValueDensity === "dense" ? 4 : block.keyValueDensity === "compact" ? 6 : 8 }}>
               {(block.items || []).map((item) => (
-                <div key={item.id} className="grid grid-cols-[minmax(110px,0.9fr)_1fr] gap-2">
-                  <span style={{ color: accentColor, fontWeight: 700 }}>{item.label}</span>
-                  <span style={{ color: txt }}>{item.value}</span>
+                <div key={item.id} className="grid grid-cols-[minmax(110px,0.9fr)_1fr] gap-2" style={{ borderBottom: block.keyValueRowDividers ? `1px solid ${borderTone}55` : undefined, paddingBottom: block.keyValueRowDividers ? 6 : undefined }}>
+                  <span style={{ color: titleColor, fontWeight: 700, textAlign: block.keyValueLabelAlign }}>{item.label}</span>
+                  <span style={{ color: bodyColor }}>{item.value}</span>
                 </div>
               ))}
             </div>
@@ -599,14 +757,14 @@ export function InetPage() {
       case "wikiLinksList":
         return (
           <div style={blockShellStyle}>
-            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
-            <div className="space-y-1">
+            {block.title && <h3 className="mb-3 text-[16px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
+            <div style={{ display: "flex", flexDirection: linkDisplayMode === "chips" ? "row" : "column", flexWrap: linkDisplayMode === "chips" ? "wrap" : undefined, gap: linkDisplayMode === "cards" ? 8 : 4 }}>
               {(block.articleIds || []).map((articleId) => (
                 <button
                   key={articleId}
                   onClick={() => navigate(`/interface/inet-page/${articleId}`)}
-                  className="block w-full text-left px-2 py-1 rounded-md hover:opacity-85"
-                  style={{ color: accent, background: "rgba(255,255,255,0.03)", border: `1px solid ${borderTone}77` }}
+                  className="block text-left px-2 py-1 rounded-md hover:opacity-85"
+                  style={{ width: linkDisplayMode === "chips" ? "auto" : "100%", color: accent, background: linkDisplayMode === "cards" ? "rgba(255,255,255,0.055)" : "rgba(255,255,255,0.03)", border: `1px solid ${borderTone}77` }}
                 >
                   {pageTitleLookup.get(articleId) || articleId}
                 </button>
@@ -617,8 +775,9 @@ export function InetPage() {
       case "divider":
         return (
           <div className="py-2">
-            <div style={{ height: 1, background: `linear-gradient(90deg, ${borderTone}, ${accentColor}66, ${borderTone})` }} />
-            {block.dividerLabel && <div className="text-[10px] mt-2 text-center uppercase tracking-[0.18em]" style={{ color: mutedText }}>{block.dividerLabel}</div>}
+            {block.dividerLabel && block.appearance.dividerLabelPosition === "above" && <div className="text-[10px] mb-2 text-center uppercase tracking-[0.18em]" style={{ color: mutedText }}>{block.dividerLabel}</div>}
+            {dividerLineElement(block.appearance.dividerStyle, borderTone, accentColor)}
+            {block.dividerLabel && block.appearance.dividerLabelPosition !== "above" && <div className={`text-[10px] ${block.appearance.dividerLabelPosition === "below" ? "mt-2" : "mt-[-8px]"} text-center uppercase tracking-[0.18em]`} style={{ color: mutedText }}>{block.dividerLabel}</div>}
           </div>
         );
       case "spacer":
@@ -629,8 +788,8 @@ export function InetPage() {
           <div style={blockShellStyle}>
             {(block.title || block.subtitle) && (
               <div className="mb-3">
-                {block.title && <h3 className="text-[16px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
-                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>{block.subtitle}</p>}
+                {block.title && <h3 className="text-[16px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
+                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font, textAlign: titleAlign }}>{block.subtitle}</p>}
               </div>
             )}
             {!showBlockContent ? spoilerOverlay : (
@@ -641,7 +800,7 @@ export function InetPage() {
                     <span>You chose to reveal this block. This content may not be intended for your character.</span>
                   </div>
                 )}
-                <RenderFormattedText text={block.html || ""} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} sectionRevealed={showBlockContent} />
+                <RenderFormattedText text={block.html || ""} color={bodyColor} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} sectionRevealed={showBlockContent} />
               </div>
             )}
           </div>
@@ -653,11 +812,11 @@ export function InetPage() {
           <div style={blockShellStyle}>
             {(block.title || block.subtitle) && (
               <div className="mb-3">
-                {block.title && <h3 className="text-[18px]" style={{ color: accentColor, fontWeight: 700, fontFamily: font }}>{block.title}</h3>}
-                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>{block.subtitle}</p>}
+                {block.title && <h3 className="text-[18px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
+                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font, textAlign: titleAlign }}>{block.subtitle}</p>}
               </div>
             )}
-            <RenderFormattedText text={block.html || ""} color={txt} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
+            <RenderFormattedText text={block.html || ""} color={bodyColor} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
           </div>
         );
     }
@@ -884,7 +1043,7 @@ export function InetPage() {
                         className="flex items-center gap-1.5 px-2 py-1 text-[11px]"
                         style={{ paddingLeft: 8 + depth * 12, color: isFolder ? mutedText : accent }}
                       >
-                        <span style={{ color: isFolder ? accent : lighten(accent, 30), fontSize: 10 }}>{isFolder ? "📁" : "📄"}</span>
+                        <span style={{ color: isFolder ? accent : lighten(accent, 30), fontSize: 10 }}>{isFolder ? "Folder" : "Article"}</span>
                         {isFolder ? (
                           <span style={{ fontWeight: 500 }}>{node.name || "Unnamed"}</span>
                         ) : linkedArticle ? (
@@ -1198,19 +1357,25 @@ export function InetPage() {
                     ))}
                   </div>
                   <div className="md:hidden space-y-4 mb-6">
-                    {mobileBlocks.map((block) => (
-                      <div
-                        key={`mobile-${block.id}`}
-                        id={`block-${block.id}`}
-                        style={{
-                          overflowX: (block.fluid?.mobileBehavior || block.mobileCollapseMode) === "scrollX" ? "auto" : undefined,
-                          maxHeight: (block.fluid?.mobileBehavior || block.mobileCollapseMode) === "compact" ? 420 : undefined,
-                          overflowY: (block.fluid?.mobileBehavior || block.mobileCollapseMode) === "compact" ? "auto" : undefined,
-                        }}
-                      >
-                        {renderArticleBlock(block, "mobile")}
-                      </div>
-                    ))}
+                    {mobileBlocks.map((block) => {
+                      const mobileBehavior = block.fluid?.mobileBehavior || block.mobileCollapseMode;
+                      const mobileDensity = block.behavior?.mobileDensity || "comfortable";
+                      return (
+                        <div
+                          key={`mobile-${block.id}`}
+                          id={`block-${block.id}`}
+                          style={{
+                            width: block.behavior?.mobileFullWidth === false ? "auto" : "100%",
+                            paddingInline: mobileDensity === "dense" ? 0 : mobileDensity === "compact" ? 2 : undefined,
+                            overflowX: mobileBehavior === "scrollX" ? "auto" : undefined,
+                            maxHeight: mobileBehavior === "compact" || mobileDensity === "dense" ? 420 : undefined,
+                            overflowY: mobileBehavior === "compact" || mobileDensity === "dense" ? "auto" : undefined,
+                          }}
+                        >
+                          {renderArticleBlock(block, "mobile")}
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               ) : (
@@ -1248,7 +1413,6 @@ export function InetPage() {
                 </>
               )}
 
-              {/* ═══ Unified Sections/Panels ═══ */}
               {false && panels.map((panel, idx) => {
                 if (!panel.title && !panel.content) return null;
                 const ps = getPanelStyle(panel.style);
