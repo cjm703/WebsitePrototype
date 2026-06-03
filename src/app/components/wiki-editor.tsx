@@ -1142,69 +1142,6 @@ export function WikiEditor() {
   const handleSaveRef = useRef<() => void>(() => {});
   handleSaveRef.current = handleSave;
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const targetIsEditable = isEditableEventTarget(e.target);
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault();
-        handleSaveRef.current();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
-        e.preventDefault();
-        handleRedo();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setShowCommandPalette(true);
-      } else if (!targetIsEditable && editorCanvasMode === "edit" && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
-        e.preventDefault();
-        duplicateSelectedBlocks();
-      } else if (!targetIsEditable && editorCanvasMode === "edit" && (e.key === "Delete" || e.key === "Backspace")) {
-        if (selectedBlockIds.length > 0) {
-          e.preventDefault();
-          removeSelectedBlocks();
-        }
-      } else if (!targetIsEditable && editorCanvasMode === "edit" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
-        if (selectedBlockIds.length > 0) {
-          e.preventDefault();
-          const step = e.shiftKey ? 4 : 1;
-          if (e.key === "ArrowLeft") nudgeSelectedBlocks(-step, 0);
-          if (e.key === "ArrowRight") nudgeSelectedBlocks(step, 0);
-          if (e.key === "ArrowUp") nudgeSelectedBlocks(0, -step);
-          if (e.key === "ArrowDown") nudgeSelectedBlocks(0, step);
-        }
-      } else if (e.key === "Escape") {
-        if (editingPanelId) setEditingPanelId(null);
-        else if (showCommandPalette) setShowCommandPalette(false);
-        else if (showRecoveryDrawer) setShowRecoveryDrawer(false);
-        else if (showSpoilerInsert) setShowSpoilerInsert(false);
-        else if (showLinkDialog) setShowLinkDialog(false);
-        else if (showImageEmbed) setShowImageEmbed(false);
-        else if (showTemplatePicker) setShowTemplatePicker(false);
-        else if (showTemplateManager) setShowTemplateManager(false);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [
-    duplicateSelectedBlocks,
-    editorCanvasMode,
-    editingPanelId,
-    handleUndo,
-    handleRedo,
-    nudgeSelectedBlocks,
-    removeSelectedBlocks,
-    selectedBlockIds.length,
-    showCommandPalette,
-    showImageEmbed,
-    showLinkDialog,
-    showRecoveryDrawer,
-    showSpoilerInsert,
-    showTemplateManager,
-    showTemplatePicker,
-  ]);
-
   // ─── Template Application ───
   const applyTemplate = useCallback((template: WikiTemplate) => {
     const data = template.data;
@@ -1969,6 +1906,69 @@ export function WikiEditor() {
         : normalizeWikiArticleBlock(block)
     )));
   }, [pageBlocks, selectedBlockIds, updateBlocks]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const targetIsEditable = isEditableEventTarget(e.target);
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        handleSaveRef.current();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      } else if (!targetIsEditable && editorCanvasMode === "edit" && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelectedBlocks();
+      } else if (!targetIsEditable && editorCanvasMode === "edit" && (e.key === "Delete" || e.key === "Backspace")) {
+        if (selectedBlockIds.length > 0) {
+          e.preventDefault();
+          removeSelectedBlocks();
+        }
+      } else if (!targetIsEditable && editorCanvasMode === "edit" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+        if (selectedBlockIds.length > 0) {
+          e.preventDefault();
+          const step = e.shiftKey ? 4 : 1;
+          if (e.key === "ArrowLeft") nudgeSelectedBlocks(-step, 0);
+          if (e.key === "ArrowRight") nudgeSelectedBlocks(step, 0);
+          if (e.key === "ArrowUp") nudgeSelectedBlocks(0, -step);
+          if (e.key === "ArrowDown") nudgeSelectedBlocks(0, step);
+        }
+      } else if (e.key === "Escape") {
+        if (editingPanelId) setEditingPanelId(null);
+        else if (showCommandPalette) setShowCommandPalette(false);
+        else if (showRecoveryDrawer) setShowRecoveryDrawer(false);
+        else if (showSpoilerInsert) setShowSpoilerInsert(false);
+        else if (showLinkDialog) setShowLinkDialog(false);
+        else if (showImageEmbed) setShowImageEmbed(false);
+        else if (showTemplatePicker) setShowTemplatePicker(false);
+        else if (showTemplateManager) setShowTemplateManager(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    duplicateSelectedBlocks,
+    editorCanvasMode,
+    editingPanelId,
+    handleUndo,
+    handleRedo,
+    nudgeSelectedBlocks,
+    removeSelectedBlocks,
+    selectedBlockIds.length,
+    showCommandPalette,
+    showImageEmbed,
+    showLinkDialog,
+    showRecoveryDrawer,
+    showSpoilerInsert,
+    showTemplateManager,
+    showTemplatePicker,
+  ]);
 
   const addArticleTemplate = useCallback((templateId: "spell-directory" | "creature-reference" | "location-page" | "rules-reference") => {
     const startRow = getNextWikiBlockRow(pageBlocks);
