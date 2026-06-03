@@ -1,8 +1,26 @@
 import { normalizeWikiPanels } from "@/lib/wiki-panel-layout";
 
-export const WIKI_BLOCK_LAYOUT_VERSION = 1;
-export const WIKI_BLOCK_COLUMNS = 12;
-export const WIKI_BLOCK_DEFAULT_ROW_SPAN = 3;
+export const WIKI_BLOCK_LAYOUT_VERSION = 2;
+export const WIKI_BLOCK_COLUMNS = 48;
+export const WIKI_BLOCK_DEFAULT_ROW_SPAN = 8;
+export const WIKI_BLOCK_LEGACY_COLUMNS = 12;
+export const WIKI_BLOCK_LEGACY_TO_DENSE_COL_SCALE = WIKI_BLOCK_COLUMNS / WIKI_BLOCK_LEGACY_COLUMNS;
+export const WIKI_BLOCK_LEGACY_TO_DENSE_ROW_SCALE = 2;
+
+export type WikiCanvasPreset = "standard" | "large" | "referenceWide";
+
+export interface WikiCanvasSettings {
+  frameWidth: number;
+  canvasHeight: number;
+  minCanvasHeight: number;
+  preset: WikiCanvasPreset;
+}
+
+export const WIKI_CANVAS_PRESETS: Record<WikiCanvasPreset, WikiCanvasSettings> = {
+  standard: { frameWidth: 1480, canvasHeight: 1480, minCanvasHeight: 1320, preset: "standard" },
+  large: { frameWidth: 1540, canvasHeight: 1720, minCanvasHeight: 1480, preset: "large" },
+  referenceWide: { frameWidth: 1600, canvasHeight: 1840, minCanvasHeight: 1560, preset: "referenceWide" },
+};
 
 export type WikiBlockType =
   | "richText"
@@ -106,22 +124,37 @@ type LegacyPageLike = {
   sections?: { id: string; heading: string; body: string }[];
   blocks?: WikiArticleBlock[];
   layoutVersion?: number;
+  canvasSettings?: Partial<WikiCanvasSettings>;
 };
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 const DEFAULT_LAYOUTS: Record<WikiBlockType, Pick<WikiBlockLayout, "colSpan" | "rowSpan" | "minColSpan" | "minRowSpan">> = {
-  richText: { colSpan: 12, rowSpan: 4, minColSpan: 4, minRowSpan: 2 },
-  heading: { colSpan: 12, rowSpan: 2, minColSpan: 3, minRowSpan: 1 },
-  image: { colSpan: 6, rowSpan: 5, minColSpan: 3, minRowSpan: 2 },
-  calloutPanel: { colSpan: 6, rowSpan: 4, minColSpan: 3, minRowSpan: 2 },
-  referenceTable: { colSpan: 12, rowSpan: 6, minColSpan: 5, minRowSpan: 3 },
-  keyValueBox: { colSpan: 4, rowSpan: 4, minColSpan: 3, minRowSpan: 2 },
-  spoilerBlock: { colSpan: 6, rowSpan: 4, minColSpan: 3, minRowSpan: 2 },
-  wikiLinksList: { colSpan: 4, rowSpan: 4, minColSpan: 3, minRowSpan: 2 },
-  divider: { colSpan: 12, rowSpan: 1, minColSpan: 12, minRowSpan: 1 },
-  spacer: { colSpan: 12, rowSpan: 1, minColSpan: 12, minRowSpan: 1 },
+  richText: { colSpan: 48, rowSpan: 14, minColSpan: 12, minRowSpan: 8 },
+  heading: { colSpan: 48, rowSpan: 5, minColSpan: 16, minRowSpan: 4 },
+  image: { colSpan: 24, rowSpan: 18, minColSpan: 12, minRowSpan: 10 },
+  calloutPanel: { colSpan: 24, rowSpan: 16, minColSpan: 12, minRowSpan: 10 },
+  referenceTable: { colSpan: 48, rowSpan: 20, minColSpan: 20, minRowSpan: 12 },
+  keyValueBox: { colSpan: 16, rowSpan: 14, minColSpan: 12, minRowSpan: 8 },
+  spoilerBlock: { colSpan: 24, rowSpan: 16, minColSpan: 12, minRowSpan: 10 },
+  wikiLinksList: { colSpan: 16, rowSpan: 14, minColSpan: 12, minRowSpan: 8 },
+  divider: { colSpan: 48, rowSpan: 2, minColSpan: 24, minRowSpan: 2 },
+  spacer: { colSpan: 48, rowSpan: 4, minColSpan: 24, minRowSpan: 2 },
 };
+
+export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSettings> | null): WikiCanvasSettings {
+  const preset = settings?.preset && WIKI_CANVAS_PRESETS[settings.preset] ? settings.preset : "standard";
+  const base = WIKI_CANVAS_PRESETS[preset];
+  const frameWidth = clampInt(settings?.frameWidth, 1100, 1760);
+  const minCanvasHeight = clampInt(settings?.minCanvasHeight, 960, 2800);
+  const canvasHeight = clampInt(settings?.canvasHeight, minCanvasHeight, 3600);
+  return {
+    preset,
+    frameWidth: settings?.frameWidth ? frameWidth : base.frameWidth,
+    minCanvasHeight: settings?.minCanvasHeight ? minCanvasHeight : base.minCanvasHeight,
+    canvasHeight: settings?.canvasHeight ? canvasHeight : base.canvasHeight,
+  };
+}
 
 export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArticleBlock {
   const base = DEFAULT_LAYOUTS[type];
@@ -220,9 +253,49 @@ export function normalizeWikiArticleBlocks(blocks: Partial<WikiArticleBlock>[] |
   return (blocks || []).map((block) => normalizeWikiArticleBlock(block));
 }
 
+export function upgradeWikiBlockToCurrentLayout(
+  block: Partial<WikiArticleBlock>,
+  version = 1,
+): Partial<WikiArticleBlock> {
+  if (version >= WIKI_BLOCK_LAYOUT_VERSION) return block;
+  const normalized = normalizeWikiArticleBlock(block);
+  const legacyColSpan = normalized.layout.colSpan;
+  const legacyColStart = normalized.layout.colStart;
+  const legacyRowSpan = normalized.layout.rowSpan;
+  const legacyRowStart = normalized.layout.rowStart;
+
+  return {
+    ...normalized,
+    layout: {
+      ...normalized.layout,
+      colStart: ((legacyColStart - 1) * WIKI_BLOCK_LEGACY_TO_DENSE_COL_SCALE) + 1,
+      colSpan: legacyColSpan * WIKI_BLOCK_LEGACY_TO_DENSE_COL_SCALE,
+      rowStart: ((legacyRowStart - 1) * WIKI_BLOCK_LEGACY_TO_DENSE_ROW_SCALE) + 1,
+      rowSpan: legacyRowSpan * WIKI_BLOCK_LEGACY_TO_DENSE_ROW_SCALE,
+      minColSpan: Math.max(
+        (normalized.layout.minColSpan || 1) * WIKI_BLOCK_LEGACY_TO_DENSE_COL_SCALE,
+        DEFAULT_LAYOUTS[normalized.type].minColSpan || 1,
+      ),
+      minRowSpan: Math.max(
+        (normalized.layout.minRowSpan || 1) * WIKI_BLOCK_LEGACY_TO_DENSE_ROW_SCALE,
+        DEFAULT_LAYOUTS[normalized.type].minRowSpan || 1,
+      ),
+    },
+  };
+}
+
 export function migrateLegacyArticleToBlocks(page: LegacyPageLike): WikiArticleBlock[] {
   if (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION && Array.isArray(page.blocks) && page.blocks.length > 0) {
     return normalizeWikiArticleBlocks(page.blocks);
+  }
+
+  if (Array.isArray(page.blocks) && page.blocks.length > 0) {
+    const priorVersion = page.layoutVersion || 1;
+    return compactWikiArticleBlocks(
+      normalizeWikiArticleBlocks(
+        page.blocks.map((block) => upgradeWikiBlockToCurrentLayout(block, priorVersion)),
+      ),
+    );
   }
 
   const blocks: WikiArticleBlock[] = [];
@@ -241,7 +314,7 @@ export function migrateLegacyArticleToBlocks(page: LegacyPageLike): WikiArticleB
     block.title = page.bodyTitle || "Overview";
     block.subtitle = page.bodySubtitle || "";
     block.html = page.body;
-    block.layout.colSpan = 12;
+    block.layout.colSpan = WIKI_BLOCK_COLUMNS;
     block.layout.rowSpan = estimateRichTextRowSpan(page.body);
     blocks.push(block);
     nextRow += block.layout.rowSpan;
@@ -265,12 +338,12 @@ export function migrateLegacyArticleToBlocks(page: LegacyPageLike): WikiArticleB
       mode: panel.assignedTo && panel.assignedTo.length > 0 ? (panel.visibilityMode || "spoiler") : "visible",
     };
     if (panel.placement === "sidebar") {
-      block.layout.colStart = 9;
-      block.layout.colSpan = 4;
+      block.layout.colStart = 33;
+      block.layout.colSpan = 16;
     } else if (panel.width === "half") {
-      block.layout.colSpan = 6;
+      block.layout.colSpan = 24;
     } else {
-      block.layout.colSpan = 12;
+      block.layout.colSpan = WIKI_BLOCK_COLUMNS;
     }
     block.layout.rowSpan = estimateRichTextRowSpan(panel.content || "", block.layout.colSpan);
     blocks.push(block);
@@ -389,6 +462,7 @@ export function serializeWikiBlocksToLegacyContent(blocks: WikiArticleBlock[]): 
   sorted.forEach((block) => {
     const bodyHtml = getWikiBlockHtml(block);
     if (block.type === "calloutPanel" || block.type === "spoilerBlock" || block.type === "keyValueBox" || block.type === "referenceTable" || block.type === "wikiLinksList") {
+      const isSidebarLike = block.layout.colStart >= 31 && block.layout.colSpan <= 18;
       panels.push({
         id: block.id,
         title: block.title,
@@ -397,8 +471,8 @@ export function serializeWikiBlocksToLegacyContent(blocks: WikiArticleBlock[]): 
         assignedTo: block.visibility.assignedTo,
         visibilityMode: block.visibility.mode === "visible" ? "spoiler" : (block.visibility.mode as "spoiler" | "hidden"),
         style: block.style,
-        placement: block.layout.colSpan <= 4 ? "sidebar" : "body",
-        width: block.layout.colSpan <= 6 ? "half" : "full",
+        placement: isSidebarLike ? "sidebar" : "body",
+        width: block.layout.colSpan <= 24 ? "half" : "full",
         mediaUrl: block.imageUrl,
         mediaCaption: block.imageCaption,
         mediaAlt: block.imageAlt,
@@ -462,10 +536,10 @@ export function collectWikiBlockHtmlStrings(blocks: WikiArticleBlock[]): string[
   return blocks.map((block) => getWikiBlockHtml(block)).filter(Boolean);
 }
 
-export function estimateRichTextRowSpan(html: string, colSpan = 12): number {
+export function estimateRichTextRowSpan(html: string, colSpan = WIKI_BLOCK_COLUMNS): number {
   const plain = stripHtml(html || "");
-  const base = Math.ceil(Math.max(plain.length, 120) / Math.max(1, colSpan * 16));
-  return Math.max(3, Math.min(14, base + 1));
+  const base = Math.ceil(Math.max(plain.length, 140) / Math.max(1, colSpan * 2.8));
+  return Math.max(8, Math.min(56, base + 5));
 }
 
 function buildTableHtml(columns: string[], rows: WikiReferenceTableRow[]): string {

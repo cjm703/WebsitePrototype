@@ -16,7 +16,9 @@ import {
   compareWikiBlocksForLayout,
   migrateLegacyArticleToBlocks,
   normalizeWikiArticleBlocks,
+  normalizeWikiCanvasSettings,
   type WikiArticleBlock,
+  type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
 import {
   getWikiPanelMediaPosition,
@@ -82,6 +84,7 @@ interface SitePage {
   panels?: WikiPanel[];
   layoutVersion?: number;
   blocks?: WikiArticleBlock[];
+  canvasSettings?: WikiCanvasSettings;
   wikiTags?: string[];
   wikiTagFields?: Record<string, string>;
   playerVisibility?: Record<string, "visible" | "spoiler" | "hidden">;
@@ -279,6 +282,7 @@ export function InetPage() {
   const showDividers = page.showDividers ?? true;
   const borderColor = lighten(bg, 25);
   const mutedText = lighten(bg, 60);
+  const canvasSettings = normalizeWikiCanvasSettings(page.canvasSettings);
 
   const bodyParagraphs = (page.body || "").trim();
   const hasBody = bodyParagraphs.length > 0;
@@ -1071,7 +1075,7 @@ export function InetPage() {
 
               {hasBlockLayout ? (
                 <>
-                  <div className="hidden md:grid gap-4 mb-6" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, gridAutoRows: "minmax(30px, auto)" }}>
+                  <div className="hidden md:grid gap-4 mb-6 mx-auto" style={{ maxWidth: canvasSettings.frameWidth, gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, gridAutoRows: "minmax(20px, auto)" }}>
                     {visibleBlocks.map((block) => (
                       <div
                         key={block.id}

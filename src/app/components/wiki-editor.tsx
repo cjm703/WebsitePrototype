@@ -40,6 +40,7 @@ import {
 import {
   WIKI_BLOCK_COLUMNS,
   WIKI_BLOCK_LAYOUT_VERSION,
+  WIKI_CANVAS_PRESETS,
   clampWikiBlockLayout,
   collectWikiBlockHtmlStrings,
   compactWikiArticleBlocks,
@@ -50,11 +51,13 @@ import {
   migrateLegacyArticleToBlocks,
   normalizeWikiArticleBlock,
   normalizeWikiArticleBlocks,
+  normalizeWikiCanvasSettings,
   placeWikiBlock,
   resolveWikiBlockCollisions,
   serializeWikiBlocksToLegacyContent,
   type WikiArticleBlock,
   type WikiBlockType,
+  type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
 import type { TagField, TagDefinition, PlayerData } from "./types";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
@@ -140,6 +143,7 @@ interface SitePage {
   panels?: WikiPanel[];
   layoutVersion?: number;
   blocks?: WikiArticleBlock[];
+  canvasSettings?: WikiCanvasSettings;
   wikiTags?: string[];
   wikiTagFields?: Record<string, string>;
   playerVisibility?: Record<string, "visible" | "spoiler" | "hidden">;
@@ -243,6 +247,7 @@ function createBlankSitePage(): SitePage {
     seeAlso: [], disambiguationNote: "", references: [], lastEditSummary: "",
     layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
     blocks: [],
+    canvasSettings: normalizeWikiCanvasSettings(),
     panels: [],
     wikiTags: [], wikiTagFields: {}, playerVisibility: {},
   };
@@ -365,14 +370,35 @@ export function WikiEditor() {
   // ─── Template State ───
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
   const blockCanvasRef = useRef<HTMLDivElement>(null);
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [draggedBlockType, setDraggedBlockType] = useState<WikiBlockType | null>(null);
+  const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
+  const [movingBlockId, setMovingBlockId] = useState<string | null>(null);
+  const [liveBlockLayouts, setLiveBlockLayouts] = useState<Record<string, Partial<WikiArticleBlock["layout"]>>>({});
+  const [canvasViewportWidth, setCanvasViewportWidth] = useState(0);
+  const [canvasInsertPicker, setCanvasInsertPicker] = useState<{
+    colStart: number;
+    rowStart: number;
+    left: number;
+    top: number;
+  } | null>(null);
   const [canvasDropPreview, setCanvasDropPreview] = useState<{
     colStart: number;
     rowStart: number;
     colSpan: number;
     rowSpan: number;
+  } | null>(null);
+  const movingBlockRef = useRef<{
+    blockId: string;
+    originColStart: number;
+    originRowStart: number;
+    colWidth: number;
+    rowHeight: number;
+    startClientX: number;
+    startClientY: number;
+    colSpan: number;
   } | null>(null);
 
   // ─── Auto-save Draft State ───
@@ -493,7 +519,14 @@ export function WikiEditor() {
 
     const migrated = migrateSectionsToPanels(existingPage);
     const migratedBlocks = migrateLegacyArticleToBlocks({ ...existingPage, panels: migrated, sections: [] });
-    setPage({ ...existingPage, panels: migrated, sections: [], layoutVersion: WIKI_BLOCK_LAYOUT_VERSION, blocks: migratedBlocks });
+    setPage({
+      ...existingPage,
+      panels: migrated,
+      sections: [],
+      layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
+      blocks: migratedBlocks,
+      canvasSettings: normalizeWikiCanvasSettings(existingPage.canvasSettings),
+    });
     setEditSummary(existingPage.lastEditSummary || "");
     setHasUnsaved(false);
     setShowTemplatePicker(false);
@@ -578,7 +611,14 @@ export function WikiEditor() {
     if (remoteDraft) {
       const migrated = migrateSectionsToPanels(remoteDraft);
       const migratedBlocks = migrateLegacyArticleToBlocks({ ...remoteDraft, panels: migrated, sections: [] });
-      setPage({ ...remoteDraft, panels: migrated, sections: [], layoutVersion: WIKI_BLOCK_LAYOUT_VERSION, blocks: migratedBlocks });
+      setPage({
+        ...remoteDraft,
+        panels: migrated,
+        sections: [],
+        layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
+        blocks: migratedBlocks,
+        canvasSettings: normalizeWikiCanvasSettings(remoteDraft.canvasSettings),
+      });
       setSelectedBlockId(migratedBlocks[0]?.id || null);
       setHasUnsaved(true);
       setShowDraftRestore(false);
@@ -590,7 +630,14 @@ export function WikiEditor() {
         const draft = JSON.parse(draftRaw);
         const migrated = migrateSectionsToPanels(draft);
         const migratedBlocks = migrateLegacyArticleToBlocks({ ...draft, panels: migrated, sections: [] });
-        setPage({ ...draft, panels: migrated, sections: [], layoutVersion: WIKI_BLOCK_LAYOUT_VERSION, blocks: migratedBlocks });
+        setPage({
+          ...draft,
+          panels: migrated,
+          sections: [],
+          layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
+          blocks: migratedBlocks,
+          canvasSettings: normalizeWikiCanvasSettings(draft.canvasSettings),
+        });
         setSelectedBlockId(migratedBlocks[0]?.id || null);
         setHasUnsaved(true);
       }
@@ -646,6 +693,7 @@ export function WikiEditor() {
       dateAdded: autoDate,
       layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
       blocks: normalizedBlocks,
+      canvasSettings: normalizeWikiCanvasSettings(page.canvasSettings),
       body: legacySnapshot.body,
       panels: normalizeWikiPanels(legacySnapshot.panels as WikiPanel[]),
       sections: [],
@@ -985,6 +1033,7 @@ export function WikiEditor() {
   const font = page.fontFamily || DEFAULT_STYLE.fontFamily;
   const borderColor = lighten(bg, 25);
   const mutedText = lighten(bg, 60);
+  const canvasSettings = useMemo(() => normalizeWikiCanvasSettings(page.canvasSettings), [page.canvasSettings]);
 
   const bodyParagraphs = (page.body || "").trim();
   const hasBody = bodyParagraphs.length > 0;
@@ -1012,18 +1061,35 @@ export function WikiEditor() {
     ),
     [page],
   );
+  const renderedPageBlocks = useMemo(
+    () => pageBlocks.map((block) => normalizeWikiArticleBlock({
+      ...block,
+      layout: {
+        ...block.layout,
+        ...(liveBlockLayouts[block.id] || {}),
+      },
+    })),
+    [liveBlockLayouts, pageBlocks],
+  );
   const blockIdToPage = useMemo(() => new Map(allPages.map((article) => [article.id, article])), [allPages]);
   const selectedBlock = selectedBlockId ? pageBlocks.find((block) => block.id === selectedBlockId) || null : null;
   const articleLinkChoices = useMemo(
     () => allPages.filter((article) => article.id !== page.id).sort((a, b) => a.title.localeCompare(b.title)),
     [allPages, page.id],
   );
-  const canvasRowHeight = 44;
+  const canvasFrameWidth = canvasSettings.frameWidth;
+  const canvasRowHeight = 24;
   const canvasBottomRow = useMemo(
-    () => Math.max(12, ...pageBlocks.map((block) => block.layout.rowStart + block.layout.rowSpan + 1)),
-    [pageBlocks],
+    () => Math.max(48, ...renderedPageBlocks.map((block) => block.layout.rowStart + block.layout.rowSpan + 2)),
+    [renderedPageBlocks],
   );
   const blockCountLabel = `${pageBlocks.length} block${pageBlocks.length === 1 ? "" : "s"}`;
+  const canvasContentHeight = canvasBottomRow * canvasRowHeight;
+  const canvasHeight = Math.max(canvasSettings.minCanvasHeight, canvasSettings.canvasHeight, canvasContentHeight + 60);
+  const canvasRenderWidth = canvasViewportWidth > 0 && canvasViewportWidth < canvasFrameWidth + 56
+    ? Math.max(920, canvasViewportWidth - 16)
+    : canvasFrameWidth;
+  const isMinimizedCanvasMode = canvasRenderWidth < canvasFrameWidth;
 
   useEffect(() => {
     if (!selectedBlockId && pageBlocks.length > 0) {
@@ -1038,6 +1104,17 @@ export function WikiEditor() {
   useEffect(() => {
     setRevealedPanels(new Set());
   }, [previewAsPlayerId, page.id]);
+
+  useEffect(() => {
+    if (!canvasViewportRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      setCanvasViewportWidth(entry.contentRect.width);
+    });
+    observer.observe(canvasViewportRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   const updateBlocks = useCallback((nextBlocks: WikiArticleBlock[]) => {
     update("blocks", compactWikiArticleBlocks(nextBlocks));
@@ -1067,6 +1144,35 @@ export function WikiEditor() {
     setSelectedBlockId(nextBlock.id);
     setInspectorTab("content");
   }, [pageBlocks, updateBlocks]);
+
+  const getCanvasGridMetrics = useCallback(() => {
+    const rect = blockCanvasRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      rect,
+      colWidth: rect.width / WIKI_BLOCK_COLUMNS,
+      rowHeight: canvasRowHeight,
+    };
+  }, [canvasRowHeight]);
+
+  const getCanvasGridPlacement = useCallback((
+    clientX: number,
+    clientY: number,
+    layoutSeed?: Partial<WikiArticleBlock["layout"]>,
+  ) => {
+    const metrics = getCanvasGridMetrics();
+    if (!metrics) return null;
+    const colSpan = layoutSeed?.colSpan || 1;
+    const rowSpan = layoutSeed?.rowSpan || 1;
+    return {
+      left: clientX - metrics.rect.left,
+      top: clientY - metrics.rect.top,
+      colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.floor((clientX - metrics.rect.left) / Math.max(metrics.colWidth, 1)) + 1)),
+      rowStart: Math.max(1, Math.floor((clientY - metrics.rect.top) / metrics.rowHeight) + 1),
+      colSpan,
+      rowSpan,
+    };
+  }, [getCanvasGridMetrics]);
 
   const duplicateBlock = useCallback((blockId: string) => {
     const source = pageBlocks.find((block) => block.id === blockId);
@@ -1176,7 +1282,6 @@ export function WikiEditor() {
       }
     }
   }, []);
-  const canvasHeight = canvasBottomRow * canvasRowHeight;
 
   const handleLibraryDragStart = useCallback((event: React.DragEvent, type: WikiBlockType) => {
     event.dataTransfer.effectAllowed = "copy";
@@ -1198,61 +1303,140 @@ export function WikiEditor() {
     setCanvasDropPreview(null);
   }, []);
 
+  const beginCanvasBlockMove = useCallback((event: React.MouseEvent, blockId: string) => {
+    const block = pageBlocks.find((entry) => entry.id === blockId);
+    const metrics = getCanvasGridMetrics();
+    if (!block || !metrics || block.locked) return;
+    event.preventDefault();
+    event.stopPropagation();
+    movingBlockRef.current = {
+      blockId,
+      originColStart: block.layout.colStart,
+      originRowStart: block.layout.rowStart,
+      colWidth: metrics.colWidth,
+      rowHeight: metrics.rowHeight,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      colSpan: block.layout.colSpan,
+    };
+    setMovingBlockId(blockId);
+    setSelectedBlockId(blockId);
+    setCanvasInsertPicker(null);
+  }, [getCanvasGridMetrics, pageBlocks]);
+
+  useEffect(() => {
+    if (!movingBlockId) return;
+    const handleMouseMove = (event: MouseEvent) => {
+      const state = movingBlockRef.current;
+      if (!state) return;
+      const source = pageBlocks.find((entry) => entry.id === state.blockId);
+      if (!source) return;
+      const deltaCols = Math.round((event.clientX - state.startClientX) / Math.max(state.colWidth, 1));
+      const deltaRows = Math.round((event.clientY - state.startClientY) / Math.max(state.rowHeight, 1));
+      const nextColStart = Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - state.colSpan + 1, state.originColStart + deltaCols));
+      const nextRowStart = Math.max(1, state.originRowStart + deltaRows);
+      setLiveBlockLayouts((prev) => ({
+        ...prev,
+        [state.blockId]: {
+          ...source.layout,
+          colStart: nextColStart,
+          rowStart: nextRowStart,
+        },
+      }));
+    };
+
+    const handleMouseUp = () => {
+      const state = movingBlockRef.current;
+      if (!state) return;
+      const draft = liveBlockLayouts[state.blockId];
+      if (draft) {
+        updateBlocks(placeWikiBlock(pageBlocks, state.blockId, draft));
+      }
+      setLiveBlockLayouts((prev) => {
+        const next = { ...prev };
+        delete next[state.blockId];
+        return next;
+      });
+      movingBlockRef.current = null;
+      setMovingBlockId(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [liveBlockLayouts, movingBlockId, pageBlocks, updateBlocks]);
+
+  const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (event.target !== event.currentTarget) return;
+    if (event.shiftKey) {
+      const nextPlacement = getCanvasGridPlacement(event.clientX, event.clientY, createDefaultBlock("richText").layout);
+      if (!nextPlacement) return;
+      event.preventDefault();
+      setCanvasInsertPicker({
+        colStart: nextPlacement.colStart,
+        rowStart: nextPlacement.rowStart,
+        left: nextPlacement.left,
+        top: nextPlacement.top,
+      });
+      return;
+    }
+    if (event.target === event.currentTarget) {
+      setCanvasInsertPicker(null);
+      setSelectedBlockId(null);
+    }
+  }, [getCanvasGridPlacement]);
+
   const updateCanvasDropPreview = useCallback((event: React.DragEvent) => {
-    const rect = blockCanvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
-    const rowStart = Math.max(1, Math.floor(y / canvasRowHeight) + 1);
     const blockSeed = draggedBlockId
       ? pageBlocks.find((block) => block.id === draggedBlockId)
       : draggedBlockType
-        ? createDefaultBlock(draggedBlockType, rowStart)
+        ? createDefaultBlock(draggedBlockType)
         : null;
     if (!blockSeed) {
       setCanvasDropPreview(null);
       return;
     }
-    const colSpan = blockSeed.layout.colSpan;
-    const rowSpan = blockSeed.layout.rowSpan;
-    const colStart = Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.floor(x / Math.max(colWidth, 1)) + 1));
-    setCanvasDropPreview({ colStart, rowStart, colSpan, rowSpan });
-  }, [canvasRowHeight, draggedBlockId, draggedBlockType, pageBlocks]);
+    const placement = getCanvasGridPlacement(event.clientX, event.clientY, blockSeed.layout);
+    if (!placement) return;
+    setCanvasDropPreview({
+      colStart: placement.colStart,
+      rowStart: placement.rowStart,
+      colSpan: placement.colSpan,
+      rowSpan: placement.rowSpan,
+    });
+  }, [draggedBlockId, draggedBlockType, getCanvasGridPlacement, pageBlocks]);
 
   const handleCanvasDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
-    const rect = blockCanvasRef.current?.getBoundingClientRect();
-    if (!rect) {
-      clearCanvasDragState();
-      return;
-    }
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
-    const rowStart = Math.max(1, Math.floor(y / canvasRowHeight) + 1);
     const draggedBlockId = event.dataTransfer.getData("application/wiki-block-id");
     const draggedBlockType = event.dataTransfer.getData("application/wiki-block-type") as WikiBlockType | "";
     const blockSeed = draggedBlockId
       ? pageBlocks.find((block) => block.id === draggedBlockId)
       : draggedBlockType
-        ? createDefaultBlock(draggedBlockType, rowStart)
+        ? createDefaultBlock(draggedBlockType)
         : null;
-    const colSpan = blockSeed?.layout.colSpan || 1;
-    const colStart = Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.floor(x / Math.max(colWidth, 1)) + 1));
+    const placement = blockSeed ? getCanvasGridPlacement(event.clientX, event.clientY, blockSeed.layout) : null;
+    if (!placement) {
+      clearCanvasDragState();
+      return;
+    }
 
     if (draggedBlockId) {
-      updateBlocks(placeWikiBlock(pageBlocks, draggedBlockId, { colStart, rowStart }));
+      updateBlocks(placeWikiBlock(pageBlocks, draggedBlockId, { colStart: placement.colStart, rowStart: placement.rowStart }));
       setSelectedBlockId(draggedBlockId);
       clearCanvasDragState();
       return;
     }
 
     if (draggedBlockType) {
-      addBlock(draggedBlockType, { layout: { colStart, rowStart } as WikiArticleBlock["layout"] });
+      addBlock(draggedBlockType, { layout: { colStart: placement.colStart, rowStart: placement.rowStart } as WikiArticleBlock["layout"] });
     }
     clearCanvasDragState();
-  }, [addBlock, canvasRowHeight, clearCanvasDragState, pageBlocks, updateBlocks]);
+  }, [addBlock, clearCanvasDragState, getCanvasGridPlacement, pageBlocks, updateBlocks]);
 
   const resolveBlockPalette = useCallback((block: WikiArticleBlock) => {
     const styleDef = block.style ? allPanelStyles.find((entry) => entry.id === block.style) : null;
@@ -2247,7 +2431,7 @@ export function WikiEditor() {
               <div>
                 <div className="text-[10px] uppercase tracking-[0.22em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Live Article Canvas</div>
                 <div className="text-[12px] mt-1" style={{ color: "#9FB0CC" }}>
-                  Drag blocks into place, resize them by snapped handles, and edit text directly in the canvas.
+                  Shift-click to place a new block, drag overlays to move, and resize blocks in a denser fixed article frame.
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -2263,8 +2447,8 @@ export function WikiEditor() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5">
-              <div className="mx-auto max-w-[1220px] rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ background: hdr, borderColor }}>
+            <div ref={canvasViewportRef} className="flex-1 overflow-y-auto px-4 py-5">
+              <div className="mx-auto rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ width: canvasRenderWidth, background: hdr, borderColor }}>
                 <div className="border-b px-6 py-5" style={{ borderBottomColor: borderColor }}>
                   <InlineEdit
                     tag="h1"
@@ -2293,8 +2477,25 @@ export function WikiEditor() {
                 </div>
 
                 <div className="px-6 py-6">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article"}</span>
+                      <span>|</span>
+                      <span>{Math.round(canvasRenderWidth)}px frame width</span>
+                      <span>|</span>
+                      <span>{canvasHeight}px canvas height</span>
+                      <span>|</span>
+                      <span>{WIKI_BLOCK_COLUMNS}-column dense snap canvas</span>
+                    </div>
+                    {isMinimizedCanvasMode && (
+                      <span style={{ color: "#FFCC7A" }}>
+                        Minimized editor mode is active for this screen width.
+                      </span>
+                    )}
+                  </div>
                   <div
                     ref={blockCanvasRef}
+                    onMouseDown={handleCanvasMouseDown}
                     onDragOver={(event) => {
                       event.preventDefault();
                       updateCanvasDropPreview(event);
@@ -2305,7 +2506,7 @@ export function WikiEditor() {
                       }
                     }}
                     onDrop={handleCanvasDrop}
-                    className="relative rounded-lg border overflow-hidden"
+                    className="relative rounded-lg border overflow-visible"
                     style={{
                       minHeight: canvasHeight,
                       borderColor: "#20335B",
@@ -2317,15 +2518,15 @@ export function WikiEditor() {
                       backgroundSize: `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
                     }}
                   >
-                    <div className="absolute inset-x-0 top-0 z-[1] grid" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, pointerEvents: "none" }}>
+                    <div className="absolute inset-x-0 top-0 z-[1] grid" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, pointerEvents: "none", opacity: isMinimizedCanvasMode ? 0.35 : 1 }}>
                       {Array.from({ length: WIKI_BLOCK_COLUMNS }, (_, index) => (
                         <div key={`canvas-col-${index + 1}`} className="border-r px-1 py-1 text-right text-[9px]" style={{ borderRightColor: "rgba(74,123,255,0.12)", color: "#58729D" }}>
                           {index + 1}
                         </div>
                       ))}
                     </div>
-                    <div className="absolute left-0 top-0 bottom-0 z-[1] flex flex-col" style={{ width: 28, pointerEvents: "none" }}>
-                      {Array.from({ length: Math.max(12, canvasBottomRow) }, (_, index) => (
+                    <div className="absolute left-0 top-0 bottom-0 z-[1] flex flex-col" style={{ width: 28, pointerEvents: "none", opacity: isMinimizedCanvasMode ? 0.3 : 1 }}>
+                      {Array.from({ length: Math.max(24, canvasBottomRow) }, (_, index) => (
                         <div key={`canvas-row-${index + 1}`} className="pr-1 pt-0.5 text-right text-[9px]" style={{ height: canvasRowHeight, color: "#4D6188" }}>
                           {index + 1}
                         </div>
@@ -2346,77 +2547,157 @@ export function WikiEditor() {
                         }}
                       />
                     )}
-                    {pageBlocks.map((block) => {
+                    {canvasInsertPicker && (
+                      <div
+                        className="absolute z-[4] w-56 rounded-lg border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.42)]"
+                        style={{
+                          left: Math.max(12, Math.min(canvasInsertPicker.left, Math.max(12, canvasRenderWidth - 240))),
+                          top: Math.max(18, canvasInsertPicker.top),
+                          borderColor: "#2B4B79",
+                          background: "rgba(8, 14, 34, 0.96)",
+                        }}
+                      >
+                        <div className="mb-2 text-[10px] uppercase tracking-[0.18em]" style={{ color: "#8EA9D7", fontWeight: 700 }}>
+                          Insert Block Here
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {([
+                            ["richText", "Rich Text"],
+                            ["heading", "Heading"],
+                            ["image", "Image"],
+                            ["calloutPanel", "Callout"],
+                            ["referenceTable", "Table"],
+                            ["keyValueBox", "Key-Value"],
+                            ["spoilerBlock", "Spoiler"],
+                            ["wikiLinksList", "Wiki Links"],
+                            ["divider", "Divider"],
+                            ["spacer", "Spacer"],
+                          ] as [WikiBlockType, string][]).map(([type, label]) => (
+                            <button
+                              key={type}
+                              onClick={() => {
+                                addBlock(type, { layout: { colStart: canvasInsertPicker.colStart, rowStart: canvasInsertPicker.rowStart } as WikiArticleBlock["layout"] });
+                                setCanvasInsertPicker(null);
+                              }}
+                              className={`${retro.button} px-2 py-2 text-[10px]`}
+                              style={S_SUBTLE}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {renderedPageBlocks.map((block) => {
                       const palette = resolveBlockPalette(block);
                       const blockLeft = `${((block.layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`;
                       const blockWidth = `${(block.layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`;
                       const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
                       const blockHeight = block.layout.rowSpan * canvasRowHeight;
                       const isSelected = selectedBlockId === block.id;
+                      const isChromeVisible = isSelected || hoveredBlockId === block.id || movingBlockId === block.id;
 
                       return (
                         <div
                           key={block.id}
-                          className="absolute p-1.5"
+                          className="absolute p-1"
+                          onMouseEnter={() => setHoveredBlockId(block.id)}
+                          onMouseLeave={() => setHoveredBlockId((current) => (current === block.id ? null : current))}
                           style={{
                             left: blockLeft,
                             width: blockWidth,
                             top: blockTop,
                             height: blockHeight,
+                            overflow: "visible",
                           }}
                         >
+                          <div
+                            className="absolute left-3 right-3 z-[4] flex items-center gap-2 rounded-md border px-3 py-2 transition-all duration-150"
+                            style={{
+                              top: -14,
+                              opacity: isChromeVisible ? 1 : 0,
+                              transform: `translateY(${isChromeVisible ? 0 : -4}px)`,
+                              pointerEvents: isChromeVisible ? "auto" : "none",
+                              borderColor: isSelected ? accent : `${palette.border}D9`,
+                              background: "rgba(5, 10, 28, 0.92)",
+                              backdropFilter: "blur(6px)",
+                              boxShadow: "0 10px 24px rgba(0,0,0,0.28)",
+                            }}
+                          >
+                            <button
+                              onMouseDown={(event) => beginCanvasBlockMove(event, block.id)}
+                              className="cursor-grab active:cursor-grabbing"
+                              title="Move block"
+                            >
+                              <GripVertical size={13} style={{ color: palette.accent }} />
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: palette.accent, fontWeight: 700 }}>{block.type}</div>
+                              <div className="text-[11px] truncate" style={{ color: "#D3E1FF" }}>
+                                {block.title || block.subtitle || `Untitled ${block.type}`}
+                              </div>
+                            </div>
+                            {block.locked && <Lock size={12} style={{ color: "#FFAA4A" }} />}
+                            <button onClick={(event) => { event.stopPropagation(); duplicateBlock(block.id); }} className="hover:opacity-80" title="Duplicate">
+                              <Plus size={12} style={{ color: "#8AB4FF" }} />
+                            </button>
+                            <button onClick={(event) => { event.stopPropagation(); removeBlock(block.id); }} className="hover:opacity-80" title="Delete">
+                              <Trash2 size={12} style={{ color: "#FF8A8A" }} />
+                            </button>
+                          </div>
                           <Resizable
                             size={{ width: "100%", height: "100%" }}
-                            minWidth="100%"
+                            minWidth={Math.max((block.layout.minColSpan || 1) * ((blockCanvasRef.current?.getBoundingClientRect().width || canvasRenderWidth) / WIKI_BLOCK_COLUMNS), 120)}
                             minHeight={Math.max((block.layout.minRowSpan || 1) * canvasRowHeight, 48)}
-                            enable={block.locked ? { top: false, right: false, bottom: false, left: false, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false } : { right: true, bottom: true, bottomRight: true }}
+                            enable={block.locked ? { top: false, right: false, bottom: false, left: false, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false } : { right: true, bottom: true, bottomRight: true, bottomLeft: false, top: false, left: false, topLeft: false, topRight: false }}
                             handleStyles={{
-                              right: { width: 10, right: -4, cursor: "ew-resize" },
-                              bottom: { height: 10, bottom: -4, cursor: "ns-resize" },
-                              bottomRight: { width: 12, height: 12, right: -5, bottom: -5, cursor: "nwse-resize" },
+                              right: { width: 12, right: -5, cursor: "ew-resize" },
+                              bottom: { height: 12, bottom: -5, cursor: "ns-resize" },
+                              bottomRight: { width: 14, height: 14, right: -6, bottom: -6, cursor: "nwse-resize" },
                             }}
-                            onResizeStop={(_event, _direction, ref, delta) => {
+                            handleClasses={{
+                              right: "rounded-r-md bg-[#4A7BFF]/80",
+                              bottom: "rounded-b-md bg-[#4A7BFF]/80",
+                              bottomRight: "rounded-br-md bg-[#8AB4FF]",
+                            }}
+                            onResize={(_event, _direction, ref) => {
+                              const rect = blockCanvasRef.current?.getBoundingClientRect();
+                              if (!rect) return;
+                              const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+                              const nextColSpan = Math.max(block.layout.minColSpan || 1, Math.round(ref.offsetWidth / Math.max(colWidth, 1)));
+                              const nextRowSpan = Math.max(block.layout.minRowSpan || 1, Math.round(ref.offsetHeight / canvasRowHeight));
+                              setLiveBlockLayouts((prev) => ({
+                                ...prev,
+                                [block.id]: {
+                                  ...block.layout,
+                                  colSpan: nextColSpan,
+                                  rowSpan: nextRowSpan,
+                                },
+                              }));
+                            }}
+                            onResizeStop={(_event, _direction, ref) => {
                               const rect = blockCanvasRef.current?.getBoundingClientRect();
                               if (!rect) return;
                               const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
                               const nextColSpan = Math.max(block.layout.minColSpan || 1, Math.round(ref.offsetWidth / Math.max(colWidth, 1)));
                               const nextRowSpan = Math.max(block.layout.minRowSpan || 1, Math.round(ref.offsetHeight / canvasRowHeight));
                               updateBlocks(placeWikiBlock(pageBlocks, block.id, { colSpan: nextColSpan, rowSpan: nextRowSpan }));
+                              setLiveBlockLayouts((prev) => {
+                                const next = { ...prev };
+                                delete next[block.id];
+                                return next;
+                              });
                             }}
                             style={{
                               border: `1px solid ${isSelected ? accent : palette.border}`,
                               background: palette.background,
                               boxShadow: isSelected ? `0 0 0 1px ${accent}, 0 12px 24px rgba(0,0,0,0.28)` : "0 8px 18px rgba(0,0,0,0.24)",
                               overflow: "hidden",
+                              borderRadius: 14,
                             }}
                           >
                             <div className="h-full flex flex-col" onClick={() => setSelectedBlockId(block.id)}>
-                              <div className="flex items-center gap-2 px-3 py-2 border-b cursor-move" style={{ borderBottomColor: `${palette.border}88`, background: "rgba(0,0,0,0.18)" }}>
-                                <button
-                                  draggable
-                                  onDragStart={(event) => handleCanvasBlockDragStart(event, block.id)}
-                                  onDragEnd={clearCanvasDragState}
-                                  className="cursor-grab"
-                                  title="Drag block"
-                                >
-                                  <GripVertical size={13} style={{ color: palette.accent }} />
-                                </button>
-                                <span className="text-[9px] uppercase tracking-[0.18em]" style={{ color: "#8EA9D7", fontWeight: 700 }}>Drag</span>
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: palette.accent, fontWeight: 700 }}>{block.type}</div>
-                                  <div className="text-[11px] truncate" style={{ color: "#D3E1FF" }}>
-                                    {block.title || block.subtitle || `Untitled ${block.type}`}
-                                  </div>
-                                </div>
-                                {block.locked && <Lock size={12} style={{ color: "#FFAA4A" }} />}
-                                <button onClick={(event) => { event.stopPropagation(); duplicateBlock(block.id); }} className="hover:opacity-80" title="Duplicate">
-                                  <Plus size={12} style={{ color: "#8AB4FF" }} />
-                                </button>
-                                <button onClick={(event) => { event.stopPropagation(); removeBlock(block.id); }} className="hover:opacity-80" title="Delete">
-                                  <Trash2 size={12} style={{ color: "#FF8A8A" }} />
-                                </button>
-                              </div>
-                              <div className="min-h-0 flex-1 overflow-auto p-3">
+                              <div className="min-h-0 flex-1 overflow-auto p-3.5">
                                 {renderEditableWikiBlock(block)}
                               </div>
                             </div>
@@ -2427,11 +2708,11 @@ export function WikiEditor() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
-                    <span>Desktop canvas keeps your authored 12-column layout.</span>
+                    <span>Desktop canvas keeps a fixed article frame and a dense 48-column layout.</span>
                     <span>|</span>
-                    <span>Tablet and mobile automatically stack blocks by row and column order.</span>
+                    <span>Shift-click empty canvas space to place a new block exactly where you want it.</span>
                     <span>|</span>
-                    <span>Saving also refreshes legacy body/panel snapshots for compatibility.</span>
+                    <span>Saving still refreshes legacy body and panel snapshots for compatibility.</span>
                   </div>
                 </div>
               </div>
@@ -2816,6 +3097,77 @@ export function WikiEditor() {
 
               {inspectorTab === "article" && (
                 <div className="space-y-3">
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Canvas Frame</div>
+                      <div className="text-[10px] mt-1" style={{ color: "#8EA9D7" }}>
+                        The editor keeps a stable article frame and only switches into a minimized mode on smaller devices.
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Frame Preset</label>
+                      <select
+                        value={canvasSettings.preset}
+                        onChange={(event) => {
+                          const preset = event.target.value as keyof typeof WIKI_CANVAS_PRESETS;
+                          update("canvasSettings", { ...WIKI_CANVAS_PRESETS[preset] });
+                        }}
+                        className={`${inputClass} cursor-pointer`}
+                        style={inputStyle}
+                      >
+                        <option value="standard">Standard</option>
+                        <option value="large">Large</option>
+                        <option value="referenceWide">Reference Wide</option>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Frame Width</label>
+                        <input
+                          type="number"
+                          min={1100}
+                          max={1760}
+                          value={canvasSettings.frameWidth}
+                          onChange={(event) => update("canvasSettings", normalizeWikiCanvasSettings({
+                            ...canvasSettings,
+                            frameWidth: Number(event.target.value) || canvasSettings.frameWidth,
+                          }))}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Canvas Height</label>
+                        <input
+                          type="number"
+                          min={960}
+                          max={3600}
+                          value={canvasSettings.canvasHeight}
+                          onChange={(event) => update("canvasSettings", normalizeWikiCanvasSettings({
+                            ...canvasSettings,
+                            canvasHeight: Number(event.target.value) || canvasSettings.canvasHeight,
+                          }))}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Minimum Canvas Height</label>
+                      <input
+                        type="number"
+                        min={960}
+                        max={2800}
+                        value={canvasSettings.minCanvasHeight}
+                        onChange={(event) => update("canvasSettings", normalizeWikiCanvasSettings({
+                          ...canvasSettings,
+                          minCanvasHeight: Number(event.target.value) || canvasSettings.minCanvasHeight,
+                        }))}
+                        className={inputClass}
+                        style={inputStyle}
+                      />
+                    </div>
+                  </div>
                   <div>
                     <label style={labelStyle}>Article Quality</label>
                     <select value={page.articleQuality} onChange={(event) => update("articleQuality", event.target.value as SitePage["articleQuality"])} className={`${inputClass} cursor-pointer`} style={inputStyle}>
