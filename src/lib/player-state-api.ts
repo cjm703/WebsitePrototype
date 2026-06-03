@@ -1,4 +1,5 @@
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetJson } from "@/app/components/safe-storage";
+import { IMAGE_STORAGE_LOCAL_KEY } from "./image-storage";
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env";
 
 const API_BASE = supabaseFunctionBase;
@@ -6,12 +7,20 @@ const LOCAL_DM_LEVEL_CATEGORIES_KEY = "inet-dm-player-level-categories";
 const LEVEL_CATEGORIES_FALLBACK_STATE_KEY = "inet-dm-player-level-categories-fallback";
 const LOCAL_DM_MAGIC_LISTS_KEY = "inet-dm-player-magic-lists";
 const MAGIC_LISTS_FALLBACK_STATE_KEY = "inet-dm-player-magic-lists-fallback";
+const LOCAL_WIKI_BLOCK_PRESETS_KEY = "inet-wiki-block-presets";
+const IMAGE_STORAGE_FALLBACK_STATE_KEY = "inet-dm-image-storage-fallback";
+const WIKI_BLOCK_PRESETS_FALLBACK_STATE_KEY = "inet-wiki-block-presets-fallback";
 const LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 const LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 type LocalLevelCategoryMap = Record<string, Record<string, unknown>[]>;
 type LocalMagicListMap = Record<string, Record<string, unknown>[]>;
+type LocalCollectionFallbackState = {
+  mode: "local";
+  reason: "deployment" | "transient";
+  retryAfter: number;
+};
 export type GitHubBackupStatus = {
   configured: boolean;
   owner: string;
@@ -31,16 +40,14 @@ export type GitHubBackupStatus = {
     error?: string;
   } | null;
 };
-type LevelCategoriesFallbackState = {
-  mode: "local";
-  reason: "deployment" | "transient";
-  retryAfter: number;
-};
-
-let inMemoryLevelCategoriesFallbackState: LevelCategoriesFallbackState | null = null;
+let inMemoryLevelCategoriesFallbackState: LocalCollectionFallbackState | null = null;
 let hasLoggedLevelCategoriesFallback = false;
-let inMemoryMagicListsFallbackState: LevelCategoriesFallbackState | null = null;
+let inMemoryMagicListsFallbackState: LocalCollectionFallbackState | null = null;
 let hasLoggedMagicListsFallback = false;
+let inMemoryImageStorageFallbackState: LocalCollectionFallbackState | null = null;
+let hasLoggedImageStorageFallback = false;
+let inMemoryWikiBlockPresetsFallbackState: LocalCollectionFallbackState | null = null;
+let hasLoggedWikiBlockPresetsFallback = false;
 
 function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
@@ -165,10 +172,6 @@ export const loadDMCustomReactions = <T>() =>
   loadDMCollection<T>("/dm/custom-reactions", "reactions");
 export const saveDMCustomReactions = (reactions: Record<string, unknown>[]) =>
   saveDMCollection("/dm/custom-reactions/save", "reactions", reactions);
-export const loadDMImageStorage = <T>() =>
-  loadDMCollection<T>("/dm/image-storage", "images");
-export const saveDMImageStorage = (images: Record<string, unknown>[]) =>
-  saveDMCollection("/dm/image-storage/save", "images", images);
 
 export async function loadDMTags<T>(kind: DMTagKind) {
   const body = await apiFetch(`/dm/tags/${encodeURIComponent(kind)}`, {
@@ -214,6 +217,32 @@ function isDeploymentMagicListsFailure(err: unknown) {
   return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
 }
 
+function shouldFallbackImageStorage(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return (
+    isDeploymentImageStorageFailure(err) ||
+    /Failed to fetch|NetworkError|Load failed|timed out|timeout/i.test(message)
+  );
+}
+
+function isDeploymentImageStorageFailure(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /404|Unknown DM collection|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
+}
+
+function shouldFallbackWikiBlockPresets(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return (
+    isDeploymentWikiBlockPresetsFailure(err) ||
+    /Failed to fetch|NetworkError|Load failed|timed out|timeout/i.test(message)
+  );
+}
+
+function isDeploymentWikiBlockPresetsFailure(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return /404|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
+}
+
 function loadLocalDMPlayerLevelCategories(playerId: string) {
   const stored = safeGetJson<LocalLevelCategoryMap>(LOCAL_DM_LEVEL_CATEGORIES_KEY, {});
   return Array.isArray(stored[playerId]) ? stored[playerId] : [];
@@ -222,6 +251,14 @@ function loadLocalDMPlayerLevelCategories(playerId: string) {
 function loadLocalDMPlayerMagicLists(playerId: string) {
   const stored = safeGetJson<LocalMagicListMap>(LOCAL_DM_MAGIC_LISTS_KEY, {});
   return Array.isArray(stored[playerId]) ? stored[playerId] : [];
+}
+
+function loadLocalDMImageStorage() {
+  return safeGetJson<Record<string, unknown>[]>(IMAGE_STORAGE_LOCAL_KEY, []);
+}
+
+function loadLocalWikiBlockPresets() {
+  return safeGetJson<Record<string, unknown>[]>(LOCAL_WIKI_BLOCK_PRESETS_KEY, []);
 }
 
 function getActiveLevelCategoriesFallbackState() {
@@ -233,7 +270,7 @@ function getActiveLevelCategoriesFallbackState() {
     return inMemoryLevelCategoriesFallbackState;
   }
 
-  const persisted = safeGetJson<LevelCategoriesFallbackState | null>(
+  const persisted = safeGetJson<LocalCollectionFallbackState | null>(
     LEVEL_CATEGORIES_FALLBACK_STATE_KEY,
     null,
   );
@@ -260,7 +297,7 @@ function getActiveMagicListsFallbackState() {
     return inMemoryMagicListsFallbackState;
   }
 
-  const persisted = safeGetJson<LevelCategoriesFallbackState | null>(
+  const persisted = safeGetJson<LocalCollectionFallbackState | null>(
     MAGIC_LISTS_FALLBACK_STATE_KEY,
     null,
   );
@@ -275,6 +312,60 @@ function getActiveMagicListsFallbackState() {
   }
 
   inMemoryMagicListsFallbackState = null;
+  return null;
+}
+
+function getActiveImageStorageFallbackState() {
+  if (
+    inMemoryImageStorageFallbackState?.mode === "local" &&
+    typeof inMemoryImageStorageFallbackState.retryAfter === "number" &&
+    inMemoryImageStorageFallbackState.retryAfter > Date.now()
+  ) {
+    return inMemoryImageStorageFallbackState;
+  }
+
+  const persisted = safeGetJson<LocalCollectionFallbackState | null>(
+    IMAGE_STORAGE_FALLBACK_STATE_KEY,
+    null,
+  );
+
+  if (
+    persisted?.mode === "local" &&
+    typeof persisted.retryAfter === "number" &&
+    persisted.retryAfter > Date.now()
+  ) {
+    inMemoryImageStorageFallbackState = persisted;
+    return persisted;
+  }
+
+  inMemoryImageStorageFallbackState = null;
+  return null;
+}
+
+function getActiveWikiBlockPresetsFallbackState() {
+  if (
+    inMemoryWikiBlockPresetsFallbackState?.mode === "local" &&
+    typeof inMemoryWikiBlockPresetsFallbackState.retryAfter === "number" &&
+    inMemoryWikiBlockPresetsFallbackState.retryAfter > Date.now()
+  ) {
+    return inMemoryWikiBlockPresetsFallbackState;
+  }
+
+  const persisted = safeGetJson<LocalCollectionFallbackState | null>(
+    WIKI_BLOCK_PRESETS_FALLBACK_STATE_KEY,
+    null,
+  );
+
+  if (
+    persisted?.mode === "local" &&
+    typeof persisted.retryAfter === "number" &&
+    persisted.retryAfter > Date.now()
+  ) {
+    inMemoryWikiBlockPresetsFallbackState = persisted;
+    return persisted;
+  }
+
+  inMemoryWikiBlockPresetsFallbackState = null;
   return null;
 }
 
@@ -293,6 +384,24 @@ function logMagicListsFallback(action: "load" | "save", err: unknown) {
   const message = err instanceof Error ? err.message : String(err || "Unknown fallback reason");
   console.warn(
     `${action === "load" ? "Loading" : "Saving"} DM magic lists in local fallback mode (${message}).`,
+  );
+}
+
+function logImageStorageFallback(action: "load" | "save", err: unknown) {
+  if (hasLoggedImageStorageFallback) return;
+  hasLoggedImageStorageFallback = true;
+  const message = err instanceof Error ? err.message : String(err || "Unknown fallback reason");
+  console.warn(
+    `${action === "load" ? "Loading" : "Saving"} DM image storage in local fallback mode (${message}).`,
+  );
+}
+
+function logWikiBlockPresetsFallback(action: "load" | "save", err: unknown) {
+  if (hasLoggedWikiBlockPresetsFallback) return;
+  hasLoggedWikiBlockPresetsFallback = true;
+  const message = err instanceof Error ? err.message : String(err || "Unknown fallback reason");
+  console.warn(
+    `${action === "load" ? "Loading" : "Saving"} wiki block presets in local fallback mode (${message}).`,
   );
 }
 
@@ -318,12 +427,28 @@ function saveLocalDMPlayerMagicLists(
   });
 }
 
+function saveLocalDMImageStorage(images: Record<string, unknown>[]) {
+  safeSetJson(IMAGE_STORAGE_LOCAL_KEY, images);
+}
+
+function saveLocalWikiBlockPresets(presets: Record<string, unknown>[]) {
+  safeSetJson(LOCAL_WIKI_BLOCK_PRESETS_KEY, presets);
+}
+
 function shouldUseLocalLevelCategoriesFallback() {
   return getActiveLevelCategoriesFallbackState() !== null;
 }
 
 function shouldUseLocalMagicListsFallback() {
   return getActiveMagicListsFallbackState() !== null;
+}
+
+function shouldUseLocalImageStorageFallback() {
+  return getActiveImageStorageFallbackState() !== null;
+}
+
+function shouldUseLocalWikiBlockPresetsFallback() {
+  return getActiveWikiBlockPresetsFallbackState() !== null;
 }
 
 function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient") {
@@ -335,7 +460,7 @@ function activateLocalLevelCategoriesFallback(reason: "deployment" | "transient"
       (reason === "deployment"
         ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
         : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
-  } satisfies LevelCategoriesFallbackState;
+  } satisfies LocalCollectionFallbackState;
   inMemoryLevelCategoriesFallbackState = fallbackState;
   safeSetJson(LEVEL_CATEGORIES_FALLBACK_STATE_KEY, fallbackState);
 }
@@ -349,9 +474,37 @@ function activateLocalMagicListsFallback(reason: "deployment" | "transient") {
       (reason === "deployment"
         ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
         : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
-  } satisfies LevelCategoriesFallbackState;
+  } satisfies LocalCollectionFallbackState;
   inMemoryMagicListsFallbackState = fallbackState;
   safeSetJson(MAGIC_LISTS_FALLBACK_STATE_KEY, fallbackState);
+}
+
+function activateLocalImageStorageFallback(reason: "deployment" | "transient") {
+  const fallbackState = {
+    mode: "local",
+    reason,
+    retryAfter:
+      Date.now() +
+      (reason === "deployment"
+        ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
+        : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
+  } satisfies LocalCollectionFallbackState;
+  inMemoryImageStorageFallbackState = fallbackState;
+  safeSetJson(IMAGE_STORAGE_FALLBACK_STATE_KEY, fallbackState);
+}
+
+function activateLocalWikiBlockPresetsFallback(reason: "deployment" | "transient") {
+  const fallbackState = {
+    mode: "local",
+    reason,
+    retryAfter:
+      Date.now() +
+      (reason === "deployment"
+        ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
+        : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
+  } satisfies LocalCollectionFallbackState;
+  inMemoryWikiBlockPresetsFallbackState = fallbackState;
+  safeSetJson(WIKI_BLOCK_PRESETS_FALLBACK_STATE_KEY, fallbackState);
 }
 
 function clearLocalLevelCategoriesFallback() {
@@ -364,6 +517,26 @@ function clearLocalMagicListsFallback() {
   inMemoryMagicListsFallbackState = null;
   hasLoggedMagicListsFallback = false;
   safeRemoveItem(MAGIC_LISTS_FALLBACK_STATE_KEY);
+}
+
+function clearLocalImageStorageFallback() {
+  inMemoryImageStorageFallbackState = null;
+  hasLoggedImageStorageFallback = false;
+  safeRemoveItem(IMAGE_STORAGE_FALLBACK_STATE_KEY);
+}
+
+function clearLocalWikiBlockPresetsFallback() {
+  inMemoryWikiBlockPresetsFallbackState = null;
+  hasLoggedWikiBlockPresetsFallback = false;
+  safeRemoveItem(WIKI_BLOCK_PRESETS_FALLBACK_STATE_KEY);
+}
+
+export function getDMImageStorageFallbackState() {
+  return getActiveImageStorageFallbackState();
+}
+
+export function getWikiBlockPresetsFallbackState() {
+  return getActiveWikiBlockPresetsFallbackState();
 }
 
 export async function loadDMPlayerLevelCategories(playerId: string) {
@@ -457,6 +630,94 @@ export async function saveDMPlayerMagicLists(
     );
     logMagicListsFallback("save", err);
     saveLocalDMPlayerMagicLists(playerId, magicLists);
+  }
+}
+
+export async function loadDMImageStorage<T>() {
+  if (shouldUseLocalImageStorageFallback()) {
+    return loadLocalDMImageStorage() as T[];
+  }
+
+  try {
+    const body = await apiFetch("/dm/image-storage", { method: "GET" });
+    clearLocalImageStorageFallback();
+    const images = (body?.images ?? []) as T[];
+    saveLocalDMImageStorage(images as unknown as Record<string, unknown>[]);
+    return images;
+  } catch (err) {
+    if (!shouldFallbackImageStorage(err)) throw err;
+    activateLocalImageStorageFallback(
+      isDeploymentImageStorageFailure(err) ? "deployment" : "transient",
+    );
+    logImageStorageFallback("load", err);
+    return loadLocalDMImageStorage() as T[];
+  }
+}
+
+export async function saveDMImageStorage(images: Record<string, unknown>[]) {
+  if (shouldUseLocalImageStorageFallback()) {
+    saveLocalDMImageStorage(images);
+    return;
+  }
+
+  try {
+    await apiFetch("/dm/image-storage/save", {
+      method: "POST",
+      body: JSON.stringify({ images }),
+    });
+    clearLocalImageStorageFallback();
+    saveLocalDMImageStorage(images);
+  } catch (err) {
+    if (!shouldFallbackImageStorage(err)) throw err;
+    activateLocalImageStorageFallback(
+      isDeploymentImageStorageFailure(err) ? "deployment" : "transient",
+    );
+    logImageStorageFallback("save", err);
+    saveLocalDMImageStorage(images);
+  }
+}
+
+export async function loadWikiBlockPresets<T>() {
+  if (shouldUseLocalWikiBlockPresetsFallback()) {
+    return loadLocalWikiBlockPresets() as T[];
+  }
+
+  try {
+    const body = await apiFetch("/wiki/block-presets", { method: "GET" });
+    clearLocalWikiBlockPresetsFallback();
+    const presets = (body?.wikiBlockPresets ?? []) as T[];
+    saveLocalWikiBlockPresets(presets as unknown as Record<string, unknown>[]);
+    return presets;
+  } catch (err) {
+    if (!shouldFallbackWikiBlockPresets(err)) throw err;
+    activateLocalWikiBlockPresetsFallback(
+      isDeploymentWikiBlockPresetsFailure(err) ? "deployment" : "transient",
+    );
+    logWikiBlockPresetsFallback("load", err);
+    return loadLocalWikiBlockPresets() as T[];
+  }
+}
+
+export async function saveWikiBlockPresets(presets: Record<string, unknown>[]) {
+  if (shouldUseLocalWikiBlockPresetsFallback()) {
+    saveLocalWikiBlockPresets(presets);
+    return;
+  }
+
+  try {
+    await apiFetch("/wiki/block-presets/save", {
+      method: "POST",
+      body: JSON.stringify({ wikiBlockPresets: presets }),
+    });
+    clearLocalWikiBlockPresetsFallback();
+    saveLocalWikiBlockPresets(presets);
+  } catch (err) {
+    if (!shouldFallbackWikiBlockPresets(err)) throw err;
+    activateLocalWikiBlockPresetsFallback(
+      isDeploymentWikiBlockPresetsFailure(err) ? "deployment" : "transient",
+    );
+    logWikiBlockPresetsFallback("save", err);
+    saveLocalWikiBlockPresets(presets);
   }
 }
 

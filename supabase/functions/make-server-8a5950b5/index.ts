@@ -167,6 +167,7 @@ const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${playerId}`;
 const imageStorageKey = "inet-image-storage";
+const wikiBlockPresetsKey = "inet-wiki-block-presets";
 const githubBackupStatusKey = "inet-github-backup-status";
 const GITHUB_API_BASE = "https://api.github.com";
 
@@ -520,6 +521,7 @@ async function buildGitHubBackupPayload() {
     arcadeLeaderboardState,
     playerArcadeProfiles,
     imageStorage,
+    wikiBlockPresets,
   ] = await Promise.all([
     listPlayerScopedRows("player_quick_items"),
     listPlayerScopedRows("player_source_usage_log"),
@@ -571,6 +573,7 @@ async function buildGitHubBackupPayload() {
     loadSingletonCollectionRow("app_arcade_leaderboard_state"),
     listPlayerScopedRows("player_arcade_profiles"),
     kv.get(imageStorageKey),
+    kv.get(wikiBlockPresetsKey),
   ]);
 
   const magicLists = await Promise.all(
@@ -584,7 +587,7 @@ async function buildGitHubBackupPayload() {
   );
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     source: "inet-dm-backup",
     includes: [
@@ -636,6 +639,7 @@ async function buildGitHubBackupPayload() {
       sites,
       customPanelStyles,
       wikiTags,
+      wikiBlockPresets: Array.isArray(wikiBlockPresets) ? wikiBlockPresets : [],
     },
     community: {
       messages: communityMessages,
@@ -1597,15 +1601,38 @@ function registerRoutes(prefix: string) {
       const requesterId = await resolveSessionPlayerId(c);
       requireDM(requesterId);
 
-      const [sites, players, wikiTags, customPanelStyles, imageStorage] = await Promise.all([
+      const [sites, players, wikiTags, customPanelStyles, imageStorage, wikiBlockPresets] = await Promise.all([
         listCollectionRows("app_sites"),
         listEntityRows("app_players"),
         listTagRows("wiki"),
         listCollectionRows("app_custom_panel_styles"),
         kv.get(imageStorageKey),
+        kv.get(wikiBlockPresetsKey),
       ]);
 
-      return c.json({ sites, players, wikiTags, customPanelStyles, imageStorage: Array.isArray(imageStorage) ? imageStorage : [] });
+      return c.json({
+        sites,
+        players,
+        wikiTags,
+        customPanelStyles,
+        imageStorage: Array.isArray(imageStorage) ? imageStorage : [],
+        wikiBlockPresets: Array.isArray(wikiBlockPresets) ? wikiBlockPresets : [],
+      });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/wiki/block-presets`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const wikiBlockPresets = await kv.get(wikiBlockPresetsKey);
+      return c.json({ wikiBlockPresets: Array.isArray(wikiBlockPresets) ? wikiBlockPresets : [] });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
     }
@@ -1647,6 +1674,29 @@ function registerRoutes(prefix: string) {
       }
 
       await replaceCollectionRows("app_custom_panel_styles", customPanelStyles);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/block-presets/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      const wikiBlockPresets = Array.isArray(body?.wikiBlockPresets)
+        ? body.wikiBlockPresets
+        : null;
+      if (!wikiBlockPresets) {
+        return c.json({ error: "wikiBlockPresets must be an array" }, 400);
+      }
+
+      await kv.set(wikiBlockPresetsKey, wikiBlockPresets);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

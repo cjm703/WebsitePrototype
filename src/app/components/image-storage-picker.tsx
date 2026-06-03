@@ -8,6 +8,7 @@ interface ImageStoragePickerModalProps {
   open: boolean;
   images: StoredImageAsset[];
   title?: string;
+  fallbackMode?: boolean;
   onClose: () => void;
   onSelect: (image: StoredImageAsset) => void;
   onUploadFiles?: (files: File[]) => Promise<void> | void;
@@ -17,6 +18,7 @@ export function ImageStoragePickerModal({
   open,
   images,
   title = "Image Storage",
+  fallbackMode = false,
   onClose,
   onSelect,
   onUploadFiles,
@@ -106,6 +108,18 @@ export function ImageStoragePickerModal({
               {visibleImages.length} shown / {images.length} stored
             </div>
           </div>
+          {fallbackMode && (
+            <div
+              className="mt-3 rounded-[6px] border px-3 py-2 text-[10px]"
+              style={{
+                borderColor: "#6A5520",
+                background: "rgba(82, 52, 8, 0.28)",
+                color: "#FFD37A",
+              }}
+            >
+              Shared image storage is currently using local fallback mode until the frontend and edge function are redeployed together.
+            </div>
+          )}
         </div>
 
         <div className="max-h-[calc(88vh-150px)] overflow-y-auto px-5 py-4">

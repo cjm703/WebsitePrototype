@@ -3,7 +3,11 @@ import { Copy, ImageIcon, Search, Trash2, Upload } from "lucide-react";
 import { retro } from "./retro-styles";
 import type { StoredImageAsset } from "./types";
 import { safeGetJson, safeSetJson } from "./safe-storage";
-import { loadDMImageStorage, saveDMImageStorage } from "@/lib/player-state-api";
+import {
+  getDMImageStorageFallbackState,
+  loadDMImageStorage,
+  saveDMImageStorage,
+} from "@/lib/player-state-api";
 import {
   IMAGE_STORAGE_LOCAL_KEY,
   IMAGE_STORAGE_UPDATED_EVENT,
@@ -27,6 +31,7 @@ export function DMImageStorageSection() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [usingLocalFallback, setUsingLocalFallback] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [altDraft, setAltDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -41,10 +46,12 @@ export function DMImageStorageSection() {
         const next = sortStoredImages(remote);
         setImages(next);
         safeSetJson(IMAGE_STORAGE_LOCAL_KEY, next);
+        setUsingLocalFallback(!!getDMImageStorageFallbackState());
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load stored images");
         setImages(sortStoredImages(safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, [])));
+        setUsingLocalFallback(!!getDMImageStorageFallbackState());
       }
     }
 
@@ -54,6 +61,7 @@ export function DMImageStorageSection() {
       const detail = (event as CustomEvent<{ images?: StoredImageAsset[] }>).detail;
       if (!detail?.images) return;
       setImages(sortStoredImages(detail.images));
+      setUsingLocalFallback(!!getDMImageStorageFallbackState());
     };
     window.addEventListener(IMAGE_STORAGE_UPDATED_EVENT, handleUpdate as EventListener);
 
@@ -99,8 +107,10 @@ export function DMImageStorageSection() {
       safeSetJson(IMAGE_STORAGE_LOCAL_KEY, sorted);
       window.dispatchEvent(new CustomEvent(IMAGE_STORAGE_UPDATED_EVENT, { detail: { images: sorted } }));
       setStatus(successMessage);
+      setUsingLocalFallback(!!getDMImageStorageFallbackState());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save image storage");
+      setUsingLocalFallback(!!getDMImageStorageFallbackState());
     } finally {
       setIsSaving(false);
     }
@@ -205,6 +215,19 @@ export function DMImageStorageSection() {
           }}
         >
           {error || status}
+        </div>
+      )}
+
+      {usingLocalFallback && (
+        <div
+          className="rounded-[6px] border px-3 py-2 text-[11px]"
+          style={{
+            borderColor: "#6A5520",
+            background: "rgba(82, 52, 8, 0.28)",
+            color: "#FFD37A",
+          }}
+        >
+          Shared image storage is currently running in local fallback mode. Uploads and edits still save locally until the frontend and edge function are redeployed together.
         </div>
       )}
 

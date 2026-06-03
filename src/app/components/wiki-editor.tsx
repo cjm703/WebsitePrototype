@@ -23,8 +23,11 @@ import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
 import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
+  getDMImageStorageFallbackState,
+  getWikiBlockPresetsFallbackState,
   loadWikiBootstrap,
   saveDMImageStorage,
+  saveWikiBlockPresets,
   saveWikiCustomPanelStyles,
   saveWikiSites,
 } from "@/lib/player-state-api";
@@ -40,6 +43,7 @@ import {
   type WikiPanelWidth,
 } from "@/lib/wiki-panel-layout";
 import {
+  BUILTIN_WIKI_BLOCK_PRESETS,
   WIKI_BLOCK_COLUMNS,
   WIKI_BLOCK_LAYOUT_VERSION,
   WIKI_CANVAS_PRESETS,
@@ -49,15 +53,20 @@ import {
   compareWikiBlocksForLayout,
   createDefaultBlock,
   getNextWikiBlockRow,
+  getWikiBlockLayoutBounds,
   getWikiBlockHtml,
+  instantiateWikiBlockPreset,
   migrateLegacyArticleToBlocks,
   normalizeWikiArticleBlock,
   normalizeWikiArticleBlocks,
+  normalizeWikiBlockPreset,
+  normalizeWikiBlockPresets,
   normalizeWikiCanvasSettings,
   placeWikiBlock,
   resolveWikiBlockCollisions,
   serializeWikiBlocksToLegacyContent,
   type WikiArticleBlock,
+  type WikiBlockPreset,
   type WikiBlockType,
   type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
@@ -78,6 +87,13 @@ interface PageSection {
   id: string;
   heading: string;
   body: string;
+}
+
+interface MarqueeSelectionState {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
 }
 
 interface SubCategory {
@@ -241,6 +257,8 @@ const DEFAULT_STYLE = {
   fontFamily: "'Tahoma', 'Verdana', sans-serif",
 };
 
+const WIKI_BLOCK_PRESETS_LOCAL_KEY = "inet-wiki-block-presets";
+
 function createBlankSitePage(): SitePage {
   return {
     id: `site-${uid()}` ,
@@ -355,11 +373,11 @@ export function WikiEditor() {
 
   // ─── UI State ───
   const [activePanel, setActivePanel] = useState<"preview" | "settings" | "content" | "metadata" | "appearance">("preview");
-  const [workspaceRailTab, setWorkspaceRailTab] = useState<"outline" | "library" | "article">("outline");
+  const [workspaceRailTab, setWorkspaceRailTab] = useState<"outline" | "library" | "presets" | "article">("outline");
   const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "article">("content");
   const [editingPanelId, setEditingPanelId] = useState<string | null>(null);
   const [selectedPreviewPanelId, setSelectedPreviewPanelId] = useState<string | null>(null);
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
   const [inlinePreviewEditorTarget, setInlinePreviewEditorTarget] = useState<"body" | string | null>(null);
   const [editSummary, setEditSummary] = useState("");
   const [saveFlash, setSaveFlash] = useState(false);
@@ -372,6 +390,10 @@ export function WikiEditor() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [dragType, setDragType] = useState<"panel" | null>(null);
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
+  const [wikiBlockPresets, setWikiBlockPresets] = useState<WikiBlockPreset[]>([]);
+  const [sharedImageStorageFallback, setSharedImageStorageFallback] = useState(false);
+  const [sharedPresetFallback, setSharedPresetFallback] = useState(false);
+  const [presetStatus, setPresetStatus] = useState("");
   const urlManuallyEdited = useRef(false);
   const hydratedPageRef = useRef<string | null>(null);
 
@@ -379,13 +401,17 @@ export function WikiEditor() {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const canvasFrameRef = useRef<HTMLDivElement>(null);
   const blockCanvasRef = useRef<HTMLDivElement>(null);
+  const minimapButtonRef = useRef<HTMLButtonElement>(null);
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [draggedBlockType, setDraggedBlockType] = useState<WikiBlockType | null>(null);
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [movingBlockId, setMovingBlockId] = useState<string | null>(null);
   const [liveBlockLayouts, setLiveBlockLayouts] = useState<Record<string, Partial<WikiArticleBlock["layout"]>>>({});
   const [canvasViewportWidth, setCanvasViewportWidth] = useState(0);
+  const [canvasZoom, setCanvasZoom] = useState(1);
+  const [minimapViewport, setMinimapViewport] = useState({ left: 0, top: 0, width: 1, height: 1 });
   const [canvasInsertPicker, setCanvasInsertPicker] = useState<{
     colStart: number;
     rowStart: number;
@@ -398,6 +424,7 @@ export function WikiEditor() {
     colSpan: number;
     rowSpan: number;
   } | null>(null);
+  const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const movingBlockRef = useRef<{
     blockId: string;
     originColStart: number;
@@ -408,6 +435,8 @@ export function WikiEditor() {
     startClientY: number;
     colSpan: number;
   } | null>(null);
+  const marqueeSelectionRef = useRef<MarqueeSelectionState | null>(null);
+  const minimapDragActiveRef = useRef(false);
 
   // ─── Auto-save Draft State ───
   const [showDraftRestore, setShowDraftRestore] = useState(false);
@@ -445,6 +474,22 @@ export function WikiEditor() {
   const [newStyleBg, setNewStyleBg] = useState("#0A1A2A");
   const [newStyleBorder, setNewStyleBorder] = useState("#1A3A5B");
 
+  const refreshSharedAssetFallbackState = useCallback((overrides?: {
+    imageStorage?: boolean;
+    presets?: boolean;
+  }) => {
+    setSharedImageStorageFallback(
+      typeof overrides?.imageStorage === "boolean"
+        ? overrides.imageStorage
+        : !!getDMImageStorageFallbackState(),
+    );
+    setSharedPresetFallback(
+      typeof overrides?.presets === "boolean"
+        ? overrides.presets
+        : !!getWikiBlockPresetsFallbackState(),
+    );
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -452,13 +497,18 @@ export function WikiEditor() {
       try {
         setWikiLoading(true);
         setWikiLoadError("");
-        const bootstrap = await loadWikiBootstrap().catch(() => ({
-          sites: safeGetJson<SitePage[]>("inet-dm-sites", []),
-          players: safeGetJson<PlayerData[]>("inet-dm-players", []),
-          wikiTags: safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []),
-          customPanelStyles: safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []),
-          imageStorage: safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []),
-        }));
+        let bootstrapFallback = false;
+        const bootstrap = await loadWikiBootstrap().catch(() => {
+          bootstrapFallback = true;
+          return {
+            sites: safeGetJson<SitePage[]>("inet-dm-sites", []),
+            players: safeGetJson<PlayerData[]>("inet-dm-players", []),
+            wikiTags: safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []),
+            customPanelStyles: safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []),
+            imageStorage: safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []),
+            wikiBlockPresets: safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []),
+          };
+        });
 
         if (cancelled) return;
 
@@ -467,8 +517,18 @@ export function WikiEditor() {
         setWikiTagDefs(Array.isArray(bootstrap?.wikiTags) ? bootstrap.wikiTags : []);
         setCustomPanelStyles(Array.isArray(bootstrap?.customPanelStyles) ? bootstrap.customPanelStyles : []);
         const nextImages = Array.isArray(bootstrap?.imageStorage) ? bootstrap.imageStorage : [];
+        const nextPresets = normalizeWikiBlockPresets(
+          Array.isArray(bootstrap?.wikiBlockPresets) ? bootstrap.wikiBlockPresets : safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []),
+        );
         setStoredImages(nextImages);
+        setWikiBlockPresets(nextPresets.filter((preset) => !preset.builtIn));
         safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
+        safeSetJson(WIKI_BLOCK_PRESETS_LOCAL_KEY, nextPresets.filter((preset) => !preset.builtIn));
+        refreshSharedAssetFallbackState(
+          bootstrapFallback
+            ? { imageStorage: true, presets: true }
+            : undefined,
+        );
       } catch (err) {
         if (cancelled) return;
         setWikiLoadError(err instanceof Error ? err.message : "Failed to load wiki editor data");
@@ -477,6 +537,11 @@ export function WikiEditor() {
         setWikiTagDefs(safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []));
         setCustomPanelStyles(safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []));
         setStoredImages(safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []));
+        setWikiBlockPresets(
+          normalizeWikiBlockPresets(safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []))
+            .filter((preset) => !preset.builtIn),
+        );
+        refreshSharedAssetFallbackState({ imageStorage: true, presets: true });
       } finally {
         if (!cancelled) setWikiLoading(false);
       }
@@ -486,7 +551,7 @@ export function WikiEditor() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshSharedAssetFallbackState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -522,7 +587,7 @@ export function WikiEditor() {
       setHasUnsaved(true);
       setShowTemplatePicker(true);
       setSelectedPreviewPanelId(null);
-      setSelectedBlockId(blank.blocks[0]?.id || null);
+      setSelectedBlockIds(blank.blocks[0]?.id ? [blank.blocks[0].id] : []);
       setInlinePreviewEditorTarget(null);
       urlManuallyEdited.current = false;
       hydratedPageRef.current = "new";
@@ -546,7 +611,7 @@ export function WikiEditor() {
     setHasUnsaved(false);
     setShowTemplatePicker(false);
     setSelectedPreviewPanelId(null);
-    setSelectedBlockId(migratedBlocks[0]?.id || null);
+    setSelectedBlockIds(migratedBlocks[0]?.id ? [migratedBlocks[0].id] : []);
     setInlinePreviewEditorTarget(null);
     urlManuallyEdited.current = !!existingPage.url;
     hydratedPageRef.current = existingPage.id;
@@ -591,54 +656,20 @@ export function WikiEditor() {
       const nextImages = Array.isArray(detail.images) ? detail.images : [];
       setStoredImages(nextImages);
       safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
+      refreshSharedAssetFallbackState();
     };
     window.addEventListener(IMAGE_STORAGE_UPDATED_EVENT, handleImageStorageUpdate as EventListener);
     return () => {
       window.removeEventListener(IMAGE_STORAGE_UPDATED_EVENT, handleImageStorageUpdate as EventListener);
     };
-  }, []);
+  }, [refreshSharedAssetFallbackState]);
 
-  const persistStoredImages = useCallback(async (nextImages: StoredImageAsset[]) => {
-    try {
-      await saveDMImageStorage(nextImages as unknown as Record<string, unknown>[]);
-      setStoredImages(nextImages);
-      safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
-      window.dispatchEvent(new CustomEvent(IMAGE_STORAGE_UPDATED_EVENT, { detail: { images: nextImages } }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save image storage");
-      throw err;
-    }
-  }, []);
+  useEffect(() => {
+    if (!presetStatus) return;
+    const timer = window.setTimeout(() => setPresetStatus(""), 2400);
+    return () => window.clearTimeout(timer);
+  }, [presetStatus]);
 
-  const openImageStoragePicker = useCallback((target: { mode: "embed" | "block"; blockId?: string }) => {
-    setImagePickerTarget(target);
-  }, []);
-
-  const handleStoredImageSelect = useCallback((image: StoredImageAsset) => {
-    if (imagePickerTarget?.mode === "block" && imagePickerTarget.blockId) {
-      updateSingleBlock(imagePickerTarget.blockId, (block) => ({
-        ...block,
-        imageUrl: image.src,
-        imageAlt: block.imageAlt || image.alt || image.name,
-      }));
-    } else {
-      setImageUrl(image.src);
-      if (!imageCaption.trim() && image.name) setImageCaption(image.name);
-    }
-    setImagePickerTarget(null);
-  }, [imageCaption, imagePickerTarget, updateSingleBlock]);
-
-  const handleStoredImageUpload = useCallback(async (files: File[]) => {
-    try {
-      const created = await createStoredImageAssetsFromFiles(files, "wiki-editor");
-      if (!created.length) return;
-      const nextImages = mergeStoredImageAssets(storedImages, created);
-      await persistStoredImages(nextImages);
-      handleStoredImageSelect(created[0]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload images into storage");
-    }
-  }, [handleStoredImageSelect, persistStoredImages, storedImages]);
 
   // ─── Category/Tag Helpers ───
   const allCategories = useMemo(() => Array.from(new Set(allPages.map((p) => p.category).filter(Boolean))), [allPages]);
@@ -690,7 +721,7 @@ export function WikiEditor() {
         blocks: migratedBlocks,
         canvasSettings: normalizeWikiCanvasSettings(remoteDraft.canvasSettings),
       });
-      setSelectedBlockId(migratedBlocks[0]?.id || null);
+      setSelectedBlockIds(migratedBlocks[0]?.id ? [migratedBlocks[0].id] : []);
       setHasUnsaved(true);
       setShowDraftRestore(false);
       return;
@@ -709,7 +740,7 @@ export function WikiEditor() {
           blocks: migratedBlocks,
           canvasSettings: normalizeWikiCanvasSettings(draft.canvasSettings),
         });
-        setSelectedBlockId(migratedBlocks[0]?.id || null);
+        setSelectedBlockIds(migratedBlocks[0]?.id ? [migratedBlocks[0].id] : []);
         setHasUnsaved(true);
       }
     } catch {}
@@ -1003,7 +1034,7 @@ export function WikiEditor() {
     setShowTemplatePicker(false);
     setSelectedPreviewPanelId(null);
     setInlinePreviewEditorTarget(null);
-    setSelectedBlockId(null);
+    setSelectedBlockIds([]);
   }, []);
 
   // ─── Wiki Link Insertion ───
@@ -1143,7 +1174,23 @@ export function WikiEditor() {
     [liveBlockLayouts, pageBlocks],
   );
   const blockIdToPage = useMemo(() => new Map(allPages.map((article) => [article.id, article])), [allPages]);
+  const selectedBlockId = selectedBlockIds[0] || null;
+  const selectedBlocks = useMemo(
+    () => pageBlocks.filter((block) => selectedBlockIds.includes(block.id)).sort(compareWikiBlocksForLayout),
+    [pageBlocks, selectedBlockIds],
+  );
   const selectedBlock = selectedBlockId ? pageBlocks.find((block) => block.id === selectedBlockId) || null : null;
+  const selectedBlockBounds = useMemo(
+    () => getWikiBlockLayoutBounds(selectedBlocks),
+    [selectedBlocks],
+  );
+  const presetLibrary = useMemo(
+    () => [
+      ...BUILTIN_WIKI_BLOCK_PRESETS,
+      ...normalizeWikiBlockPresets(wikiBlockPresets).filter((preset) => !preset.builtIn),
+    ],
+    [wikiBlockPresets],
+  );
   const articleLinkChoices = useMemo(
     () => allPages.filter((article) => article.id !== page.id).sort((a, b) => a.title.localeCompare(b.title)),
     [allPages, page.id],
@@ -1157,20 +1204,37 @@ export function WikiEditor() {
   const blockCountLabel = `${pageBlocks.length} block${pageBlocks.length === 1 ? "" : "s"}`;
   const canvasContentHeight = canvasBottomRow * canvasRowHeight;
   const canvasHeight = Math.max(canvasSettings.minCanvasHeight, canvasSettings.canvasHeight, canvasContentHeight + 60);
-  const canvasRenderWidth = canvasViewportWidth > 0 && canvasViewportWidth < canvasFrameWidth + 56
-    ? Math.max(920, canvasViewportWidth - 16)
-    : canvasFrameWidth;
-  const isMinimizedCanvasMode = canvasRenderWidth < canvasFrameWidth;
+  const canvasBaseScale = canvasViewportWidth > 0 && canvasViewportWidth < canvasFrameWidth + 64
+    ? Math.max(0.58, (canvasViewportWidth - 28) / canvasFrameWidth)
+    : 1;
+  const isMinimizedCanvasMode = canvasBaseScale < 1;
+  const effectiveCanvasScale = Math.max(0.45, Math.min(1.45, canvasZoom * canvasBaseScale));
+  const canvasRenderWidth = canvasFrameWidth;
+  const canvasScaledWidth = canvasRenderWidth * effectiveCanvasScale;
 
-  useEffect(() => {
-    if (!selectedBlockId && pageBlocks.length > 0) {
-      setSelectedBlockId(pageBlocks[0].id);
+  const selectExclusiveBlock = useCallback((blockId: string | null) => {
+    setSelectedBlockIds(blockId ? [blockId] : []);
+  }, []);
+
+  const toggleBlockSelection = useCallback((blockId: string) => {
+    setSelectedBlockIds((prev) => (
+      prev.includes(blockId)
+        ? prev.filter((entry) => entry !== blockId)
+        : [blockId, ...prev.filter((entry) => entry !== blockId)]
+    ));
+  }, []);
+
+  const handleBlockSelection = useCallback((blockId: string, additive = false) => {
+    if (additive) {
+      toggleBlockSelection(blockId);
       return;
     }
-    if (selectedBlockId && !pageBlocks.some((block) => block.id === selectedBlockId)) {
-      setSelectedBlockId(pageBlocks[0]?.id || null);
-    }
-  }, [pageBlocks, selectedBlockId]);
+    selectExclusiveBlock(blockId);
+  }, [selectExclusiveBlock, toggleBlockSelection]);
+
+  useEffect(() => {
+    setSelectedBlockIds((prev) => prev.filter((blockId) => pageBlocks.some((block) => block.id === blockId)));
+  }, [pageBlocks]);
 
   useEffect(() => {
     setRevealedPanels(new Set());
@@ -1187,6 +1251,117 @@ export function WikiEditor() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const viewport = canvasViewportRef.current;
+    const canvas = blockCanvasRef.current;
+    if (!viewport || !canvas) return;
+
+    const syncViewport = () => {
+      const viewportRect = viewport.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const left = Math.max(0, Math.min(canvasRect.width, viewportRect.left - canvasRect.left));
+      const top = Math.max(0, Math.min(canvasRect.height, viewportRect.top - canvasRect.top));
+      const right = Math.max(0, Math.min(canvasRect.width, viewportRect.right - canvasRect.left));
+      const bottom = Math.max(0, Math.min(canvasRect.height, viewportRect.bottom - canvasRect.top));
+      setMinimapViewport({
+        left: canvasRect.width > 0 ? left / canvasRect.width : 0,
+        top: canvasRect.height > 0 ? top / canvasRect.height : 0,
+        width: canvasRect.width > 0 ? Math.max(0.06, (right - left) / canvasRect.width) : 1,
+        height: canvasRect.height > 0 ? Math.max(0.06, (bottom - top) / canvasRect.height) : 1,
+      });
+    };
+
+    syncViewport();
+    viewport.addEventListener("scroll", syncViewport, { passive: true });
+    window.addEventListener("resize", syncViewport);
+    return () => {
+      viewport.removeEventListener("scroll", syncViewport);
+      window.removeEventListener("resize", syncViewport);
+    };
+  }, [canvasHeight, effectiveCanvasScale, renderedPageBlocks]);
+
+  const jumpCanvasViewportFromMinimap = useCallback((clientX: number, clientY: number, behavior: ScrollBehavior = "auto") => {
+    const frame = canvasFrameRef.current;
+    const viewport = canvasViewportRef.current;
+    const minimap = minimapButtonRef.current;
+    if (!frame || !viewport || !minimap) return;
+    const rect = minimap.getBoundingClientRect();
+    const xRatio = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(rect.width, 1)));
+    const yRatio = Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(rect.height, 1)));
+    const targetLeft = frame.offsetLeft + (frame.clientWidth * xRatio) - (viewport.clientWidth / 2);
+    const targetTop = frame.offsetTop + (frame.clientHeight * yRatio) - (viewport.clientHeight / 2);
+    viewport.scrollTo({
+      left: Math.max(0, targetLeft),
+      top: Math.max(0, targetTop),
+      behavior,
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!minimapDragActiveRef.current) return;
+      jumpCanvasViewportFromMinimap(event.clientX, event.clientY, "auto");
+    };
+
+    const handleMouseUp = () => {
+      minimapDragActiveRef.current = false;
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [jumpCanvasViewportFromMinimap]);
+
+  useEffect(() => {
+    if (!marqueeSelection) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const rect = blockCanvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const next = {
+        ...marqueeSelectionRef.current!,
+        currentX: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+        currentY: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      };
+      marqueeSelectionRef.current = next;
+      setMarqueeSelection(next);
+    };
+
+    const handleMouseUp = () => {
+      const state = marqueeSelectionRef.current;
+      const rect = blockCanvasRef.current?.getBoundingClientRect();
+      marqueeSelectionRef.current = null;
+      if (!state || !rect) {
+        setMarqueeSelection(null);
+        return;
+      }
+      const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+      const left = Math.min(state.startX, state.currentX);
+      const top = Math.min(state.startY, state.currentY);
+      const right = Math.max(state.startX, state.currentX);
+      const bottom = Math.max(state.startY, state.currentY);
+      const hits = renderedPageBlocks.filter((block) => {
+        const blockLeft = (block.layout.colStart - 1) * colWidth;
+        const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
+        const blockRight = blockLeft + (block.layout.colSpan * colWidth);
+        const blockBottom = blockTop + (block.layout.rowSpan * canvasRowHeight);
+        return left <= blockRight && right >= blockLeft && top <= blockBottom && bottom >= blockTop;
+      }).map((block) => block.id);
+      setSelectedBlockIds(hits);
+      setMarqueeSelection(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [canvasRowHeight, marqueeSelection, renderedPageBlocks]);
+
   const updateBlocks = useCallback((nextBlocks: WikiArticleBlock[]) => {
     update("blocks", compactWikiArticleBlocks(nextBlocks));
   }, [update]);
@@ -1200,6 +1375,73 @@ export function WikiEditor() {
     updateBlocks(resolveWikiBlockCollisions(nextBlocks, blockId));
   }, [pageBlocks, updateBlocks]);
 
+  const persistStoredImages = useCallback(async (nextImages: StoredImageAsset[]) => {
+    try {
+      await saveDMImageStorage(nextImages as unknown as Record<string, unknown>[]);
+      setStoredImages(nextImages);
+      safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
+      window.dispatchEvent(new CustomEvent(IMAGE_STORAGE_UPDATED_EVENT, { detail: { images: nextImages } }));
+      refreshSharedAssetFallbackState();
+    } catch (err) {
+      refreshSharedAssetFallbackState();
+      setError(err instanceof Error ? err.message : "Failed to save image storage");
+      throw err;
+    }
+  }, [refreshSharedAssetFallbackState]);
+
+  const persistWikiPresetLibrary = useCallback(async (
+    nextPresets: WikiBlockPreset[],
+    successMessage?: string,
+  ) => {
+    const normalized = normalizeWikiBlockPresets(nextPresets)
+      .filter((preset) => !preset.builtIn)
+      .map((preset) => ({
+        ...preset,
+        builtIn: false,
+      }));
+    try {
+      await saveWikiBlockPresets(normalized as unknown as Record<string, unknown>[]);
+      setWikiBlockPresets(normalized);
+      safeSetJson(WIKI_BLOCK_PRESETS_LOCAL_KEY, normalized);
+      if (successMessage) setPresetStatus(successMessage);
+      refreshSharedAssetFallbackState();
+    } catch (err) {
+      refreshSharedAssetFallbackState();
+      setError(err instanceof Error ? err.message : "Failed to save wiki block presets");
+      throw err;
+    }
+  }, [refreshSharedAssetFallbackState]);
+
+  const openImageStoragePicker = useCallback((target: { mode: "embed" | "block"; blockId?: string }) => {
+    setImagePickerTarget(target);
+  }, []);
+
+  const handleStoredImageSelect = useCallback((image: StoredImageAsset) => {
+    if (imagePickerTarget?.mode === "block" && imagePickerTarget.blockId) {
+      updateSingleBlock(imagePickerTarget.blockId, (block) => ({
+        ...block,
+        imageUrl: image.src,
+        imageAlt: block.imageAlt || image.alt || image.name,
+      }));
+    } else {
+      setImageUrl(image.src);
+      if (!imageCaption.trim() && image.name) setImageCaption(image.name);
+    }
+    setImagePickerTarget(null);
+  }, [imageCaption, imagePickerTarget, updateSingleBlock]);
+
+  const handleStoredImageUpload = useCallback(async (files: File[]) => {
+    try {
+      const created = await createStoredImageAssetsFromFiles(files, "wiki-editor");
+      if (!created.length) return;
+      const nextImages = mergeStoredImageAssets(storedImages, created);
+      await persistStoredImages(nextImages);
+      handleStoredImageSelect(created[0]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload images into storage");
+    }
+  }, [handleStoredImageSelect, persistStoredImages, storedImages]);
+
   const addBlock = useCallback((type: WikiBlockType, seed?: Partial<WikiArticleBlock>) => {
     const rowStart = seed?.layout?.rowStart || getNextWikiBlockRow(pageBlocks);
     const nextBlock = normalizeWikiArticleBlock({
@@ -1212,9 +1454,9 @@ export function WikiEditor() {
       },
     });
     updateBlocks(resolveWikiBlockCollisions([...pageBlocks, nextBlock], nextBlock.id));
-    setSelectedBlockId(nextBlock.id);
+    selectExclusiveBlock(nextBlock.id);
     setInspectorTab("content");
-  }, [pageBlocks, updateBlocks]);
+  }, [pageBlocks, selectExclusiveBlock, updateBlocks]);
 
   const getCanvasGridMetrics = useCallback(() => {
     const rect = blockCanvasRef.current?.getBoundingClientRect();
@@ -1258,15 +1500,15 @@ export function WikiEditor() {
       },
     });
     updateBlocks(resolveWikiBlockCollisions([...pageBlocks, clone], clone.id));
-    setSelectedBlockId(clone.id);
-  }, [pageBlocks, updateBlocks]);
+    selectExclusiveBlock(clone.id);
+  }, [pageBlocks, selectExclusiveBlock, updateBlocks]);
 
   const removeBlock = useCallback((blockId: string) => {
     updateBlocks(pageBlocks.filter((block) => block.id !== blockId));
     if (selectedBlockId === blockId) {
-      setSelectedBlockId(pageBlocks.find((block) => block.id !== blockId)?.id || null);
+      selectExclusiveBlock(pageBlocks.find((block) => block.id !== blockId)?.id || null);
     }
-  }, [pageBlocks, selectedBlockId, updateBlocks]);
+  }, [pageBlocks, selectExclusiveBlock, selectedBlockId, updateBlocks]);
 
   const nudgeBlock = useCallback((blockId: string, deltaCol: number, deltaRow: number) => {
     const block = pageBlocks.find((entry) => entry.id === blockId);
@@ -1328,8 +1570,173 @@ export function WikiEditor() {
     }
 
     updateBlocks(resolveWikiBlockCollisions([...pageBlocks, ...blockSeed], blockSeed[0]?.id));
-    setSelectedBlockId(blockSeed[0]?.id || null);
+    selectExclusiveBlock(blockSeed[0]?.id || null);
+  }, [pageBlocks, selectExclusiveBlock, updateBlocks]);
+
+  const insertPreset = useCallback((preset: WikiBlockPreset, anchor?: { colStart: number; rowStart: number }) => {
+    const nextBlocks = instantiateWikiBlockPreset(preset, anchor);
+    if (!nextBlocks.length) return;
+    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, ...nextBlocks], nextBlocks[0]?.id));
+    setSelectedBlockIds(nextBlocks.map((block) => block.id));
+    setInspectorTab("content");
+    setCanvasInsertPicker(null);
+    setPresetStatus(`Inserted preset: ${preset.name}`);
   }, [pageBlocks, updateBlocks]);
+
+  const saveSelectionAsPreset = useCallback(async () => {
+    if (selectedBlocks.length === 0) {
+      setError("Select one or more blocks before saving a preset.");
+      return;
+    }
+    const name = window.prompt("Preset name", selectedBlocks[0]?.title || "Custom Preset")?.trim();
+    if (!name) return;
+    const description = window.prompt("Preset description", selectedBlocks.length > 1 ? "Reusable multi-block layout" : "Reusable block preset")?.trim() || "";
+    const bounds = getWikiBlockLayoutBounds(selectedBlocks);
+    const preset = normalizeWikiBlockPreset({
+      id: `wiki-preset-${uid()}`,
+      name,
+      description,
+      category: selectedBlocks.length > 1 ? "Layouts" : "Blocks",
+      builtIn: false,
+      blocks: selectedBlocks.map((block) => normalizeWikiArticleBlock({
+        ...block,
+        layout: {
+          ...block.layout,
+          colStart: block.layout.colStart - bounds.minColStart + 1,
+          rowStart: block.layout.rowStart - bounds.minRowStart + 1,
+        },
+      })),
+    });
+    try {
+      await persistWikiPresetLibrary([...wikiBlockPresets, preset], `Saved preset: ${name}`);
+    } catch {}
+  }, [persistWikiPresetLibrary, selectedBlocks, wikiBlockPresets]);
+
+  const duplicatePresetToLibrary = useCallback(async (preset: WikiBlockPreset) => {
+    const duplicate = normalizeWikiBlockPreset({
+      ...preset,
+      id: `wiki-preset-${uid()}`,
+      name: `${preset.name} Copy`,
+      builtIn: false,
+      blocks: preset.blocks.map((block) => normalizeWikiArticleBlock({
+        ...block,
+        id: `wiki-block-${uid()}`,
+      })),
+    });
+    try {
+      await persistWikiPresetLibrary([...wikiBlockPresets, duplicate], `Copied preset: ${preset.name}`);
+      setWorkspaceRailTab("presets");
+    } catch {}
+  }, [persistWikiPresetLibrary, wikiBlockPresets]);
+
+  const renameStoredPreset = useCallback(async (presetId: string) => {
+    const target = wikiBlockPresets.find((preset) => preset.id === presetId);
+    if (!target) return;
+    const nextName = window.prompt("Rename preset", target.name)?.trim();
+    if (!nextName) return;
+    try {
+      await persistWikiPresetLibrary(
+        wikiBlockPresets.map((preset) => preset.id === presetId ? { ...preset, name: nextName } : preset),
+        `Renamed preset: ${nextName}`,
+      );
+    } catch {}
+  }, [persistWikiPresetLibrary, wikiBlockPresets]);
+
+  const deleteStoredPreset = useCallback(async (presetId: string) => {
+    const target = wikiBlockPresets.find((preset) => preset.id === presetId);
+    if (!target) return;
+    if (!window.confirm(`Delete preset "${target.name}"?`)) return;
+    try {
+      await persistWikiPresetLibrary(
+        wikiBlockPresets.filter((preset) => preset.id !== presetId),
+        `Deleted preset: ${target.name}`,
+      );
+    } catch {}
+  }, [persistWikiPresetLibrary, wikiBlockPresets]);
+
+  const applySelectionLayoutAction = useCallback((
+    action:
+      | "align-left"
+      | "align-center"
+      | "align-right"
+      | "align-top"
+      | "align-middle"
+      | "align-bottom"
+      | "distribute-horizontal"
+      | "distribute-vertical"
+      | "match-width"
+      | "match-height",
+  ) => {
+    if (selectedBlocks.length < 2) return;
+    const selectedSet = new Set(selectedBlockIds);
+    const sortedByCols = [...selectedBlocks].sort((a, b) => a.layout.colStart - b.layout.colStart || compareWikiBlocksForLayout(a, b));
+    const sortedByRows = [...selectedBlocks].sort((a, b) => a.layout.rowStart - b.layout.rowStart || compareWikiBlocksForLayout(a, b));
+    const primary = selectedBlocks[0];
+    const nextLayouts = new Map<string, Partial<WikiArticleBlock["layout"]>>();
+
+    if (action === "align-left") {
+      selectedBlocks.forEach((block) => nextLayouts.set(block.id, { colStart: selectedBlockBounds.minColStart }));
+    } else if (action === "align-center") {
+      const center = selectedBlockBounds.minColStart + Math.floor(selectedBlockBounds.colSpan / 2);
+      selectedBlocks.forEach((block) => nextLayouts.set(block.id, { colStart: Math.max(1, center - Math.floor(block.layout.colSpan / 2)) }));
+    } else if (action === "align-right") {
+      selectedBlocks.forEach((block) => nextLayouts.set(block.id, {
+        colStart: Math.max(1, selectedBlockBounds.maxColEnd - block.layout.colSpan + 1),
+      }));
+    } else if (action === "align-top") {
+      selectedBlocks.forEach((block) => nextLayouts.set(block.id, { rowStart: selectedBlockBounds.minRowStart }));
+    } else if (action === "align-middle") {
+      const middle = selectedBlockBounds.minRowStart + Math.floor(selectedBlockBounds.rowSpan / 2);
+      selectedBlocks.forEach((block) => nextLayouts.set(block.id, { rowStart: Math.max(1, middle - Math.floor(block.layout.rowSpan / 2)) }));
+    } else if (action === "align-bottom") {
+      selectedBlocks.forEach((block) => nextLayouts.set(block.id, {
+        rowStart: Math.max(1, selectedBlockBounds.maxRowEnd - block.layout.rowSpan + 1),
+      }));
+    } else if (action === "distribute-horizontal") {
+      const totalWidth = sortedByCols.reduce((sum, block) => sum + block.layout.colSpan, 0);
+      const gap = sortedByCols.length > 1 ? Math.max(0, Math.floor((selectedBlockBounds.colSpan - totalWidth) / (sortedByCols.length - 1))) : 0;
+      let cursor = sortedByCols[0]?.layout.colStart || selectedBlockBounds.minColStart;
+      sortedByCols.forEach((block, index) => {
+        if (index === 0) {
+          cursor = block.layout.colStart + block.layout.colSpan + gap;
+          return;
+        }
+        nextLayouts.set(block.id, { colStart: cursor });
+        cursor += block.layout.colSpan + gap;
+      });
+    } else if (action === "distribute-vertical") {
+      const totalHeight = sortedByRows.reduce((sum, block) => sum + block.layout.rowSpan, 0);
+      const gap = sortedByRows.length > 1 ? Math.max(0, Math.floor((selectedBlockBounds.rowSpan - totalHeight) / (sortedByRows.length - 1))) : 0;
+      let cursor = sortedByRows[0]?.layout.rowStart || selectedBlockBounds.minRowStart;
+      sortedByRows.forEach((block, index) => {
+        if (index === 0) {
+          cursor = block.layout.rowStart + block.layout.rowSpan + gap;
+          return;
+        }
+        nextLayouts.set(block.id, { rowStart: cursor });
+        cursor += block.layout.rowSpan + gap;
+      });
+    } else if (action === "match-width") {
+      selectedBlocks.slice(1).forEach((block) => nextLayouts.set(block.id, { colSpan: primary.layout.colSpan }));
+    } else if (action === "match-height") {
+      selectedBlocks.slice(1).forEach((block) => nextLayouts.set(block.id, { rowSpan: primary.layout.rowSpan }));
+    }
+
+    const nextBlocks = pageBlocks.map((block) => {
+      if (!selectedSet.has(block.id)) return normalizeWikiArticleBlock(block);
+      const layoutDelta = nextLayouts.get(block.id);
+      if (!layoutDelta) return normalizeWikiArticleBlock(block);
+      return clampWikiBlockLayout(normalizeWikiArticleBlock({
+        ...block,
+        layout: {
+          ...block.layout,
+          ...layoutDelta,
+        },
+      }));
+    });
+
+    updateBlocks(resolveWikiBlockCollisions(nextBlocks, selectedBlockIds[0]));
+  }, [pageBlocks, selectedBlockBounds, selectedBlockIds, selectedBlocks, updateBlocks]);
 
   const renderWikiBlockSummary = useCallback((block: WikiArticleBlock) => {
     switch (block.type) {
@@ -1391,9 +1798,9 @@ export function WikiEditor() {
       colSpan: block.layout.colSpan,
     };
     setMovingBlockId(blockId);
-    setSelectedBlockId(blockId);
+    selectExclusiveBlock(blockId);
     setCanvasInsertPicker(null);
-  }, [getCanvasGridMetrics, pageBlocks]);
+  }, [getCanvasGridMetrics, pageBlocks, selectExclusiveBlock]);
 
   useEffect(() => {
     if (!movingBlockId) return;
@@ -1443,6 +1850,8 @@ export function WikiEditor() {
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     if (event.target !== event.currentTarget) return;
+    const rect = blockCanvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
     if (event.shiftKey) {
       const nextPlacement = getCanvasGridPlacement(event.clientX, event.clientY, createDefaultBlock("richText").layout);
       if (!nextPlacement) return;
@@ -1457,9 +1866,17 @@ export function WikiEditor() {
     }
     if (event.target === event.currentTarget) {
       setCanvasInsertPicker(null);
-      setSelectedBlockId(null);
+      const nextMarquee = {
+        startX: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+        startY: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+        currentX: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+        currentY: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      };
+      marqueeSelectionRef.current = nextMarquee;
+      setMarqueeSelection(nextMarquee);
+      selectExclusiveBlock(null);
     }
-  }, [getCanvasGridPlacement]);
+  }, [getCanvasGridPlacement, selectExclusiveBlock]);
 
   const updateCanvasDropPreview = useCallback((event: React.DragEvent) => {
     const blockSeed = draggedBlockId
@@ -1498,7 +1915,7 @@ export function WikiEditor() {
 
     if (draggedBlockId) {
       updateBlocks(placeWikiBlock(pageBlocks, draggedBlockId, { colStart: placement.colStart, rowStart: placement.rowStart }));
-      setSelectedBlockId(draggedBlockId);
+      selectExclusiveBlock(draggedBlockId);
       clearCanvasDragState();
       return;
     }
@@ -1507,7 +1924,7 @@ export function WikiEditor() {
       addBlock(draggedBlockType, { layout: { colStart: placement.colStart, rowStart: placement.rowStart } as WikiArticleBlock["layout"] });
     }
     clearCanvasDragState();
-  }, [addBlock, clearCanvasDragState, getCanvasGridPlacement, pageBlocks, updateBlocks]);
+  }, [addBlock, clearCanvasDragState, getCanvasGridPlacement, pageBlocks, selectExclusiveBlock, updateBlocks]);
 
   const resolveBlockPalette = useCallback((block: WikiArticleBlock) => {
     const styleDef = block.style ? allPanelStyles.find((entry) => entry.id === block.style) : null;
@@ -1612,7 +2029,7 @@ export function WikiEditor() {
 
   const renderEditableWikiBlock = useCallback((block: WikiArticleBlock) => {
     const palette = resolveBlockPalette(block);
-    const isSelected = selectedBlockId === block.id;
+    const isSelected = selectedBlockIds.includes(block.id);
     const hasRestriction = block.visibility.assignedTo.length > 0;
     const previewAllowed = !previewAsPlayerId || !hasRestriction || block.visibility.assignedTo.includes(previewAsPlayerId);
     const previewHidden = !!previewAsPlayerId && hasRestriction && block.visibility.mode === "hidden" && !previewAllowed;
@@ -1933,7 +2350,7 @@ export function WikiEditor() {
           </div>
         );
     }
-  }, [blockIdToPage, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockId, txt, updateReferenceTableCell, updateSingleBlock]);
+  }, [blockIdToPage, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock]);
 
   const iconMode = page.pageIcon || "globe";
   const PageIcon = getPageIcon(iconMode === "none" || iconMode === "custom" ? undefined : iconMode);
@@ -2295,7 +2712,7 @@ export function WikiEditor() {
               <Globe size={11} /> Wiki Block Editor
             </span>
             <span className="text-[10px] px-2 py-0.5" style={{ color: "#7A9ABB", border: "1px solid #1A345B", background: "#09132A" }}>
-              Snap Grid | 12 Columns | Responsive Reflow
+              Dense Canvas | 48 Columns | Fixed Frame
             </span>
             {hasUnsaved && (
               <span className="text-[9px] px-2 py-0.5 animate-pulse" style={{ color: "#FFAA4A", background: "#1A1A0A", border: "1px solid #3A3A1A" }}>
@@ -2312,6 +2729,11 @@ export function WikiEditor() {
             {error && (
               <span className="text-[11px] px-3 py-1 flex items-center gap-1" style={{ color: "#FF6A6A", background: "#1A0A0A", border: "1px solid #3A1A1A" }}>
                 <AlertTriangle size={10} /> {error}
+              </span>
+            )}
+            {presetStatus && (
+              <span className="text-[11px] px-3 py-1" style={{ color: "#A8D8FF", background: "#08172E", border: "1px solid #1E4C7A" }}>
+                {presetStatus}
               </span>
             )}
             <button onClick={handleUndo} disabled={undoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Undo (Ctrl+Z)" style={{ opacity: undoStack.length === 0 ? 0.3 : 1 }}>
@@ -2342,10 +2764,11 @@ export function WikiEditor() {
 
         <div className="flex-1 min-h-0 flex">
           <div className="w-[300px] shrink-0 border-r flex flex-col" style={{ borderRightColor: "#15264B", background: "#081129" }}>
-            <div className="grid grid-cols-3 border-b" style={{ borderBottomColor: "#15264B" }}>
+            <div className="grid grid-cols-4 border-b" style={{ borderBottomColor: "#15264B" }}>
               {([
                 { id: "outline", label: "Outline" },
-                { id: "library", label: "Library" },
+                { id: "library", label: "Blocks" },
+                { id: "presets", label: "Presets" },
                 { id: "article", label: "Article" },
               ] as const).map((tab) => (
                 <button
@@ -2365,8 +2788,14 @@ export function WikiEditor() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#19345E", background: "#09142D", color: "#7A9ABB" }}>
-                {blockCountLabel} active. The canvas uses the same block document the published article now renders.
+                {blockCountLabel} active. {selectedBlockIds.length || 0} selected. The canvas uses the same block document the published article now renders.
               </div>
+              {(sharedImageStorageFallback || sharedPresetFallback) && (
+                <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#6A5520", background: "rgba(82, 52, 8, 0.28)", color: "#FFD37A" }}>
+                  {sharedImageStorageFallback && <div>Image Storage is running in local fallback mode until the frontend and edge function are back in sync.</div>}
+                  {sharedPresetFallback && <div>Preset Library is also using local fallback mode right now.</div>}
+                </div>
+              )}
 
               {workspaceRailTab === "outline" && (
                 <div className="space-y-3">
@@ -2375,13 +2804,13 @@ export function WikiEditor() {
                       key={block.id}
                       className="rounded-md border px-3 py-3 transition-colors"
                       style={{
-                        borderColor: selectedBlockId === block.id ? accent : "#1A2E55",
-                        background: selectedBlockId === block.id ? "#0C1735" : "#081027",
+                        borderColor: selectedBlockIds.includes(block.id) ? accent : "#1A2E55",
+                        background: selectedBlockIds.includes(block.id) ? "#0C1735" : "#081027",
                       }}
                     >
                       <button
-                        onClick={() => {
-                          setSelectedBlockId(block.id);
+                        onClick={(event) => {
+                          handleBlockSelection(block.id, event.shiftKey || event.ctrlKey || event.metaKey);
                           setInspectorTab("content");
                         }}
                         className="w-full text-left"
@@ -2468,6 +2897,92 @@ export function WikiEditor() {
                 </div>
               )}
 
+              {workspaceRailTab === "presets" && (
+                <div className="space-y-4">
+                  <div className="rounded-md border px-3 py-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>Preset Actions</div>
+                    <button
+                      onClick={() => void saveSelectionAsPreset()}
+                      disabled={selectedBlocks.length === 0}
+                      className={`${retro.button} w-full px-3 py-2 text-[10px] disabled:opacity-40`}
+                      style={S_ACCENT}
+                    >
+                      Save Current Selection as Preset
+                    </button>
+                    <div className="mt-2 text-[10px]" style={{ color: "#8091AE" }}>
+                      Save one block or a whole multi-block layout, then reuse it across articles.
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {presetLibrary.map((preset) => (
+                      <div
+                        key={preset.id}
+                        className="rounded-md border px-3 py-3"
+                        style={{ borderColor: preset.builtIn ? "#2D4B77" : "#21415F", background: preset.builtIn ? "#0A1732" : "#09142D" }}
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="text-[11px] font-bold" style={{ color: "#D3E1FF" }}>{preset.name}</div>
+                              <span className="text-[9px] px-2 py-0.5" style={{ color: preset.builtIn ? "#A8D8FF" : "#B6FFCC", background: "#081226", border: "1px solid #1A345B" }}>
+                                {preset.builtIn ? "Built In" : "Shared"}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[10px]" style={{ color: "#8CA0C2" }}>{preset.description || "Reusable block layout preset."}</div>
+                            <div className="mt-2 flex flex-wrap gap-2 text-[9px]" style={{ color: "#7A9ABB" }}>
+                              <span>{preset.category}</span>
+                              <span>|</span>
+                              <span>{preset.blocks.length} block{preset.blocks.length === 1 ? "" : "s"}</span>
+                              {preset.previewLabel && (
+                                <>
+                                  <span>|</span>
+                                  <span>{preset.previewLabel}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            onClick={() => insertPreset(preset, canvasInsertPicker ? { colStart: canvasInsertPicker.colStart, rowStart: canvasInsertPicker.rowStart } : undefined)}
+                            className={`${retro.button} px-3 py-1.5 text-[10px]`}
+                            style={S_ACCENT}
+                          >
+                            Insert
+                          </button>
+                          <button
+                            onClick={() => void duplicatePresetToLibrary(preset)}
+                            className={`${retro.button} px-3 py-1.5 text-[10px]`}
+                            style={S_SUBTLE}
+                          >
+                            Duplicate
+                          </button>
+                          {!preset.builtIn && (
+                            <>
+                              <button
+                                onClick={() => void renameStoredPreset(preset.id)}
+                                className={`${retro.button} px-3 py-1.5 text-[10px]`}
+                                style={S_SUBTLE}
+                              >
+                                Rename
+                              </button>
+                              <button
+                                onClick={() => void deleteStoredPreset(preset.id)}
+                                className={`${retro.button} px-3 py-1.5 text-[10px]`}
+                                style={S_RED}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {workspaceRailTab === "article" && (
                 <div className="space-y-3">
                   <div>
@@ -2528,7 +3043,7 @@ export function WikiEditor() {
               <div>
                 <div className="text-[10px] uppercase tracking-[0.22em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Live Article Canvas</div>
                 <div className="text-[12px] mt-1" style={{ color: "#9FB0CC" }}>
-                  Shift-click to place a new block, drag overlays to move, and resize blocks in a denser fixed article frame.
+                  Shift-click empty space to place a block or preset, drag overlays to move blocks, and use marquee selection for faster layout editing.
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -2544,8 +3059,84 @@ export function WikiEditor() {
               </div>
             </div>
 
+            <div className="border-b px-5 py-3 flex flex-wrap items-start justify-between gap-4" style={{ borderBottomColor: "#172B52", background: "rgba(8,14,34,0.88)" }}>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#A7BAD8" }}>
+                  <span>{selectedBlockIds.length || 0} selected</span>
+                  <span>|</span>
+                  <span>Zoom {(effectiveCanvasScale * 100).toFixed(0)}%</span>
+                  <span>|</span>
+                  <span>{canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article"}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => setCanvasZoom((value) => Math.max(0.65, Number((value - 0.1).toFixed(2))))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Zoom Out</button>
+                  <button onClick={() => setCanvasZoom(1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Reset Zoom</button>
+                  <button onClick={() => setCanvasZoom((value) => Math.min(1.45, Number((value + 0.1).toFixed(2))))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Zoom In</button>
+                  <button onClick={() => void saveSelectionAsPreset()} disabled={selectedBlocks.length === 0} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_ACCENT}>Save Selection as Preset</button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => applySelectionLayoutAction("align-left")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Left</button>
+                  <button onClick={() => applySelectionLayoutAction("align-center")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Center</button>
+                  <button onClick={() => applySelectionLayoutAction("align-right")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Right</button>
+                  <button onClick={() => applySelectionLayoutAction("align-top")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Top</button>
+                  <button onClick={() => applySelectionLayoutAction("align-middle")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Middle</button>
+                  <button onClick={() => applySelectionLayoutAction("align-bottom")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Bottom</button>
+                  <button onClick={() => applySelectionLayoutAction("distribute-horizontal")} disabled={selectedBlocks.length < 3} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Distribute X</button>
+                  <button onClick={() => applySelectionLayoutAction("distribute-vertical")} disabled={selectedBlocks.length < 3} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Distribute Y</button>
+                  <button onClick={() => applySelectionLayoutAction("match-width")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Match Width</button>
+                  <button onClick={() => applySelectionLayoutAction("match-height")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Match Height</button>
+                </div>
+              </div>
+
+              <div className="w-[220px] shrink-0 rounded-md border p-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                <div className="mb-2 text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Minimap</div>
+                <div className="mb-2 text-[9px]" style={{ color: "#8091AE" }}>
+                  Click or drag here to pan across the authored article frame.
+                </div>
+                <button
+                  ref={minimapButtonRef}
+                  onMouseDown={(event) => {
+                    minimapDragActiveRef.current = true;
+                    jumpCanvasViewportFromMinimap(event.clientX, event.clientY, "smooth");
+                  }}
+                  className="relative block h-[150px] w-full overflow-hidden rounded-md border"
+                  style={{ borderColor: "#20335B", background: "linear-gradient(180deg, rgba(12,18,44,0.92) 0%, rgba(9,14,34,0.98) 100%)" }}
+                >
+                  {renderedPageBlocks.map((block) => {
+                    const palette = resolveBlockPalette(block);
+                    return (
+                      <span
+                        key={`minimap-${block.id}`}
+                        className="absolute rounded-[2px] border"
+                        style={{
+                          left: `${((block.layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`,
+                          width: `${(block.layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`,
+                          top: `${((block.layout.rowStart - 1) * canvasRowHeight / canvasHeight) * 100}%`,
+                          height: `${((block.layout.rowSpan * canvasRowHeight) / canvasHeight) * 100}%`,
+                          borderColor: selectedBlockIds.includes(block.id) ? accent : palette.accent,
+                          background: selectedBlockIds.includes(block.id) ? `${accent}55` : `${palette.accent}30`,
+                        }}
+                      />
+                    );
+                  })}
+                  <span
+                    className="absolute rounded-[4px] border-2"
+                    style={{
+                      left: `${minimapViewport.left * 100}%`,
+                      top: `${minimapViewport.top * 100}%`,
+                      width: `${minimapViewport.width * 100}%`,
+                      height: `${minimapViewport.height * 100}%`,
+                      borderColor: "#A8D8FF",
+                      background: "rgba(168, 216, 255, 0.12)",
+                    }}
+                  />
+                </button>
+              </div>
+            </div>
+
             <div ref={canvasViewportRef} className="flex-1 overflow-y-auto px-4 py-5">
-              <div className="mx-auto rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ width: canvasRenderWidth, background: hdr, borderColor }}>
+              <div ref={canvasFrameRef} className="mx-auto rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ width: canvasScaledWidth, background: hdr, borderColor }}>
+                <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
                 <div className="border-b px-6 py-5" style={{ borderBottomColor: borderColor }}>
                   <InlineEdit
                     tag="h1"
@@ -2614,7 +3205,21 @@ export function WikiEditor() {
                       `,
                       backgroundSize: `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
                     }}
-                  >
+                    >
+                    {marqueeSelection && (
+                      <div
+                        className="absolute z-[3] rounded-md border border-dashed"
+                        style={{
+                          left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
+                          top: Math.min(marqueeSelection.startY, marqueeSelection.currentY),
+                          width: Math.abs(marqueeSelection.currentX - marqueeSelection.startX),
+                          height: Math.abs(marqueeSelection.currentY - marqueeSelection.startY),
+                          borderColor: "#8AB4FF",
+                          background: "rgba(74, 123, 255, 0.16)",
+                          pointerEvents: "none",
+                        }}
+                      />
+                    )}
                     <div className="absolute inset-x-0 top-0 z-[1] grid" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, pointerEvents: "none", opacity: isMinimizedCanvasMode ? 0.35 : 1 }}>
                       {Array.from({ length: WIKI_BLOCK_COLUMNS }, (_, index) => (
                         <div key={`canvas-col-${index + 1}`} className="border-r px-1 py-1 text-right text-[9px]" style={{ borderRightColor: "rgba(74,123,255,0.12)", color: "#58729D" }}>
@@ -2646,42 +3251,71 @@ export function WikiEditor() {
                     )}
                     {canvasInsertPicker && (
                       <div
-                        className="absolute z-[4] w-56 rounded-lg border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.42)]"
+                        className="absolute z-[4] w-[320px] rounded-lg border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.42)]"
                         style={{
-                          left: Math.max(12, Math.min(canvasInsertPicker.left, Math.max(12, canvasRenderWidth - 240))),
+                          left: Math.max(12, Math.min(canvasInsertPicker.left, Math.max(12, canvasRenderWidth - 332))),
                           top: Math.max(18, canvasInsertPicker.top),
                           borderColor: "#2B4B79",
                           background: "rgba(8, 14, 34, 0.96)",
                         }}
                       >
                         <div className="mb-2 text-[10px] uppercase tracking-[0.18em]" style={{ color: "#8EA9D7", fontWeight: 700 }}>
-                          Insert Block Here
+                          Insert Block or Preset
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {([
-                            ["richText", "Rich Text"],
-                            ["heading", "Heading"],
-                            ["image", "Image"],
-                            ["calloutPanel", "Callout"],
-                            ["referenceTable", "Table"],
-                            ["keyValueBox", "Key-Value"],
-                            ["spoilerBlock", "Spoiler"],
-                            ["wikiLinksList", "Wiki Links"],
-                            ["divider", "Divider"],
-                            ["spacer", "Spacer"],
-                          ] as [WikiBlockType, string][]).map(([type, label]) => (
-                            <button
-                              key={type}
-                              onClick={() => {
-                                addBlock(type, { layout: { colStart: canvasInsertPicker.colStart, rowStart: canvasInsertPicker.rowStart } as WikiArticleBlock["layout"] });
-                                setCanvasInsertPicker(null);
-                              }}
-                              className={`${retro.button} px-2 py-2 text-[10px]`}
-                              style={S_SUBTLE}
-                            >
-                              {label}
-                            </button>
-                          ))}
+                        <div className="max-h-[320px] space-y-3 overflow-y-auto pr-1">
+                          <div>
+                            <div className="mb-2 text-[9px] uppercase tracking-[0.16em]" style={{ color: "#6F88B4", fontWeight: 700 }}>
+                              Block Types
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              {([
+                                ["richText", "Rich Text"],
+                                ["heading", "Heading"],
+                                ["image", "Image"],
+                                ["calloutPanel", "Callout"],
+                                ["referenceTable", "Table"],
+                                ["keyValueBox", "Key-Value"],
+                                ["spoilerBlock", "Spoiler"],
+                                ["wikiLinksList", "Wiki Links"],
+                                ["divider", "Divider"],
+                                ["spacer", "Spacer"],
+                              ] as [WikiBlockType, string][]).map(([type, label]) => (
+                                <button
+                                  key={type}
+                                  onClick={() => {
+                                    addBlock(type, { layout: { colStart: canvasInsertPicker.colStart, rowStart: canvasInsertPicker.rowStart } as WikiArticleBlock["layout"] });
+                                    setCanvasInsertPicker(null);
+                                  }}
+                                  className={`${retro.button} px-2 py-2 text-[10px]`}
+                                  style={S_SUBTLE}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {presetLibrary.length > 0 && (
+                            <div>
+                              <div className="mb-2 text-[9px] uppercase tracking-[0.16em]" style={{ color: "#6F88B4", fontWeight: 700 }}>
+                                Preset Library
+                              </div>
+                              <div className="space-y-2">
+                                {presetLibrary.map((preset) => (
+                                  <button
+                                    key={preset.id}
+                                    onClick={() => insertPreset(preset, { colStart: canvasInsertPicker.colStart, rowStart: canvasInsertPicker.rowStart })}
+                                    className={`${retro.button} w-full px-3 py-2 text-left text-[10px]`}
+                                    style={{ ...S_ACCENT, background: "#10284F", borderColor: "#315B8D" }}
+                                  >
+                                    <div className="font-bold">{preset.name}</div>
+                                    <div style={{ color: "#A7C6EE" }}>
+                                      {preset.previewLabel || `${preset.blocks.length} block${preset.blocks.length === 1 ? "" : "s"}`}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -2691,7 +3325,7 @@ export function WikiEditor() {
                       const blockWidth = `${(block.layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`;
                       const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
                       const blockHeight = block.layout.rowSpan * canvasRowHeight;
-                      const isSelected = selectedBlockId === block.id;
+                      const isSelected = selectedBlockIds.includes(block.id);
                       const isChromeVisible = isSelected || hoveredBlockId === block.id || movingBlockId === block.id;
 
                       return (
@@ -2796,7 +3430,10 @@ export function WikiEditor() {
                           >
                             <div
                               className="h-full flex flex-col overflow-hidden"
-                              onClick={() => setSelectedBlockId(block.id)}
+                              onClick={(event) => {
+                                handleBlockSelection(block.id, event.shiftKey || event.ctrlKey || event.metaKey);
+                                setInspectorTab("content");
+                              }}
                               style={{
                                 borderRadius: 13,
                                 background: palette.background,
@@ -2815,10 +3452,11 @@ export function WikiEditor() {
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
                     <span>Desktop canvas keeps a fixed article frame and a dense 48-column layout.</span>
                     <span>|</span>
-                    <span>Shift-click empty canvas space to place a new block exactly where you want it.</span>
+                    <span>Shift-click empty canvas space to place a new block or preset exactly where you want it.</span>
                     <span>|</span>
                     <span>Saving still refreshes legacy body and panel snapshots for compatibility.</span>
                   </div>
+                </div>
                 </div>
               </div>
             </div>
@@ -2847,6 +3485,25 @@ export function WikiEditor() {
               ))}
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {selectedBlocks.length > 1 && (
+                <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Multi-Selection</div>
+                      <div className="text-[13px] font-bold" style={{ color: "#D3E1FF" }}>{selectedBlocks.length} blocks selected</div>
+                    </div>
+                    <button onClick={() => setSelectedBlockIds([])} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Clear</button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button onClick={() => void saveSelectionAsPreset()} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Save as Preset</button>
+                    <button onClick={() => applySelectionLayoutAction("distribute-horizontal")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Distribute X</button>
+                    <button onClick={() => applySelectionLayoutAction("distribute-vertical")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Distribute Y</button>
+                    <button onClick={() => applySelectionLayoutAction("match-width")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Match Width</button>
+                    <button onClick={() => applySelectionLayoutAction("match-height")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Match Height</button>
+                  </div>
+                </div>
+              )}
+
               {selectedBlock && (
                 <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
                   <div className="flex items-center justify-between gap-2">
@@ -5162,6 +5819,7 @@ export function WikiEditor() {
         open={!!imagePickerTarget}
         images={storedImages}
         title="Wiki Image Storage"
+        fallbackMode={sharedImageStorageFallback}
         onClose={() => setImagePickerTarget(null)}
         onSelect={handleStoredImageSelect}
         onUploadFiles={handleStoredImageUpload}

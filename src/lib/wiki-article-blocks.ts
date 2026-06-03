@@ -100,6 +100,16 @@ export interface WikiArticleBlock {
   mobileCollapseMode?: WikiBlockMobileCollapseMode;
 }
 
+export interface WikiBlockPreset {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  builtIn: boolean;
+  blocks: WikiArticleBlock[];
+  previewLabel?: string;
+}
+
 type LegacyPanelLike = {
   id: string;
   title?: string;
@@ -141,6 +151,159 @@ const DEFAULT_LAYOUTS: Record<WikiBlockType, Pick<WikiBlockLayout, "colSpan" | "
   divider: { colSpan: 48, rowSpan: 2, minColSpan: 24, minRowSpan: 2 },
   spacer: { colSpan: 48, rowSpan: 4, minColSpan: 24, minRowSpan: 2 },
 };
+
+function createPresetBlock(
+  type: WikiBlockType,
+  rowStart: number,
+  partial?: Partial<WikiArticleBlock>,
+): WikiArticleBlock {
+  const base = createDefaultBlock(type, rowStart);
+  return normalizeWikiArticleBlock({
+    ...base,
+    ...partial,
+    layout: {
+      ...base.layout,
+      ...(partial?.layout || {}),
+    },
+  });
+}
+
+export const BUILTIN_WIKI_BLOCK_PRESETS: WikiBlockPreset[] = [
+  {
+    id: "preset-hero-header",
+    name: "Hero Header",
+    description: "A bold header with supporting article text.",
+    category: "Article Openers",
+    builtIn: true,
+    previewLabel: "Header + summary",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Section Header",
+        subtitle: "Supporting line or flavor text",
+        headingLevel: 2,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 5 },
+      }),
+      createPresetBlock("richText", 6, {
+        title: "Overview",
+        html: "<p>Write a high-level summary that introduces the topic and gives readers context before the deeper sections begin.</p>",
+        layout: { colStart: 1, colSpan: 48, rowStart: 6, rowSpan: 10 },
+      }),
+    ],
+  },
+  {
+    id: "preset-two-column-image-text",
+    name: "Two Column Image + Text",
+    description: "A clean media block beside descriptive article text.",
+    category: "Layouts",
+    builtIn: true,
+    previewLabel: "Image + overview",
+    blocks: [
+      createPresetBlock("image", 1, {
+        title: "Feature Image",
+        imageCaption: "Image caption",
+        layout: { colStart: 1, colSpan: 18, rowStart: 1, rowSpan: 18 },
+      }),
+      createPresetBlock("richText", 1, {
+        title: "Overview",
+        html: "<p>Pair an image with descriptive text, a short summary, or a scene-setting excerpt.</p>",
+        layout: { colStart: 20, colSpan: 29, rowStart: 1, rowSpan: 18 },
+      }),
+    ],
+  },
+  {
+    id: "preset-infobox-cluster",
+    name: "Infobox Cluster",
+    description: "Profile data with a main article summary beside it.",
+    category: "Reference",
+    builtIn: true,
+    previewLabel: "Profile + article text",
+    blocks: [
+      createPresetBlock("keyValueBox", 1, {
+        title: "Profile",
+        items: [
+          { id: "preset-item-1", label: "Type", value: "" },
+          { id: "preset-item-2", label: "Affiliation", value: "" },
+          { id: "preset-item-3", label: "Region", value: "" },
+          { id: "preset-item-4", label: "Status", value: "" },
+        ],
+        layout: { colStart: 1, colSpan: 14, rowStart: 1, rowSpan: 18 },
+      }),
+      createPresetBlock("richText", 1, {
+        title: "Main Entry",
+        html: "<p>Use this space for the readable article body while the profile block carries quick-reference facts.</p>",
+        layout: { colStart: 17, colSpan: 32, rowStart: 1, rowSpan: 18 },
+      }),
+    ],
+  },
+  {
+    id: "preset-spell-reference",
+    name: "Spell / Reference Table",
+    description: "A heading followed by a wide structured reference table.",
+    category: "Reference",
+    builtIn: true,
+    previewLabel: "Heading + table",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Reference Section",
+        subtitle: "A structured rules or spell listing",
+        headingLevel: 2,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 5 },
+      }),
+      createPresetBlock("referenceTable", 6, {
+        title: "Directory",
+        columns: ["Name", "Type", "Range", "Duration", "Notes"],
+        rows: [{ id: "preset-row-1", cells: ["Sample Entry", "Evocation", "60 ft", "Instant", "Describe the effect here."] }],
+        layout: { colStart: 1, colSpan: 48, rowStart: 6, rowSpan: 20 },
+      }),
+    ],
+  },
+  {
+    id: "preset-callout-strip",
+    name: "Callout Strip",
+    description: "A pair of lore or warning callouts that sit beside each other.",
+    category: "Callouts",
+    builtIn: true,
+    previewLabel: "Parallel callouts",
+    blocks: [
+      createPresetBlock("calloutPanel", 1, {
+        title: "Lore",
+        html: "<p>Drop important worldbuilding, side-notes, or historical context here.</p>",
+        layout: { colStart: 1, colSpan: 24, rowStart: 1, rowSpan: 14 },
+      }),
+      createPresetBlock("calloutPanel", 1, {
+        title: "Rules / Warning",
+        html: "<p>Use a second callout for rules text, a warning, or a contrasting note.</p>",
+        layout: { colStart: 25, colSpan: 24, rowStart: 1, rowSpan: 14 },
+      }),
+    ],
+  },
+  {
+    id: "preset-related-links-cluster",
+    name: "Related Links Cluster",
+    description: "A compact heading, related links list, and callout stack.",
+    category: "Navigation",
+    builtIn: true,
+    previewLabel: "Links + note",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Related Reading",
+        subtitle: "Jump points for connected articles",
+        headingLevel: 3,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 4 },
+      }),
+      createPresetBlock("wikiLinksList", 5, {
+        title: "Linked Articles",
+        articleIds: [],
+        layout: { colStart: 1, colSpan: 18, rowStart: 5, rowSpan: 14 },
+      }),
+      createPresetBlock("calloutPanel", 5, {
+        title: "Reader Note",
+        html: "<p>Use this companion panel for context, reading order, or spoiler guidance.</p>",
+        layout: { colStart: 21, colSpan: 28, rowStart: 5, rowSpan: 14 },
+      }),
+    ],
+  },
+];
 
 export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSettings> | null): WikiCanvasSettings {
   const preset = settings?.preset && WIKI_CANVAS_PRESETS[settings.preset] ? settings.preset : "standard";
@@ -253,6 +416,22 @@ export function normalizeWikiArticleBlocks(blocks: Partial<WikiArticleBlock>[] |
   return (blocks || []).map((block) => normalizeWikiArticleBlock(block));
 }
 
+export function normalizeWikiBlockPreset(preset: Partial<WikiBlockPreset>): WikiBlockPreset {
+  return {
+    id: preset.id || `wiki-preset-${uid()}`,
+    name: preset.name || "Untitled Preset",
+    description: preset.description || "",
+    category: preset.category || "General",
+    builtIn: !!preset.builtIn,
+    previewLabel: preset.previewLabel || "",
+    blocks: compactWikiArticleBlocks(normalizeWikiArticleBlocks(preset.blocks || [])),
+  };
+}
+
+export function normalizeWikiBlockPresets(presets: Partial<WikiBlockPreset>[] | null | undefined): WikiBlockPreset[] {
+  return (presets || []).map((preset) => normalizeWikiBlockPreset(preset));
+}
+
 export function upgradeWikiBlockToCurrentLayout(
   block: Partial<WikiArticleBlock>,
   version = 1,
@@ -356,6 +535,65 @@ export function migrateLegacyArticleToBlocks(page: LegacyPageLike): WikiArticleB
 export function compactWikiArticleBlocks(blocks: WikiArticleBlock[]): WikiArticleBlock[] {
   const sorted = [...blocks].sort(compareWikiBlocksForLayout);
   return sorted.map((block) => normalizeWikiArticleBlock(block));
+}
+
+export function getWikiBlockLayoutBounds(blocks: WikiArticleBlock[]) {
+  if (blocks.length === 0) {
+    return {
+      minColStart: 1,
+      maxColEnd: 1,
+      minRowStart: 1,
+      maxRowEnd: 1,
+      colSpan: 1,
+      rowSpan: 1,
+    };
+  }
+
+  const minColStart = Math.min(...blocks.map((block) => block.layout.colStart));
+  const maxColEnd = Math.max(...blocks.map((block) => block.layout.colStart + block.layout.colSpan - 1));
+  const minRowStart = Math.min(...blocks.map((block) => block.layout.rowStart));
+  const maxRowEnd = Math.max(...blocks.map((block) => block.layout.rowStart + block.layout.rowSpan - 1));
+
+  return {
+    minColStart,
+    maxColEnd,
+    minRowStart,
+    maxRowEnd,
+    colSpan: maxColEnd - minColStart + 1,
+    rowSpan: maxRowEnd - minRowStart + 1,
+  };
+}
+
+export function instantiateWikiBlockPreset(
+  preset: WikiBlockPreset,
+  anchor?: { colStart: number; rowStart: number },
+): WikiArticleBlock[] {
+  const sourceBlocks = compactWikiArticleBlocks(normalizeWikiArticleBlocks(preset.blocks));
+  const bounds = getWikiBlockLayoutBounds(sourceBlocks);
+  const targetColStart = Math.max(1, anchor?.colStart || bounds.minColStart);
+  const targetRowStart = Math.max(1, anchor?.rowStart || bounds.minRowStart);
+  const maxColStart = Math.max(1, WIKI_BLOCK_COLUMNS - bounds.colSpan + 1);
+  const rebasedColStart = Math.min(targetColStart, maxColStart);
+  const colOffset = rebasedColStart - bounds.minColStart;
+  const rowOffset = targetRowStart - bounds.minRowStart;
+
+  return sourceBlocks.map((block) => normalizeWikiArticleBlock({
+    ...block,
+    id: `wiki-block-${uid()}`,
+    layout: {
+      ...block.layout,
+      colStart: block.layout.colStart + colOffset,
+      rowStart: block.layout.rowStart + rowOffset,
+    },
+    rows: block.rows?.map((row) => ({
+      ...row,
+      id: `row-${uid()}`,
+    })),
+    items: block.items?.map((item) => ({
+      ...item,
+      id: `item-${uid()}`,
+    })),
+  }));
 }
 
 export function compareWikiBlocksForLayout(a: WikiArticleBlock, b: WikiArticleBlock): number {
