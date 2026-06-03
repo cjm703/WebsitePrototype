@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers, loadDMGitHubBackupStatus, runDMGitHubBackup, type GitHubBackupStatus } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
@@ -566,10 +566,6 @@ export function DMArea() {
   const [isAddingNewNotif, setIsAddingNewNotif] = useState(false);
   const [reactions, setReactions] = useState<CustomReaction[]>([]);
   const [nodeTrees, setNodeTrees] = useState<NodeTree[]>([]);
-  const [backupStatus, setBackupStatus] = useState<GitHubBackupStatus | null>(null);
-  const [backupStatusError, setBackupStatusError] = useState("");
-  const [backupRunning, setBackupRunning] = useState(false);
-  const [backupNotice, setBackupNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null);
 
 
   // Notifications (DM-created)
@@ -672,43 +668,6 @@ useEffect(() => {
     cancelled = true;
   };
 }, []);
-
-const refreshBackupStatus = useCallback(async () => {
-  try {
-    const status = await loadDMGitHubBackupStatus();
-    setBackupStatus(status);
-    setBackupStatusError("");
-  } catch (err) {
-    setBackupStatusError(getSaveError(err, "Failed to load GitHub backup status"));
-  }
-}, []);
-
-useEffect(() => {
-  void refreshBackupStatus();
-}, [refreshBackupStatus]);
-
-async function handleRunGitHubBackup() {
-  try {
-    setBackupRunning(true);
-    setBackupNotice(null);
-    const result = await runDMGitHubBackup("manual");
-    await refreshBackupStatus();
-    setBackupNotice({
-      kind: "success",
-      text: result?.snapshotPath
-        ? `GitHub backup completed: ${result.snapshotPath}`
-        : "GitHub backup completed successfully.",
-    });
-  } catch (err) {
-    await refreshBackupStatus();
-    setBackupNotice({
-      kind: "error",
-      text: getSaveError(err, "Failed to run GitHub backup"),
-    });
-  } finally {
-    setBackupRunning(false);
-  }
-}
 
 async function persistPlayers(next: PlayerData[]) {
   try {
@@ -1153,7 +1112,7 @@ async function persistCustomReactions(next: CustomReaction[]) {
     setIsAddingNewPlayer(false);
     setPendingAuthCode("");
   };
-  // Step 1: Initiate deletion ����� show first confirm modal
+  // Step 1: initiate deletion and show the first confirm modal.
   const initiateDeletePlayer = (player: PlayerData) => {
     setDeleteTarget(player);
     setDeleteStep("confirm1");
@@ -1524,17 +1483,6 @@ const handleSaveItem = async () => {
     }
   };
 
-  const lastBackup = backupStatus?.lastBackup || null;
-  const lastBackupLabel = lastBackup?.finishedAt
-    ? new Date(lastBackup.finishedAt).toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : "Not yet run";
-
   return (
     <div
       className="min-h-screen flex flex-col"
@@ -1572,67 +1520,6 @@ const handleSaveItem = async () => {
             </h1>
           </div>
           <p className="text-[12px]" style={S_LABEL}>Campaign management and player content administration</p>
-        </div>
-
-        <div className={`${retro.raised} bg-[#11113A] p-4 mb-6`}>
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <GitBranch size={15} style={S_ACCENT} />
-                <span className="text-[12px]" style={S_ACCENT_HDR}>GitHub Backup</span>
-              </div>
-              <div className="text-[11px] leading-relaxed" style={S_MUTED}>
-                Backs up Personal Files, Wiki, News, Session Log, and Campaign Timeline to a private GitHub repository.
-              </div>
-              {backupStatus?.configured ? (
-                <div className="text-[10px] mt-2 flex flex-wrap gap-x-3 gap-y-1" style={S_DIM}>
-                  <span>Repo: {backupStatus.owner}/{backupStatus.repo}</span>
-                  <span>Branch: {backupStatus.branch}</span>
-                  <span>Path: {backupStatus.basePath}</span>
-                  <span>Last backup: {lastBackupLabel}</span>
-                </div>
-              ) : (
-                <div className="text-[10px] mt-2" style={S_WARN}>
-                  Configure the GitHub backup environment variables in the Supabase function before running backups.
-                </div>
-              )}
-              {lastBackup?.status === "error" && lastBackup.error && (
-                <div className="text-[10px] mt-2" style={S_RED}>
-                  Last backup error: {lastBackup.error}
-                </div>
-              )}
-              {backupStatusError && (
-                <div className="text-[10px] mt-2" style={S_RED}>
-                  {backupStatusError}
-                </div>
-              )}
-              {backupNotice && (
-                <div className="text-[10px] mt-2" style={backupNotice.kind === "success" ? S_GREEN : S_RED}>
-                  {backupNotice.text}
-                </div>
-              )}
-            </div>
-
-            <div className="shrink-0 flex flex-col items-start xl:items-end gap-2">
-              <button
-                onClick={() => void handleRunGitHubBackup()}
-                disabled={!backupStatus?.configured || backupRunning}
-                className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 disabled:opacity-50`}
-                style={backupStatus?.configured ? S_SAVE_BTN : DM_BTN_CANCEL}
-              >
-                <Save size={13} />
-                {backupRunning ? "Backing Up..." : "Run Backup Now"}
-              </button>
-              <div className="text-[10px] text-left xl:text-right" style={S_DIM}>
-                Weekly backups can be triggered from a separate backup repository or another external scheduler.
-              </div>
-              {!backupStatus?.triggerSecretConfigured && (
-                <div className="text-[10px] text-left xl:text-right" style={S_WARN}>
-                  External scheduler trigger secret is not configured yet.
-                </div>
-              )}
-            </div>
-          </div>
         </div>
 
         {/* Nav Tabs */}

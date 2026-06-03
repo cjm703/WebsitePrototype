@@ -1,6 +1,6 @@
 import { normalizeWikiPanels } from "@/lib/wiki-panel-layout";
 
-export const WIKI_BLOCK_LAYOUT_VERSION = 2;
+export const WIKI_BLOCK_LAYOUT_VERSION = 3;
 export const WIKI_BLOCK_COLUMNS = 48;
 export const WIKI_BLOCK_DEFAULT_ROW_SPAN = 8;
 export const WIKI_BLOCK_LEGACY_COLUMNS = 12;
@@ -8,18 +8,27 @@ export const WIKI_BLOCK_LEGACY_TO_DENSE_COL_SCALE = WIKI_BLOCK_COLUMNS / WIKI_BL
 export const WIKI_BLOCK_LEGACY_TO_DENSE_ROW_SCALE = 2;
 
 export type WikiCanvasPreset = "standard" | "large" | "referenceWide";
+export type WikiArticleChromeField = "title" | "subtitle" | "description";
+export type WikiArticleChromeLayouts = Record<WikiArticleChromeField, WikiBlockLayout>;
 
 export interface WikiCanvasSettings {
   frameWidth: number;
   canvasHeight: number;
   minCanvasHeight: number;
   preset: WikiCanvasPreset;
+  articleChromeLayouts?: WikiArticleChromeLayouts;
 }
 
 export const WIKI_CANVAS_PRESETS: Record<WikiCanvasPreset, WikiCanvasSettings> = {
   standard: { frameWidth: 1480, canvasHeight: 1480, minCanvasHeight: 1320, preset: "standard" },
   large: { frameWidth: 1540, canvasHeight: 1720, minCanvasHeight: 1480, preset: "large" },
   referenceWide: { frameWidth: 1600, canvasHeight: 1840, minCanvasHeight: 1560, preset: "referenceWide" },
+};
+
+export const DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS: WikiArticleChromeLayouts = {
+  title: { colStart: 1, colSpan: 30, rowStart: 1, rowSpan: 4, minColSpan: 12, minRowSpan: 3 },
+  subtitle: { colStart: 1, colSpan: 22, rowStart: 5, rowSpan: 3, minColSpan: 10, minRowSpan: 2 },
+  description: { colStart: 1, colSpan: 34, rowStart: 8, rowSpan: 5, minColSpan: 14, minRowSpan: 3 },
 };
 
 export type WikiBlockType =
@@ -39,6 +48,10 @@ export type WikiBlockCropMode = "contain" | "cover";
 export type WikiBlockPadding = "tight" | "normal" | "loose";
 export type WikiBlockBorderStyle = "solid" | "dashed" | "none";
 export type WikiBlockMobileCollapseMode = "stack" | "scrollX" | "compact";
+export type WikiImageCaptionPlacement = "below" | "overlay" | "hidden";
+export type WikiBlockWidthMode = "fixed" | "fill" | "hug";
+export type WikiBlockHeightMode = "fixed" | "hug" | "fill";
+export type WikiBlockLayoutGroupMode = "manual" | "stack" | "columns" | "wrap";
 
 export interface WikiBlockLayout {
   colStart: number;
@@ -60,6 +73,14 @@ export interface WikiBlockAppearance {
   borderColor?: string;
   borderStyle?: WikiBlockBorderStyle;
   padding?: WikiBlockPadding;
+}
+
+export interface WikiBlockFluidSettings {
+  widthMode: WikiBlockWidthMode;
+  heightMode: WikiBlockHeightMode;
+  keepAspectRatio: boolean;
+  mobileBehavior: WikiBlockMobileCollapseMode;
+  preferredMobileOrder?: number;
 }
 
 export interface WikiKeyValueRow {
@@ -88,6 +109,10 @@ export interface WikiArticleBlock {
   imageUrl?: string;
   imageAlt?: string;
   imageCaption?: string;
+  imageStorageAssetId?: string;
+  imageFocalX?: number;
+  imageFocalY?: number;
+  imageCaptionPlacement?: WikiImageCaptionPlacement;
   cropMode?: WikiBlockCropMode;
   headingLevel?: 1 | 2 | 3 | 4;
   dividerLabel?: string;
@@ -98,6 +123,10 @@ export interface WikiArticleBlock {
   articleIds?: string[];
   mobilePriority?: number;
   mobileCollapseMode?: WikiBlockMobileCollapseMode;
+  fluid?: WikiBlockFluidSettings;
+  layoutGroupId?: string;
+  layoutGroupName?: string;
+  layoutGroupMode?: WikiBlockLayoutGroupMode;
 }
 
 export interface WikiBlockPreset {
@@ -108,6 +137,16 @@ export interface WikiBlockPreset {
   builtIn: boolean;
   blocks: WikiArticleBlock[];
   previewLabel?: string;
+}
+
+export interface WikiArticleRevision<TSnapshot = unknown> {
+  id: string;
+  pageId: string;
+  createdAt: string;
+  createdBy: string;
+  label: string;
+  source: "save" | "manual" | "import" | "restore";
+  snapshot: TSnapshot;
 }
 
 type LegacyPanelLike = {
@@ -150,6 +189,19 @@ const DEFAULT_LAYOUTS: Record<WikiBlockType, Pick<WikiBlockLayout, "colSpan" | "
   wikiLinksList: { colSpan: 16, rowSpan: 14, minColSpan: 12, minRowSpan: 8 },
   divider: { colSpan: 48, rowSpan: 2, minColSpan: 24, minRowSpan: 2 },
   spacer: { colSpan: 48, rowSpan: 4, minColSpan: 24, minRowSpan: 2 },
+};
+
+const DEFAULT_FLUID_SETTINGS: Record<WikiBlockType, WikiBlockFluidSettings> = {
+  richText: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+  heading: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+  image: { widthMode: "fixed", heightMode: "fixed", keepAspectRatio: true, mobileBehavior: "stack" },
+  calloutPanel: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+  referenceTable: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+  keyValueBox: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
+  spoilerBlock: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+  wikiLinksList: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
+  divider: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: false, mobileBehavior: "stack" },
+  spacer: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: false, mobileBehavior: "compact" },
 };
 
 function createPresetBlock(
@@ -303,6 +355,71 @@ export const BUILTIN_WIKI_BLOCK_PRESETS: WikiBlockPreset[] = [
       }),
     ],
   },
+  {
+    id: "preset-image-gallery-strip",
+    name: "Image Gallery Strip",
+    description: "Three image blocks arranged as a responsive visual strip.",
+    category: "Media",
+    builtIn: true,
+    previewLabel: "3 image gallery",
+    blocks: [
+      createPresetBlock("image", 1, {
+        title: "Gallery Image",
+        imageCaption: "Caption",
+        layout: { colStart: 1, colSpan: 15, rowStart: 1, rowSpan: 14 },
+        fluid: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: true, mobileBehavior: "stack" },
+      }),
+      createPresetBlock("image", 1, {
+        title: "Gallery Image",
+        imageCaption: "Caption",
+        layout: { colStart: 17, colSpan: 15, rowStart: 1, rowSpan: 14 },
+        fluid: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: true, mobileBehavior: "stack" },
+      }),
+      createPresetBlock("image", 1, {
+        title: "Gallery Image",
+        imageCaption: "Caption",
+        layout: { colStart: 33, colSpan: 16, rowStart: 1, rowSpan: 14 },
+        fluid: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: true, mobileBehavior: "stack" },
+      }),
+    ],
+  },
+  {
+    id: "preset-timeline-reference-section",
+    name: "Timeline Reference Section",
+    description: "A heading, compact key facts, and a chronological reference table.",
+    category: "Reference",
+    builtIn: true,
+    previewLabel: "Timeline + facts",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Timeline",
+        subtitle: "Important events in reading order",
+        headingLevel: 2,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 5 },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+      }),
+      createPresetBlock("keyValueBox", 6, {
+        title: "Quick Facts",
+        items: [
+          { id: "timeline-fact-1", label: "Era", value: "" },
+          { id: "timeline-fact-2", label: "Region", value: "" },
+          { id: "timeline-fact-3", label: "Status", value: "" },
+        ],
+        layout: { colStart: 1, colSpan: 14, rowStart: 6, rowSpan: 14 },
+        fluid: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
+      }),
+      createPresetBlock("referenceTable", 6, {
+        title: "Events",
+        columns: ["When", "Event", "Outcome"],
+        rows: [
+          { id: "timeline-row-1", cells: ["Date / Era", "Event name", "What changed?"] },
+          { id: "timeline-row-2", cells: ["Date / Era", "Event name", "What changed?"] },
+        ],
+        layout: { colStart: 16, colSpan: 33, rowStart: 6, rowSpan: 18 },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+      }),
+    ],
+  },
 ];
 
 export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSettings> | null): WikiCanvasSettings {
@@ -311,11 +428,31 @@ export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSetting
   const frameWidth = clampInt(settings?.frameWidth, 1100, 1760);
   const minCanvasHeight = clampInt(settings?.minCanvasHeight, 960, 2800);
   const canvasHeight = clampInt(settings?.canvasHeight, minCanvasHeight, 3600);
+  const articleChromeLayouts = (Object.keys(DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS) as WikiArticleChromeField[]).reduce(
+    (layouts, field) => {
+      const fallback = DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
+      const incoming = settings?.articleChromeLayouts?.[field] || fallback;
+      const colSpan = clampInt(incoming.colSpan, fallback.minColSpan || 1, WIKI_BLOCK_COLUMNS);
+      return {
+        ...layouts,
+        [field]: {
+          colStart: clampInt(incoming.colStart, 1, WIKI_BLOCK_COLUMNS - colSpan + 1),
+          colSpan,
+          rowStart: Math.max(1, incoming.rowStart || fallback.rowStart),
+          rowSpan: Math.max(fallback.minRowSpan || 1, incoming.rowSpan || fallback.rowSpan),
+          minColSpan: fallback.minColSpan,
+          minRowSpan: fallback.minRowSpan,
+        },
+      };
+    },
+    {} as WikiArticleChromeLayouts,
+  );
   return {
     preset,
     frameWidth: settings?.frameWidth ? frameWidth : base.frameWidth,
     minCanvasHeight: settings?.minCanvasHeight ? minCanvasHeight : base.minCanvasHeight,
     canvasHeight: settings?.canvasHeight ? canvasHeight : base.canvasHeight,
+    articleChromeLayouts,
   };
 }
 
@@ -346,20 +483,26 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
     style: type === "calloutPanel" || type === "spoilerBlock" ? "neutral" : "blank",
     headingLevel: type === "heading" ? 2 : undefined,
     cropMode: type === "image" ? "cover" : undefined,
+    imageFocalX: type === "image" ? 50 : undefined,
+    imageFocalY: type === "image" ? 50 : undefined,
+    imageCaptionPlacement: type === "image" ? "below" : undefined,
     dividerLabel: type === "divider" ? "" : undefined,
     spacerHeight: type === "spacer" ? 1 : undefined,
     columns: type === "referenceTable" ? ["Name", "Type", "Notes"] : undefined,
     rows: type === "referenceTable" ? [{ id: `row-${uid()}`, cells: ["", "", ""] }] : undefined,
     items: type === "keyValueBox" ? [{ id: `item-${uid()}`, label: "Label", value: "Value" }] : undefined,
     articleIds: type === "wikiLinksList" ? [] : undefined,
+    fluid: DEFAULT_FLUID_SETTINGS[type],
   });
 }
 
 export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): WikiArticleBlock {
   const type = (block.type || "richText") as WikiBlockType;
   const base = DEFAULT_LAYOUTS[type];
+  const baseFluid = DEFAULT_FLUID_SETTINGS[type];
   const layout = block.layout || ({} as Partial<WikiBlockLayout>);
   const visibility = block.visibility || { assignedTo: [], mode: "visible" as const };
+  const fluid = block.fluid || ({} as Partial<WikiBlockFluidSettings>);
   return {
     id: block.id || `wiki-block-${uid()}`,
     type,
@@ -391,6 +534,10 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     imageUrl: block.imageUrl || "",
     imageAlt: block.imageAlt || "",
     imageCaption: block.imageCaption || "",
+    imageStorageAssetId: block.imageStorageAssetId || "",
+    imageFocalX: typeof block.imageFocalX === "number" ? clampInt(block.imageFocalX, 0, 100) : 50,
+    imageFocalY: typeof block.imageFocalY === "number" ? clampInt(block.imageFocalY, 0, 100) : 50,
+    imageCaptionPlacement: block.imageCaptionPlacement || (type === "image" ? "below" : "hidden"),
     cropMode: block.cropMode || (type === "image" ? "cover" : "contain"),
     headingLevel: (block.headingLevel || (type === "heading" ? 2 : undefined)) as 1 | 2 | 3 | 4 | undefined,
     dividerLabel: block.dividerLabel || "",
@@ -409,6 +556,16 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     articleIds: Array.isArray(block.articleIds) ? block.articleIds : type === "wikiLinksList" ? [] : undefined,
     mobilePriority: typeof block.mobilePriority === "number" ? block.mobilePriority : undefined,
     mobileCollapseMode: block.mobileCollapseMode || (type === "referenceTable" ? "scrollX" : "stack"),
+    fluid: {
+      widthMode: fluid.widthMode || baseFluid.widthMode,
+      heightMode: fluid.heightMode || baseFluid.heightMode,
+      keepAspectRatio: typeof fluid.keepAspectRatio === "boolean" ? fluid.keepAspectRatio : baseFluid.keepAspectRatio,
+      mobileBehavior: fluid.mobileBehavior || block.mobileCollapseMode || baseFluid.mobileBehavior,
+      preferredMobileOrder: typeof fluid.preferredMobileOrder === "number" ? fluid.preferredMobileOrder : undefined,
+    },
+    layoutGroupId: block.layoutGroupId || "",
+    layoutGroupName: block.layoutGroupName || "",
+    layoutGroupMode: block.layoutGroupMode || "manual",
   };
 }
 

@@ -14,7 +14,7 @@ import {
   Lock, Unlock, Layers,
   GripVertical, ChevronUp, ChevronDown, Users,
   Link2, ImageIcon, BookOpen, Undo2, Redo2,
-  Network, Hash,
+  Network, Hash, Download, Upload, History, Keyboard, Search,
 } from "lucide-react";
 import { TemplatePickerModal, TemplateManagerModal } from "./wiki-templates";
 import type { WikiTemplate } from "./wiki-templates";
@@ -27,6 +27,7 @@ import {
   getWikiBlockPresetsFallbackState,
   loadWikiBootstrap,
   saveDMImageStorage,
+  saveWikiArticleRevisions,
   saveWikiBlockPresets,
   saveWikiCustomPanelStyles,
   saveWikiSites,
@@ -44,6 +45,7 @@ import {
 } from "@/lib/wiki-panel-layout";
 import {
   BUILTIN_WIKI_BLOCK_PRESETS,
+  DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS,
   WIKI_BLOCK_COLUMNS,
   WIKI_BLOCK_LAYOUT_VERSION,
   WIKI_CANVAS_PRESETS,
@@ -66,6 +68,9 @@ import {
   resolveWikiBlockCollisions,
   serializeWikiBlocksToLegacyContent,
   type WikiArticleBlock,
+  type WikiArticleChromeField,
+  type WikiArticleRevision,
+  type WikiBlockLayout,
   type WikiBlockPreset,
   type WikiBlockType,
   type WikiCanvasSettings,
@@ -79,9 +84,7 @@ import {
 } from "@/lib/image-storage";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
 
-// ═══════════════════════════════════════════
-// Types (mirrored from dm-area / inet-page)
-// ═══════════════════════════════════════��═══
+// Types mirrored from dm-area / inet-page.
 
 interface PageSection {
   id: string;
@@ -175,8 +178,11 @@ interface SitePage {
 
 type WikiTagField = TagField;
 type WikiTagDefinition = TagDefinition;
+type EditorCanvasMode = "edit" | "clean" | "player";
+type ResponsiveFrameMode = "desktop" | "tablet" | "mobile";
+type SitePageRevision = WikiArticleRevision<SitePage>;
 
-// ═══════════════════════════════════════════
+// Inline editor helpers.
 // Helpers
 // ═══════════════════════════════════════════
 
@@ -227,6 +233,12 @@ function reorder<T>(list: T[], fromIdx: number, toIdx: number): T[] {
   return next;
 }
 
+function isEditableEventTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select";
+}
+
 const DATE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const PAGE_FONTS = [
@@ -258,6 +270,13 @@ const DEFAULT_STYLE = {
 };
 
 const WIKI_BLOCK_PRESETS_LOCAL_KEY = "inet-wiki-block-presets";
+const WIKI_ARTICLE_REVISIONS_LOCAL_KEY = "inet-wiki-article-revisions";
+const MAX_WIKI_REVISIONS_PER_ARTICLE = 25;
+const RESPONSIVE_FRAME_OPTIONS: Record<ResponsiveFrameMode, { label: string; width: number; description: string }> = {
+  desktop: { label: "Desktop", width: 0, description: "Authored fixed article frame" },
+  tablet: { label: "Tablet", width: 900, description: "Stacked tablet reading frame" },
+  mobile: { label: "Mobile", width: 430, description: "Single-column player frame" },
+};
 
 function createBlankSitePage(): SitePage {
   return {
@@ -281,7 +300,7 @@ function createBlankSitePage(): SitePage {
 
 // ═══════════════════════════════════════════
 // Inline editable text component
-// ════��══════════════════════════════════════
+// End inline editor helpers.
 function InlineEdit({
   value, onChange, placeholder, tag: Tag = "span", style, className, multiline,
 }: {
@@ -375,6 +394,10 @@ export function WikiEditor() {
   const [activePanel, setActivePanel] = useState<"preview" | "settings" | "content" | "metadata" | "appearance">("preview");
   const [workspaceRailTab, setWorkspaceRailTab] = useState<"outline" | "library" | "presets" | "article">("outline");
   const [inspectorTab, setInspectorTab] = useState<"content" | "layout" | "article">("content");
+  const [editorCanvasMode, setEditorCanvasMode] = useState<EditorCanvasMode>("edit");
+  const [responsiveFrameMode, setResponsiveFrameMode] = useState<ResponsiveFrameMode>("desktop");
+  const editorPreviewMode = editorCanvasMode !== "edit";
+  const isPlayerPreviewMode = editorCanvasMode === "player";
   const [editingPanelId, setEditingPanelId] = useState<string | null>(null);
   const [selectedPreviewPanelId, setSelectedPreviewPanelId] = useState<string | null>(null);
   const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
@@ -391,11 +414,17 @@ export function WikiEditor() {
   const [dragType, setDragType] = useState<"panel" | null>(null);
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
   const [wikiBlockPresets, setWikiBlockPresets] = useState<WikiBlockPreset[]>([]);
+  const [wikiArticleRevisions, setWikiArticleRevisions] = useState<SitePageRevision[]>([]);
   const [sharedImageStorageFallback, setSharedImageStorageFallback] = useState(false);
   const [sharedPresetFallback, setSharedPresetFallback] = useState(false);
   const [presetStatus, setPresetStatus] = useState("");
+  const [showRecoveryDrawer, setShowRecoveryDrawer] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [recoveryStatus, setRecoveryStatus] = useState("");
   const urlManuallyEdited = useRef(false);
   const hydratedPageRef = useRef<string | null>(null);
+  const articleImportInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Template State ───
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
@@ -403,12 +432,17 @@ export function WikiEditor() {
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const canvasFrameRef = useRef<HTMLDivElement>(null);
   const blockCanvasRef = useRef<HTMLDivElement>(null);
+  const articleChromeCanvasRef = useRef<HTMLDivElement>(null);
   const minimapButtonRef = useRef<HTMLButtonElement>(null);
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [draggedBlockType, setDraggedBlockType] = useState<WikiBlockType | null>(null);
+  const [draggedImageAssetId, setDraggedImageAssetId] = useState<string | null>(null);
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
+  const [hoveredArticleChromeField, setHoveredArticleChromeField] = useState<WikiArticleChromeField | null>(null);
   const [movingBlockId, setMovingBlockId] = useState<string | null>(null);
+  const [movingArticleChromeField, setMovingArticleChromeField] = useState<WikiArticleChromeField | null>(null);
   const [liveBlockLayouts, setLiveBlockLayouts] = useState<Record<string, Partial<WikiArticleBlock["layout"]>>>({});
+  const [liveArticleChromeLayouts, setLiveArticleChromeLayouts] = useState<Partial<Record<WikiArticleChromeField, WikiBlockLayout>>>({});
   const [canvasViewportWidth, setCanvasViewportWidth] = useState(0);
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [minimapViewport, setMinimapViewport] = useState({ left: 0, top: 0, width: 1, height: 1 });
@@ -427,6 +461,16 @@ export function WikiEditor() {
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null);
   const movingBlockRef = useRef<{
     blockId: string;
+    originColStart: number;
+    originRowStart: number;
+    colWidth: number;
+    rowHeight: number;
+    startClientX: number;
+    startClientY: number;
+    colSpan: number;
+  } | null>(null);
+  const movingArticleChromeRef = useRef<{
+    field: WikiArticleChromeField;
     originColStart: number;
     originRowStart: number;
     colWidth: number;
@@ -507,6 +551,7 @@ export function WikiEditor() {
             customPanelStyles: safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []),
             imageStorage: safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []),
             wikiBlockPresets: safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []),
+            wikiArticleRevisions: safeGetJson<SitePageRevision[]>(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, []),
           };
         });
 
@@ -520,10 +565,15 @@ export function WikiEditor() {
         const nextPresets = normalizeWikiBlockPresets(
           Array.isArray(bootstrap?.wikiBlockPresets) ? bootstrap.wikiBlockPresets : safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []),
         );
+        const nextRevisions = Array.isArray(bootstrap?.wikiArticleRevisions)
+          ? bootstrap.wikiArticleRevisions
+          : safeGetJson<SitePageRevision[]>(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, []);
         setStoredImages(nextImages);
         setWikiBlockPresets(nextPresets.filter((preset) => !preset.builtIn));
+        setWikiArticleRevisions(nextRevisions);
         safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
         safeSetJson(WIKI_BLOCK_PRESETS_LOCAL_KEY, nextPresets.filter((preset) => !preset.builtIn));
+        safeSetJson(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, nextRevisions);
         refreshSharedAssetFallbackState(
           bootstrapFallback
             ? { imageStorage: true, presets: true }
@@ -537,6 +587,7 @@ export function WikiEditor() {
         setWikiTagDefs(safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []));
         setCustomPanelStyles(safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []));
         setStoredImages(safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []));
+        setWikiArticleRevisions(safeGetJson<SitePageRevision[]>(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, []));
         setWikiBlockPresets(
           normalizeWikiBlockPresets(safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []))
             .filter((preset) => !preset.builtIn),
@@ -670,6 +721,16 @@ export function WikiEditor() {
     return () => window.clearTimeout(timer);
   }, [presetStatus]);
 
+  useEffect(() => {
+    if (!recoveryStatus) return;
+    const timer = window.setTimeout(() => setRecoveryStatus(""), 3200);
+    return () => window.clearTimeout(timer);
+  }, [recoveryStatus]);
+
+  useEffect(() => {
+    if (!showCommandPalette) setCommandPaletteQuery("");
+  }, [showCommandPalette]);
+
 
   // ─── Category/Tag Helpers ───
   const allCategories = useMemo(() => Array.from(new Set(allPages.map((p) => p.category).filter(Boolean))), [allPages]);
@@ -779,6 +840,123 @@ export function WikiEditor() {
   }, []);
 
   // ─── Save ───
+  const normalizePageForStorage = useCallback((sourcePage: SitePage): SitePage => {
+    const normalizedBlocks = compactWikiArticleBlocks(
+      normalizeWikiArticleBlocks(sourcePage.blocks || migrateLegacyArticleToBlocks(sourcePage)),
+    );
+    const legacySnapshot = serializeWikiBlocksToLegacyContent(normalizedBlocks);
+    return {
+      ...sourcePage,
+      layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
+      blocks: normalizedBlocks,
+      canvasSettings: normalizeWikiCanvasSettings(sourcePage.canvasSettings),
+      body: legacySnapshot.body,
+      panels: normalizeWikiPanels(legacySnapshot.panels as WikiPanel[]),
+      sections: [],
+    };
+  }, []);
+
+  const persistArticleRevisions = useCallback(async (nextRevisions: SitePageRevision[]) => {
+    const sorted = [...nextRevisions].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    setWikiArticleRevisions(sorted);
+    safeSetJson(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, sorted);
+    await saveWikiArticleRevisions(sorted as unknown as Record<string, unknown>[]);
+  }, []);
+
+  const createArticleRevision = useCallback(async (
+    sourcePage: SitePage,
+    source: SitePageRevision["source"],
+    label: string,
+  ) => {
+    const snapshot = normalizePageForStorage(sourcePage);
+    const revision: SitePageRevision = {
+      id: `wiki-revision-${snapshot.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      pageId: snapshot.id,
+      createdAt: new Date().toISOString(),
+      createdBy: currentUserId || "dm",
+      label: label.trim() || "Untitled revision",
+      source,
+      snapshot,
+    };
+    const revisionsForArticle = [
+      revision,
+      ...wikiArticleRevisions.filter((entry) => entry.pageId === snapshot.id && entry.id !== revision.id),
+    ].slice(0, MAX_WIKI_REVISIONS_PER_ARTICLE);
+    const revisionsForOtherArticles = wikiArticleRevisions.filter((entry) => entry.pageId !== snapshot.id);
+    await persistArticleRevisions([...revisionsForArticle, ...revisionsForOtherArticles]);
+    return revision;
+  }, [currentUserId, normalizePageForStorage, persistArticleRevisions, wikiArticleRevisions]);
+
+  const saveManualRevision = useCallback(async () => {
+    try {
+      const label = window.prompt("Revision label", editSummary.trim() || "Manual checkpoint")?.trim();
+      if (!label) return;
+      await createArticleRevision(page, "manual", label);
+      setRecoveryStatus(`Saved revision: ${label}`);
+    } catch (err) {
+      setError(err instanceof Error ? `Failed to save revision: ${err.message}` : "Failed to save revision");
+    }
+  }, [createArticleRevision, editSummary, page]);
+
+  const restoreRevision = useCallback(async (revision: SitePageRevision) => {
+    if (!window.confirm(`Restore "${revision.label}"? Your current unsaved edits will be replaced.`)) return;
+    try {
+      await createArticleRevision(page, "restore", "Before revision restore");
+      const restored = normalizePageForStorage(revision.snapshot);
+      setPage(restored);
+      setSelectedBlockIds(restored.blocks?.[0]?.id ? [restored.blocks[0].id] : []);
+      setHasUnsaved(true);
+      setShowRecoveryDrawer(false);
+      setRecoveryStatus(`Restored revision: ${revision.label}`);
+    } catch (err) {
+      setError(err instanceof Error ? `Failed to restore revision: ${err.message}` : "Failed to restore revision");
+    }
+  }, [createArticleRevision, normalizePageForStorage, page]);
+
+  const exportCurrentArticle = useCallback(() => {
+    const snapshot = normalizePageForStorage(page);
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      source: "inet-wiki-article-export",
+      article: snapshot,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${toSlug(snapshot.title || snapshot.id) || "wiki-article"}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setRecoveryStatus("Article export created.");
+  }, [normalizePageForStorage, page]);
+
+  const handleImportArticleFile = useCallback(async (file: File | null | undefined) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const imported = parsed?.article || parsed?.snapshot || parsed;
+      if (!imported || typeof imported !== "object") throw new Error("Import file does not contain an article.");
+      await createArticleRevision(page, "import", "Before article import");
+      const normalized = normalizePageForStorage({
+        ...createBlankSitePage(),
+        ...imported,
+        id: page.id,
+      } as SitePage);
+      setPage(normalized);
+      setSelectedBlockIds(normalized.blocks?.[0]?.id ? [normalized.blocks[0].id] : []);
+      setHasUnsaved(true);
+      setRecoveryStatus(`Imported article content from ${file.name}.`);
+    } catch (err) {
+      setError(err instanceof Error ? `Failed to import article: ${err.message}` : "Failed to import article");
+    } finally {
+      if (articleImportInputRef.current) articleImportInputRef.current.value = "";
+    }
+  }, [createArticleRevision, normalizePageForStorage, page]);
+
   const handleSave = async () => {
     if (!page.title.trim()) { setError("Title is required"); return; }
     if (!page.url.trim()) { setError("URL is required"); return; }
@@ -787,19 +965,11 @@ export function WikiEditor() {
 
     const now = new Date();
     const autoDate = `${DATE_MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
-    const normalizedBlocks = compactWikiArticleBlocks(normalizeWikiArticleBlocks(page.blocks || migrateLegacyArticleToBlocks(page)));
-    const legacySnapshot = serializeWikiBlocksToLegacyContent(normalizedBlocks);
-    const data: SitePage = {
+    const data: SitePage = normalizePageForStorage({
       ...page,
       lastEditSummary: editSummary.trim(),
       dateAdded: autoDate,
-      layoutVersion: WIKI_BLOCK_LAYOUT_VERSION,
-      blocks: normalizedBlocks,
-      canvasSettings: normalizeWikiCanvasSettings(page.canvasSettings),
-      body: legacySnapshot.body,
-      panels: normalizeWikiPanels(legacySnapshot.panels as WikiPanel[]),
-      sections: [],
-    };
+    });
     const stored: SitePage[] = [...allPages];
     const idx = stored.findIndex((p) => p.id === data.id);
     if (idx >= 0) {
@@ -824,6 +994,10 @@ export function WikiEditor() {
 
     try {
       await saveWikiSites(stored as unknown as Record<string, unknown>[]);
+      await createArticleRevision(data, "save", editSummary.trim() || "Published save").catch((err) => {
+        console.warn("Failed to save wiki article revision", err);
+        setRecoveryStatus("Article saved, but revision storage is using local fallback or could not update.");
+      });
       if (currentUserId) {
         const nextDrafts = { ...remoteDrafts };
         delete nextDrafts[data.id];
@@ -970,6 +1144,7 @@ export function WikiEditor() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const targetIsEditable = isEditableEventTarget(e.target);
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         handleSaveRef.current();
@@ -979,8 +1154,30 @@ export function WikiEditor() {
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
         e.preventDefault();
         handleRedo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette(true);
+      } else if (!targetIsEditable && editorCanvasMode === "edit" && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelectedBlocks();
+      } else if (!targetIsEditable && editorCanvasMode === "edit" && (e.key === "Delete" || e.key === "Backspace")) {
+        if (selectedBlockIds.length > 0) {
+          e.preventDefault();
+          removeSelectedBlocks();
+        }
+      } else if (!targetIsEditable && editorCanvasMode === "edit" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+        if (selectedBlockIds.length > 0) {
+          e.preventDefault();
+          const step = e.shiftKey ? 4 : 1;
+          if (e.key === "ArrowLeft") nudgeSelectedBlocks(-step, 0);
+          if (e.key === "ArrowRight") nudgeSelectedBlocks(step, 0);
+          if (e.key === "ArrowUp") nudgeSelectedBlocks(0, -step);
+          if (e.key === "ArrowDown") nudgeSelectedBlocks(0, step);
+        }
       } else if (e.key === "Escape") {
         if (editingPanelId) setEditingPanelId(null);
+        else if (showCommandPalette) setShowCommandPalette(false);
+        else if (showRecoveryDrawer) setShowRecoveryDrawer(false);
         else if (showSpoilerInsert) setShowSpoilerInsert(false);
         else if (showLinkDialog) setShowLinkDialog(false);
         else if (showImageEmbed) setShowImageEmbed(false);
@@ -990,7 +1187,23 @@ export function WikiEditor() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleUndo, handleRedo, editingPanelId, showSpoilerInsert, showLinkDialog, showImageEmbed, showTemplatePicker, showTemplateManager]);
+  }, [
+    duplicateSelectedBlocks,
+    editorCanvasMode,
+    editingPanelId,
+    handleUndo,
+    handleRedo,
+    nudgeSelectedBlocks,
+    removeSelectedBlocks,
+    selectedBlockIds.length,
+    showCommandPalette,
+    showImageEmbed,
+    showLinkDialog,
+    showRecoveryDrawer,
+    showSpoilerInsert,
+    showTemplateManager,
+    showTemplatePicker,
+  ]);
 
   // ─── Template Application ───
   const applyTemplate = useCallback((template: WikiTemplate) => {
@@ -1092,6 +1305,11 @@ export function WikiEditor() {
 
   // ─── Preview-as-player helpers ───
   const previewPlayer = useMemo(() => previewAsPlayerId ? players.find((p) => p.id === previewAsPlayerId) : null, [previewAsPlayerId, players]);
+  const playerPreviewArticleVisibility = previewAsPlayerId ? (page.playerVisibility || {})[previewAsPlayerId] || "visible" : "visible";
+  const playerPreviewArticleBlocked = isPlayerPreviewMode && !!previewAsPlayerId && (
+    playerPreviewArticleVisibility === "hidden" ||
+    (playerPreviewArticleVisibility === "spoiler" && !revealedPanels.has("article-spoiler-gate"))
+  );
 
   // ─── Infobox helpers ───
   const addInfoboxRow = () => update("infobox", [...(page.infobox || []), { label: "", value: "" }]);
@@ -1173,6 +1391,35 @@ export function WikiEditor() {
     })),
     [liveBlockLayouts, pageBlocks],
   );
+  const responsiveFrame = RESPONSIVE_FRAME_OPTIONS[responsiveFrameMode];
+  const responsivePageBlocks = useMemo(
+    () => [...renderedPageBlocks].sort((a, b) => {
+      const aOrder = a.fluid?.preferredMobileOrder ?? a.mobilePriority ?? a.layout.rowStart * 100 + a.layout.colStart;
+      const bOrder = b.fluid?.preferredMobileOrder ?? b.mobilePriority ?? b.layout.rowStart * 100 + b.layout.colStart;
+      return aOrder - bOrder || compareWikiBlocksForLayout(a, b);
+    }),
+    [renderedPageBlocks],
+  );
+  const layoutQaFindings = useMemo(() => {
+    const findings: { id: string; severity: "warn" | "info"; text: string }[] = [];
+    renderedPageBlocks.forEach((block) => {
+      if (block.layout.colStart + block.layout.colSpan - 1 > WIKI_BLOCK_COLUMNS) {
+        findings.push({ id: `${block.id}-overflow`, severity: "warn", text: `${block.title || block.type} extends beyond the desktop grid.` });
+      }
+      if (block.type === "image" && block.imageUrl && !block.imageAlt) {
+        findings.push({ id: `${block.id}-alt`, severity: "info", text: `${block.title || "Image block"} is missing alt text.` });
+      }
+      if (block.type === "referenceTable" && (block.rows || []).length > 10 && (block.fluid?.mobileBehavior || block.mobileCollapseMode) !== "scrollX") {
+        findings.push({ id: `${block.id}-table-mobile`, severity: "warn", text: `${block.title || "Reference table"} should use horizontal scroll on mobile.` });
+      }
+      if ((block.fluid?.widthMode === "hug" || block.fluid?.heightMode === "hug") && block.type === "image" && !block.fluid?.keepAspectRatio) {
+        findings.push({ id: `${block.id}-aspect`, severity: "info", text: `${block.title || "Image block"} may crop oddly unless aspect ratio is locked.` });
+      }
+    });
+    if (!page.title.trim()) findings.push({ id: "article-title", severity: "warn", text: "Article title is empty." });
+    if (!page.description.trim()) findings.push({ id: "article-description", severity: "info", text: "Article description is empty; search previews may feel thin." });
+    return findings;
+  }, [page.description, page.title, renderedPageBlocks]);
   const blockIdToPage = useMemo(() => new Map(allPages.map((article) => [article.id, article])), [allPages]);
   const selectedBlockId = selectedBlockIds[0] || null;
   const selectedBlocks = useMemo(
@@ -1184,6 +1431,17 @@ export function WikiEditor() {
     () => getWikiBlockLayoutBounds(selectedBlocks),
     [selectedBlocks],
   );
+  const currentArticleRevisions = useMemo(
+    () => wikiArticleRevisions
+      .filter((revision) => revision.pageId === page.id)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+    [page.id, wikiArticleRevisions],
+  );
+  const hasRecoverableDraft = useMemo(() => {
+    if (showDraftRestore) return true;
+    if (existingPage && remoteDrafts[existingPage.id]) return true;
+    return !!safeGetItem(draftKey);
+  }, [draftKey, existingPage, remoteDrafts, showDraftRestore]);
   const presetLibrary = useMemo(
     () => [
       ...BUILTIN_WIKI_BLOCK_PRESETS,
@@ -1195,8 +1453,25 @@ export function WikiEditor() {
     () => allPages.filter((article) => article.id !== page.id).sort((a, b) => a.title.localeCompare(b.title)),
     [allPages, page.id],
   );
-  const canvasFrameWidth = canvasSettings.frameWidth;
+  const isResponsiveReflowMode = editorPreviewMode && responsiveFrameMode !== "desktop";
+  const canvasFrameWidth = isResponsiveReflowMode ? responsiveFrame.width : canvasSettings.frameWidth;
   const canvasRowHeight = 24;
+  const articleChromeFields = useMemo(
+    () => (["title", "subtitle", "description"] as WikiArticleChromeField[]),
+    [],
+  );
+  const articleChromeLayouts = useMemo(() => {
+    const storedLayouts = canvasSettings.articleChromeLayouts || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS;
+    return articleChromeFields.reduce((layouts, field) => ({
+      ...layouts,
+      [field]: liveArticleChromeLayouts[field] || storedLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field],
+    }), {} as Record<WikiArticleChromeField, WikiBlockLayout>);
+  }, [articleChromeFields, canvasSettings.articleChromeLayouts, liveArticleChromeLayouts]);
+  const articleChromeBottomRow = useMemo(
+    () => Math.max(12, ...articleChromeFields.map((field) => articleChromeLayouts[field].rowStart + articleChromeLayouts[field].rowSpan + 1)),
+    [articleChromeFields, articleChromeLayouts],
+  );
+  const articleChromeCanvasHeight = articleChromeBottomRow * canvasRowHeight;
   const canvasBottomRow = useMemo(
     () => Math.max(48, ...renderedPageBlocks.map((block) => block.layout.rowStart + block.layout.rowSpan + 2)),
     [renderedPageBlocks],
@@ -1422,13 +1697,34 @@ export function WikiEditor() {
         ...block,
         imageUrl: image.src,
         imageAlt: block.imageAlt || image.alt || image.name,
+        imageCaption: block.imageCaption || image.name,
+        imageStorageAssetId: image.id,
+        imageFocalX: block.imageFocalX ?? 50,
+        imageFocalY: block.imageFocalY ?? 50,
+        imageCaptionPlacement: block.imageCaptionPlacement || "below",
       }));
+    } else if (imagePickerTarget?.mode === "block") {
+      const rowStart = getNextWikiBlockRow(pageBlocks);
+      const nextBlock = normalizeWikiArticleBlock({
+        ...createDefaultBlock("image", rowStart),
+        id: `wiki-block-${uid()}`,
+        title: image.name,
+        imageUrl: image.src,
+        imageAlt: image.alt || image.name,
+        imageCaption: image.name,
+        imageStorageAssetId: image.id,
+        imageFocalX: 50,
+        imageFocalY: 50,
+        imageCaptionPlacement: "below",
+      });
+      updateBlocks(resolveWikiBlockCollisions([...pageBlocks, nextBlock], nextBlock.id));
+      selectExclusiveBlock(nextBlock.id);
     } else {
       setImageUrl(image.src);
       if (!imageCaption.trim() && image.name) setImageCaption(image.name);
     }
     setImagePickerTarget(null);
-  }, [imageCaption, imagePickerTarget, updateSingleBlock]);
+  }, [imageCaption, imagePickerTarget, pageBlocks, selectExclusiveBlock, updateBlocks, updateSingleBlock]);
 
   const handleStoredImageUpload = useCallback(async (files: File[]) => {
     try {
@@ -1487,6 +1783,54 @@ export function WikiEditor() {
     };
   }, [getCanvasGridMetrics]);
 
+  const clampArticleChromeLayout = useCallback((layout: Partial<WikiBlockLayout>, fallback: WikiBlockLayout): WikiBlockLayout => {
+    const minColSpan = fallback.minColSpan || 6;
+    const minRowSpan = fallback.minRowSpan || 2;
+    const colSpan = Math.max(minColSpan, Math.min(WIKI_BLOCK_COLUMNS, Math.round(layout.colSpan || fallback.colSpan)));
+    return {
+      colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - colSpan + 1, Math.round(layout.colStart || fallback.colStart))),
+      colSpan,
+      rowStart: Math.max(1, Math.round(layout.rowStart || fallback.rowStart)),
+      rowSpan: Math.max(minRowSpan, Math.round(layout.rowSpan || fallback.rowSpan)),
+      minColSpan,
+      minRowSpan,
+    };
+  }, []);
+
+  const updateArticleChromeLayout = useCallback((field: WikiArticleChromeField, layoutPatch: Partial<WikiBlockLayout>) => {
+    const currentLayouts = canvasSettings.articleChromeLayouts || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS;
+    const fallback = currentLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
+    const nextLayout = clampArticleChromeLayout({ ...fallback, ...layoutPatch }, fallback);
+    update("canvasSettings", normalizeWikiCanvasSettings({
+      ...canvasSettings,
+      articleChromeLayouts: {
+        ...DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS,
+        ...currentLayouts,
+        [field]: nextLayout,
+      },
+    }));
+  }, [canvasSettings, clampArticleChromeLayout, update]);
+
+  const beginArticleChromeMove = useCallback((event: React.MouseEvent, field: WikiArticleChromeField) => {
+    if (editorPreviewMode) return;
+    const metricsRect = articleChromeCanvasRef.current?.getBoundingClientRect();
+    const layout = articleChromeLayouts[field];
+    if (!metricsRect || !layout) return;
+    event.preventDefault();
+    event.stopPropagation();
+    movingArticleChromeRef.current = {
+      field,
+      originColStart: layout.colStart,
+      originRowStart: layout.rowStart,
+      colWidth: metricsRect.width / WIKI_BLOCK_COLUMNS,
+      rowHeight: canvasRowHeight,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      colSpan: layout.colSpan,
+    };
+    setMovingArticleChromeField(field);
+  }, [articleChromeLayouts, canvasRowHeight, editorPreviewMode]);
+
   const duplicateBlock = useCallback((blockId: string) => {
     const source = pageBlocks.find((block) => block.id === blockId);
     if (!source) return;
@@ -1519,6 +1863,112 @@ export function WikiEditor() {
     };
     updateBlocks(placeWikiBlock(pageBlocks, blockId, nextLayout));
   }, [pageBlocks, updateBlocks]);
+
+  const nudgeSelectedBlocks = useCallback((deltaCol: number, deltaRow: number) => {
+    if (selectedBlocks.length === 0) return;
+    const selectedSet = new Set(selectedBlockIds);
+    const nextBlocks = pageBlocks.map((block) => {
+      if (!selectedSet.has(block.id) || block.locked) return normalizeWikiArticleBlock(block);
+      return clampWikiBlockLayout(normalizeWikiArticleBlock({
+        ...block,
+        layout: {
+          ...block.layout,
+          colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - block.layout.colSpan + 1, block.layout.colStart + deltaCol)),
+          rowStart: Math.max(1, block.layout.rowStart + deltaRow),
+        },
+      }));
+    });
+    updateBlocks(resolveWikiBlockCollisions(nextBlocks, selectedBlockIds[0]));
+  }, [pageBlocks, selectedBlockIds, selectedBlocks.length, updateBlocks]);
+
+  const duplicateSelectedBlocks = useCallback(() => {
+    if (selectedBlocks.length === 0) return;
+    const clones = selectedBlocks.map((block) => normalizeWikiArticleBlock({
+      ...block,
+      id: `wiki-block-${uid()}`,
+      title: block.title ? `${block.title} Copy` : block.title,
+      layout: {
+        ...block.layout,
+        rowStart: block.layout.rowStart + block.layout.rowSpan,
+      },
+    }));
+    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, ...clones], clones[0]?.id));
+    setSelectedBlockIds(clones.map((block) => block.id));
+  }, [pageBlocks, selectedBlocks, updateBlocks]);
+
+  const removeSelectedBlocks = useCallback(() => {
+    if (selectedBlockIds.length === 0) return;
+    const selectedSet = new Set(selectedBlockIds);
+    updateBlocks(pageBlocks.filter((block) => !selectedSet.has(block.id)));
+    setSelectedBlockIds([]);
+  }, [pageBlocks, selectedBlockIds, updateBlocks]);
+
+  const applySmartLayoutGroup = useCallback((mode: "stack" | "columns" | "wrap") => {
+    if (selectedBlocks.length < 2) return;
+    const selectedSet = new Set(selectedBlockIds);
+    const bounds = getWikiBlockLayoutBounds(selectedBlocks);
+    const groupId = `wiki-group-${uid()}`;
+    const groupName = mode === "stack" ? "Stack Section" : mode === "columns" ? "Column Section" : "Wrap Section";
+    const sorted = [...selectedBlocks].sort(compareWikiBlocksForLayout);
+    const layoutById = new Map<string, Partial<WikiBlockLayout>>();
+
+    if (mode === "stack") {
+      let nextRow = bounds.minRowStart;
+      sorted.forEach((block) => {
+        layoutById.set(block.id, {
+          colStart: bounds.minColStart,
+          colSpan: bounds.colSpan,
+          rowStart: nextRow,
+        });
+        nextRow += block.layout.rowSpan + 1;
+      });
+    } else if (mode === "columns") {
+      const colSpan = Math.max(4, Math.floor(bounds.colSpan / sorted.length));
+      sorted.forEach((block, index) => {
+        const isLast = index === sorted.length - 1;
+        const colStart = Math.min(WIKI_BLOCK_COLUMNS, bounds.minColStart + index * colSpan);
+        const desiredSpan = isLast ? Math.max(block.layout.minColSpan || 1, bounds.maxColEnd - colStart + 1) : Math.max(block.layout.minColSpan || 1, colSpan - 1);
+        layoutById.set(block.id, {
+          colStart,
+          colSpan: Math.max(1, Math.min(desiredSpan, WIKI_BLOCK_COLUMNS - colStart + 1)),
+          rowStart: bounds.minRowStart,
+          rowSpan: Math.max(block.layout.rowSpan, bounds.rowSpan),
+        });
+      });
+    }
+
+    const nextBlocks = pageBlocks.map((block) => {
+      if (!selectedSet.has(block.id)) return normalizeWikiArticleBlock(block);
+      return normalizeWikiArticleBlock({
+        ...block,
+        layout: {
+          ...block.layout,
+          ...(layoutById.get(block.id) || {}),
+        },
+        layoutGroupId: groupId,
+        layoutGroupName: groupName,
+        layoutGroupMode: mode,
+        fluid: {
+          ...block.fluid,
+          widthMode: mode === "stack" ? "fill" : block.fluid?.widthMode || "fixed",
+          heightMode: block.fluid?.heightMode || "hug",
+          mobileBehavior: "stack",
+        },
+      });
+    });
+
+    updateBlocks(resolveWikiBlockCollisions(nextBlocks, sorted[0]?.id));
+  }, [pageBlocks, selectedBlockIds, selectedBlocks, updateBlocks]);
+
+  const ungroupSelectedBlocks = useCallback(() => {
+    if (selectedBlockIds.length === 0) return;
+    const selectedSet = new Set(selectedBlockIds);
+    updateBlocks(pageBlocks.map((block) => (
+      selectedSet.has(block.id)
+        ? normalizeWikiArticleBlock({ ...block, layoutGroupId: "", layoutGroupName: "", layoutGroupMode: "manual" })
+        : normalizeWikiArticleBlock(block)
+    )));
+  }, [pageBlocks, selectedBlockIds, updateBlocks]);
 
   const addArticleTemplate = useCallback((templateId: "spell-directory" | "creature-reference" | "location-page" | "rules-reference") => {
     const startRow = getNextWikiBlockRow(pageBlocks);
@@ -1766,6 +2216,15 @@ export function WikiEditor() {
     event.dataTransfer.setData("application/wiki-block-type", type);
     setDraggedBlockType(type);
     setDraggedBlockId(null);
+    setDraggedImageAssetId(null);
+  }, []);
+
+  const handleStoredImageDragStart = useCallback((event: React.DragEvent, image: StoredImageAsset) => {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("application/wiki-image-asset-id", image.id);
+    setDraggedImageAssetId(image.id);
+    setDraggedBlockType(null);
+    setDraggedBlockId(null);
   }, []);
 
   const handleCanvasBlockDragStart = useCallback((event: React.DragEvent, blockId: string) => {
@@ -1773,11 +2232,13 @@ export function WikiEditor() {
     event.dataTransfer.setData("application/wiki-block-id", blockId);
     setDraggedBlockId(blockId);
     setDraggedBlockType(null);
+    setDraggedImageAssetId(null);
   }, []);
 
   const clearCanvasDragState = useCallback(() => {
     setDraggedBlockId(null);
     setDraggedBlockType(null);
+    setDraggedImageAssetId(null);
     setCanvasDropPreview(null);
   }, []);
 
@@ -1847,6 +2308,49 @@ export function WikiEditor() {
     };
   }, [liveBlockLayouts, movingBlockId, pageBlocks, updateBlocks]);
 
+  useEffect(() => {
+    if (!movingArticleChromeField) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const state = movingArticleChromeRef.current;
+      if (!state) return;
+      const fallback = articleChromeLayouts[state.field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[state.field];
+      const deltaCols = Math.round((event.clientX - state.startClientX) / Math.max(state.colWidth, 1));
+      const deltaRows = Math.round((event.clientY - state.startClientY) / Math.max(state.rowHeight, 1));
+      const nextLayout = clampArticleChromeLayout({
+        ...fallback,
+        colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - state.colSpan + 1, state.originColStart + deltaCols)),
+        rowStart: Math.max(1, state.originRowStart + deltaRows),
+      }, fallback);
+      setLiveArticleChromeLayouts((prev) => ({
+        ...prev,
+        [state.field]: nextLayout,
+      }));
+    };
+
+    const handleMouseUp = () => {
+      const state = movingArticleChromeRef.current;
+      if (state) {
+        const draft = liveArticleChromeLayouts[state.field];
+        if (draft) updateArticleChromeLayout(state.field, draft);
+      }
+      setLiveArticleChromeLayouts((prev) => {
+        const next = { ...prev };
+        if (state) delete next[state.field];
+        return next;
+      });
+      movingArticleChromeRef.current = null;
+      setMovingArticleChromeField(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [articleChromeLayouts, clampArticleChromeLayout, liveArticleChromeLayouts, movingArticleChromeField, updateArticleChromeLayout]);
+
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     if (event.target !== event.currentTarget) return;
@@ -1883,7 +2387,9 @@ export function WikiEditor() {
       ? pageBlocks.find((block) => block.id === draggedBlockId)
       : draggedBlockType
         ? createDefaultBlock(draggedBlockType)
-        : null;
+        : draggedImageAssetId
+          ? createDefaultBlock("image")
+          : null;
     if (!blockSeed) {
       setCanvasDropPreview(null);
       return;
@@ -1896,17 +2402,20 @@ export function WikiEditor() {
       colSpan: placement.colSpan,
       rowSpan: placement.rowSpan,
     });
-  }, [draggedBlockId, draggedBlockType, getCanvasGridPlacement, pageBlocks]);
+  }, [draggedBlockId, draggedBlockType, draggedImageAssetId, getCanvasGridPlacement, pageBlocks]);
 
   const handleCanvasDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     const draggedBlockId = event.dataTransfer.getData("application/wiki-block-id");
     const draggedBlockType = event.dataTransfer.getData("application/wiki-block-type") as WikiBlockType | "";
+    const draggedImageAssetId = event.dataTransfer.getData("application/wiki-image-asset-id");
     const blockSeed = draggedBlockId
       ? pageBlocks.find((block) => block.id === draggedBlockId)
       : draggedBlockType
         ? createDefaultBlock(draggedBlockType)
-        : null;
+        : draggedImageAssetId
+          ? createDefaultBlock("image")
+          : null;
     const placement = blockSeed ? getCanvasGridPlacement(event.clientX, event.clientY, blockSeed.layout) : null;
     if (!placement) {
       clearCanvasDragState();
@@ -1923,8 +2432,22 @@ export function WikiEditor() {
     if (draggedBlockType) {
       addBlock(draggedBlockType, { layout: { colStart: placement.colStart, rowStart: placement.rowStart } as WikiArticleBlock["layout"] });
     }
+    if (draggedImageAssetId) {
+      const image = storedImages.find((asset) => asset.id === draggedImageAssetId);
+      addBlock("image", {
+        title: image?.name || "Stored Image",
+        imageUrl: image?.src || "",
+        imageAlt: image?.alt || image?.name || "",
+        imageCaption: image?.name || "",
+        imageStorageAssetId: image?.id || draggedImageAssetId,
+        imageFocalX: 50,
+        imageFocalY: 50,
+        imageCaptionPlacement: "below",
+        layout: { colStart: placement.colStart, rowStart: placement.rowStart } as WikiArticleBlock["layout"],
+      });
+    }
     clearCanvasDragState();
-  }, [addBlock, clearCanvasDragState, getCanvasGridPlacement, pageBlocks, selectExclusiveBlock, updateBlocks]);
+  }, [addBlock, clearCanvasDragState, getCanvasGridPlacement, pageBlocks, selectExclusiveBlock, storedImages, updateBlocks]);
 
   const resolveBlockPalette = useCallback((block: WikiArticleBlock) => {
     const styleDef = block.style ? allPanelStyles.find((entry) => entry.id === block.style) : null;
@@ -1964,6 +2487,18 @@ export function WikiEditor() {
     }));
   }, [updateSingleBlock]);
 
+  const duplicateReferenceTableRow = useCallback((blockId: string, rowId: string) => {
+    updateSingleBlock(blockId, (block) => {
+      const rows = block.rows || [];
+      const rowIndex = rows.findIndex((row) => row.id === rowId);
+      if (rowIndex < 0) return block;
+      const clone = { ...rows[rowIndex], id: `row-${uid()}`, cells: [...rows[rowIndex].cells] };
+      const nextRows = [...rows];
+      nextRows.splice(rowIndex + 1, 0, clone);
+      return { ...block, rows: nextRows };
+    });
+  }, [updateSingleBlock]);
+
   const moveReferenceTableColumn = useCallback((blockId: string, columnIndex: number, direction: -1 | 1) => {
     updateSingleBlock(blockId, (block) => {
       const columns = block.columns || [];
@@ -1991,6 +2526,24 @@ export function WikiEditor() {
     }));
   }, [updateSingleBlock]);
 
+  const duplicateReferenceTableColumn = useCallback((blockId: string, columnIndex: number) => {
+    updateSingleBlock(blockId, (block) => {
+      const columns = block.columns || [];
+      if (columnIndex < 0 || columnIndex >= columns.length) return block;
+      const nextColumns = [...columns];
+      nextColumns.splice(columnIndex + 1, 0, `${columns[columnIndex] || "Column"} Copy`);
+      return {
+        ...block,
+        columns: nextColumns,
+        rows: (block.rows || []).map((row) => {
+          const nextCells = [...row.cells];
+          nextCells.splice(columnIndex + 1, 0, row.cells[columnIndex] || "");
+          return { ...row, cells: nextCells };
+        }),
+      };
+    });
+  }, [updateSingleBlock]);
+
   const moveKeyValueItem = useCallback((blockId: string, itemId: string, direction: -1 | 1) => {
     updateSingleBlock(blockId, (block) => {
       const items = block.items || [];
@@ -2007,6 +2560,18 @@ export function WikiEditor() {
       ...block,
       items: (block.items || []).filter((item) => item.id !== itemId),
     }));
+  }, [updateSingleBlock]);
+
+  const duplicateKeyValueItem = useCallback((blockId: string, itemId: string) => {
+    updateSingleBlock(blockId, (block) => {
+      const items = block.items || [];
+      const itemIndex = items.findIndex((item) => item.id === itemId);
+      if (itemIndex < 0) return block;
+      const clone = { ...items[itemIndex], id: `item-${uid()}`, label: `${items[itemIndex].label || "Label"} Copy` };
+      const nextItems = [...items];
+      nextItems.splice(itemIndex + 1, 0, clone);
+      return { ...block, items: nextItems };
+    });
   }, [updateSingleBlock]);
 
   const moveWikiLinkItem = useCallback((blockId: string, articleId: string, direction: -1 | 1) => {
@@ -2029,7 +2594,7 @@ export function WikiEditor() {
 
   const renderEditableWikiBlock = useCallback((block: WikiArticleBlock) => {
     const palette = resolveBlockPalette(block);
-    const isSelected = selectedBlockIds.includes(block.id);
+    const isSelected = !editorPreviewMode && selectedBlockIds.includes(block.id);
     const hasRestriction = block.visibility.assignedTo.length > 0;
     const previewAllowed = !previewAsPlayerId || !hasRestriction || block.visibility.assignedTo.includes(previewAsPlayerId);
     const previewHidden = !!previewAsPlayerId && hasRestriction && block.visibility.mode === "hidden" && !previewAllowed;
@@ -2072,8 +2637,8 @@ export function WikiEditor() {
     }
 
     const paddingMode = block.appearance.padding || "normal";
-    const horizontalPad = paddingMode === "tight" ? 10 : paddingMode === "loose" ? 18 : 14;
-    const verticalPad = paddingMode === "tight" ? 8 : paddingMode === "loose" ? 16 : 11;
+    const horizontalPad = paddingMode === "tight" ? 8 : paddingMode === "loose" ? 16 : 12;
+    const verticalPad = paddingMode === "tight" ? 6 : paddingMode === "loose" ? 14 : 9;
     const blockShellStyle: React.CSSProperties = {
       padding: `${verticalPad}px ${horizontalPad}px`,
     };
@@ -2091,7 +2656,7 @@ export function WikiEditor() {
             value={html}
             onChange={onChange}
             placeholder={placeholder}
-            minHeight={150}
+            minHeight={0}
             enableWikiLayouts
             floatingToolbar
             fillHeight
@@ -2124,21 +2689,31 @@ export function WikiEditor() {
         );
       case "image":
         return (
-          <div className="h-full flex flex-col gap-3" style={blockShellStyle}>
-            <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="h-full flex flex-col gap-2" style={blockShellStyle}>
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border" style={{ borderColor: palette.border, background: "#050518" }}>
               {block.imageUrl ? (
                 <img
                   src={block.imageUrl}
                   alt={block.imageAlt || block.title || "Article media"}
-                  className="h-full w-full rounded-md border"
-                  style={{ borderColor: palette.border, objectFit: block.cropMode === "cover" ? "cover" : "contain", minHeight: 120, background: "#050518" }}
+                  className="h-full w-full"
+                  style={{
+                    objectFit: block.cropMode === "cover" ? "cover" : "contain",
+                    objectPosition: `${block.imageFocalX ?? 50}% ${block.imageFocalY ?? 50}%`,
+                    background: "#050518",
+                  }}
                 />
               ) : (
-                <div className="h-full rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ minHeight: 140, borderColor: palette.border, color: mutedText }}>
-                  Add an image URL in the inspector to place media here.
+                <div className="h-full border border-dashed flex items-center justify-center px-4 text-center text-[11px]" style={{ borderColor: `${palette.border}99`, color: mutedText }}>
+                  Add an image URL, choose Image Storage, or drag a stored image here.
+                </div>
+              )}
+              {(block.imageCaption || block.title) && block.imageCaptionPlacement === "overlay" && (
+                <div className="absolute inset-x-0 bottom-0 px-3 py-2 text-[11px]" style={{ color: "#E8F0FF", background: "linear-gradient(180deg, transparent, rgba(0,0,0,0.82))", fontStyle: "italic" }}>
+                  {block.imageCaption || block.title}
                 </div>
               )}
             </div>
+            {block.imageCaptionPlacement !== "hidden" && block.imageCaptionPlacement !== "overlay" && (
             <div className="shrink-0">
               <InlineEdit
                 tag="div"
@@ -2148,6 +2723,7 @@ export function WikiEditor() {
                 style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
               />
             </div>
+            )}
           </div>
         );
       case "calloutPanel":
@@ -2350,7 +2926,189 @@ export function WikiEditor() {
           </div>
         );
     }
-  }, [blockIdToPage, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock]);
+  }, [blockIdToPage, editorPreviewMode, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock]);
+
+  const renderArticleChromeBox = useCallback((field: WikiArticleChromeField) => {
+    const layout = articleChromeLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
+    const left = `${((layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`;
+    const width = `${(layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`;
+    const top = (layout.rowStart - 1) * canvasRowHeight;
+    const height = layout.rowSpan * canvasRowHeight;
+    const chromeVisible = !editorPreviewMode && (hoveredArticleChromeField === field || movingArticleChromeField === field);
+    const fieldLabel = field === "title" ? "Title" : field === "subtitle" ? "Subtitle" : "Description";
+    const outlineColor = field === "title" ? accent : field === "subtitle" ? "#8EA9D7" : "#6AAFAF";
+
+    const content = (() => {
+      if (field === "title") {
+        return editorPreviewMode ? (
+          <h1 className="m-0 leading-tight" style={{ color: txt, fontWeight: 700, fontSize: 30 }}>
+            {page.title || "Untitled Article"}
+          </h1>
+        ) : (
+          <InlineEdit
+            tag="h1"
+            value={page.title}
+            onChange={(value) => { update("title", value); if (!urlManuallyEdited.current) update("url", toSlug(value)); }}
+            placeholder="Article title"
+            style={{ color: txt, fontWeight: 700, fontSize: 30, lineHeight: 1.12 }}
+          />
+        );
+      }
+      if (field === "subtitle") {
+        return editorPreviewMode ? (
+          page.subtitle ? (
+            <p className="m-0 leading-snug" style={{ color: mutedText, fontSize: 15, fontStyle: "italic" }}>
+              {page.subtitle}
+            </p>
+          ) : null
+        ) : (
+          <InlineEdit
+            tag="p"
+            value={page.subtitle || ""}
+            onChange={(value) => update("subtitle", value)}
+            placeholder="Subtitle"
+            style={{ color: mutedText, fontSize: 15, fontStyle: "italic", lineHeight: 1.25 }}
+          />
+        );
+      }
+      return editorPreviewMode ? (
+        page.description ? (
+          <p className="m-0 leading-relaxed" style={{ color: txt, fontSize: 13 }}>
+            {page.description}
+          </p>
+        ) : null
+      ) : (
+        <InlineEdit
+          tag="div"
+          value={page.description || ""}
+          onChange={(value) => update("description", value)}
+          placeholder="Article description"
+          multiline
+          style={{ color: txt, fontSize: 13, lineHeight: 1.55 }}
+        />
+      );
+    })();
+
+    const box = (
+      <div
+        className="h-full overflow-hidden"
+        onMouseEnter={() => setHoveredArticleChromeField(field)}
+        onMouseLeave={() => setHoveredArticleChromeField((current) => (current === field ? null : current))}
+        style={{
+          position: "relative",
+          borderRadius: 10,
+          border: editorPreviewMode ? "1px solid transparent" : `1px ${chromeVisible ? "solid" : "dashed"} ${chromeVisible ? outlineColor : `${outlineColor}66`}`,
+          background: editorPreviewMode ? "transparent" : "rgba(6, 12, 30, 0.18)",
+        }}
+      >
+        {!editorPreviewMode && (
+          <div
+            className="absolute left-0 right-0 z-[5] flex min-h-[32px] items-center gap-2 rounded-t-[10px] border-b px-2.5 py-1.5 transition-all duration-150"
+            style={{
+              top: 0,
+              opacity: chromeVisible ? 1 : 0,
+              transform: `translateY(${chromeVisible ? 0 : -2}px)`,
+              pointerEvents: chromeVisible ? "auto" : "none",
+              borderColor: `${outlineColor}AA`,
+              background: "linear-gradient(180deg, rgba(5,10,28,0.95), rgba(5,10,28,0.78))",
+              backdropFilter: "blur(6px)",
+              boxShadow: "0 10px 24px rgba(0,0,0,0.28)",
+            }}
+          >
+            <button
+              onMouseDown={(event) => beginArticleChromeMove(event, field)}
+              className="cursor-grab active:cursor-grabbing"
+              title={`Move article ${fieldLabel.toLowerCase()}`}
+            >
+              <GripVertical size={13} style={{ color: outlineColor }} />
+            </button>
+            <span className="min-w-0 flex-1 truncate text-[10px] uppercase tracking-[0.18em]" style={{ color: outlineColor, fontWeight: 700 }}>
+              Article {fieldLabel}
+            </span>
+          </div>
+        )}
+        <div className="h-full min-h-0 overflow-hidden px-3 py-2" style={{ paddingTop: 8 }}>
+          {content}
+        </div>
+      </div>
+    );
+
+    if (editorPreviewMode) {
+      return (
+        <div key={field} className="absolute" style={{ left, width, top, height, pointerEvents: "none" }}>
+          {box}
+        </div>
+      );
+    }
+
+    return (
+      <div key={field} className="absolute" style={{ left, width, top, height, overflow: "visible" }}>
+        <Resizable
+          size={{ width: "100%", height: "100%" }}
+          minWidth={Math.max((layout.minColSpan || 6) * ((articleChromeCanvasRef.current?.getBoundingClientRect().width || canvasRenderWidth) / WIKI_BLOCK_COLUMNS), 120)}
+          minHeight={Math.max((layout.minRowSpan || 2) * canvasRowHeight, 48)}
+          enable={{ right: true, bottom: true, bottomRight: true, bottomLeft: false, top: false, left: false, topLeft: false, topRight: false }}
+          handleStyles={{
+            right: { width: 10, right: -4, cursor: "ew-resize" },
+            bottom: { height: 10, bottom: -4, cursor: "ns-resize" },
+            bottomRight: { width: 12, height: 12, right: -5, bottom: -5, cursor: "nwse-resize" },
+          }}
+          handleClasses={{
+            right: "rounded-r-md bg-[#4A7BFF]/70",
+            bottom: "rounded-b-md bg-[#4A7BFF]/70",
+            bottomRight: "rounded-br-md bg-[#8AB4FF]",
+          }}
+          onResize={(_event, _direction, ref) => {
+            const rect = articleChromeCanvasRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+            setLiveArticleChromeLayouts((prev) => ({
+              ...prev,
+              [field]: clampArticleChromeLayout({
+                ...layout,
+                colSpan: Math.round(ref.offsetWidth / Math.max(colWidth, 1)),
+                rowSpan: Math.round(ref.offsetHeight / canvasRowHeight),
+              }, layout),
+            }));
+          }}
+          onResizeStop={(_event, _direction, ref) => {
+            const rect = articleChromeCanvasRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const colWidth = rect.width / WIKI_BLOCK_COLUMNS;
+            updateArticleChromeLayout(field, {
+              colSpan: Math.round(ref.offsetWidth / Math.max(colWidth, 1)),
+              rowSpan: Math.round(ref.offsetHeight / canvasRowHeight),
+            });
+            setLiveArticleChromeLayouts((prev) => {
+              const next = { ...prev };
+              delete next[field];
+              return next;
+            });
+          }}
+          style={{ overflow: "visible" }}
+        >
+          {box}
+        </Resizable>
+      </div>
+    );
+  }, [
+    accent,
+    articleChromeLayouts,
+    beginArticleChromeMove,
+    canvasRenderWidth,
+    canvasRowHeight,
+    clampArticleChromeLayout,
+    editorPreviewMode,
+    hoveredArticleChromeField,
+    movingArticleChromeField,
+    mutedText,
+    page.description,
+    page.subtitle,
+    page.title,
+    txt,
+    update,
+    updateArticleChromeLayout,
+  ]);
 
   const iconMode = page.pageIcon || "globe";
   const PageIcon = getPageIcon(iconMode === "none" || iconMode === "custom" ? undefined : iconMode);
@@ -2374,6 +3132,49 @@ export function WikiEditor() {
     { id: "metadata", label: "Metadata", icon: Tag },
     { id: "appearance", label: "Style", icon: Palette },
   ];
+
+  const commandPaletteItems = useMemo<Array<{
+    label: string;
+    description: string;
+    keywords: string;
+    action: () => void;
+    disabled?: boolean;
+  }>>(() => ([
+    { label: "Add Rich Text Block", description: "Insert a full-width writing block.", keywords: "text paragraph body", action: () => addBlock("richText") },
+    { label: "Add Heading Block", description: "Insert a title or section heading.", keywords: "heading title section", action: () => addBlock("heading") },
+    { label: "Add Image Block", description: "Insert an empty image/media block.", keywords: "image media picture", action: () => addBlock("image") },
+    { label: "Add Reference Table", description: "Insert a structured table for spells, items, or rules.", keywords: "table reference list spells", action: () => addBlock("referenceTable") },
+    { label: "Add Key-Value Box", description: "Insert an infobox-style data block.", keywords: "infobox key value stats", action: () => addBlock("keyValueBox") },
+    { label: "Insert Spell Directory Template", description: "Add a grouped spell/reference page starter.", keywords: "spell directory template", action: () => addArticleTemplate("spell-directory") },
+    { label: "Save Selection as Preset", description: "Create a reusable block preset from selected blocks.", keywords: "preset save reusable", action: () => void saveSelectionAsPreset(), disabled: selectedBlocks.length === 0 },
+    { label: "Duplicate Selection", description: "Copy the selected block or block group.", keywords: "copy duplicate clone", action: duplicateSelectedBlocks, disabled: selectedBlocks.length === 0 },
+    { label: "Make Selection a Stack", description: "Convert selected blocks into a clean vertical section.", keywords: "smart layout stack section", action: () => applySmartLayoutGroup("stack"), disabled: selectedBlocks.length < 2 },
+    { label: "Make Selection Columns", description: "Convert selected blocks into an aligned column section.", keywords: "smart layout columns section", action: () => applySmartLayoutGroup("columns"), disabled: selectedBlocks.length < 2 },
+    { label: "Make Selection Wrap Section", description: "Mark selected blocks as a responsive wrap section without changing placement.", keywords: "smart layout wrap responsive section", action: () => applySmartLayoutGroup("wrap"), disabled: selectedBlocks.length < 2 },
+    { label: "Open Recovery Drawer", description: "View drafts, revisions, export, and import.", keywords: "history revision restore export import", action: () => setShowRecoveryDrawer(true) },
+    { label: "Save Manual Revision", description: "Create a named recovery checkpoint.", keywords: "checkpoint revision snapshot", action: () => void saveManualRevision() },
+    { label: "Switch to Edit Mode", description: "Show all authoring rails, grid guides, and handles.", keywords: "edit mode", action: () => setEditorCanvasMode("edit") },
+    { label: "Switch to Clean Canvas", description: "Hide chrome for layout review.", keywords: "clean canvas preview", action: () => setEditorCanvasMode("clean") },
+    { label: "Switch to Player Preview", description: "Hide editor chrome and review player-facing visibility.", keywords: "player preview", action: () => setEditorCanvasMode("player") },
+    { label: "Preview Desktop Frame", description: "Review the authored desktop article frame.", keywords: "responsive desktop frame", action: () => setResponsiveFrameMode("desktop") },
+    { label: "Preview Tablet Frame", description: "Review stacked tablet reflow.", keywords: "responsive tablet frame", action: () => setResponsiveFrameMode("tablet") },
+    { label: "Preview Mobile Frame", description: "Review single-column mobile reflow.", keywords: "responsive mobile phone frame", action: () => setResponsiveFrameMode("mobile") },
+  ]), [
+    addArticleTemplate,
+    addBlock,
+    applySmartLayoutGroup,
+    duplicateSelectedBlocks,
+    saveManualRevision,
+    saveSelectionAsPreset,
+    selectedBlocks.length,
+  ]);
+  const visibleCommandPaletteItems = useMemo(() => {
+    const query = commandPaletteQuery.trim().toLowerCase();
+    if (!query) return commandPaletteItems;
+    return commandPaletteItems.filter((item) =>
+      `${item.label} ${item.description} ${item.keywords}`.toLowerCase().includes(query),
+    );
+  }, [commandPaletteItems, commandPaletteQuery]);
 
   const inputClass = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] w-full outline-none`;
   const inputStyle: React.CSSProperties = { color: "#C0D0F0" };
@@ -2736,6 +3537,11 @@ export function WikiEditor() {
                 {presetStatus}
               </span>
             )}
+            {recoveryStatus && (
+              <span className="text-[11px] px-3 py-1" style={{ color: "#FFD37A", background: "#1A1308", border: "1px solid #5B4318" }}>
+                {recoveryStatus}
+              </span>
+            )}
             <button onClick={handleUndo} disabled={undoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Undo (Ctrl+Z)" style={{ opacity: undoStack.length === 0 ? 0.3 : 1 }}>
               <Undo2 size={11} style={S_LINK} />
             </button>
@@ -2748,6 +3554,12 @@ export function WikiEditor() {
             <button onClick={() => setShowTemplateManager(true)} className={`${retro.button} px-2 py-1`} title="Manage Templates">
               <FolderOpen size={11} style={S_ACCENT} />
             </button>
+            <button onClick={() => setShowCommandPalette(true)} className={`${retro.button} px-2 py-1`} title="Command Palette (Ctrl+K)">
+              <Keyboard size={11} style={{ color: "#A8D8FF" }} />
+            </button>
+            <button onClick={() => setShowRecoveryDrawer(true)} className={`${retro.button} px-2 py-1`} title="Recovery, Revisions, Export, and Import">
+              <History size={11} style={{ color: "#FFCC7A" }} />
+            </button>
             <button onClick={() => navigate("/interface/wiki-graph")} className={`${retro.button} px-2 py-1`} title="Article Graph">
               <Network size={11} style={{ color: "#9A7ABB" }} />
             </button>
@@ -2759,10 +3571,58 @@ export function WikiEditor() {
             >
               <Save size={11} /> Publish
             </button>
+            <div className="flex items-center rounded-md border overflow-hidden" style={{ borderColor: "#1A345B", background: "#081226" }}>
+              {([
+                ["edit", "Edit"],
+                ["clean", "Clean Canvas"],
+                ["player", "Player Preview"],
+              ] as [EditorCanvasMode, string][]).map(([mode, label]) => {
+                const active = editorCanvasMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setEditorCanvasMode(mode)}
+                    className="px-3 py-1 text-[10px] transition-colors"
+                    style={{
+                      color: active ? "#FFFFFF" : "#7A8CAA",
+                      background: active ? (mode === "player" ? "#0C4F2B" : "#17305A") : "transparent",
+                      borderLeft: mode === "edit" ? "none" : "1px solid #1A345B",
+                      fontWeight: active ? 700 : 500,
+                    }}
+                    title={mode === "edit" ? "Show all editing tools" : mode === "clean" ? "Hide editor chrome for layout review" : "Show the player-facing article preview"}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center rounded-md border overflow-hidden" style={{ borderColor: "#1A345B", background: "#081226" }}>
+              {(["desktop", "tablet", "mobile"] as ResponsiveFrameMode[]).map((mode) => {
+                const active = responsiveFrameMode === mode;
+                const option = RESPONSIVE_FRAME_OPTIONS[mode];
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setResponsiveFrameMode(mode)}
+                    className="px-2.5 py-1 text-[10px] transition-colors"
+                    style={{
+                      color: active ? "#FFFFFF" : "#7A8CAA",
+                      background: active ? "#243B68" : "transparent",
+                      borderLeft: mode === "desktop" ? "none" : "1px solid #1A345B",
+                      fontWeight: active ? 700 : 500,
+                    }}
+                    title={option.description}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
         <div className="flex-1 min-h-0 flex">
+          {!editorPreviewMode && (
           <div className="w-[300px] shrink-0 border-r flex flex-col" style={{ borderRightColor: "#15264B", background: "#081129" }}>
             <div className="grid grid-cols-4 border-b" style={{ borderBottomColor: "#15264B" }}>
               {([
@@ -2796,6 +3656,26 @@ export function WikiEditor() {
                   {sharedPresetFallback && <div>Preset Library is also using local fallback mode right now.</div>}
                 </div>
               )}
+              <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: layoutQaFindings.length ? "#5A4720" : "#1A4A36", background: layoutQaFindings.length ? "rgba(82, 52, 8, 0.22)" : "rgba(8, 56, 35, 0.24)", color: layoutQaFindings.length ? "#FFD37A" : "#8FF0B8" }}>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="uppercase tracking-[0.18em]" style={{ fontWeight: 700 }}>Layout QA</span>
+                  <span>{layoutQaFindings.length || "Clear"}</span>
+                </div>
+                {layoutQaFindings.length === 0 ? (
+                  <div style={{ color: "#9FDDB7" }}>No obvious layout, mobile, or media warnings found.</div>
+                ) : (
+                  <div className="space-y-1">
+                    {layoutQaFindings.slice(0, 5).map((finding) => (
+                      <div key={finding.id} style={{ color: finding.severity === "warn" ? "#FFD37A" : "#A8D8FF" }}>
+                        {finding.text}
+                      </div>
+                    ))}
+                    {layoutQaFindings.length > 5 && (
+                      <div style={{ color: "#8EA9D7" }}>+{layoutQaFindings.length - 5} more note{layoutQaFindings.length - 5 === 1 ? "" : "s"}</div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {workspaceRailTab === "outline" && (
                 <div className="space-y-3">
@@ -2868,6 +3748,54 @@ export function WikiEditor() {
                         >
                           <div className="font-bold">{label}</div>
                           <div style={{ color: "#7386A5" }}>Click or drag onto the canvas</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Image Storage</div>
+                      <button
+                        onClick={() => openImageStoragePicker({ mode: "block" })}
+                        className={`${retro.button} px-2 py-1 text-[9px]`}
+                        style={S_ACCENT}
+                      >
+                        Upload / Browse
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {storedImages.length === 0 && (
+                        <div className="rounded-md border px-3 py-3 text-[10px]" style={{ borderColor: "#1A345B", background: "#09142D", color: "#7A9ABB" }}>
+                          No stored images yet. Upload images here, then drag them directly into the article canvas.
+                        </div>
+                      )}
+                      {storedImages.slice(0, 8).map((image) => (
+                        <button
+                          key={image.id}
+                          draggable
+                          onDragStart={(event) => handleStoredImageDragStart(event, image)}
+                          onDragEnd={clearCanvasDragState}
+                          onClick={() => addBlock("image", {
+                            title: image.name,
+                            imageUrl: image.src,
+                            imageAlt: image.alt || image.name,
+                            imageCaption: image.name,
+                            imageStorageAssetId: image.id,
+                            imageFocalX: 50,
+                            imageFocalY: 50,
+                            imageCaptionPlacement: "below",
+                          })}
+                          className="w-full rounded-md border p-2 text-left hover:opacity-90"
+                          style={{ borderColor: "#1A345B", background: "#09142D", color: "#D3E1FF" }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <img src={image.src} alt={image.alt || image.name} className="h-10 w-12 rounded object-cover" style={{ background: "#050518", border: "1px solid #20335B" }} />
+                            <div className="min-w-0">
+                              <div className="truncate text-[10px] font-bold">{image.name || "Stored image"}</div>
+                              <div className="text-[9px]" style={{ color: "#7386A5" }}>Click to add or drag onto the canvas</div>
+                            </div>
+                          </div>
                         </button>
                       ))}
                     </div>
@@ -3037,13 +3965,20 @@ export function WikiEditor() {
               )}
             </div>
           </div>
+          )}
 
           <div className="flex-1 min-w-0 flex flex-col" style={{ background: `linear-gradient(180deg, ${darken(bg, 10)} 0%, ${bg} 100%)` }}>
             <div className="border-b px-5 py-4 flex flex-wrap items-center justify-between gap-3" style={{ borderBottomColor: "#172B52", background: "rgba(7,12,31,0.9)" }}>
               <div>
-                <div className="text-[10px] uppercase tracking-[0.22em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Live Article Canvas</div>
+                <div className="text-[10px] uppercase tracking-[0.22em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>
+                  {editorCanvasMode === "edit" ? "Live Article Canvas" : editorCanvasMode === "clean" ? "Clean Canvas Review" : "Player Article Preview"}
+                </div>
                 <div className="text-[12px] mt-1" style={{ color: "#9FB0CC" }}>
-                  Shift-click empty space to place a block or preset, drag overlays to move blocks, and use marquee selection for faster layout editing.
+                  {editorCanvasMode === "player"
+                    ? `Previewing the ${responsiveFrame.label.toLowerCase()} player frame with visibility rules and editor chrome hidden.`
+                    : editorCanvasMode === "clean"
+                      ? `Reviewing the ${responsiveFrame.label.toLowerCase()} frame without editor rails, grid guides, handles, or block chrome.`
+                    : "Shift-click empty space to place a block or preset, drag overlays to move blocks, and use marquee selection for faster layout editing."}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -3059,6 +3994,7 @@ export function WikiEditor() {
               </div>
             </div>
 
+            {!editorPreviewMode && (
             <div className="border-b px-5 py-3 flex flex-wrap items-start justify-between gap-4" style={{ borderBottomColor: "#172B52", background: "rgba(8,14,34,0.88)" }}>
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#A7BAD8" }}>
@@ -3066,7 +4002,11 @@ export function WikiEditor() {
                   <span>|</span>
                   <span>Zoom {(effectiveCanvasScale * 100).toFixed(0)}%</span>
                   <span>|</span>
+                  <span>Frame {responsiveFrame.label}</span>
+                  <span>|</span>
                   <span>{canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article"}</span>
+                  <span>|</span>
+                  <span>{layoutQaFindings.length === 0 ? "Layout QA clear" : `${layoutQaFindings.length} QA note${layoutQaFindings.length === 1 ? "" : "s"}`}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={() => setCanvasZoom((value) => Math.max(0.65, Number((value - 0.1).toFixed(2))))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Zoom Out</button>
@@ -3133,34 +4073,130 @@ export function WikiEditor() {
                 </button>
               </div>
             </div>
+            )}
 
             <div ref={canvasViewportRef} className="flex-1 overflow-y-auto px-4 py-5">
               <div ref={canvasFrameRef} className="mx-auto rounded-lg border shadow-[0_18px_40px_rgba(0,0,0,0.35)]" style={{ width: canvasScaledWidth, background: hdr, borderColor }}>
+                {playerPreviewArticleBlocked ? (
+                  <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
+                    <div className="px-6 py-8">
+                      <div
+                        className="mx-auto flex min-h-[360px] max-w-[760px] flex-col items-center justify-center rounded-lg border px-8 py-12 text-center"
+                        style={{
+                          borderColor: playerPreviewArticleVisibility === "hidden" ? "#5A2630" : "#5C4216",
+                          background: playerPreviewArticleVisibility === "hidden"
+                            ? "linear-gradient(180deg, rgba(43,12,19,0.82), rgba(10,13,28,0.96))"
+                            : "linear-gradient(180deg, rgba(55,39,10,0.82), rgba(10,13,28,0.96))",
+                          color: "#D3E1FF",
+                        }}
+                      >
+                        {playerPreviewArticleVisibility === "hidden" ? (
+                          <EyeOff size={34} style={{ color: "#FF8A8A" }} />
+                        ) : (
+                          <Shield size={34} style={{ color: "#FFCC7A" }} />
+                        )}
+                        <div className="mt-4 text-[11px] uppercase tracking-[0.22em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>
+                          Player Preview
+                        </div>
+                        <h2 className="mt-2 text-xl font-bold">
+                          {playerPreviewArticleVisibility === "hidden" ? "Article Hidden From Player" : "Spoiler / Metagame Warning"}
+                        </h2>
+                        <p className="mt-3 max-w-[520px] text-sm leading-relaxed" style={{ color: "#A7B8D8" }}>
+                          {playerPreviewArticleVisibility === "hidden"
+                            ? `${previewPlayer?.name || "This player"} would not see this article in the published wiki.`
+                            : `${previewPlayer?.name || "This player"} would see a spoiler gate before this article content is revealed.`}
+                        </p>
+                        {playerPreviewArticleVisibility === "spoiler" && (
+                          <button
+                            onClick={() => setRevealedPanels((prev) => new Set([...prev, "article-spoiler-gate"]))}
+                            className={`${retro.button} mt-5 px-4 py-2 text-[11px]`}
+                            style={S_WARN}
+                          >
+                            Reveal in Preview
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : isResponsiveReflowMode ? (
+                  <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
+                    <div className="px-4 py-5">
+                      <div
+                        className="mb-4 rounded-lg border px-4 py-4"
+                        style={{
+                          borderColor,
+                          background: `linear-gradient(180deg, ${darken(hdr, 4)} 0%, ${darken(bg, 6)} 100%)`,
+                        }}
+                      >
+                        <div className="text-[9px] uppercase tracking-[0.2em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>
+                          {responsiveFrame.label} Reflow Preview
+                        </div>
+                        <h1 className="m-0 leading-tight" style={{ color: txt, fontSize: responsiveFrameMode === "mobile" ? 24 : 30, fontWeight: 700 }}>
+                          {page.title || "Untitled Article"}
+                        </h1>
+                        {page.subtitle && (
+                          <p className="mt-1 text-[13px] italic" style={{ color: mutedText }}>{page.subtitle}</p>
+                        )}
+                        {page.description && (
+                          <p className="mt-3 text-[12px] leading-relaxed" style={{ color: txt }}>{page.description}</p>
+                        )}
+                      </div>
+                      <div className="space-y-4">
+                        {responsivePageBlocks.map((block) => {
+                          const palette = resolveBlockPalette(block);
+                          const behavior = block.fluid?.mobileBehavior || block.mobileCollapseMode || "stack";
+                          const baseHeight = block.type === "divider"
+                            ? 54
+                            : block.type === "spacer"
+                              ? Math.max(40, (block.spacerHeight || 1) * 18)
+                              : Math.max(110, Math.min(responsiveFrameMode === "mobile" ? 430 : 560, block.layout.rowSpan * (block.fluid?.heightMode === "hug" ? 18 : 24)));
+                          return (
+                            <div
+                              key={`responsive-${block.id}`}
+                              id={`block-${block.id}`}
+                              className="rounded-lg border overflow-hidden"
+                              style={{
+                                minHeight: baseHeight,
+                                height: block.fluid?.heightMode === "fixed" ? baseHeight : undefined,
+                                maxHeight: behavior === "compact" ? (responsiveFrameMode === "mobile" ? 340 : 420) : undefined,
+                                overflowX: behavior === "scrollX" ? "auto" : "hidden",
+                                overflowY: behavior === "compact" ? "auto" : "hidden",
+                                borderColor: palette.border,
+                                background: palette.background,
+                              }}
+                            >
+                              {renderEditableWikiBlock(block)}
+                            </div>
+                          );
+                        })}
+                        {responsivePageBlocks.length === 0 && (
+                          <div className="rounded-lg border border-dashed px-5 py-10 text-center text-[12px]" style={{ borderColor: "#20335B", color: "#7A9ABB" }}>
+                            This article does not have any blocks yet.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
                 <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
                 <div className="border-b px-6 py-5" style={{ borderBottomColor: borderColor }}>
-                  <InlineEdit
-                    tag="h1"
-                    value={page.title}
-                    onChange={(value) => { update("title", value); if (!urlManuallyEdited.current) update("url", toSlug(value)); }}
-                    placeholder="Article title"
-                    style={{ color: txt, fontWeight: 700, fontSize: 28 }}
-                  />
-                  <InlineEdit
-                    tag="p"
-                    value={page.subtitle || ""}
-                    onChange={(value) => update("subtitle", value)}
-                    placeholder="Subtitle"
-                    style={{ color: mutedText, fontSize: 14, fontStyle: "italic", marginTop: 4 }}
-                  />
-                  <div className="mt-3 max-w-[850px]">
-                    <InlineEdit
-                      tag="div"
-                      value={page.description || ""}
-                      onChange={(value) => update("description", value)}
-                      placeholder="Article description"
-                      multiline
-                      style={{ color: txt, fontSize: 13, lineHeight: 1.6 }}
-                    />
+                  <div
+                    ref={articleChromeCanvasRef}
+                    className="relative rounded-lg border overflow-visible"
+                    style={{
+                      height: articleChromeCanvasHeight,
+                      borderColor: editorPreviewMode ? "transparent" : "#20335B",
+                      background: editorPreviewMode
+                        ? "transparent"
+                        : `
+                          linear-gradient(90deg, rgba(74,123,255,0.06) 1px, transparent 1px),
+                          linear-gradient(180deg, rgba(74,123,255,0.04) 1px, transparent 1px),
+                          rgba(8, 14, 34, 0.36)
+                        `,
+                      backgroundSize: `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
+                    }}
+                  >
+                    {articleChromeFields.map((field) => renderArticleChromeBox(field))}
                   </div>
                 </div>
 
@@ -3183,30 +4219,34 @@ export function WikiEditor() {
                   </div>
                   <div
                     ref={blockCanvasRef}
-                    onMouseDown={handleCanvasMouseDown}
+                    onMouseDown={editorPreviewMode ? undefined : handleCanvasMouseDown}
                     onDragOver={(event) => {
+                      if (editorPreviewMode) return;
                       event.preventDefault();
                       updateCanvasDropPreview(event);
                     }}
                     onDragLeave={(event) => {
+                      if (editorPreviewMode) return;
                       if (event.currentTarget === event.target) {
                         setCanvasDropPreview(null);
                       }
                     }}
-                    onDrop={handleCanvasDrop}
+                    onDrop={editorPreviewMode ? undefined : handleCanvasDrop}
                     className="relative rounded-lg border overflow-visible"
                     style={{
                       minHeight: canvasHeight,
-                      borderColor: "#20335B",
-                      background: `
-                        linear-gradient(90deg, rgba(74,123,255,0.08) 1px, transparent 1px),
-                        linear-gradient(180deg, rgba(74,123,255,0.05) 1px, transparent 1px),
-                        linear-gradient(180deg, rgba(12,18,44,0.92) 0%, rgba(9,14,34,0.98) 100%)
-                      `,
-                      backgroundSize: `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
+                      borderColor: editorPreviewMode ? "transparent" : "#20335B",
+                      background: editorPreviewMode
+                        ? "transparent"
+                        : `
+                          linear-gradient(90deg, rgba(74,123,255,0.08) 1px, transparent 1px),
+                          linear-gradient(180deg, rgba(74,123,255,0.05) 1px, transparent 1px),
+                          linear-gradient(180deg, rgba(12,18,44,0.92) 0%, rgba(9,14,34,0.98) 100%)
+                        `,
+                      backgroundSize: editorPreviewMode ? undefined : `${100 / WIKI_BLOCK_COLUMNS}% 100%, 100% ${canvasRowHeight}px, 100% 100%`,
                     }}
                     >
-                    {marqueeSelection && (
+                    {!editorPreviewMode && marqueeSelection && (
                       <div
                         className="absolute z-[3] rounded-md border border-dashed"
                         style={{
@@ -3220,6 +4260,7 @@ export function WikiEditor() {
                         }}
                       />
                     )}
+                    {!editorPreviewMode && (
                     <div className="absolute inset-x-0 top-0 z-[1] grid" style={{ gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, pointerEvents: "none", opacity: isMinimizedCanvasMode ? 0.35 : 1 }}>
                       {Array.from({ length: WIKI_BLOCK_COLUMNS }, (_, index) => (
                         <div key={`canvas-col-${index + 1}`} className="border-r px-1 py-1 text-right text-[9px]" style={{ borderRightColor: "rgba(74,123,255,0.12)", color: "#58729D" }}>
@@ -3227,6 +4268,8 @@ export function WikiEditor() {
                         </div>
                       ))}
                     </div>
+                    )}
+                    {!editorPreviewMode && (
                     <div className="absolute left-0 top-0 bottom-0 z-[1] flex flex-col" style={{ width: 28, pointerEvents: "none", opacity: isMinimizedCanvasMode ? 0.3 : 1 }}>
                       {Array.from({ length: Math.max(24, canvasBottomRow) }, (_, index) => (
                         <div key={`canvas-row-${index + 1}`} className="pr-1 pt-0.5 text-right text-[9px]" style={{ height: canvasRowHeight, color: "#4D6188" }}>
@@ -3234,7 +4277,8 @@ export function WikiEditor() {
                         </div>
                       ))}
                     </div>
-                    {canvasDropPreview && (
+                    )}
+                    {!editorPreviewMode && canvasDropPreview && (
                       <div
                         className="absolute z-[2] rounded-md border-2 border-dashed"
                         style={{
@@ -3249,7 +4293,7 @@ export function WikiEditor() {
                         }}
                       />
                     )}
-                    {canvasInsertPicker && (
+                    {!editorPreviewMode && canvasInsertPicker && (
                       <div
                         className="absolute z-[4] w-[320px] rounded-lg border p-2 shadow-[0_18px_40px_rgba(0,0,0,0.42)]"
                         style={{
@@ -3326,7 +4370,7 @@ export function WikiEditor() {
                       const blockTop = (block.layout.rowStart - 1) * canvasRowHeight;
                       const blockHeight = block.layout.rowSpan * canvasRowHeight;
                       const isSelected = selectedBlockIds.includes(block.id);
-                      const isChromeVisible = isSelected || hoveredBlockId === block.id || movingBlockId === block.id;
+                      const isChromeVisible = !editorPreviewMode && (hoveredBlockId === block.id || movingBlockId === block.id);
 
                       return (
                         <div
@@ -3343,14 +4387,14 @@ export function WikiEditor() {
                           }}
                         >
                           <div
-                            className="absolute left-3 right-3 z-[4] flex items-center gap-2 rounded-md border px-3 py-2 transition-all duration-150"
+                            className="absolute left-0 right-0 z-[4] flex min-h-[34px] items-center gap-2 rounded-t-[13px] border-b px-3 py-1.5 transition-all duration-150"
                             style={{
-                              top: -16,
+                              top: 0,
                               opacity: isChromeVisible ? 1 : 0,
-                              transform: `translateY(${isChromeVisible ? 0 : -4}px)`,
+                              transform: `translateY(${isChromeVisible ? 0 : -2}px)`,
                               pointerEvents: isChromeVisible ? "auto" : "none",
-                              borderColor: isSelected ? accent : `${palette.border}D9`,
-                              background: "rgba(5, 10, 28, 0.92)",
+                              borderColor: isSelected ? `${accent}AA` : `${palette.border}D9`,
+                              background: "linear-gradient(180deg, rgba(5,10,28,0.95), rgba(5,10,28,0.78))",
                               backdropFilter: "blur(6px)",
                               boxShadow: "0 10px 24px rgba(0,0,0,0.28)",
                             }}
@@ -3380,7 +4424,7 @@ export function WikiEditor() {
                             size={{ width: "100%", height: "100%" }}
                             minWidth={Math.max((block.layout.minColSpan || 1) * ((blockCanvasRef.current?.getBoundingClientRect().width || canvasRenderWidth) / WIKI_BLOCK_COLUMNS), 120)}
                             minHeight={Math.max((block.layout.minRowSpan || 1) * canvasRowHeight, 48)}
-                            enable={block.locked ? { top: false, right: false, bottom: false, left: false, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false } : { right: true, bottom: true, bottomRight: true, bottomLeft: false, top: false, left: false, topLeft: false, topRight: false }}
+                            enable={editorPreviewMode || block.locked ? { top: false, right: false, bottom: false, left: false, topRight: false, bottomRight: false, bottomLeft: false, topLeft: false } : { right: true, bottom: true, bottomRight: true, bottomLeft: false, top: false, left: false, topLeft: false, topRight: false }}
                             handleStyles={{
                               right: { width: 12, right: -5, cursor: "ew-resize" },
                               bottom: { height: 12, bottom: -5, cursor: "ns-resize" },
@@ -3420,9 +4464,9 @@ export function WikiEditor() {
                               });
                             }}
                             style={{
-                              border: `1px solid ${isSelected ? accent : palette.border}`,
+                              border: editorPreviewMode ? "1px solid transparent" : `1px solid ${isSelected ? accent : palette.border}`,
                               background: "transparent",
-                              boxShadow: isSelected ? `0 0 0 1px ${accent}, 0 12px 24px rgba(0,0,0,0.28)` : "0 8px 18px rgba(0,0,0,0.24)",
+                              boxShadow: editorPreviewMode ? "none" : isSelected ? `0 0 0 1px ${accent}, 0 12px 24px rgba(0,0,0,0.28)` : "0 8px 18px rgba(0,0,0,0.24)",
                               overflow: "visible",
                               borderRadius: 14,
                               borderStyle: block.appearance.borderStyle === "dashed" ? "dashed" : block.appearance.borderStyle === "none" ? "none" : "solid",
@@ -3431,6 +4475,7 @@ export function WikiEditor() {
                             <div
                               className="h-full flex flex-col overflow-hidden"
                               onClick={(event) => {
+                                if (editorPreviewMode) return;
                                 handleBlockSelection(block.id, event.shiftKey || event.ctrlKey || event.metaKey);
                                 setInspectorTab("content");
                               }}
@@ -3449,6 +4494,7 @@ export function WikiEditor() {
                     })}
                   </div>
 
+                  {!editorPreviewMode && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
                     <span>Desktop canvas keeps a fixed article frame and a dense 48-column layout.</span>
                     <span>|</span>
@@ -3456,12 +4502,15 @@ export function WikiEditor() {
                     <span>|</span>
                     <span>Saving still refreshes legacy body and panel snapshots for compatibility.</span>
                   </div>
+                  )}
                 </div>
                 </div>
+                )}
               </div>
             </div>
           </div>
 
+          {!editorPreviewMode && (
           <div className="w-[360px] shrink-0 border-l flex flex-col" style={{ borderLeftColor: "#15264B", background: "#081129" }}>
             <div className="grid grid-cols-3 border-b" style={{ borderBottomColor: "#15264B" }}>
               {([
@@ -3500,6 +4549,10 @@ export function WikiEditor() {
                     <button onClick={() => applySelectionLayoutAction("distribute-vertical")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Distribute Y</button>
                     <button onClick={() => applySelectionLayoutAction("match-width")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Match Width</button>
                     <button onClick={() => applySelectionLayoutAction("match-height")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Match Height</button>
+                    <button onClick={() => applySmartLayoutGroup("stack")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Make Stack</button>
+                    <button onClick={() => applySmartLayoutGroup("columns")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Make Columns</button>
+                    <button onClick={() => applySmartLayoutGroup("wrap")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Make Wrap</button>
+                    <button onClick={ungroupSelectedBlocks} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Ungroup</button>
                   </div>
                 </div>
               )}
@@ -3561,6 +4614,51 @@ export function WikiEditor() {
                           </select>
                         </div>
                       </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label style={labelStyle}>Caption Placement</label>
+                          <select
+                            value={selectedBlock.imageCaptionPlacement || "below"}
+                            onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageCaptionPlacement: event.target.value as WikiArticleBlock["imageCaptionPlacement"] }))}
+                            className={`${inputClass} cursor-pointer`}
+                            style={inputStyle}
+                          >
+                            <option value="below">Below Image</option>
+                            <option value="overlay">Overlay</option>
+                            <option value="hidden">Hidden</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Storage Asset</label>
+                          <div className="text-[10px] px-3 py-2 rounded-md border truncate" style={{ borderColor: "#1A345B", background: "#09142D", color: "#7A9ABB" }}>
+                            {selectedBlock.imageStorageAssetId || "Direct URL / not linked"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label style={labelStyle}>Focal X ({selectedBlock.imageFocalX ?? 50}%)</label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={selectedBlock.imageFocalX ?? 50}
+                            onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageFocalX: Number(event.target.value) }))}
+                            className="w-full"
+                          />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>Focal Y ({selectedBlock.imageFocalY ?? 50}%)</label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={selectedBlock.imageFocalY ?? 50}
+                            onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageFocalY: Number(event.target.value) }))}
+                            className="w-full"
+                          />
+                        </div>
+                      </div>
                     </>
                   )}
                   {selectedBlock.type === "heading" && (
@@ -3608,6 +4706,13 @@ export function WikiEditor() {
                               Right
                             </button>
                             <button
+                              onClick={() => duplicateReferenceTableColumn(selectedBlock.id, columnIndex)}
+                              className={`${retro.button} px-2 py-1 text-[9px]`}
+                              style={S_ACCENT}
+                            >
+                              Copy
+                            </button>
+                            <button
                               onClick={() => removeReferenceTableColumn(selectedBlock.id, columnIndex)}
                               disabled={columns.length <= 1}
                               className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`}
@@ -3646,6 +4751,13 @@ export function WikiEditor() {
                               style={S_SUBTLE}
                             >
                               Down
+                            </button>
+                            <button
+                              onClick={() => duplicateReferenceTableRow(selectedBlock.id, row.id)}
+                              className={`${retro.button} px-2 py-1 text-[9px]`}
+                              style={S_ACCENT}
+                            >
+                              Copy
                             </button>
                             <button
                               onClick={() => removeReferenceTableRow(selectedBlock.id, row.id)}
@@ -3692,6 +4804,13 @@ export function WikiEditor() {
                               style={S_SUBTLE}
                             >
                               Down
+                            </button>
+                            <button
+                              onClick={() => duplicateKeyValueItem(selectedBlock.id, item.id)}
+                              className={`${retro.button} px-2 py-1 text-[9px]`}
+                              style={S_ACCENT}
+                            >
+                              Copy
                             </button>
                             <button
                               onClick={() => removeKeyValueItem(selectedBlock.id, item.id)}
@@ -3790,6 +4909,91 @@ export function WikiEditor() {
                     <button onClick={() => nudgeBlock(selectedBlock.id, 0, -1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Up</button>
                     <button onClick={() => nudgeBlock(selectedBlock.id, 0, 1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Down</button>
                   </div>
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Fluid Behavior</div>
+                      <div className="mt-1 text-[10px]" style={{ color: "#8EA9D7" }}>
+                        These settings guide responsive previews and future section tools while preserving the authored desktop grid.
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Width Mode</label>
+                        <select
+                          value={selectedBlock.fluid?.widthMode || "fixed"}
+                          onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, fluid: { ...block.fluid, widthMode: event.target.value as NonNullable<WikiArticleBlock["fluid"]>["widthMode"] } }))}
+                          className={`${inputClass} cursor-pointer`}
+                          style={inputStyle}
+                        >
+                          <option value="fixed">Fixed</option>
+                          <option value="fill">Fill Section</option>
+                          <option value="hug">Hug Content</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Height Mode</label>
+                        <select
+                          value={selectedBlock.fluid?.heightMode || "fixed"}
+                          onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, fluid: { ...block.fluid, heightMode: event.target.value as NonNullable<WikiArticleBlock["fluid"]>["heightMode"] } }))}
+                          className={`${inputClass} cursor-pointer`}
+                          style={inputStyle}
+                        >
+                          <option value="fixed">Fixed</option>
+                          <option value="hug">Hug Content</option>
+                          <option value="fill">Fill Section</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Mobile Behavior</label>
+                        <select
+                          value={selectedBlock.fluid?.mobileBehavior || selectedBlock.mobileCollapseMode || "stack"}
+                          onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                            ...block,
+                            mobileCollapseMode: event.target.value as WikiArticleBlock["mobileCollapseMode"],
+                            fluid: { ...block.fluid, mobileBehavior: event.target.value as NonNullable<WikiArticleBlock["fluid"]>["mobileBehavior"] },
+                          }))}
+                          className={`${inputClass} cursor-pointer`}
+                          style={inputStyle}
+                        >
+                          <option value="stack">Stack</option>
+                          <option value="scrollX">Horizontal Scroll</option>
+                          <option value="compact">Compact / Scroll Y</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Mobile Order</label>
+                        <input
+                          type="number"
+                          value={selectedBlock.fluid?.preferredMobileOrder ?? ""}
+                          placeholder="Auto"
+                          onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                            ...block,
+                            fluid: {
+                              ...block.fluid,
+                              preferredMobileOrder: event.target.value === "" ? undefined : Number(event.target.value),
+                            },
+                          }))}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border px-3 py-2" style={{ borderColor: "#17315A", background: "#071126" }}>
+                      <span className="text-[11px]" style={{ color: "#D3E1FF" }}>Keep image/aspect ratio</span>
+                      <button
+                        onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, fluid: { ...block.fluid, keepAspectRatio: !block.fluid?.keepAspectRatio } }))}
+                        className={`${retro.button} px-2 py-1 text-[10px]`}
+                        style={selectedBlock.fluid?.keepAspectRatio ? S_ACCENT : S_SUBTLE}
+                      >
+                        {selectedBlock.fluid?.keepAspectRatio ? "On" : "Off"}
+                      </button>
+                    </div>
+                    {(selectedBlock.layoutGroupId || selectedBlock.layoutGroupMode !== "manual") && (
+                      <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#24436D", background: "#071126", color: "#A8D8FF" }}>
+                        Group: {selectedBlock.layoutGroupName || "Unnamed Group"} | {selectedBlock.layoutGroupMode || "manual"}
+                      </div>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label style={labelStyle}>Padding</label>
@@ -3880,7 +5084,10 @@ export function WikiEditor() {
                         value={canvasSettings.preset}
                         onChange={(event) => {
                           const preset = event.target.value as keyof typeof WIKI_CANVAS_PRESETS;
-                          update("canvasSettings", { ...WIKI_CANVAS_PRESETS[preset] });
+                          update("canvasSettings", normalizeWikiCanvasSettings({
+                            ...WIKI_CANVAS_PRESETS[preset],
+                            articleChromeLayouts: canvasSettings.articleChromeLayouts,
+                          }));
                         }}
                         className={`${inputClass} cursor-pointer`}
                         style={inputStyle}
@@ -3938,6 +5145,25 @@ export function WikiEditor() {
                       />
                     </div>
                   </div>
+                  <div className="rounded-md border p-3 space-y-2" style={{ borderColor: layoutQaFindings.length ? "#5A4720" : "#1A4A36", background: layoutQaFindings.length ? "rgba(82, 52, 8, 0.22)" : "rgba(8, 56, 35, 0.24)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: layoutQaFindings.length ? "#FFD37A" : "#8FF0B8", fontWeight: 700 }}>Responsive QA</div>
+                      <div className="text-[10px]" style={{ color: "#A7C6EE" }}>{responsiveFrame.label}</div>
+                    </div>
+                    {layoutQaFindings.length === 0 ? (
+                      <div className="text-[10px]" style={{ color: "#9FDDB7" }}>
+                        No obvious desktop/mobile layout issues detected.
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {layoutQaFindings.map((finding) => (
+                          <div key={`inspector-${finding.id}`} className="text-[10px]" style={{ color: finding.severity === "warn" ? "#FFD37A" : "#A8D8FF" }}>
+                            {finding.text}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div>
                     <label style={labelStyle}>Article Quality</label>
                     <select value={page.articleQuality} onChange={(event) => update("articleQuality", event.target.value as SitePage["articleQuality"])} className={`${inputClass} cursor-pointer`} style={inputStyle}>
@@ -3989,6 +5215,7 @@ export function WikiEditor() {
               )}
             </div>
           </div>
+          )}
         </div>
 
         {showDraftRestore && (
@@ -4008,6 +5235,159 @@ export function WikiEditor() {
             </div>
           </div>
         )}
+
+        <input
+          ref={articleImportInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(event) => void handleImportArticleFile(event.target.files?.[0])}
+        />
+
+        {showCommandPalette && (
+          <div
+            className="fixed inset-0 z-[110] flex items-start justify-center px-4 pt-[12vh]"
+            style={{ background: "rgba(0,0,0,0.62)", backdropFilter: "blur(4px)" }}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) setShowCommandPalette(false);
+            }}
+          >
+            <div className="w-full max-w-[640px] overflow-hidden rounded-[10px] border" style={{ borderColor: "#294A74", background: "#081129", boxShadow: "0 24px 60px rgba(0,0,0,0.5)" }}>
+              <div className="border-b px-4 py-3" style={{ borderBottomColor: "#17355D", background: "linear-gradient(180deg, #102040 0%, #0A1630 100%)" }}>
+                <div className="flex items-center gap-2">
+                  <Search size={14} style={{ color: "#8AB4FF" }} />
+                  <input
+                    value={commandPaletteQuery}
+                    onChange={(event) => setCommandPaletteQuery(event.target.value)}
+                    placeholder="Search commands, blocks, templates, and recovery..."
+                    className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
+                    style={{ color: "#D3E1FF" }}
+                    autoFocus
+                  />
+                  <button onClick={() => setShowCommandPalette(false)} className="hover:opacity-80">
+                    <X size={14} style={{ color: "#7A9ABB" }} />
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-[54vh] overflow-y-auto p-2">
+                {visibleCommandPaletteItems.length === 0 && (
+                  <div className="px-4 py-8 text-center text-[11px]" style={{ color: "#7A9ABB" }}>
+                    No matching commands.
+                  </div>
+                )}
+                {visibleCommandPaletteItems.map((item) => (
+                  <button
+                    key={item.label}
+                    disabled={item.disabled}
+                    onClick={() => {
+                      item.action();
+                      setShowCommandPalette(false);
+                    }}
+                    className="w-full rounded-md px-3 py-3 text-left transition-colors disabled:opacity-40"
+                    style={{ color: "#D3E1FF", background: "transparent" }}
+                    onMouseEnter={(event) => { event.currentTarget.style.background = "#0D1B3A"; }}
+                    onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div className="text-[12px] font-bold">{item.label}</div>
+                    <div className="mt-0.5 text-[10px]" style={{ color: "#8CA0C2" }}>{item.description}</div>
+                  </button>
+                ))}
+              </div>
+              <div className="border-t px-4 py-2 text-[10px]" style={{ borderTopColor: "#17355D", color: "#7A9ABB" }}>
+                Shortcuts: Ctrl/Cmd+K opens commands, Delete removes selected blocks, Ctrl/Cmd+D duplicates, arrows nudge, Shift+arrows nudge farther.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showRecoveryDrawer && (
+          <div className="fixed inset-0 z-[105] flex justify-end" style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(3px)" }} onClick={(event) => { if (event.target === event.currentTarget) setShowRecoveryDrawer(false); }}>
+            <div className="h-full w-full max-w-[460px] overflow-y-auto border-l" style={{ borderLeftColor: "#294A74", background: "#081129", boxShadow: "-20px 0 50px rgba(0,0,0,0.45)" }}>
+              <div className="sticky top-0 z-10 border-b px-5 py-4" style={{ borderBottomColor: "#17355D", background: "linear-gradient(180deg, #102040 0%, #0A1630 100%)" }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <History size={15} style={{ color: "#FFD37A" }} />
+                    <div>
+                      <div className="text-[14px] font-bold" style={{ color: "#D3E1FF" }}>Article Recovery</div>
+                      <div className="text-[10px]" style={{ color: "#7A9ABB" }}>Drafts, revision snapshots, export, and import.</div>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowRecoveryDrawer(false)} className="hover:opacity-80">
+                    <X size={15} style={{ color: "#7A9ABB" }} />
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-4 p-5">
+                <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                  <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Quick Safety</div>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <button onClick={() => void saveManualRevision()} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_ACCENT}>
+                      <History size={10} className="inline mr-1" /> Checkpoint
+                    </button>
+                    <button onClick={exportCurrentArticle} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_SUBTLE}>
+                      <Download size={10} className="inline mr-1" /> Export
+                    </button>
+                    <button onClick={() => articleImportInputRef.current?.click()} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_SUBTLE}>
+                      <Upload size={10} className="inline mr-1" /> Import
+                    </button>
+                    <button
+                      onClick={() => hasRecoverableDraft && setShowDraftRestore(true)}
+                      disabled={!hasRecoverableDraft}
+                      className={`${retro.button} px-3 py-2 text-[10px] disabled:opacity-40`}
+                      style={hasRecoverableDraft ? S_WARN : S_SUBTLE}
+                    >
+                      <FileText size={10} className="inline mr-1" /> {hasRecoverableDraft ? "Drafts" : "No Draft"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Saved Revisions</div>
+                      <div className="mt-1 text-[10px]" style={{ color: "#8CA0C2" }}>{currentArticleRevisions.length} checkpoint{currentArticleRevisions.length === 1 ? "" : "s"} for this article.</div>
+                    </div>
+                    <span className="text-[9px] px-2 py-0.5" style={{ color: "#FFD37A", border: "1px solid #5B4318", background: "#1A1308" }}>
+                      Keeps {MAX_WIKI_REVISIONS_PER_ARTICLE}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {currentArticleRevisions.length === 0 && (
+                      <div className="rounded-md border px-3 py-4 text-center text-[10px]" style={{ borderColor: "#1A345B", color: "#7A9ABB" }}>
+                        No revisions yet. Save the article or create a manual checkpoint.
+                      </div>
+                    )}
+                    {currentArticleRevisions.map((revision) => (
+                      <div key={revision.id} className="rounded-md border px-3 py-3" style={{ borderColor: "#17355D", background: "#071126" }}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-[11px] font-bold" style={{ color: "#D3E1FF" }}>{revision.label}</div>
+                            <div className="mt-1 text-[9px]" style={{ color: "#7A9ABB" }}>
+                              {new Date(revision.createdAt).toLocaleString()} | {revision.source}
+                            </div>
+                          </div>
+                          <button onClick={() => void restoreRevision(revision)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_ACCENT}>
+                            Restore
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <ImageStoragePickerModal
+          open={!!imagePickerTarget}
+          images={storedImages}
+          title="Wiki Image Storage"
+          fallbackMode={sharedImageStorageFallback}
+          onClose={() => setImagePickerTarget(null)}
+          onSelect={handleStoredImageSelect}
+          onUploadFiles={handleStoredImageUpload}
+        />
 
         <TemplatePickerModal
           open={showTemplatePicker}
@@ -4283,7 +5663,7 @@ export function WikiEditor() {
               </div>
             )}
 
-            {/* ─── ARTICLE SETTINGS TAB ��── */}
+            {/* Article settings tab */}
             {activePanel === "settings" && (
               <div className="space-y-4">
                 <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>

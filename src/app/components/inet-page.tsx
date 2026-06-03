@@ -11,6 +11,7 @@ import { safeGetItem, safeGetJson } from "./safe-storage";
 import { getPageIcon } from "./page-icons";
 import { RenderFormattedText } from "./render-text";
 import {
+  DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS,
   WIKI_BLOCK_COLUMNS,
   WIKI_BLOCK_LAYOUT_VERSION,
   compareWikiBlocksForLayout,
@@ -18,6 +19,7 @@ import {
   normalizeWikiArticleBlocks,
   normalizeWikiCanvasSettings,
   type WikiArticleBlock,
+  type WikiArticleChromeField,
   type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
 import {
@@ -283,6 +285,17 @@ export function InetPage() {
   const borderColor = lighten(bg, 25);
   const mutedText = lighten(bg, 60);
   const canvasSettings = normalizeWikiCanvasSettings(page.canvasSettings);
+  const hasAuthoredArticleChromeLayout = !!page.canvasSettings?.articleChromeLayouts;
+  const articleChromeFields: WikiArticleChromeField[] = ["title", "subtitle", "description"];
+  const articleChromeLayouts = canvasSettings.articleChromeLayouts || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS;
+  const articleChromeRowHeight = 28;
+  const articleChromeCanvasHeight = Math.max(
+    220,
+    ...articleChromeFields.map((field) => {
+      const layout = articleChromeLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
+      return (layout.rowStart + layout.rowSpan + 1) * articleChromeRowHeight;
+    }),
+  );
 
   const bodyParagraphs = (page.body || "").trim();
   const hasBody = bodyParagraphs.length > 0;
@@ -312,7 +325,11 @@ export function InetPage() {
       return true;
     })
     .sort(compareWikiBlocksForLayout);
-  const mobileBlocks = [...visibleBlocks].sort(compareWikiBlocksForLayout);
+  const mobileBlocks = [...visibleBlocks].sort((a, b) => {
+    const aOrder = a.fluid?.preferredMobileOrder ?? a.mobilePriority ?? a.layout.rowStart * 100 + a.layout.colStart;
+    const bOrder = b.fluid?.preferredMobileOrder ?? b.mobilePriority ?? b.layout.rowStart * 100 + b.layout.colStart;
+    return aOrder - bOrder || compareWikiBlocksForLayout(a, b);
+  });
   const pageTitleLookup = new Map(pages.map((entry) => [entry.id, entry.title]));
 
   const iconMode = page.pageIcon || "globe";
@@ -500,21 +517,36 @@ export function InetPage() {
       }
       case "image":
         return (
-          <figure style={blockShellStyle}>
+          <figure style={{ ...blockShellStyle, position: "relative", overflow: block.imageCaptionPlacement === "overlay" ? "hidden" : undefined }}>
             {block.imageUrl ? (
               <img
                 src={block.imageUrl}
                 alt={block.imageAlt || block.title || "Article media"}
                 className="w-full"
-                style={{ borderRadius: 6, maxHeight: mode === "mobile" ? 280 : 420, objectFit: block.cropMode === "cover" ? "cover" : "contain", background: "#050518" }}
+                style={{
+                  borderRadius: 6,
+                  maxHeight: mode === "mobile" ? (block.fluid?.mobileBehavior === "compact" ? 220 : 280) : 420,
+                  aspectRatio: block.fluid?.keepAspectRatio ? "16 / 9" : undefined,
+                  objectFit: block.cropMode === "cover" ? "cover" : "contain",
+                  objectPosition: `${block.imageFocalX ?? 50}% ${block.imageFocalY ?? 50}%`,
+                  background: "#050518",
+                }}
               />
             ) : (
               <div className="rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ minHeight: 160, borderColor: borderTone, color: mutedText }}>
                 No image provided yet.
               </div>
             )}
-            {(block.imageCaption || block.title) && (
-              <figcaption className="mt-2 text-[11px]" style={{ color: mutedText, fontStyle: "italic", fontFamily: font }}>
+            {(block.imageCaption || block.title) && block.imageCaptionPlacement !== "hidden" && (
+              <figcaption
+                className={block.imageCaptionPlacement === "overlay" ? "absolute inset-x-0 bottom-0 px-3 py-2 text-[11px]" : "mt-2 text-[11px]"}
+                style={{
+                  color: block.imageCaptionPlacement === "overlay" ? "#E8F0FF" : mutedText,
+                  background: block.imageCaptionPlacement === "overlay" ? "linear-gradient(180deg, transparent, rgba(0,0,0,0.78))" : undefined,
+                  fontStyle: "italic",
+                  fontFamily: font,
+                }}
+              >
                 {block.imageCaption || block.title}
               </figcaption>
             )}
@@ -1048,28 +1080,103 @@ export function InetPage() {
             <div className="flex-1 min-w-0 order-1 md:order-2">
               {/* Article Header */}
               <div className="mb-4 border-b-2 pb-4" style={{ borderBottomColor: borderColor }}>
-                <div className="flex items-start gap-3">
-                  {iconMode === "custom" && page.pageIconUrl ? (
-                    <img src={page.pageIconUrl} alt="" className="shrink-0 mt-1 object-contain" style={{ width: 28, height: 28 }} />
-                  ) : iconMode !== "none" ? (
-                    <PageIcon size={28} style={{ color: accent }} className="shrink-0 mt-1" />
-                  ) : null}
-                  <div>
-                    <h1 className="text-[24px] mb-1" style={{ color: txt, fontWeight: 700, fontFamily: font }}>
-                      {page.title}
-                    </h1>
-                    {page.subtitle && (
-                      <p className="text-[14px] italic" style={{ color: mutedText, fontFamily: font }}>
-                        {page.subtitle}
+                {hasAuthoredArticleChromeLayout ? (
+                  <>
+                    <div
+                      className="relative hidden md:block mx-auto"
+                      style={{ maxWidth: canvasSettings.frameWidth, height: articleChromeCanvasHeight }}
+                    >
+                      {iconMode === "custom" && page.pageIconUrl ? (
+                        <img src={page.pageIconUrl} alt="" className="absolute object-contain" style={{ width: 28, height: 28, left: 0, top: 4 }} />
+                      ) : iconMode !== "none" ? (
+                        <PageIcon size={28} style={{ color: accent, position: "absolute", left: 0, top: 4 }} />
+                      ) : null}
+                      {articleChromeFields.map((field) => {
+                        const layout = articleChromeLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
+                        const content = field === "title"
+                          ? page.title
+                          : field === "subtitle"
+                            ? page.subtitle
+                            : page.description;
+                        if (!content && field !== "title") return null;
+                        return (
+                          <div
+                            key={field}
+                            className="absolute overflow-hidden px-3 py-2"
+                            style={{
+                              left: `${((layout.colStart - 1) / WIKI_BLOCK_COLUMNS) * 100}%`,
+                              width: `${(layout.colSpan / WIKI_BLOCK_COLUMNS) * 100}%`,
+                              top: (layout.rowStart - 1) * articleChromeRowHeight,
+                              minHeight: layout.rowSpan * articleChromeRowHeight,
+                            }}
+                          >
+                            {field === "title" ? (
+                              <h1 className="m-0 leading-tight" style={{ color: txt, fontWeight: 700, fontFamily: font, fontSize: 30 }}>
+                                {content || "Untitled Article"}
+                              </h1>
+                            ) : field === "subtitle" ? (
+                              <p className="m-0 leading-snug" style={{ color: mutedText, fontFamily: font, fontSize: 15, fontStyle: "italic" }}>
+                                {content}
+                              </p>
+                            ) : (
+                              <p className="m-0 leading-relaxed" style={{ color: txt, fontFamily: font, fontSize: 13 }}>
+                                {content}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="md:hidden">
+                      <div className="flex items-start gap-3">
+                        {iconMode === "custom" && page.pageIconUrl ? (
+                          <img src={page.pageIconUrl} alt="" className="shrink-0 mt-1 object-contain" style={{ width: 28, height: 28 }} />
+                        ) : iconMode !== "none" ? (
+                          <PageIcon size={28} style={{ color: accent }} className="shrink-0 mt-1" />
+                        ) : null}
+                        <div>
+                          <h1 className="text-[24px] mb-1" style={{ color: txt, fontWeight: 700, fontFamily: font }}>
+                            {page.title}
+                          </h1>
+                          {page.subtitle && (
+                            <p className="text-[14px] italic" style={{ color: mutedText, fontFamily: font }}>
+                              {page.subtitle}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {page.description && (
+                        <p className="text-[13px] mt-3 leading-relaxed" style={{ color: txt, fontFamily: font }}>
+                          {page.description}
+                        </p>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-start gap-3">
+                      {iconMode === "custom" && page.pageIconUrl ? (
+                        <img src={page.pageIconUrl} alt="" className="shrink-0 mt-1 object-contain" style={{ width: 28, height: 28 }} />
+                      ) : iconMode !== "none" ? (
+                        <PageIcon size={28} style={{ color: accent }} className="shrink-0 mt-1" />
+                      ) : null}
+                      <div>
+                        <h1 className="text-[24px] mb-1" style={{ color: txt, fontWeight: 700, fontFamily: font }}>
+                          {page.title}
+                        </h1>
+                        {page.subtitle && (
+                          <p className="text-[14px] italic" style={{ color: mutedText, fontFamily: font }}>
+                            {page.subtitle}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {page.description && (
+                      <p className="text-[13px] mt-3 leading-relaxed" style={{ color: txt, fontFamily: font }}>
+                        {page.description}
                       </p>
                     )}
-                  </div>
-                </div>
-                {/* Description as lead paragraph */}
-                {page.description && (
-                  <p className="text-[13px] mt-3 leading-relaxed" style={{ color: txt, fontFamily: font }}>
-                    {page.description}
-                  </p>
+                  </>
                 )}
               </div>
 
@@ -1092,7 +1199,15 @@ export function InetPage() {
                   </div>
                   <div className="md:hidden space-y-4 mb-6">
                     {mobileBlocks.map((block) => (
-                      <div key={`mobile-${block.id}`} id={`block-${block.id}`}>
+                      <div
+                        key={`mobile-${block.id}`}
+                        id={`block-${block.id}`}
+                        style={{
+                          overflowX: (block.fluid?.mobileBehavior || block.mobileCollapseMode) === "scrollX" ? "auto" : undefined,
+                          maxHeight: (block.fluid?.mobileBehavior || block.mobileCollapseMode) === "compact" ? 420 : undefined,
+                          overflowY: (block.fluid?.mobileBehavior || block.mobileCollapseMode) === "compact" ? "auto" : undefined,
+                        }}
+                      >
                         {renderArticleBlock(block, "mobile")}
                       </div>
                     ))}

@@ -8,6 +8,7 @@ const LEVEL_CATEGORIES_FALLBACK_STATE_KEY = "inet-dm-player-level-categories-fal
 const LOCAL_DM_MAGIC_LISTS_KEY = "inet-dm-player-magic-lists";
 const MAGIC_LISTS_FALLBACK_STATE_KEY = "inet-dm-player-magic-lists-fallback";
 const LOCAL_WIKI_BLOCK_PRESETS_KEY = "inet-wiki-block-presets";
+const LOCAL_WIKI_ARTICLE_REVISIONS_KEY = "inet-wiki-article-revisions";
 const IMAGE_STORAGE_FALLBACK_STATE_KEY = "inet-dm-image-storage-fallback";
 const WIKI_BLOCK_PRESETS_FALLBACK_STATE_KEY = "inet-wiki-block-presets-fallback";
 const LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
@@ -20,25 +21,6 @@ type LocalCollectionFallbackState = {
   mode: "local";
   reason: "deployment" | "transient";
   retryAfter: number;
-};
-export type GitHubBackupStatus = {
-  configured: boolean;
-  owner: string;
-  repo: string;
-  branch: string;
-  basePath: string;
-  triggerSecretConfigured: boolean;
-  lastBackup: {
-    status: "idle" | "success" | "error";
-    trigger: "manual" | "weekly";
-    startedAt: string;
-    finishedAt?: string;
-    snapshotPath?: string;
-    latestPath?: string;
-    commitSha?: string;
-    commitUrl?: string;
-    error?: string;
-  } | null;
 };
 let inMemoryLevelCategoriesFallbackState: LocalCollectionFallbackState | null = null;
 let hasLoggedLevelCategoriesFallback = false;
@@ -243,6 +225,14 @@ function isDeploymentWikiBlockPresetsFailure(err: unknown) {
   return /404|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message);
 }
 
+function shouldFallbackWikiArticleRevisions(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return (
+    /404|Invalid API key|No API key found|Request failed: 404|42501|row-level security/i.test(message) ||
+    /Failed to fetch|NetworkError|Load failed|timed out|timeout/i.test(message)
+  );
+}
+
 function loadLocalDMPlayerLevelCategories(playerId: string) {
   const stored = safeGetJson<LocalLevelCategoryMap>(LOCAL_DM_LEVEL_CATEGORIES_KEY, {});
   return Array.isArray(stored[playerId]) ? stored[playerId] : [];
@@ -259,6 +249,10 @@ function loadLocalDMImageStorage() {
 
 function loadLocalWikiBlockPresets() {
   return safeGetJson<Record<string, unknown>[]>(LOCAL_WIKI_BLOCK_PRESETS_KEY, []);
+}
+
+function loadLocalWikiArticleRevisions() {
+  return safeGetJson<Record<string, unknown>[]>(LOCAL_WIKI_ARTICLE_REVISIONS_KEY, []);
 }
 
 function getActiveLevelCategoriesFallbackState() {
@@ -433,6 +427,10 @@ function saveLocalDMImageStorage(images: Record<string, unknown>[]) {
 
 function saveLocalWikiBlockPresets(presets: Record<string, unknown>[]) {
   safeSetJson(LOCAL_WIKI_BLOCK_PRESETS_KEY, presets);
+}
+
+function saveLocalWikiArticleRevisions(revisions: Record<string, unknown>[]) {
+  safeSetJson(LOCAL_WIKI_ARTICLE_REVISIONS_KEY, revisions);
 }
 
 function shouldUseLocalLevelCategoriesFallback() {
@@ -721,6 +719,31 @@ export async function saveWikiBlockPresets(presets: Record<string, unknown>[]) {
   }
 }
 
+export async function loadWikiArticleRevisions<T>() {
+  try {
+    const body = await apiFetch("/wiki/article-revisions", { method: "GET" });
+    const revisions = (body?.wikiArticleRevisions ?? []) as T[];
+    saveLocalWikiArticleRevisions(revisions as unknown as Record<string, unknown>[]);
+    return revisions;
+  } catch (err) {
+    if (!shouldFallbackWikiArticleRevisions(err)) throw err;
+    return loadLocalWikiArticleRevisions() as T[];
+  }
+}
+
+export async function saveWikiArticleRevisions(revisions: Record<string, unknown>[]) {
+  try {
+    await apiFetch("/wiki/article-revisions/save", {
+      method: "POST",
+      body: JSON.stringify({ wikiArticleRevisions: revisions }),
+    });
+    saveLocalWikiArticleRevisions(revisions);
+  } catch (err) {
+    if (!shouldFallbackWikiArticleRevisions(err)) throw err;
+    saveLocalWikiArticleRevisions(revisions);
+  }
+}
+
 export async function purgeDMDeletedPlayer(playerId: string) {
   return apiFetch("/dm/deleted-player/purge", {
     method: "POST",
@@ -761,19 +784,4 @@ export async function saveWikiCustomPanelStyles(
     method: "POST",
     body: JSON.stringify({ customPanelStyles }),
   });
-}
-
-export async function loadDMGitHubBackupStatus() {
-  const body = await apiFetch("/dm/backups/github/status", {
-    method: "GET",
-  });
-  return (body?.status ?? null) as GitHubBackupStatus | null;
-}
-
-export async function runDMGitHubBackup(trigger: "manual" | "weekly" = "manual") {
-  const body = await apiFetch("/dm/backups/github/run", {
-    method: "POST",
-    body: JSON.stringify({ trigger }),
-  });
-  return (body?.status ?? null) as GitHubBackupStatus["lastBackup"];
 }
