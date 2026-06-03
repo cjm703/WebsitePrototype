@@ -7,7 +7,7 @@ import {
   ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp, Dices,
+  Newspaper, Copy, Zap, ChevronUp, Dices, Images,
 } from "lucide-react";
 import { DMNodeTreeBuilder, type NodeTree } from "./node-trees";
 import {
@@ -29,6 +29,7 @@ import { DMNewsManager } from "./dm-news-manager";
 import { DMCustomizeSection } from "./dm-customize-section";
 import { DMWikiSection } from "./dm-wiki-section";
 import { DMTagsSection } from "./dm-tags-section";
+import { DMImageStorageSection } from "./dm-image-storage-section";
 import { RichTextEditor } from "./rich-text-editor";
 import { DMInfoManagerSection } from "./dm-area-info-panel";
 import { DMCardManagerSection } from "./dm-card-manager-section";
@@ -472,6 +473,7 @@ type SectionId =
   | "players"
   | "items"
   | "cards"
+  | "images"
   | "info"
   | "pages"
   | "tags"
@@ -492,6 +494,7 @@ const DM_SECTIONS = [
   { id: "players" as const, label: "Players", icon: Users },
   { id: "items" as const, label: "Manage Items", icon: Package },
   { id: "cards" as const, label: "Manage Cards", icon: CreditCard },
+  { id: "images" as const, label: "Image Storage", icon: Images },
   { id: "nodetrees" as const, label: "Node Trees", icon: GitBranch },
   { id: "info" as const, label: "Manage Info", icon: FileText },
   { id: "notifs" as const, label: "Notifications", icon: Bell },
@@ -2396,6 +2399,11 @@ const handleSaveItem = async () => {
               </div>
             </div>
           )}
+
+          {/* ======================================================= */}
+          {/* IMAGE STORAGE                                            */}
+          {/* ======================================================= */}
+          {activeSection === "images" && <DMImageStorageSection />}
 
           {/* ======================================================= */}
           {/* MANAGE NEWS (extracted)                                   */}

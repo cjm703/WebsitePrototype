@@ -165,6 +165,10 @@ export const loadDMCustomReactions = <T>() =>
   loadDMCollection<T>("/dm/custom-reactions", "reactions");
 export const saveDMCustomReactions = (reactions: Record<string, unknown>[]) =>
   saveDMCollection("/dm/custom-reactions/save", "reactions", reactions);
+export const loadDMImageStorage = <T>() =>
+  loadDMCollection<T>("/dm/image-storage", "images");
+export const saveDMImageStorage = (images: Record<string, unknown>[]) =>
+  saveDMCollection("/dm/image-storage/save", "images", images);
 
 export async function loadDMTags<T>(kind: DMTagKind) {
   const body = await apiFetch(`/dm/tags/${encodeURIComponent(kind)}`, {

@@ -154,3 +154,18 @@ export interface LoginProfile {
   hasAuthCode: boolean;
   description: string;
 }
+
+export interface StoredImageAsset {
+  id: string;
+  name: string;
+  src: string;
+  alt?: string;
+  createdAt: string;
+  updatedAt: string;
+  contentType?: string;
+  sizeBytes?: number;
+  width?: number;
+  height?: number;
+  sourceContext?: string;
+  tags?: string[];
+}

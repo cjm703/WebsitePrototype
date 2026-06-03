@@ -166,6 +166,7 @@ function requireDM(playerId: string) {
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${playerId}`;
+const imageStorageKey = "inet-image-storage";
 const githubBackupStatusKey = "inet-github-backup-status";
 const GITHUB_API_BASE = "https://api.github.com";
 
@@ -518,6 +519,7 @@ async function buildGitHubBackupPayload() {
     arcadeCatalogState,
     arcadeLeaderboardState,
     playerArcadeProfiles,
+    imageStorage,
   ] = await Promise.all([
     listPlayerScopedRows("player_quick_items"),
     listPlayerScopedRows("player_source_usage_log"),
@@ -568,6 +570,7 @@ async function buildGitHubBackupPayload() {
     loadSingletonCollectionRow("app_arcade_catalog_state"),
     loadSingletonCollectionRow("app_arcade_leaderboard_state"),
     listPlayerScopedRows("player_arcade_profiles"),
+    kv.get(imageStorageKey),
   ]);
 
   const magicLists = await Promise.all(
@@ -604,6 +607,7 @@ async function buildGitHubBackupPayload() {
       infoSubTabs,
       nodeTrees,
       notifications,
+      imageStorage: Array.isArray(imageStorage) ? imageStorage : [],
       tags: {
         item: itemTags,
         card: cardTags,
@@ -1593,14 +1597,15 @@ function registerRoutes(prefix: string) {
       const requesterId = await resolveSessionPlayerId(c);
       requireDM(requesterId);
 
-      const [sites, players, wikiTags, customPanelStyles] = await Promise.all([
+      const [sites, players, wikiTags, customPanelStyles, imageStorage] = await Promise.all([
         listCollectionRows("app_sites"),
         listEntityRows("app_players"),
         listTagRows("wiki"),
         listCollectionRows("app_custom_panel_styles"),
+        kv.get(imageStorageKey),
       ]);
 
-      return c.json({ sites, players, wikiTags, customPanelStyles });
+      return c.json({ sites, players, wikiTags, customPanelStyles, imageStorage: Array.isArray(imageStorage) ? imageStorage : [] });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
     }
@@ -2267,6 +2272,41 @@ function registerRoutes(prefix: string) {
       }
 
       await replaceEntityRows("app_deleted_players", body.players);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/dm/image-storage`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const images = await kv.get(imageStorageKey);
+      return c.json({ images: Array.isArray(images) ? images : [] });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/dm/image-storage/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      requireDM(playerId);
+
+      const body = await c.req.json();
+      if (!Array.isArray(body?.images)) {
+        return c.json({ error: "images must be an array" }, 400);
+      }
+
+      await kv.set(imageStorageKey, body.images);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

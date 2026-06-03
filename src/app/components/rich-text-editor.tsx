@@ -13,6 +13,8 @@ interface RichTextEditorProps {
   placeholder?: string;
   minHeight?: number;
   enableWikiLayouts?: boolean;
+  floatingToolbar?: boolean;
+  fillHeight?: boolean;
 }
 
 // ========================
@@ -249,7 +251,15 @@ function ToolDropdown({
 // ========================
 // Main Component
 // ========================
-export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, enableWikiLayouts = false }: RichTextEditorProps) {
+export function RichTextEditor({
+  value,
+  onChange,
+  placeholder,
+  minHeight = 120,
+  enableWikiLayouts = false,
+  floatingToolbar = false,
+  fillHeight = false,
+}: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const sizeDropRef = useRef<HTMLDivElement>(null);
   const savedSelectionRef = useRef<Range | null>(null);
@@ -265,6 +275,8 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
   const [tableCols, setTableCols] = useState("3");
   const [imagePopupOpen, setImagePopupOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
 
   // Close size dropdown on outside click
   useEffect(() => {
@@ -490,14 +502,38 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
     outline: "none",
   };
 
+  const hasOpenPopup = fontDropOpen || sizeDropOpen || layoutDropOpen || colorPickerOpen || tablePopupOpen || imagePopupOpen;
+  const showToolbar = !floatingToolbar || isHovered || isFocused || hasOpenPopup;
+  const editableAreaStyle: React.CSSProperties = {
+    position: "relative",
+    minHeight: fillHeight ? undefined : minHeight,
+    height: fillHeight ? "100%" : undefined,
+    flex: fillHeight ? 1 : undefined,
+    padding: floatingToolbar ? "12px 12px 10px" : "8px 12px",
+    color: "#C0D0F0",
+    fontSize: 13,
+    fontFamily: "'Tahoma', 'Verdana', sans-serif",
+    lineHeight: 1.6,
+    outline: "none",
+    overflowY: "auto",
+    maxHeight: fillHeight ? "none" : 400,
+    wordWrap: "break-word" as const,
+    overflowWrap: "break-word" as const,
+  };
+
   return (
     <div
       style={{
+        position: "relative",
         border: "1px solid #2A2A5A",
         borderRadius: 4,
-        overflow: "hidden",
+        overflow: floatingToolbar ? "visible" : "hidden",
         background: "#0A0A28",
+        minHeight,
+        height: fillHeight ? "100%" : undefined,
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       {/* ── Toolbar ── */}
       <div
@@ -506,9 +542,22 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
           flexWrap: "wrap",
           gap: 3,
           padding: "5px 6px",
-          background: "linear-gradient(180deg, #16163A 0%, #0E0E28 100%)",
-          borderBottom: "1px solid #2A2A5A",
+          background: floatingToolbar ? "rgba(14, 14, 40, 0.94)" : "linear-gradient(180deg, #16163A 0%, #0E0E28 100%)",
+          borderBottom: floatingToolbar ? "none" : "1px solid #2A2A5A",
+          border: floatingToolbar ? "1px solid #2A2A5A" : "none",
+          borderRadius: floatingToolbar ? 10 : 0,
           alignItems: "center",
+          position: floatingToolbar ? "absolute" : "relative",
+          top: floatingToolbar ? 10 : undefined,
+          left: floatingToolbar ? 8 : undefined,
+          right: floatingToolbar ? 8 : undefined,
+          zIndex: floatingToolbar ? 15 : undefined,
+          opacity: showToolbar ? 1 : 0,
+          transform: floatingToolbar ? `translateY(${showToolbar ? 0 : -6}px)` : undefined,
+          pointerEvents: floatingToolbar ? (showToolbar ? "auto" : "none") : undefined,
+          boxShadow: floatingToolbar ? "0 10px 24px rgba(0,0,0,0.28)" : "none",
+          backdropFilter: floatingToolbar ? "blur(8px)" : undefined,
+          transition: floatingToolbar ? "opacity 140ms ease, transform 140ms ease" : undefined,
         }}
       >
         {/* Font Family */}
@@ -940,22 +989,13 @@ export function RichTextEditor({ value, onChange, placeholder, minHeight = 120, 
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
-        onBlur={emitChange}
-        data-placeholder={placeholder}
-        style={{
-          position: "relative",
-          minHeight,
-          padding: "8px 12px",
-          color: "#C0D0F0",
-          fontSize: 13,
-          fontFamily: "'Tahoma', 'Verdana', sans-serif",
-          lineHeight: 1.6,
-          outline: "none",
-          overflowY: "auto",
-          maxHeight: 400,
-          wordWrap: "break-word" as const,
-          overflowWrap: "break-word" as const,
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => {
+          setIsFocused(false);
+          emitChange();
         }}
+        data-placeholder={placeholder}
+        style={editableAreaStyle}
         className="rich-text-editable"
       />
 

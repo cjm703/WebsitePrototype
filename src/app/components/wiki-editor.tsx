@@ -4,6 +4,7 @@ import { Resizable } from "re-resizable";
 import { retro } from "./retro-styles";
 import { RenderFormattedText } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
+import { ImageStoragePickerModal } from "./image-storage-picker";
 import { PAGE_ICONS, getPageIcon } from "./page-icons";
 import {
   ArrowLeft, Save, Globe, FileText, Plus, Trash2, X,
@@ -19,10 +20,11 @@ import { TemplatePickerModal, TemplateManagerModal } from "./wiki-templates";
 import type { WikiTemplate } from "./wiki-templates";
 import { WikiLinkDialog } from "./wiki-link-dialog";
 import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
-import { safeGetItem, safeRemoveItem, safeGetJson } from "./safe-storage";
+import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
   loadWikiBootstrap,
+  saveDMImageStorage,
   saveWikiCustomPanelStyles,
   saveWikiSites,
 } from "@/lib/player-state-api";
@@ -59,7 +61,13 @@ import {
   type WikiBlockType,
   type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
-import type { TagField, TagDefinition, PlayerData } from "./types";
+import type { TagField, TagDefinition, PlayerData, StoredImageAsset } from "./types";
+import {
+  IMAGE_STORAGE_LOCAL_KEY,
+  IMAGE_STORAGE_UPDATED_EVENT,
+  createStoredImageAssetsFromFiles,
+  mergeStoredImageAssets,
+} from "@/lib/image-storage";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_WARN, S_RED, S_SUBTLE, S_TEXT, S_MUTED, S_GREEN_BTN } from "./shared-styles";
 
 // ═══════════════════════════════════════════
@@ -423,6 +431,8 @@ export function WikiEditor() {
   const [spoilerLabel, setSpoilerLabel] = useState("Spoiler");
   const [spoilerPlayerIds, setSpoilerPlayerIds] = useState<string[]>([]);
   const [spoilerContent, setSpoilerContent] = useState("");
+  const [storedImages, setStoredImages] = useState<StoredImageAsset[]>([]);
+  const [imagePickerTarget, setImagePickerTarget] = useState<{ mode: "embed" | "block"; blockId?: string } | null>(null);
   const [imageUrl, setImageUrl] = useState("");
   const [imageCaption, setImageCaption] = useState("");
   const [imageAlign, setImageAlign] = useState<"left" | "center" | "right">("center");
@@ -447,6 +457,7 @@ export function WikiEditor() {
           players: safeGetJson<PlayerData[]>("inet-dm-players", []),
           wikiTags: safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []),
           customPanelStyles: safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []),
+          imageStorage: safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []),
         }));
 
         if (cancelled) return;
@@ -455,6 +466,9 @@ export function WikiEditor() {
         setPlayers(Array.isArray(bootstrap?.players) ? bootstrap.players : []);
         setWikiTagDefs(Array.isArray(bootstrap?.wikiTags) ? bootstrap.wikiTags : []);
         setCustomPanelStyles(Array.isArray(bootstrap?.customPanelStyles) ? bootstrap.customPanelStyles : []);
+        const nextImages = Array.isArray(bootstrap?.imageStorage) ? bootstrap.imageStorage : [];
+        setStoredImages(nextImages);
+        safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
       } catch (err) {
         if (cancelled) return;
         setWikiLoadError(err instanceof Error ? err.message : "Failed to load wiki editor data");
@@ -462,6 +476,7 @@ export function WikiEditor() {
         setPlayers(safeGetJson<PlayerData[]>("inet-dm-players", []));
         setWikiTagDefs(safeGetJson<WikiTagDefinition[]>("inet-dm-wikiTags", []));
         setCustomPanelStyles(safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []));
+        setStoredImages(safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []));
       } finally {
         if (!cancelled) setWikiLoading(false);
       }
@@ -568,6 +583,62 @@ export function WikiEditor() {
   };
 
   useEffect(() => { resetNewStyleForm(); }, [editingPanelId]);
+
+  useEffect(() => {
+    const handleImageStorageUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<{ images?: StoredImageAsset[] }>).detail;
+      if (!detail?.images) return;
+      const nextImages = Array.isArray(detail.images) ? detail.images : [];
+      setStoredImages(nextImages);
+      safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
+    };
+    window.addEventListener(IMAGE_STORAGE_UPDATED_EVENT, handleImageStorageUpdate as EventListener);
+    return () => {
+      window.removeEventListener(IMAGE_STORAGE_UPDATED_EVENT, handleImageStorageUpdate as EventListener);
+    };
+  }, []);
+
+  const persistStoredImages = useCallback(async (nextImages: StoredImageAsset[]) => {
+    try {
+      await saveDMImageStorage(nextImages as unknown as Record<string, unknown>[]);
+      setStoredImages(nextImages);
+      safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
+      window.dispatchEvent(new CustomEvent(IMAGE_STORAGE_UPDATED_EVENT, { detail: { images: nextImages } }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save image storage");
+      throw err;
+    }
+  }, []);
+
+  const openImageStoragePicker = useCallback((target: { mode: "embed" | "block"; blockId?: string }) => {
+    setImagePickerTarget(target);
+  }, []);
+
+  const handleStoredImageSelect = useCallback((image: StoredImageAsset) => {
+    if (imagePickerTarget?.mode === "block" && imagePickerTarget.blockId) {
+      updateSingleBlock(imagePickerTarget.blockId, (block) => ({
+        ...block,
+        imageUrl: image.src,
+        imageAlt: block.imageAlt || image.alt || image.name,
+      }));
+    } else {
+      setImageUrl(image.src);
+      if (!imageCaption.trim() && image.name) setImageCaption(image.name);
+    }
+    setImagePickerTarget(null);
+  }, [imageCaption, imagePickerTarget, updateSingleBlock]);
+
+  const handleStoredImageUpload = useCallback(async (files: File[]) => {
+    try {
+      const created = await createStoredImageAssetsFromFiles(files, "wiki-editor");
+      if (!created.length) return;
+      const nextImages = mergeStoredImageAssets(storedImages, created);
+      await persistStoredImages(nextImages);
+      handleStoredImageSelect(created[0]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload images into storage");
+    }
+  }, [handleStoredImageSelect, persistStoredImages, storedImages]);
 
   // ─── Category/Tag Helpers ───
   const allCategories = useMemo(() => Array.from(new Set(allPages.map((p) => p.category).filter(Boolean))), [allPages]);
@@ -1583,6 +1654,19 @@ export function WikiEditor() {
       );
     }
 
+    const paddingMode = block.appearance.padding || "normal";
+    const horizontalPad = paddingMode === "tight" ? 10 : paddingMode === "loose" ? 18 : 14;
+    const verticalPad = paddingMode === "tight" ? 8 : paddingMode === "loose" ? 16 : 11;
+    const blockShellStyle: React.CSSProperties = {
+      padding: `${verticalPad}px ${horizontalPad}px`,
+    };
+    const blockHeaderStyle: React.CSSProperties = {
+      padding: `${verticalPad}px ${horizontalPad}px ${Math.max(8, verticalPad - 1)}px`,
+    };
+    const blockContentStyle: React.CSSProperties = {
+      padding: `${block.title || block.subtitle ? 0 : verticalPad}px ${horizontalPad}px ${verticalPad}px`,
+    };
+
     const richEditor = (placeholder: string, html: string, onChange: (nextHtml: string) => void) => (
       isSelected || inlinePreviewEditorTarget === block.id
         ? (
@@ -1592,6 +1676,8 @@ export function WikiEditor() {
             placeholder={placeholder}
             minHeight={150}
             enableWikiLayouts
+            floatingToolbar
+            fillHeight
           />
         )
         : (
@@ -1602,7 +1688,7 @@ export function WikiEditor() {
     switch (block.type) {
       case "heading":
         return (
-          <div className="h-full flex flex-col justify-center gap-1">
+          <div className="h-full flex flex-col justify-center gap-1" style={blockShellStyle}>
             <InlineEdit
               tag={(block.headingLevel === 1 ? "h1" : block.headingLevel === 3 ? "h3" : "h2")}
               value={block.title}
@@ -1621,33 +1707,37 @@ export function WikiEditor() {
         );
       case "image":
         return (
-          <div className="h-full flex flex-col gap-3">
-            {block.imageUrl ? (
-              <img
-                src={block.imageUrl}
-                alt={block.imageAlt || block.title || "Article media"}
-                className="w-full rounded-md border"
-                style={{ borderColor: palette.border, objectFit: block.cropMode === "cover" ? "cover" : "contain", maxHeight: "100%", minHeight: 120, background: "#050518" }}
+          <div className="h-full flex flex-col gap-3" style={blockShellStyle}>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {block.imageUrl ? (
+                <img
+                  src={block.imageUrl}
+                  alt={block.imageAlt || block.title || "Article media"}
+                  className="h-full w-full rounded-md border"
+                  style={{ borderColor: palette.border, objectFit: block.cropMode === "cover" ? "cover" : "contain", minHeight: 120, background: "#050518" }}
+                />
+              ) : (
+                <div className="h-full rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ minHeight: 140, borderColor: palette.border, color: mutedText }}>
+                  Add an image URL in the inspector to place media here.
+                </div>
+              )}
+            </div>
+            <div className="shrink-0">
+              <InlineEdit
+                tag="div"
+                value={block.imageCaption || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, imageCaption: value }))}
+                placeholder="Image caption"
+                style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
               />
-            ) : (
-              <div className="rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ minHeight: 140, borderColor: palette.border, color: mutedText }}>
-                Add an image URL in the inspector to place media here.
-              </div>
-            )}
-            <InlineEdit
-              tag="div"
-              value={block.imageCaption || ""}
-              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, imageCaption: value }))}
-              placeholder="Image caption"
-              style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
-            />
+            </div>
           </div>
         );
       case "calloutPanel":
       case "spoilerBlock":
         return (
-          <div className="h-full flex flex-col gap-3">
-            <div className="space-y-1">
+          <div className="h-full flex flex-col">
+            <div className="shrink-0 space-y-1" style={blockHeaderStyle}>
               <InlineEdit
                 tag="h2"
                 value={block.title || ""}
@@ -1663,22 +1753,24 @@ export function WikiEditor() {
                 style={{ color: mutedText, fontSize: 11, fontStyle: "italic" }}
               />
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden" style={blockContentStyle}>
               {richEditor("Write callout content...", block.html, (nextHtml) => updateSingleBlock(block.id, (entry) => ({ ...entry, html: nextHtml })))}
             </div>
           </div>
         );
       case "referenceTable":
         return (
-          <div className="h-full flex flex-col gap-2">
-            <InlineEdit
-              tag="h2"
-              value={block.title || ""}
-              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
-              placeholder="Table title"
-              style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
-            />
-            <div className="overflow-auto rounded-md border" style={{ borderColor: palette.border }}>
+          <div className="h-full flex flex-col" style={blockShellStyle}>
+            <div className="shrink-0 pb-2">
+              <InlineEdit
+                tag="h2"
+                value={block.title || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+                placeholder="Table title"
+                style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto rounded-md border" style={{ borderColor: palette.border }}>
               <table className="w-full text-[11px]" style={{ borderCollapse: "collapse" }}>
                 <thead style={{ background: "rgba(255,255,255,0.04)" }}>
                   <tr>
@@ -1723,15 +1815,17 @@ export function WikiEditor() {
         );
       case "keyValueBox":
         return (
-          <div className="h-full flex flex-col gap-2">
-            <InlineEdit
-              tag="h2"
-              value={block.title || ""}
-              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
-              placeholder="Key-value box title"
-              style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
-            />
-            <div className="space-y-2">
+          <div className="h-full flex flex-col" style={blockShellStyle}>
+            <div className="shrink-0 pb-2">
+              <InlineEdit
+                tag="h2"
+                value={block.title || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+                placeholder="Key-value box title"
+                style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+              />
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-auto">
               {(block.items || []).map((item) => (
                 <div key={item.id} className="grid grid-cols-[minmax(90px,0.9fr)_1fr] gap-2 items-start">
                   {isSelected ? (
@@ -1762,15 +1856,17 @@ export function WikiEditor() {
         );
       case "wikiLinksList":
         return (
-          <div className="h-full flex flex-col gap-2">
-            <InlineEdit
-              tag="h2"
-              value={block.title || ""}
-              onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
-              placeholder="Related links"
-              style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
-            />
-            <div className="space-y-1 text-[11px]">
+          <div className="h-full flex flex-col" style={blockShellStyle}>
+            <div className="shrink-0 pb-2">
+              <InlineEdit
+                tag="h2"
+                value={block.title || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+                placeholder="Related links"
+                style={{ color: palette.accent, fontWeight: 700, fontSize: 16 }}
+              />
+            </div>
+            <div className="min-h-0 flex-1 space-y-1 overflow-auto text-[11px]">
               {(block.articleIds || []).length === 0 && (
                 <div style={{ color: mutedText }}>No linked articles yet.</div>
               )}
@@ -1792,7 +1888,7 @@ export function WikiEditor() {
         );
       case "divider":
         return (
-          <div className="h-full flex flex-col justify-center gap-2">
+          <div className="h-full flex flex-col justify-center gap-2" style={blockShellStyle}>
             <div style={{ height: 1, background: `linear-gradient(90deg, ${palette.border}, ${palette.accent}, ${palette.border})` }} />
             <InlineEdit
               tag="div"
@@ -1805,16 +1901,16 @@ export function WikiEditor() {
         );
       case "spacer":
         return (
-          <div className="h-full rounded-md border border-dashed flex items-center justify-center text-[11px]" style={{ borderColor: `${palette.border}99`, color: mutedText }}>
+          <div className="h-full rounded-md border border-dashed flex items-center justify-center text-[11px] m-2.5" style={{ borderColor: `${palette.border}99`, color: mutedText }}>
             Spacer block
           </div>
         );
       case "richText":
       default:
         return (
-          <div className="h-full flex flex-col gap-3">
+          <div className="h-full flex flex-col">
             {(block.title || block.subtitle) && (
-              <div className="space-y-1">
+              <div className="shrink-0 space-y-1" style={blockHeaderStyle}>
                 <InlineEdit
                   tag="h2"
                   value={block.title || ""}
@@ -1831,7 +1927,7 @@ export function WikiEditor() {
                 />
               </div>
             )}
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden" style={blockContentStyle}>
               {richEditor("Write article text here...", block.html, (nextHtml) => updateSingleBlock(block.id, (entry) => ({ ...entry, html: nextHtml })))}
             </div>
           </div>
@@ -1908,6 +2004,7 @@ export function WikiEditor() {
           placeholder="Write section content directly in the preview..."
           minHeight={160}
           enableWikiLayouts
+          floatingToolbar
         />
         <div className="flex gap-2">
           <button
@@ -2600,7 +2697,7 @@ export function WikiEditor() {
                       return (
                         <div
                           key={block.id}
-                          className="absolute p-1"
+                          className="absolute"
                           onMouseEnter={() => setHoveredBlockId(block.id)}
                           onMouseLeave={() => setHoveredBlockId((current) => (current === block.id ? null : current))}
                           style={{
@@ -2614,7 +2711,7 @@ export function WikiEditor() {
                           <div
                             className="absolute left-3 right-3 z-[4] flex items-center gap-2 rounded-md border px-3 py-2 transition-all duration-150"
                             style={{
-                              top: -14,
+                              top: -16,
                               opacity: isChromeVisible ? 1 : 0,
                               transform: `translateY(${isChromeVisible ? 0 : -4}px)`,
                               pointerEvents: isChromeVisible ? "auto" : "none",
@@ -2690,14 +2787,22 @@ export function WikiEditor() {
                             }}
                             style={{
                               border: `1px solid ${isSelected ? accent : palette.border}`,
-                              background: palette.background,
+                              background: "transparent",
                               boxShadow: isSelected ? `0 0 0 1px ${accent}, 0 12px 24px rgba(0,0,0,0.28)` : "0 8px 18px rgba(0,0,0,0.24)",
-                              overflow: "hidden",
+                              overflow: "visible",
                               borderRadius: 14,
+                              borderStyle: block.appearance.borderStyle === "dashed" ? "dashed" : block.appearance.borderStyle === "none" ? "none" : "solid",
                             }}
                           >
-                            <div className="h-full flex flex-col" onClick={() => setSelectedBlockId(block.id)}>
-                              <div className="min-h-0 flex-1 overflow-auto p-3.5">
+                            <div
+                              className="h-full flex flex-col overflow-hidden"
+                              onClick={() => setSelectedBlockId(block.id)}
+                              style={{
+                                borderRadius: 13,
+                                background: palette.background,
+                              }}
+                            >
+                              <div className="min-h-0 flex-1 overflow-hidden">
                                 {renderEditableWikiBlock(block)}
                               </div>
                             </div>
@@ -2778,6 +2883,14 @@ export function WikiEditor() {
                         <label style={labelStyle}>Image URL</label>
                         <input value={selectedBlock.imageUrl || ""} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, imageUrl: event.target.value }))} className={inputClass} style={inputStyle} />
                       </div>
+                      <button
+                        onClick={() => openImageStoragePicker({ mode: "block", blockId: selectedBlock.id })}
+                        className={`${retro.button} px-3 py-1.5 text-[10px]`}
+                        style={S_ACCENT}
+                        title="Choose an existing stored image or upload a new one into the shared library."
+                      >
+                        Image Storage / Upload
+                      </button>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label style={labelStyle}>Alt Text</label>
@@ -5045,6 +5158,15 @@ export function WikiEditor() {
         </div>
       )}
 
+      <ImageStoragePickerModal
+        open={!!imagePickerTarget}
+        images={storedImages}
+        title="Wiki Image Storage"
+        onClose={() => setImagePickerTarget(null)}
+        onSelect={handleStoredImageSelect}
+        onUploadFiles={handleStoredImageUpload}
+      />
+
       {/* Image Embed Dialog */}
       {showImageEmbed && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(3px)" }} onClick={(e) => { if (e.target === e.currentTarget) setShowImageEmbed(false); }}>
@@ -5061,6 +5183,13 @@ export function WikiEditor() {
                 <label style={labelStyle}>Image URL *</label>
                 <input type="text" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://..." className={inputClass} style={inputStyle} />
               </div>
+              <button
+                onClick={() => openImageStoragePicker({ mode: "embed" })}
+                className={`${retro.button} px-3 py-1.5 text-[10px]`}
+                style={S_ACCENT}
+              >
+                Choose From Image Storage / Upload
+              </button>
               <div>
                 <label style={labelStyle}>Caption</label>
                 <input type="text" value={imageCaption} onChange={(e) => setImageCaption(e.target.value)} placeholder="Optional caption text..." className={inputClass} style={inputStyle} />
