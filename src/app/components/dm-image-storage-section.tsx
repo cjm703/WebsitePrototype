@@ -4,6 +4,7 @@ import { retro } from "./retro-styles";
 import type { StoredImageAsset } from "./types";
 import { safeGetJson, safeSetJson } from "./safe-storage";
 import {
+  clearDMImageStorageFallbackState,
   getDMImageStorageFallbackState,
   loadDMImageStorage,
   saveDMImageStorage,
@@ -116,6 +117,33 @@ export function DMImageStorageSection() {
     }
   }
 
+  async function handleRetrySharedStorage() {
+    setIsSaving(true);
+    setError("");
+    setStatus("");
+    clearDMImageStorageFallbackState();
+
+    try {
+      const remoteImages = await loadDMImageStorage<StoredImageAsset>({ forceRemote: true });
+      const merged = sortStoredImages(mergeStoredImageAssets(images, remoteImages));
+      await saveDMImageStorage(merged as unknown as Record<string, unknown>[], { forceRemote: true });
+      setImages(merged);
+      safeSetJson(IMAGE_STORAGE_LOCAL_KEY, merged);
+      window.dispatchEvent(new CustomEvent(IMAGE_STORAGE_UPDATED_EVENT, { detail: { images: merged } }));
+      setUsingLocalFallback(false);
+      setStatus("Shared image storage reconnected and synced.");
+    } catch (err) {
+      setUsingLocalFallback(!!getDMImageStorageFallbackState());
+      setError(
+        `Shared image storage is still unavailable: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function handleUploadFiles(files: File[]) {
     if (!files.length) return;
     setStatus("");
@@ -220,14 +248,25 @@ export function DMImageStorageSection() {
 
       {usingLocalFallback && (
         <div
-          className="rounded-[6px] border px-3 py-2 text-[11px]"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[6px] border px-3 py-2 text-[11px]"
           style={{
             borderColor: "#6A5520",
             background: "rgba(82, 52, 8, 0.28)",
             color: "#FFD37A",
           }}
         >
-          Shared image storage is currently running in local fallback mode. Uploads and edits still save locally until the frontend and edge function are redeployed together.
+          <span>
+            Shared image storage is using local fallback mode. Uploads and edits still save locally until the Supabase function route and publishable key are working again.
+          </span>
+          <button
+            type="button"
+            onClick={() => void handleRetrySharedStorage()}
+            disabled={isSaving}
+            className={`${retro.button} px-3 py-1 text-[10px]`}
+            style={{ color: "#FFF3C4", background: "#3A2B0A", borderColor: "#8A6A24" }}
+          >
+            Retry Shared Storage
+          </button>
         </div>
       )}
 

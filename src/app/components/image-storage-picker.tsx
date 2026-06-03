@@ -117,7 +117,7 @@ export function ImageStoragePickerModal({
                 color: "#FFD37A",
               }}
             >
-              Shared image storage is currently using local fallback mode until the frontend and edge function are redeployed together.
+              Shared image storage is using local fallback mode. Uploads and edits still save locally until the Supabase function route and publishable key are working again.
             </div>
           )}
         </div>

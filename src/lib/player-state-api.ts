@@ -13,6 +13,7 @@ const IMAGE_STORAGE_FALLBACK_STATE_KEY = "inet-dm-image-storage-fallback";
 const WIKI_BLOCK_PRESETS_FALLBACK_STATE_KEY = "inet-wiki-block-presets-fallback";
 const LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 const LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const IMAGE_STORAGE_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 type LocalLevelCategoryMap = Record<string, Record<string, unknown>[]>;
@@ -484,7 +485,7 @@ function activateLocalImageStorageFallback(reason: "deployment" | "transient") {
     retryAfter:
       Date.now() +
       (reason === "deployment"
-        ? LEVEL_CATEGORIES_DEPLOYMENT_FALLBACK_COOLDOWN_MS
+        ? IMAGE_STORAGE_DEPLOYMENT_FALLBACK_COOLDOWN_MS
         : LEVEL_CATEGORIES_TRANSIENT_FALLBACK_COOLDOWN_MS),
   } satisfies LocalCollectionFallbackState;
   inMemoryImageStorageFallbackState = fallbackState;
@@ -531,6 +532,10 @@ function clearLocalWikiBlockPresetsFallback() {
 
 export function getDMImageStorageFallbackState() {
   return getActiveImageStorageFallbackState();
+}
+
+export function clearDMImageStorageFallbackState() {
+  clearLocalImageStorageFallback();
 }
 
 export function getWikiBlockPresetsFallbackState() {
@@ -631,8 +636,8 @@ export async function saveDMPlayerMagicLists(
   }
 }
 
-export async function loadDMImageStorage<T>() {
-  if (shouldUseLocalImageStorageFallback()) {
+export async function loadDMImageStorage<T>(options: { forceRemote?: boolean } = {}) {
+  if (!options.forceRemote && shouldUseLocalImageStorageFallback()) {
     return loadLocalDMImageStorage() as T[];
   }
 
@@ -648,12 +653,16 @@ export async function loadDMImageStorage<T>() {
       isDeploymentImageStorageFailure(err) ? "deployment" : "transient",
     );
     logImageStorageFallback("load", err);
+    if (options.forceRemote) throw err;
     return loadLocalDMImageStorage() as T[];
   }
 }
 
-export async function saveDMImageStorage(images: Record<string, unknown>[]) {
-  if (shouldUseLocalImageStorageFallback()) {
+export async function saveDMImageStorage(
+  images: Record<string, unknown>[],
+  options: { forceRemote?: boolean } = {},
+) {
+  if (!options.forceRemote && shouldUseLocalImageStorageFallback()) {
     saveLocalDMImageStorage(images);
     return;
   }
@@ -671,6 +680,7 @@ export async function saveDMImageStorage(images: Record<string, unknown>[]) {
       isDeploymentImageStorageFailure(err) ? "deployment" : "transient",
     );
     logImageStorageFallback("save", err);
+    if (options.forceRemote) throw err;
     saveLocalDMImageStorage(images);
   }
 }

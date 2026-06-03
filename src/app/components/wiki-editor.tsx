@@ -23,8 +23,10 @@ import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
 import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
+  clearDMImageStorageFallbackState,
   getDMImageStorageFallbackState,
   getWikiBlockPresetsFallbackState,
+  loadDMImageStorage,
   loadWikiBootstrap,
   saveDMImageStorage,
   saveWikiArticleRevisions,
@@ -426,7 +428,7 @@ export function WikiEditor() {
   const hydratedPageRef = useRef<string | null>(null);
   const articleImportInputRef = useRef<HTMLInputElement>(null);
 
-  // ─── Template State ───
+  // Template state
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
@@ -1600,6 +1602,27 @@ export function WikiEditor() {
       throw err;
     }
   }, [refreshSharedAssetFallbackState]);
+
+  const retrySharedImageStorage = useCallback(async () => {
+    clearDMImageStorageFallbackState();
+    setError("");
+    try {
+      const remoteImages = await loadDMImageStorage<StoredImageAsset>({ forceRemote: true });
+      const merged = mergeStoredImageAssets(storedImages, remoteImages);
+      await saveDMImageStorage(merged as unknown as Record<string, unknown>[], { forceRemote: true });
+      setStoredImages(merged);
+      safeSetJson(IMAGE_STORAGE_LOCAL_KEY, merged);
+      window.dispatchEvent(new CustomEvent(IMAGE_STORAGE_UPDATED_EVENT, { detail: { images: merged } }));
+      refreshSharedAssetFallbackState({ imageStorage: false });
+    } catch (err) {
+      refreshSharedAssetFallbackState();
+      setError(
+        `Shared image storage is still unavailable: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+      );
+    }
+  }, [refreshSharedAssetFallbackState, storedImages]);
 
   const persistWikiPresetLibrary = useCallback(async (
     nextPresets: WikiBlockPreset[],
@@ -3652,7 +3675,19 @@ export function WikiEditor() {
               </div>
               {(sharedImageStorageFallback || sharedPresetFallback) && (
                 <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#6A5520", background: "rgba(82, 52, 8, 0.28)", color: "#FFD37A" }}>
-                  {sharedImageStorageFallback && <div>Image Storage is running in local fallback mode until the frontend and edge function are back in sync.</div>}
+                  {sharedImageStorageFallback && (
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span>Image Storage is using local fallback mode until the Supabase function route and publishable key are working again.</span>
+                      <button
+                        type="button"
+                        onClick={() => void retrySharedImageStorage()}
+                        className={`${retro.button} px-2 py-1 text-[9px]`}
+                        style={{ color: "#FFF3C4", background: "#3A2B0A", borderColor: "#8A6A24" }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
                   {sharedPresetFallback && <div>Preset Library is also using local fallback mode right now.</div>}
                 </div>
               )}
