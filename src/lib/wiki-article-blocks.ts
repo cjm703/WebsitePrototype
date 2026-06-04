@@ -83,6 +83,9 @@ export interface WikiBlockLayout {
 export interface WikiBlockVisibility {
   assignedTo: string[];
   mode: WikiBlockVisibilityMode;
+  revealLabel?: string;
+  revealNote?: string;
+  revealAfter?: string;
 }
 
 export interface WikiBlockAppearance {
@@ -939,6 +942,189 @@ export const BUILTIN_WIKI_BLOCK_PRESETS: WikiBlockPreset[] = [
       }),
     ],
   },
+  {
+    id: "component-npc-profile-card",
+    name: "NPC Profile Component",
+    description: "A compact reusable NPC profile with traits and relationship hooks.",
+    category: "Components",
+    builtIn: true,
+    previewLabel: "NPC profile",
+    blocks: [
+      createPresetBlock("keyValueBox", 1, {
+        title: "NPC Profile",
+        items: [
+          { id: "npc-profile-name", label: "Name", value: "" },
+          { id: "npc-profile-role", label: "Role", value: "" },
+          { id: "npc-profile-affiliation", label: "Affiliation", value: "" },
+          { id: "npc-profile-disposition", label: "Disposition", value: "" },
+        ],
+        keyValueDensity: "compact",
+        keyValueRowDividers: true,
+        layout: { colStart: 1, colSpan: 16, rowStart: 1, rowSpan: 16 },
+        appearance: { surfaceStyle: "inset", backgroundTreatment: "scanline", backgroundColor: "#071126", accentColor: "#8AB4FF", borderColor: "#25446E", borderRadius: 12 },
+      }),
+      createPresetBlock("richText", 1, {
+        title: "Personality and Hooks",
+        html: "<p>Describe how this NPC speaks, what they want, and what players can learn from them.</p>",
+        layout: { colStart: 18, colSpan: 31, rowStart: 1, rowSpan: 16 },
+        appearance: { surfaceStyle: "raised", backgroundColor: "#0B142B", accentColor: "#C7D6FF", borderColor: "#2F4F7D", borderRadius: 12 },
+      }),
+    ],
+  },
+  {
+    id: "component-spell-showcase",
+    name: "Spell Showcase Component",
+    description: "A button-cycled spell list ready for spell level groups or magic types.",
+    category: "Components",
+    builtIn: true,
+    previewLabel: "Tabbed spell showcase",
+    blocks: [
+      createPresetBlock("tabbedReference", 1, {
+        title: "Spell Showcase",
+        subtitle: "Cycle through spell groups",
+        tabs: [
+          {
+            id: "spell-showcase-cantrips",
+            label: "Cantrips",
+            title: "Cantrips",
+            columns: ["Spell", "Level", "Type", "Summary"],
+            rows: [{ id: "spell-showcase-cantrips-1", cells: ["[[Example Cantrip]]", "Cantrip", "Attack", "Short effect summary."] }],
+          },
+          {
+            id: "spell-showcase-level-1",
+            label: "Level 1",
+            title: "Level 1",
+            columns: ["Spell", "Level", "Type", "Summary"],
+            rows: [{ id: "spell-showcase-level-1-1", cells: ["[[Example Spell]]", "1", "Utility", "Short effect summary."] }],
+          },
+        ],
+        tableDensity: "compact",
+        tableStripedRows: true,
+        tableStickyHeader: true,
+        tableLinkedCells: true,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 22 },
+        appearance: { surfaceStyle: "glass", backgroundTreatment: "gradient", backgroundColor: "#08283A", accentColor: "#5CE8FF", borderColor: "#2CAFD2", borderRadius: 16, glowIntensity: 18 },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+      }),
+    ],
+  },
+  {
+    id: "quick-data-stat-block",
+    name: "Quick Data: Stat Block",
+    description: "Fast stat/reference box for NPCs, monsters, objects, or systems.",
+    category: "Quick Data Blocks",
+    builtIn: true,
+    previewLabel: "Stats + notes",
+    blocks: [
+      createPresetBlock("keyValueBox", 1, {
+        title: "Stat Block",
+        items: [
+          { id: "stat-block-hp", label: "HP", value: "" },
+          { id: "stat-block-armor", label: "Armor", value: "" },
+          { id: "stat-block-speed", label: "Speed", value: "" },
+          { id: "stat-block-threat", label: "Threat", value: "" },
+        ],
+        keyValueDensity: "compact",
+        keyValueRowDividers: true,
+        layout: { colStart: 1, colSpan: 16, rowStart: 1, rowSpan: 14 },
+      }),
+      createPresetBlock("referenceTable", 1, {
+        title: "Actions / Features",
+        columns: ["Name", "Type", "Effect"],
+        rows: [{ id: "stat-action-1", cells: ["Feature", "Passive", "Describe effect."] }],
+        tableDensity: "compact",
+        tableLinkedCells: true,
+        layout: { colStart: 18, colSpan: 31, rowStart: 1, rowSpan: 14 },
+      }),
+    ],
+  },
+  {
+    id: "quick-data-roll-table",
+    name: "Quick Data: Roll Table",
+    description: "A ready-to-fill random table for encounters, loot, rumors, or discoveries.",
+    category: "Quick Data Blocks",
+    builtIn: true,
+    previewLabel: "d6 table",
+    blocks: [
+      createPresetBlock("referenceTable", 1, {
+        title: "Roll Table",
+        columns: ["Roll", "Result", "Notes"],
+        rows: [
+          { id: "roll-table-1", cells: ["1", "Result one", "Optional note"] },
+          { id: "roll-table-2", cells: ["2", "Result two", "Optional note"] },
+          { id: "roll-table-3", cells: ["3", "Result three", "Optional note"] },
+          { id: "roll-table-4", cells: ["4", "Result four", "Optional note"] },
+          { id: "roll-table-5", cells: ["5", "Result five", "Optional note"] },
+          { id: "roll-table-6", cells: ["6", "Result six", "Optional note"] },
+        ],
+        tableDensity: "compact",
+        tableStripedRows: true,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 20 },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+      }),
+    ],
+  },
+  {
+    id: "snap-layout-hero-sidebar-body",
+    name: "Snap Layout: Hero + Sidebar + Body",
+    description: "A full article starter with hero, sidebar profile, body area, and footer links.",
+    category: "Snap Layouts",
+    builtIn: true,
+    previewLabel: "Hero/sidebar/body",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Article Hero",
+        subtitle: "One-line article promise",
+        headingLevel: 1,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 6 },
+        appearance: { surfaceStyle: "raised", backgroundTreatment: "gradient", backgroundColor: "#08162E", accentColor: "#8AB4FF", borderColor: "#284A7C", borderRadius: 14, titleAlign: "center", bodyAlign: "center" },
+      }),
+      createPresetBlock("keyValueBox", 9, {
+        title: "At a Glance",
+        items: [
+          { id: "snap-glance-1", label: "Type", value: "" },
+          { id: "snap-glance-2", label: "Region", value: "" },
+          { id: "snap-glance-3", label: "Status", value: "" },
+        ],
+        layout: { colStart: 1, colSpan: 14, rowStart: 9, rowSpan: 18 },
+      }),
+      createPresetBlock("richText", 9, {
+        title: "Main Article",
+        html: "<p>Write the core article text here.</p>",
+        layout: { colStart: 17, colSpan: 32, rowStart: 9, rowSpan: 24 },
+      }),
+      createPresetBlock("wikiLinksList", 35, {
+        title: "Related Pages",
+        articleIds: [],
+        wikiLinksDisplayMode: "chips",
+        layout: { colStart: 1, colSpan: 48, rowStart: 35, rowSpan: 8 },
+      }),
+    ],
+  },
+  {
+    id: "snap-layout-three-column-reference",
+    name: "Snap Layout: Three Column Reference",
+    description: "Three balanced columns for dense indexes, rules notes, or comparison pages.",
+    category: "Snap Layouts",
+    builtIn: true,
+    previewLabel: "3-column article",
+    blocks: [
+      ...(["Column One", "Column Two", "Column Three"] as const).map((title, index) => createPresetBlock("calloutPanel", 1, {
+        title,
+        html: `<p>Add ${title.toLowerCase()} content here.</p>`,
+        layout: { colStart: 1 + index * 16, colSpan: 15, rowStart: 1, rowSpan: 18 },
+        appearance: { surfaceStyle: "raised", backgroundColor: index % 2 === 0 ? "#071126" : "#0B1A28", accentColor: index % 2 === 0 ? "#8AB4FF" : "#8FF0B8", borderColor: "#25446E", borderRadius: 12 },
+      })),
+      createPresetBlock("referenceTable", 22, {
+        title: "Comparison Table",
+        columns: ["Entry", "Column One", "Column Two", "Column Three"],
+        rows: [{ id: "snap-comparison-1", cells: ["Example", "Detail", "Detail", "Detail"] }],
+        tableDensity: "compact",
+        tableStripedRows: true,
+        layout: { colStart: 1, colSpan: 48, rowStart: 22, rowSpan: 16 },
+      }),
+    ],
+  },
 ];
 
 export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSettings> | null): WikiCanvasSettings {
@@ -1018,6 +1204,9 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
     visibility: {
       assignedTo: [],
       mode: "visible",
+      revealLabel: "",
+      revealNote: "",
+      revealAfter: "",
     },
     style: type === "calloutPanel" || type === "spoilerBlock" ? "neutral" : "blank",
     headingLevel: type === "heading" ? 2 : undefined,
@@ -1106,6 +1295,9 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     visibility: {
       assignedTo: Array.isArray(visibility.assignedTo) ? visibility.assignedTo : [],
       mode: visibility.mode || (Array.isArray(visibility.assignedTo) && visibility.assignedTo.length > 0 ? "spoiler" : "visible"),
+      revealLabel: typeof visibility.revealLabel === "string" ? visibility.revealLabel : "",
+      revealNote: typeof visibility.revealNote === "string" ? visibility.revealNote : "",
+      revealAfter: typeof visibility.revealAfter === "string" ? visibility.revealAfter : "",
     },
     locked: !!block.locked,
     style: block.style || (type === "calloutPanel" || type === "spoilerBlock" ? "neutral" : "blank"),

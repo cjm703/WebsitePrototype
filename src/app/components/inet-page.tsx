@@ -47,6 +47,13 @@ interface SubCategory {
   children: SubCategory[];
 }
 
+interface WikiArticleRelationship {
+  id: string;
+  type: string;
+  targetArticleId: string;
+  note?: string;
+}
+
 interface SitePage {
   id: string;
   title: string;
@@ -90,6 +97,7 @@ interface SitePage {
   wikiTags?: string[];
   wikiTagFields?: Record<string, string>;
   playerVisibility?: Record<string, "visible" | "spoiler" | "hidden">;
+  relationships?: WikiArticleRelationship[];
 }
 
 interface WikiPanel {
@@ -380,6 +388,7 @@ export function InetPage() {
   const page = pages.find((p) => p.id === id);
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
+  const pageTitleLookup = useMemo(() => new Map(pages.map((entry) => [entry.id, entry.title])), [pages]);
 
   // Article-level visibility check
   const articleVis = (!isDM && currentUserId && page?.playerVisibility)
@@ -417,6 +426,25 @@ export function InetPage() {
     }
     return result.slice(0, 8);
   }, [page, pages]);
+  const relationshipArticles = useMemo(() => {
+    if (!page) return [];
+    return (page.relationships || [])
+      .map((relationship) => {
+        const target = pages.find((article) => article.id === relationship.targetArticleId);
+        if (!target) return null;
+        return { relationship, target };
+      })
+      .filter((entry): entry is { relationship: WikiArticleRelationship; target: SitePage } => !!entry);
+  }, [page, pages]);
+  const wikiRouteParts = useMemo(() => {
+    if (!page) return ["Wiki"];
+    const linkedPath = pages
+      .filter((entry) => entry.id !== page.id)
+      .map((entry) => findSubcategoryArticlePath(entry.subcategories, page.id, pageTitleLookup))
+      .find((path): path is string[] => Array.isArray(path) && path.length > 0);
+    const tail = linkedPath && linkedPath.length > 0 ? linkedPath : [page.title || "Untitled Article"];
+    return compactRouteParts(["Wiki", page.category || "Uncategorized", ...tail]);
+  }, [page, pages, pageTitleLookup]);
 
   // If hidden, show "not found" for non-DM players
   if (articleVis === "hidden") {
@@ -525,16 +553,6 @@ export function InetPage() {
     const bOrder = b.fluid?.preferredMobileOrder ?? b.mobilePriority ?? b.layout.rowStart * 100 + b.layout.colStart;
     return aOrder - bOrder || compareWikiBlocksForLayout(a, b);
   });
-  const pageTitleLookup = new Map(pages.map((entry) => [entry.id, entry.title]));
-  const wikiRouteParts = useMemo(() => {
-    const linkedPath = pages
-      .filter((entry) => entry.id !== page.id)
-      .map((entry) => findSubcategoryArticlePath(entry.subcategories, page.id, pageTitleLookup))
-      .find((path): path is string[] => Array.isArray(path) && path.length > 0);
-    const tail = linkedPath && linkedPath.length > 0 ? linkedPath : [page.title || "Untitled Article"];
-    return compactRouteParts(["Wiki", page.category || "Uncategorized", ...tail]);
-  }, [page.category, page.id, page.title, pages, pageTitleLookup]);
-
   const iconMode = page.pageIcon || "globe";
   const PageIcon = getPageIcon(iconMode === "none" || iconMode === "custom" ? undefined : iconMode);
 
@@ -679,6 +697,8 @@ export function InetPage() {
     const overflowMode = block.behavior?.overflowMode || "clip";
     const tablePad = block.tableDensity === "dense" ? 4 : block.tableDensity === "compact" ? 6 : 8;
     const linkDisplayMode = block.wikiLinksDisplayMode || "list";
+    const revealLabel = block.visibility.revealLabel || "Spoiler / Metagame Warning";
+    const revealAfter = block.visibility.revealAfter || "";
     const blockShellStyle: React.CSSProperties = {
       border: blockBorderCss(block.appearance.borderStyle, borderTone, block.appearance.borderWidth ?? 1),
       background: blockSurfaceBackground(block.appearance.surfaceStyle, backgroundTone, accentColor, block.appearance.backgroundTreatment),
@@ -729,8 +749,13 @@ export function InetPage() {
           <div className="flex items-center gap-2">
             <Shield size={18} style={S_RED} />
             <div>
-              <div className="text-[13px]" style={{ color: "#FF6A6A", fontWeight: 700, fontFamily: font }}>Spoiler / Metagame Warning</div>
+              <div className="text-[13px]" style={{ color: "#FF6A6A", fontWeight: 700, fontFamily: font }}>{revealLabel}</div>
               <div className="text-[11px] mt-0.5" style={{ color: "#8A5A5A", fontFamily: font }}>This block contains information not intended for your character.</div>
+              {revealAfter && (
+                <div className="text-[10px] mt-1" style={{ color: "#D79A7A", fontFamily: font }}>
+                  Reveal after: {revealAfter}
+                </div>
+              )}
             </div>
           </div>
           <button onClick={() => setRevealedPanels((prev) => new Set([...prev, block.id]))} className="px-5 py-2 text-[12px] flex items-center gap-2 hover:opacity-90" style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600, fontFamily: font }}>
@@ -1360,6 +1385,47 @@ export function InetPage() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {/* Article Relationships */}
+              {relationshipArticles.length > 0 && (
+                <div
+                  className={`${retro.raised} mb-4`}
+                  style={{ background: hdr }}
+                >
+                  <div
+                    className="px-3 py-2 border-b"
+                    style={{ borderBottomColor: borderColor, background: darken(hdr, 8) }}
+                  >
+                    <span className="text-[12px]" style={{ color: accent, fontWeight: 600 }}>
+                      Article Relationships
+                    </span>
+                  </div>
+                  <div className="p-2 space-y-1.5">
+                    {relationshipArticles.map(({ relationship, target }) => (
+                      <button
+                        key={relationship.id}
+                        onClick={() => navigate(`/interface/inet-page/${target.id}`)}
+                        className="w-full text-left rounded px-2 py-1.5 hover:bg-[#1A1A4B] transition-colors"
+                        style={{ color: "#8AB4FF" }}
+                        title={relationship.note || `This page ${relationship.type} ${target.title}`}
+                      >
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <Network size={9} className="shrink-0" style={S_WARN} />
+                          <span className="truncate">
+                            <span style={{ color: mutedText }}>This page {relationship.type || "relates to"} </span>
+                            <span className="underline hover:no-underline">{target.title || "Untitled Article"}</span>
+                          </span>
+                        </div>
+                        {relationship.note && (
+                          <div className="mt-0.5 truncate pl-4 text-[10px]" style={{ color: mutedText }}>
+                            {relationship.note}
+                          </div>
+                        )}
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}

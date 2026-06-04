@@ -110,6 +110,13 @@ interface SubCategory {
   children: SubCategory[];
 }
 
+interface WikiArticleRelationship {
+  id: string;
+  type: string;
+  targetArticleId: string;
+  note?: string;
+}
+
 interface WikiPanel {
   id: string;
   title: string;
@@ -177,6 +184,7 @@ interface SitePage {
   wikiTags?: string[];
   wikiTagFields?: Record<string, string>;
   playerVisibility?: Record<string, "visible" | "spoiler" | "hidden">;
+  relationships?: WikiArticleRelationship[];
 }
 
 type WikiTagField = TagField;
@@ -377,6 +385,19 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const getArticleChromeFieldLabel = (field: WikiArticleChromeField) =>
   field === "title" ? "Title" : field === "subtitle" ? "Subtitle" : "Description";
+const WIKI_RELATIONSHIP_TYPES = [
+  "belongs to",
+  "contains",
+  "located in",
+  "member of",
+  "ally of",
+  "enemy of",
+  "teacher of",
+  "student of",
+  "created by",
+  "uses",
+  "related to",
+] as const;
 
 function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
   const existingPanels = normalizeWikiPanels(pg.panels);
@@ -642,6 +663,7 @@ function createBlankSitePage(): SitePage {
     canvasSettings: normalizeWikiCanvasSettings(),
     panels: [],
     wikiTags: [], wikiTagFields: {}, playerVisibility: {},
+    relationships: [],
   };
 }
 
@@ -1626,6 +1648,41 @@ export function WikiEditor() {
     update("subcategories", filter(page.subcategories || []));
   };
 
+  // --- Relationship helpers ---
+  const normalizeArticleRelationships = useCallback((relationships: WikiArticleRelationship[] | undefined) =>
+    (Array.isArray(relationships) ? relationships : [])
+      .map((relationship) => ({
+        id: relationship.id || `rel-${uid()}`,
+        type: relationship.type || "related to",
+        targetArticleId: relationship.targetArticleId || "",
+        note: relationship.note || "",
+      }))
+      .filter((relationship) => relationship.targetArticleId),
+  []);
+
+  const addArticleRelationship = useCallback(() => {
+    const existingTargets = new Set((page.relationships || []).map((relationship) => relationship.targetArticleId));
+    const firstTarget = allPages.find((article) => article.id !== page.id && !existingTargets.has(article.id));
+    if (!firstTarget) {
+      setError("Create another article before adding a relationship.");
+      return;
+    }
+    update("relationships", [
+      ...normalizeArticleRelationships(page.relationships),
+      { id: `rel-${uid()}`, type: "related to", targetArticleId: firstTarget.id, note: "" },
+    ]);
+  }, [allPages, normalizeArticleRelationships, page.id, page.relationships, update]);
+
+  const updateArticleRelationship = useCallback((relationshipId: string, patch: Partial<WikiArticleRelationship>) => {
+    update("relationships", normalizeArticleRelationships(page.relationships).map((relationship) => (
+      relationship.id === relationshipId ? { ...relationship, ...patch } : relationship
+    )));
+  }, [normalizeArticleRelationships, page.relationships, update]);
+
+  const removeArticleRelationship = useCallback((relationshipId: string) => {
+    update("relationships", normalizeArticleRelationships(page.relationships).filter((relationship) => relationship.id !== relationshipId));
+  }, [normalizeArticleRelationships, page.relationships, update]);
+
   // Resolve colors
   const bg = page.bgColor || DEFAULT_STYLE.bgColor;
   const hdr = page.headerColor || DEFAULT_STYLE.headerColor;
@@ -1730,6 +1787,9 @@ export function WikiEditor() {
     ],
     [wikiBlockPresets],
   );
+  const componentPresets = useMemo(() => presetLibrary.filter((preset) => preset.category === "Components"), [presetLibrary]);
+  const quickDataPresets = useMemo(() => presetLibrary.filter((preset) => preset.category === "Quick Data Blocks"), [presetLibrary]);
+  const snapLayoutPresets = useMemo(() => presetLibrary.filter((preset) => preset.category === "Snap Layouts"), [presetLibrary]);
   const stylePresetLibrary = useMemo(
     () => [
       ...BUILTIN_WIKI_BLOCK_STYLE_PRESETS,
@@ -1740,6 +1800,10 @@ export function WikiEditor() {
   const articleLinkChoices = useMemo(
     () => allPages.filter((article) => article.id !== page.id).sort((a, b) => a.title.localeCompare(b.title)),
     [allPages, page.id],
+  );
+  const wikiLinkOptions = useMemo(
+    () => articleLinkChoices.map((article) => ({ id: article.id, title: article.title || "Untitled Article", category: article.category || "Uncategorized" })),
+    [articleLinkChoices],
   );
   const isResponsiveReflowMode = editorPreviewMode && responsiveFrameMode !== "desktop";
   const canvasFrameWidth = isResponsiveReflowMode ? responsiveFrame.width : canvasSettings.frameWidth;
@@ -3251,16 +3315,29 @@ export function WikiEditor() {
     const contentOverflow = block.behavior?.overflowMode === "scroll" ? "auto" : "hidden";
     const tablePad = block.tableDensity === "dense" ? 4 : block.tableDensity === "compact" ? 6 : 8;
     const linkDisplayMode = block.wikiLinksDisplayMode || "list";
+    const revealLabel = block.visibility.revealLabel || (block.visibility.mode === "hidden" ? "Hidden Block" : "Spoiler Block");
+    const revealAfter = block.visibility.revealAfter || "";
+    const revealNote = block.visibility.revealNote || "";
 
     if (previewHidden) {
       return (
         <div className="h-full flex items-center justify-center text-center px-4" style={{ color: "#A67A7A", background: "rgba(14, 8, 8, 0.92)" }}>
           <div>
             <EyeOff size={18} className="mx-auto mb-2" />
-            <div className="text-[12px] font-bold">Hidden Block</div>
+            <div className="text-[12px] font-bold">{revealLabel}</div>
             <div className="text-[10px] mt-1">
               This block is hidden for the current previewed player.
             </div>
+            {revealAfter && (
+              <div className="text-[10px] mt-2" style={{ color: "#D79A7A" }}>
+                Reveal after: {revealAfter}
+              </div>
+            )}
+            {revealNote && (
+              <div className="text-[9px] mt-1" style={{ color: "#8A6A6A" }}>
+                DM note: {revealNote}
+              </div>
+            )}
           </div>
         </div>
       );
@@ -3291,10 +3368,15 @@ export function WikiEditor() {
         <div className="h-full flex items-center justify-center text-center px-4" style={{ color: "#FFAA6A", background: "rgba(18, 10, 10, 0.88)" }}>
           <div>
             <Shield size={18} className="mx-auto mb-2" />
-            <div className="text-[12px] font-bold">Spoiler Block</div>
+            <div className="text-[12px] font-bold">{revealLabel}</div>
             <div className="text-[10px] mt-1" style={{ color: "#A67A7A" }}>
               This block is restricted in the current preview mode.
             </div>
+            {revealAfter && (
+              <div className="text-[10px] mt-2" style={{ color: "#FFCA9A" }}>
+                Reveal after: {revealAfter}
+              </div>
+            )}
             <button
               onClick={() => setRevealedPanels((prev) => new Set([...prev, block.id]))}
               className="mt-3 px-3 py-1 text-[10px] hover:opacity-90"
@@ -3336,6 +3418,7 @@ export function WikiEditor() {
             enableWikiLayouts
             floatingToolbar
             fillHeight
+            wikiLinkOptions={wikiLinkOptions}
           />
         )
         : (
@@ -3739,7 +3822,7 @@ export function WikiEditor() {
           </div>
         );
     }
-  }, [activeTabbedReferenceTabs, blockIdToPage, editorPreviewMode, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock, updateTabbedReferenceCell, updateTabbedReferenceTab]);
+  }, [activeTabbedReferenceTabs, blockIdToPage, editorPreviewMode, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock, updateTabbedReferenceCell, updateTabbedReferenceTab, wikiLinkOptions]);
 
   const renderArticleChromeBox = useCallback((field: WikiArticleChromeField) => {
     const layout = articleChromeLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
@@ -4047,6 +4130,7 @@ export function WikiEditor() {
           minHeight={160}
           enableWikiLayouts
           floatingToolbar
+          wikiLinkOptions={wikiLinkOptions}
         />
         <div className="flex gap-2">
           <button
@@ -4668,6 +4752,63 @@ export function WikiEditor() {
                       ))}
                     </div>
                   </div>
+
+                  {componentPresets.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#8FF0B8", fontWeight: 700 }}>Article Components</div>
+                      <div className="space-y-2">
+                        {componentPresets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            onClick={() => insertPreset(preset)}
+                            className="w-full rounded-md border px-3 py-2 text-left hover:opacity-90"
+                            style={{ borderColor: "#1E5B3B", background: "#081B18", color: "#D7FFE5" }}
+                          >
+                            <div className="text-[11px] font-bold">{preset.name}</div>
+                            <div className="text-[10px]" style={{ color: "#93CDAA" }}>{preset.description}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {quickDataPresets.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#FFD37A", fontWeight: 700 }}>Quick Data Blocks</div>
+                      <div className="grid grid-cols-1 gap-2">
+                        {quickDataPresets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            onClick={() => insertPreset(preset)}
+                            className="rounded-md border px-3 py-2 text-left text-[10px] hover:opacity-90"
+                            style={{ borderColor: "#6A5520", background: "#1A1308", color: "#FFE7A8" }}
+                          >
+                            <div className="font-bold">{preset.name.replace("Quick Data: ", "")}</div>
+                            <div style={{ color: "#C5A86D" }}>{preset.previewLabel || preset.description}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {snapLayoutPresets.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#A8D8FF", fontWeight: 700 }}>Canvas Snap Layouts</div>
+                      <div className="space-y-2">
+                        {snapLayoutPresets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            onClick={() => insertPreset(preset)}
+                            className="w-full rounded-md border px-3 py-2 text-left hover:opacity-90"
+                            style={{ borderColor: "#31578A", background: "#0A1732", color: "#D3E1FF" }}
+                          >
+                            <div className="text-[11px] font-bold">{preset.name.replace("Snap Layout: ", "")}</div>
+                            <div className="text-[10px]" style={{ color: "#8EA9D7" }}>{preset.description}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-2">
@@ -6296,6 +6437,48 @@ export function WikiEditor() {
                       <option value="hidden">Hidden</option>
                     </select>
                   </div>
+                  <div className="rounded-md border p-3 space-y-2" style={{ borderColor: "#2B365C", background: "#071126" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#FFB86A", fontWeight: 700 }}>Reveal Controls</div>
+                        <div className="text-[10px] mt-1" style={{ color: "#8EA9D7" }}>
+                          Player-facing hint text and DM reveal timing for this block.
+                        </div>
+                      </div>
+                      <Shield size={14} style={S_WARN} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Reveal Label</label>
+                      <input
+                        value={selectedBlock.visibility.revealLabel || ""}
+                        onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, visibility: { ...block.visibility, revealLabel: event.target.value } }))}
+                        placeholder="Spoiler, Secret, Player Reward..."
+                        className={inputClass}
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Reveal After / Condition</label>
+                      <input
+                        value={selectedBlock.visibility.revealAfter || ""}
+                        onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, visibility: { ...block.visibility, revealAfter: event.target.value } }))}
+                        placeholder="Session 12, quest complete, player discovers..."
+                        className={inputClass}
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>DM Reveal Note</label>
+                      <textarea
+                        value={selectedBlock.visibility.revealNote || ""}
+                        onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, visibility: { ...block.visibility, revealNote: event.target.value } }))}
+                        placeholder="Why this is restricted, who should learn it, or how it unlocks."
+                        rows={2}
+                        className={`${inputClass} resize-y`}
+                        style={inputStyle}
+                      />
+                    </div>
+                  </div>
                   <div>
                     <label style={labelStyle}>Allowed Players</label>
                     <div className="space-y-1 mt-1">
@@ -6849,6 +7032,76 @@ export function WikiEditor() {
                       </div>
                     )}
                   </div>
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#A8D8FF", fontWeight: 700 }}>Relationship Builder</div>
+                        <div className="mt-1 text-[10px]" style={{ color: "#8EA9D7" }}>
+                          Define structured article links such as located in, member of, enemy of, or teacher of.
+                        </div>
+                      </div>
+                      <button onClick={addArticleRelationship} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>
+                        Add
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {normalizeArticleRelationships(page.relationships).length === 0 && (
+                        <div className="rounded-md border border-dashed px-3 py-4 text-center text-[10px]" style={{ borderColor: "#28466F", color: "#7A9ABB" }}>
+                          No structured relationships yet. Add one to make this page smarter in graph and published views.
+                        </div>
+                      )}
+                      {normalizeArticleRelationships(page.relationships).map((relationship) => {
+                        const target = allPages.find((article) => article.id === relationship.targetArticleId);
+                        return (
+                          <div key={relationship.id} className="rounded-md border p-2 space-y-2" style={{ borderColor: "#17315A", background: "#071126" }}>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label style={labelStyle}>Relationship</label>
+                                <input
+                                  value={relationship.type}
+                                  onChange={(event) => updateArticleRelationship(relationship.id, { type: event.target.value })}
+                                  className={inputClass}
+                                  style={inputStyle}
+                                  list="wiki-relationship-types"
+                                />
+                              </div>
+                              <div>
+                                <label style={labelStyle}>Target Article</label>
+                                <select
+                                  value={relationship.targetArticleId}
+                                  onChange={(event) => updateArticleRelationship(relationship.id, { targetArticleId: event.target.value })}
+                                  className={`${inputClass} cursor-pointer`}
+                                  style={inputStyle}
+                                >
+                                  {allPages.filter((article) => article.id !== page.id).map((article) => (
+                                    <option key={article.id} value={article.id}>{article.title || "Untitled Article"}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                            <input
+                              value={relationship.note || ""}
+                              onChange={(event) => updateArticleRelationship(relationship.id, { note: event.target.value })}
+                              placeholder="Optional relationship note"
+                              className={inputClass}
+                              style={inputStyle}
+                            />
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-[10px]" style={{ color: "#8EA9D7" }}>
+                                This page {relationship.type || "relates to"} {target?.title || "another article"}.
+                              </span>
+                              <button onClick={() => removeArticleRelationship(relationship.id)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <datalist id="wiki-relationship-types">
+                      {WIKI_RELATIONSHIP_TYPES.map((type) => <option key={type} value={type} />)}
+                    </datalist>
+                  </div>
                   <div>
                     <label style={labelStyle}>Article Quality</label>
                     <select value={page.articleQuality} onChange={(event) => update("articleQuality", event.target.value as SitePage["articleQuality"])} className={`${inputClass} cursor-pointer`} style={inputStyle}>
@@ -7297,7 +7550,7 @@ export function WikiEditor() {
                 </div>
                 <div>
                   <label style={labelStyle}>Main Body</label>
-                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={180} enableWikiLayouts />
+                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={180} enableWikiLayouts wikiLinkOptions={wikiLinkOptions} />
                   <div className="mt-1 text-[9px]" style={S_DIM}>
                     The same content can also be edited directly in the preview canvas below.
                   </div>
@@ -7643,7 +7896,7 @@ export function WikiEditor() {
                           {/* Content */}
                           <div>
                             <label className="text-[10px] block mb-1" style={S_MUTED}>Content</label>
-                            <RichTextEditor value={panel.content} onChange={(html) => updatePanel(panel.id, { content: html })} placeholder="Section content..." minHeight={100} enableWikiLayouts />
+                            <RichTextEditor value={panel.content} onChange={(html) => updatePanel(panel.id, { content: html })} placeholder="Section content..." minHeight={100} enableWikiLayouts wikiLinkOptions={wikiLinkOptions} />
                             <div className="mt-1 text-[9px]" style={S_DIM}>
                               Lists work here too, and Wiki Layouts can seed spell groupings or reference tables inside a section.
                             </div>
@@ -8493,6 +8746,7 @@ export function WikiEditor() {
                             placeholder="Write the main article content..."
                             minHeight={220}
                             enableWikiLayouts
+                            wikiLinkOptions={wikiLinkOptions}
                           />
                           <div className="flex gap-2">
                             <button

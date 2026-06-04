@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useEffect, useState } from "react";
 import {
   Bold, Italic, AlignLeft, AlignCenter, AlignRight,
   List, ListOrdered, Table, ImageIcon, Palette, ChevronDown,
+  Link2,
 } from "lucide-react";
 
 // ========================
@@ -15,6 +16,7 @@ interface RichTextEditorProps {
   enableWikiLayouts?: boolean;
   floatingToolbar?: boolean;
   fillHeight?: boolean;
+  wikiLinkOptions?: { id: string; title: string; category?: string }[];
 }
 
 // ========================
@@ -259,6 +261,7 @@ export function RichTextEditor({
   enableWikiLayouts = false,
   floatingToolbar = false,
   fillHeight = false,
+  wikiLinkOptions = [],
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const sizeDropRef = useRef<HTMLDivElement>(null);
@@ -275,6 +278,8 @@ export function RichTextEditor({
   const [tableCols, setTableCols] = useState("3");
   const [imagePopupOpen, setImagePopupOpen] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
+  const [wikiLinkPopupOpen, setWikiLinkPopupOpen] = useState(false);
+  const [wikiLinkQuery, setWikiLinkQuery] = useState("");
   const [isHovered, setIsHovered] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -304,18 +309,18 @@ export function RichTextEditor({
     }
   }, [value]);
 
-  // Save selection, run command, emit change
-  const execCmd = useCallback((cmd: string, val?: string) => {
-    document.execCommand(cmd, false, val);
-    emitChange();
-  }, []);
-
   const emitChange = useCallback(() => {
     const el = editorRef.current;
     if (!el) return;
     isInternalChange.current = true;
     onChange(el.innerHTML);
   }, [onChange]);
+
+  // Save selection, run command, emit change
+  const execCmd = useCallback((cmd: string, val?: string) => {
+    document.execCommand(cmd, false, val);
+    emitChange();
+  }, [emitChange]);
 
   const handleInput = useCallback(() => {
     emitChange();
@@ -471,6 +476,23 @@ export function RichTextEditor({
     setLayoutDropOpen(false);
   };
 
+  const filteredWikiLinks = wikiLinkOptions
+    .filter((option) => option.title.trim())
+    .filter((option) => {
+      const q = wikiLinkQuery.trim().toLowerCase();
+      if (!q) return true;
+      return option.title.toLowerCase().includes(q) || (option.category || "").toLowerCase().includes(q);
+    })
+    .slice(0, 10);
+
+  const handleInsertWikiLink = (title: string) => {
+    const safeTitle = title.replace(/\]/g, "").trim();
+    if (!safeTitle) return;
+    insertHtml(`[[${safeTitle}]]`);
+    setWikiLinkQuery("");
+    setWikiLinkPopupOpen(false);
+  };
+
   const handleLayoutButton = (layout: "spell-directory" | "spell-tier" | "reference-table") => (event: React.MouseEvent) => {
     event.preventDefault();
     saveSelection();
@@ -485,6 +507,7 @@ export function RichTextEditor({
     setColorPickerOpen(false);
     setTablePopupOpen(false);
     setImagePopupOpen(false);
+    setWikiLinkPopupOpen(false);
     clearSelectionHighlight();
   };
 
@@ -517,7 +540,7 @@ export function RichTextEditor({
     outline: "none",
   };
 
-  const hasOpenPopup = fontDropOpen || sizeDropOpen || layoutDropOpen || colorPickerOpen || tablePopupOpen || imagePopupOpen;
+  const hasOpenPopup = fontDropOpen || sizeDropOpen || layoutDropOpen || colorPickerOpen || tablePopupOpen || imagePopupOpen || wikiLinkPopupOpen;
   const showToolbar = !floatingToolbar || isHovered || isFocused || hasOpenPopup;
   const editableAreaStyle: React.CSSProperties = {
     position: "relative",
@@ -806,6 +829,87 @@ export function RichTextEditor({
         <ToolBtn onClick={handleNumberedList} title="Numbered List">
           <ListOrdered size={13} />
         </ToolBtn>
+
+        {wikiLinkOptions.length > 0 && (
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <ToolBtn
+              onClick={() => {
+                saveSelection();
+                togglePopup(setWikiLinkPopupOpen, wikiLinkPopupOpen);
+              }}
+              title="Insert Wiki Link"
+            >
+              <Link2 size={13} />
+            </ToolBtn>
+            {wikiLinkPopupOpen && (
+              <div
+                onMouseDown={(e) => {
+                  if ((e.target as HTMLElement).tagName !== "INPUT") e.preventDefault();
+                }}
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  zIndex: 120,
+                  width: 230,
+                  background: "#12122E",
+                  border: "1px solid #3A3A6A",
+                  borderRadius: 4,
+                  padding: 8,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+                }}
+              >
+                <div style={{ fontSize: 10, color: "#8A9ABB", fontFamily: "'Courier New', monospace", marginBottom: 6 }}>
+                  Wiki Link Autocomplete
+                </div>
+                <input
+                  value={wikiLinkQuery}
+                  onChange={(event) => setWikiLinkQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      const first = filteredWikiLinks[0]?.title || wikiLinkQuery;
+                      handleInsertWikiLink(first);
+                    }
+                  }}
+                  placeholder="Search article title..."
+                  style={{ ...smallInputStyle, width: "100%", marginBottom: 6 }}
+                  autoFocus
+                />
+                <div style={{ maxHeight: 190, overflowY: "auto" }}>
+                  {filteredWikiLinks.length === 0 && (
+                    <button
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        handleInsertWikiLink(wikiLinkQuery);
+                      }}
+                      style={{ ...dropdownItemStyle, color: "#FFD37A" }}
+                    >
+                      Insert new link: [[{wikiLinkQuery || "New Page"}]]
+                    </button>
+                  )}
+                  {filteredWikiLinks.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        handleInsertWikiLink(option.title);
+                      }}
+                      style={dropdownItemStyle}
+                      onMouseEnter={(event) => { (event.target as HTMLElement).style.background = "#1A2A5A"; }}
+                      onMouseLeave={(event) => { (event.target as HTMLElement).style.background = "transparent"; }}
+                    >
+                      <span style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{option.title}</span>
+                      {option.category && <span style={{ display: "block", color: "#6F88B4", fontSize: 9 }}>{option.category}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {enableWikiLayouts && (
           <>

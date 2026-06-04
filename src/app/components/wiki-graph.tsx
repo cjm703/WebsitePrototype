@@ -9,10 +9,7 @@ import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_MUTED, S_SUBTLE } from "./shared-styles";
 import { collectWikiBlockHtmlStrings, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
 
-// ═══════════════════════════════════════════
 // Types
-// ═══════════════════════════════════════════
-
 interface SitePage {
   id: string;
   title: string;
@@ -27,6 +24,7 @@ interface SitePage {
   layoutVersion?: number;
   blocks?: WikiArticleBlock[];
   wikiTags?: string[];
+  relationships?: { id?: string; type?: string; targetArticleId?: string; note?: string }[];
 }
 
 interface GraphNode {
@@ -45,13 +43,10 @@ interface GraphNode {
 interface GraphEdge {
   source: string;
   target: string;
-  type: "seeAlso" | "subcategory" | "wikiLink" | "related" | "sharedWikiTag";
+  type: "seeAlso" | "subcategory" | "wikiLink" | "related" | "relationship" | "sharedWikiTag";
 }
 
-// ═══════════════════════════════════════════
 // Category colors
-// ═══════════════════════════════════════════
-
 const CATEGORY_COLORS: Record<string, string> = {
   NPCs: "#FF6ABB",
   Locations: "#4AFF6A",
@@ -67,10 +62,7 @@ function getCategoryColor(category: string): string {
   return CATEGORY_COLORS[category] || `hsl(${Math.abs(category.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % 360}, 70%, 65%)`;
 }
 
-// ═══════════════════════════════════════════
 // Extract wiki links from HTML content
-// ═══════════════════════════════════════════
-
 function extractWikiLinks(html: string): string[] {
   const ids: string[] = [];
   // Extract from data-article-id attributes (inserted via wiki-link-dialog)
@@ -121,10 +113,7 @@ function extractAllWikiLinks(page: SitePage, titleToId: Map<string, string>): st
   return Array.from(ids);
 }
 
-// ═══════════════════════════════════════════
 // Force-directed layout simulation
-// ═══════════════════════════════════════════
-
 function applyForces(nodes: GraphNode[], edges: GraphEdge[], width: number, height: number) {
   const REPULSION = 3000;
   const ATTRACTION = 0.008;
@@ -186,10 +175,7 @@ function applyForces(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
   }
 }
 
-// ═══════════════════════════════════════════
 // Main Component
-// ═══════════════════════════════════════════
-
 export function WikiGraph() {
   const navigate = useNavigate();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -257,6 +243,10 @@ export function WikiGraph() {
       (page.seeAlso || []).forEach((targetId) => addEdge(page.id, targetId, "seeAlso"));
       // Related articles
       (page.relatedArticleIds || []).forEach((targetId) => addEdge(page.id, targetId, "related"));
+      // Structured article relationships
+      (page.relationships || []).forEach((relationship) => {
+        if (relationship.targetArticleId) addEdge(page.id, relationship.targetArticleId, "relationship");
+      });
       // Subcategory article links
       const walkSub = (subs: SitePage["subcategories"]) => {
         for (const sc of subs) {
@@ -293,7 +283,7 @@ export function WikiGraph() {
     setIsSimulating(true);
     tickCountRef.current = 0;
     setGraphReady(true);
-  }, []);
+  }, [dimensions.h, dimensions.w, pages]);
 
   // Resize observer
   useEffect(() => {
@@ -377,6 +367,7 @@ export function WikiGraph() {
         subcategory: "#4AFF6A55",
         wikiLink: "#FF6ABB55",
         related: "#FFAA4A55",
+        relationship: "#6AEAFF55",
         sharedWikiTag: "#9A7ABB55",
       };
 
@@ -392,7 +383,7 @@ export function WikiGraph() {
           ctx.strokeStyle = EDGE_COLORS[edge.type]?.replace("55", "CC") || "#2A3A5ACC";
         }
 
-        if (edge.type === "sharedWikiTag") {
+        if (edge.type === "sharedWikiTag" || edge.type === "relationship") {
           ctx.setLineDash([4, 4]);
         } else {
           ctx.setLineDash([]);
@@ -534,6 +525,7 @@ export function WikiGraph() {
     { type: "subcategory", label: "Subcategory", color: "#4AFF6A" },
     { type: "wikiLink", label: "Wiki Link", color: "#FF6ABB" },
     { type: "related", label: "Related", color: "#FFAA4A" },
+    { type: "relationship", label: "Relationship", color: "#6AEAFF" },
     { type: "sharedWikiTag", label: "Shared Wiki Tag", color: "#9A7ABB" },
   ];
 
@@ -624,7 +616,7 @@ export function WikiGraph() {
               <div key={et.type} className="flex items-center gap-2 text-[10px]">
                 <div style={{
                   width: 16, height: 2,
-                  background: et.type === "sharedWikiTag"
+                  background: et.type === "sharedWikiTag" || et.type === "relationship"
                     ? `repeating-linear-gradient(90deg, ${et.color} 0px, ${et.color} 3px, transparent 3px, transparent 6px)`
                     : et.color,
                 }} />
