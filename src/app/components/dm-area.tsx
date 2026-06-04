@@ -4,10 +4,10 @@ import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
 import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
-  ShieldAlert, Package, CreditCard, FileText, Globe, Users, User,
+  ShieldAlert, Package, CreditCard, FileText, Users,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp, Dices, Images,
+  Newspaper, Copy, Zap, ChevronUp, Dices, Images, BookOpen,
 } from "lucide-react";
 import { DMNodeTreeBuilder, type NodeTree } from "./node-trees";
 import {
@@ -27,10 +27,8 @@ import { DMArcadeManager } from "./dm-arcade-manager";
 import { DMCalendarWeather } from "./dm-calendar-weather";
 import { DMNewsManager } from "./dm-news-manager";
 import { DMCustomizeSection } from "./dm-customize-section";
-import { DMWikiSection } from "./dm-wiki-section";
 import { DMTagsSection } from "./dm-tags-section";
 import { DMImageStorageSection } from "./dm-image-storage-section";
-import { RichTextEditor } from "./rich-text-editor";
 import { DMInfoManagerSection } from "./dm-area-info-panel";
 import { DMCardManagerSection } from "./dm-card-manager-section";
 import { DMItemManagerSection } from "./dm-item-manager-section";
@@ -39,7 +37,7 @@ import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-stora
 import type {
   PlayerStats, PlayerData, TagField, TagDefinition,
   ManagedItem, ManagedCard, InfoFollowUp, ManagedInfo,
-  DMNotification, NewsArticle, LoginProfile,
+  DMNotification, LoginProfile,
 } from "./types";
 import {
   DM_PANEL, DM_TAG_BADGE, DM_OVERLAY,
@@ -475,7 +473,6 @@ type SectionId =
   | "cards"
   | "images"
   | "info"
-  | "pages"
   | "tags"
   | "notifs"
   | "news"
@@ -499,7 +496,6 @@ const DM_SECTIONS = [
   { id: "info" as const, label: "Manage Info", icon: FileText },
   { id: "notifs" as const, label: "Notifications", icon: Bell },
   { id: "news" as const, label: "Manage News", icon: Newspaper },
-  { id: "pages" as const, label: "Wiki Articles", icon: Globe },
   { id: "tags" as const, label: "Manage Tags", icon: Tag },
   { id: "customize" as const, label: "Customization Editing", icon: Paintbrush },
   { id: "calendar" as const, label: "Calendar & Weather", icon: CalendarDays },
@@ -1499,6 +1495,10 @@ const handleSaveItem = async () => {
           <span className="text-[11px]" style={S_RED}>DM AREA - RESTRICTED</span>
         </div>
         <div className="flex items-center gap-3">
+          <button onClick={() => navigate("/interface/wiki-studio")} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
+            <BookOpen size={12} />
+            Wiki Studio
+          </button>
           <button onClick={() => navigate("/interface/game")} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={DM_NAV_GREEN}>
             <Gamepad2 size={12} />
             Arcade
@@ -2296,13 +2296,6 @@ const handleSaveItem = async () => {
           {/* MANAGE NEWS (extracted)                                   */}
           {/* ======================================================= */}
           {activeSection === "news" && <DMNewsManager />}
-
-
-          {/* ======================================================= */}
-          {/* WIKI ARTICLES (extracted)                                 */}
-          {/* ======================================================= */}
-          {activeSection === "pages" && <DMWikiSection />}
-
 
           {/* ======================================================= */}
           {/* MANAGE TAGS (extracted)                                   */}

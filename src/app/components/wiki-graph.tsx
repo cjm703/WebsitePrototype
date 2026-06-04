@@ -543,11 +543,11 @@ export function WikiGraph() {
       <div className={`${retro.toolbar} flex items-center justify-between`} style={{ borderBottom: "2px solid #050520" }}>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate("/interface/dm-area")}
+            onClick={() => navigate("/interface/wiki-studio")}
             className="text-[11px] hover:opacity-80 flex items-center gap-1"
             style={S_ACCENT}
           >
-            <ArrowLeft size={12} /> Back to DM Area
+            <ArrowLeft size={12} /> Back to Wiki Studio
           </button>
           <span className="text-[11px]" style={S_DIM}>|</span>
           <span className="text-[11px] flex items-center gap-1" style={S_LINK}>
@@ -721,13 +721,13 @@ export function WikiGraph() {
             <div className="text-center p-8" style={{ background: "#0C0C2ECC", border: "1px solid #1A1A4B" }}>
               <Link2 size={40} style={{ color: "#2A3A5A" }} className="mx-auto mb-4" />
               <div className="text-[14px] mb-2" style={S_MUTED}>No Articles Yet</div>
-              <div className="text-[11px] mb-4" style={S_DIM}>Create some wiki articles in the DM Area to see their connections here.</div>
+              <div className="text-[11px] mb-4" style={S_DIM}>Create some wiki articles in Wiki Studio to see their connections here.</div>
               <button
-                onClick={() => navigate("/interface/dm-area")}
+                onClick={() => navigate("/interface/wiki-studio")}
                 className={`${retro.button} px-4 py-2 text-[11px]`}
                 style={S_LINK}
               >
-                Go to DM Area
+                Go to Wiki Studio
               </button>
             </div>
           </div>

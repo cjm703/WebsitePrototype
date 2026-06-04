@@ -311,6 +311,68 @@ function dividerLineElement(
   );
 }
 
+function lineBoxElement(
+  orientation: WikiArticleBlock["lineOrientation"] | undefined,
+  dividerStyle: WikiArticleBlock["appearance"]["dividerStyle"] | undefined,
+  borderColor: string,
+  accentColor: string,
+  thickness = 2,
+) {
+  const isVertical = orientation === "vertical";
+  const style = dividerStyle || "line";
+  const size = Math.max(1, Math.min(12, thickness));
+  const commonWrapper: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 2,
+  };
+  const primaryLine: React.CSSProperties = isVertical
+    ? {
+        width: style === "glow" ? Math.max(size, 2) : size,
+        height: "100%",
+        minHeight: 12,
+        borderLeft: style === "dashed" ? `${size}px dashed ${accentColor}` : undefined,
+        background: style === "dashed" ? "transparent" : `linear-gradient(180deg, ${borderColor}, ${accentColor}, ${borderColor})`,
+        boxShadow: style === "glow" ? `0 0 16px ${accentColor}` : undefined,
+      }
+    : {
+        height: style === "glow" ? Math.max(size, 2) : size,
+        width: "100%",
+        minWidth: 12,
+        borderTop: style === "dashed" ? `${size}px dashed ${accentColor}` : undefined,
+        background: style === "dashed" ? "transparent" : `linear-gradient(90deg, ${borderColor}, ${accentColor}, ${borderColor})`,
+        boxShadow: style === "glow" ? `0 0 16px ${accentColor}` : undefined,
+      };
+
+  if (style === "double") {
+    return (
+      <div style={{ ...commonWrapper, flexDirection: isVertical ? "row" : "column", gap: Math.max(3, size) }}>
+        <div style={isVertical ? { width: size, height: "100%", background: accentColor } : { height: size, width: "100%", background: accentColor }} />
+        <div style={isVertical ? { width: size, height: "100%", background: borderColor } : { height: size, width: "100%", background: borderColor }} />
+      </div>
+    );
+  }
+
+  if (style === "notched") {
+    return (
+      <div style={{ ...commonWrapper, flexDirection: isVertical ? "column" : "row", gap: 8 }}>
+        <div style={isVertical ? { width: size, flex: 1, background: `linear-gradient(180deg, transparent, ${borderColor}, ${accentColor})` } : { height: size, flex: 1, background: `linear-gradient(90deg, transparent, ${borderColor}, ${accentColor})` }} />
+        <div style={{ width: 8, height: 8, transform: "rotate(45deg)", border: `1px solid ${accentColor}`, background: `${accentColor}33`, flex: "0 0 auto" }} />
+        <div style={isVertical ? { width: size, flex: 1, background: `linear-gradient(180deg, ${accentColor}, ${borderColor}, transparent)` } : { height: size, flex: 1, background: `linear-gradient(90deg, ${accentColor}, ${borderColor}, transparent)` }} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={commonWrapper}>
+      <div style={primaryLine} />
+    </div>
+  );
+}
+
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -719,6 +781,7 @@ export function WikiEditor() {
   const [hoveredArticleChromeField, setHoveredArticleChromeField] = useState<WikiArticleChromeField | null>(null);
   const [movingBlockId, setMovingBlockId] = useState<string | null>(null);
   const [movingArticleChromeField, setMovingArticleChromeField] = useState<WikiArticleChromeField | null>(null);
+  const [activeTabbedReferenceTabs, setActiveTabbedReferenceTabs] = useState<Record<string, string>>({});
   const [liveBlockLayouts, setLiveBlockLayouts] = useState<Record<string, Partial<WikiArticleBlock["layout"]>>>({});
   const [liveArticleChromeLayouts, setLiveArticleChromeLayouts] = useState<Partial<Record<WikiArticleChromeField, WikiBlockLayout>>>({});
   const [canvasViewportWidth, setCanvasViewportWidth] = useState(0);
@@ -1624,7 +1687,7 @@ export function WikiEditor() {
       if (block.type === "image" && block.imageUrl && !block.imageAlt) {
         findings.push({ id: `${block.id}-alt`, severity: "info", text: `${block.title || "Image block"} is missing alt text.` });
       }
-      if (block.type === "referenceTable" && (block.rows || []).length > 10 && (block.fluid?.mobileBehavior || block.mobileCollapseMode) !== "scrollX") {
+      if ((block.type === "referenceTable" || block.type === "tabbedReference") && ((block.rows || []).length > 10 || (block.tabs || []).some((tab) => tab.rows.length > 10)) && (block.fluid?.mobileBehavior || block.mobileCollapseMode) !== "scrollX") {
         findings.push({ id: `${block.id}-table-mobile`, severity: "warn", text: `${block.title || "Reference table"} should use horizontal scroll on mobile.` });
       }
       if ((block.fluid?.widthMode === "hug" || block.fluid?.heightMode === "hug") && block.type === "image" && !block.fluid?.keepAspectRatio) {
@@ -1708,6 +1771,37 @@ export function WikiEditor() {
   const effectiveCanvasScale = Math.max(0.45, Math.min(1.45, canvasZoom * canvasBaseScale));
   const canvasRenderWidth = canvasFrameWidth;
   const canvasScaledWidth = canvasRenderWidth * effectiveCanvasScale;
+  const editorModeCopy: Record<EditorCanvasMode, { title: string; description: string; tone: string }> = {
+    edit: {
+      title: "Edit Canvas",
+      description: "Build and arrange blocks with rails, grid guides, handles, and inspectors.",
+      tone: "#8AB4FF",
+    },
+    clean: {
+      title: "Clean Canvas",
+      description: "Review spacing and composition without editor chrome or block controls.",
+      tone: "#C7D6FF",
+    },
+    player: {
+      title: "Player Preview",
+      description: "Preview the published article with visibility and spoiler rules applied.",
+      tone: "#8FF0B8",
+    },
+  };
+  const currentModeCopy = editorModeCopy[editorCanvasMode];
+  const selectedStatusLabel = selectedBlocks.length > 1
+    ? `${selectedBlocks.length} blocks selected`
+    : selectedBlock
+      ? selectedBlock.title || `Untitled ${selectedBlock.type}`
+      : "No block selected";
+  const articleHealth = useMemo(() => {
+    const missing: string[] = [];
+    if (!page.title.trim()) missing.push("title");
+    if (!page.description.trim()) missing.push("description");
+    if (pageBlocks.length === 0) missing.push("blocks");
+    if (missing.length === 0) return { label: "Ready", detail: "Article has core publishing details.", color: "#8FF0B8" };
+    return { label: "Needs Setup", detail: `Missing ${missing.join(", ")}.`, color: "#FFD37A" };
+  }, [page.description, page.title, pageBlocks.length]);
 
   const selectExclusiveBlock = useCallback((blockId: string | null) => {
     setSelectedBlockIds(blockId ? [blockId] : []);
@@ -1971,7 +2065,7 @@ export function WikiEditor() {
       id: `style-custom-${uid()}`,
       name,
       description,
-      category: selectedBlock.type === "referenceTable" ? "Reference" : selectedBlock.type === "divider" ? "Structure" : "Custom",
+      category: selectedBlock.type === "referenceTable" || selectedBlock.type === "tabbedReference" ? "Reference" : selectedBlock.type === "divider" || selectedBlock.type === "lineBox" ? "Structure" : "Custom",
       builtIn: false,
       appearance: { ...selectedBlock.appearance, stylePresetId: undefined },
       behavior: { ...(selectedBlock.behavior || {}) },
@@ -1986,6 +2080,8 @@ export function WikiEditor() {
         keyValueLabelAlign: selectedBlock.keyValueLabelAlign,
         keyValueRowDividers: selectedBlock.keyValueRowDividers,
         wikiLinksDisplayMode: selectedBlock.wikiLinksDisplayMode,
+        lineOrientation: selectedBlock.lineOrientation,
+        lineThickness: selectedBlock.lineThickness,
       },
     };
     persistWikiBlockStylePresets([...wikiBlockStylePresets, preset], `Saved style preset: ${name}`);
@@ -2647,6 +2743,8 @@ export function WikiEditor() {
         return `${block.articleIds?.length || 0} linked articles`;
       case "divider":
         return block.dividerLabel || "Divider";
+      case "lineBox":
+        return `${block.lineOrientation === "vertical" ? "Vertical" : "Horizontal"} line`;
       case "spacer":
         return `Spacer x${block.spacerHeight || 1}`;
       default: {
@@ -2989,6 +3087,88 @@ export function WikiEditor() {
     });
   }, [updateSingleBlock]);
 
+  const updateTabbedReferenceTab = useCallback((blockId: string, tabId: string, updater: (tab: NonNullable<WikiArticleBlock["tabs"]>[number]) => NonNullable<WikiArticleBlock["tabs"]>[number]) => {
+    updateSingleBlock(blockId, (block) => ({
+      ...block,
+      tabs: (block.tabs || []).map((tab) => (tab.id === tabId ? updater(tab) : tab)),
+    }));
+  }, [updateSingleBlock]);
+
+  const addTabbedReferenceTab = useCallback((blockId: string) => {
+    const tabId = `tab-${uid()}`;
+    updateSingleBlock(blockId, (block) => {
+      const sourceTab = (block.tabs || [])[0];
+      const columns = sourceTab?.columns?.length ? sourceTab.columns : ["Name", "Level", "School", "Summary"];
+      const nextIndex = (block.tabs || []).length + 1;
+      return {
+        ...block,
+        activeTabId: tabId,
+        tabs: [
+          ...(block.tabs || []),
+          {
+            id: tabId,
+            label: `Level ${nextIndex}`,
+            title: `Level ${nextIndex}`,
+            columns,
+            rows: [{ id: `row-${uid()}`, cells: Array.from({ length: columns.length }, () => "") }],
+            html: "",
+          },
+        ],
+      };
+    });
+    setActiveTabbedReferenceTabs((prev) => ({ ...prev, [blockId]: tabId }));
+  }, [updateSingleBlock]);
+
+  const removeTabbedReferenceTab = useCallback((blockId: string, tabId: string) => {
+    updateSingleBlock(blockId, (block) => {
+      const nextTabs = (block.tabs || []).filter((tab) => tab.id !== tabId);
+      const nextActiveId = nextTabs[0]?.id || "";
+      return { ...block, tabs: nextTabs, activeTabId: nextActiveId };
+    });
+    setActiveTabbedReferenceTabs((prev) => {
+      const next = { ...prev };
+      delete next[blockId];
+      return next;
+    });
+  }, [updateSingleBlock]);
+
+  const moveTabbedReferenceTab = useCallback((blockId: string, tabId: string, direction: -1 | 1) => {
+    updateSingleBlock(blockId, (block) => {
+      const tabs = block.tabs || [];
+      const tabIndex = tabs.findIndex((tab) => tab.id === tabId);
+      if (tabIndex < 0) return block;
+      const nextIndex = tabIndex + direction;
+      if (nextIndex < 0 || nextIndex >= tabs.length) return block;
+      return { ...block, tabs: reorder(tabs, tabIndex, nextIndex) };
+    });
+  }, [updateSingleBlock]);
+
+  const updateTabbedReferenceCell = useCallback((blockId: string, tabId: string, rowId: string, cellIndex: number, value: string) => {
+    updateTabbedReferenceTab(blockId, tabId, (tab) => ({
+      ...tab,
+      rows: tab.rows.map((row) => (
+        row.id === rowId
+          ? { ...row, cells: row.cells.map((cell, index) => (index === cellIndex ? value : cell)) }
+          : row
+      )),
+    }));
+  }, [updateTabbedReferenceTab]);
+
+  const addTabbedReferenceRow = useCallback((blockId: string, tabId: string) => {
+    updateTabbedReferenceTab(blockId, tabId, (tab) => ({
+      ...tab,
+      rows: [...tab.rows, { id: `row-${uid()}`, cells: Array.from({ length: tab.columns.length || 1 }, () => "") }],
+    }));
+  }, [updateTabbedReferenceTab]);
+
+  const addTabbedReferenceColumn = useCallback((blockId: string, tabId: string) => {
+    updateTabbedReferenceTab(blockId, tabId, (tab) => ({
+      ...tab,
+      columns: [...tab.columns, "New Column"],
+      rows: tab.rows.map((row) => ({ ...row, cells: [...row.cells, ""] })),
+    }));
+  }, [updateTabbedReferenceTab]);
+
   const moveKeyValueItem = useCallback((blockId: string, itemId: string, direction: -1 | 1) => {
     updateSingleBlock(blockId, (block) => {
       const items = block.items || [];
@@ -3297,6 +3477,119 @@ export function WikiEditor() {
             </div>
           </div>
         );
+      case "tabbedReference": {
+        const tabs = block.tabs || [];
+        const activeTabId = activeTabbedReferenceTabs[block.id] || block.activeTabId || tabs[0]?.id || "";
+        const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
+        return (
+          <div className="h-full flex flex-col" style={blockShellStyle}>
+            <div className="shrink-0 pb-2">
+              <InlineEdit
+                tag="h2"
+                value={block.title || ""}
+                onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, title: value }))}
+                placeholder="Tabbed reference title"
+                style={{ color: titleColor, fontWeight: 700, fontSize: 16, textAlign: titleAlign }}
+              />
+              {block.subtitle && (
+                <InlineEdit
+                  tag="p"
+                  value={block.subtitle || ""}
+                  onChange={(value) => updateSingleBlock(block.id, (entry) => ({ ...entry, subtitle: value }))}
+                  placeholder="Optional subtitle"
+                  style={{ color: mutedText, fontSize: 11, fontStyle: "italic", textAlign: titleAlign }}
+                />
+              )}
+            </div>
+            <div className="shrink-0 mb-2 flex flex-wrap gap-1.5">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActiveTabbedReferenceTabs((prev) => ({ ...prev, [block.id]: tab.id }));
+                  }}
+                  className="rounded-md border px-2 py-1 text-[10px] transition-opacity hover:opacity-85"
+                  style={{
+                    borderColor: tab.id === activeTab?.id ? palette.accent : `${palette.border}AA`,
+                    background: tab.id === activeTab?.id ? `${palette.accent}22` : "rgba(255,255,255,0.035)",
+                    color: tab.id === activeTab?.id ? titleColor : bodyColor,
+                    fontWeight: tab.id === activeTab?.id ? 700 : 500,
+                  }}
+                >
+                  {tab.label || "Tab"}
+                </button>
+              ))}
+            </div>
+            {activeTab ? (
+              <div className="min-h-0 flex-1 overflow-auto rounded-md border" style={{ borderColor: palette.border }}>
+                <div className="border-b px-2 py-1.5" style={{ borderBottomColor: `${palette.border}88`, background: "rgba(255,255,255,0.035)" }}>
+                  {isSelected ? (
+                    <input
+                      value={activeTab.title || ""}
+                      onChange={(event) => updateTabbedReferenceTab(block.id, activeTab.id, (tab) => ({ ...tab, title: event.target.value }))}
+                      placeholder="Active tab title"
+                      className={`${retro.sunken} w-full bg-[#080A24] px-2 py-1 text-[10px]`}
+                      style={{ color: txt }}
+                    />
+                  ) : (
+                    <div className="text-[11px] font-bold" style={{ color: titleColor }}>
+                      {activeTab.title || activeTab.label}
+                    </div>
+                  )}
+                </div>
+                <table className="w-full text-[11px]" style={{ borderCollapse: "collapse" }}>
+                  <thead style={{ background: "rgba(255,255,255,0.04)" }}>
+                    <tr>
+                      {(activeTab.columns || []).map((column, columnIndex) => (
+                        <th key={`${activeTab.id}-column-${columnIndex}`} className="text-left align-top border-b" style={{ padding: tablePad, position: block.tableStickyHeader ? "sticky" : undefined, top: block.tableStickyHeader ? 0 : undefined, background: block.tableStickyHeader ? "#071126" : undefined, borderBottomColor: palette.border, color: titleColor }}>
+                          {isSelected ? (
+                            <input
+                              value={column}
+                              onChange={(event) => updateTabbedReferenceTab(block.id, activeTab.id, (tab) => ({ ...tab, columns: tab.columns.map((value, index) => (index === columnIndex ? event.target.value : value)) }))}
+                              className={`${retro.sunken} w-full bg-[#080A24] px-1.5 py-1 text-[10px]`}
+                              style={{ color: txt }}
+                            />
+                          ) : column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(activeTab.rows || []).map((row, rowIndex) => (
+                      <tr key={row.id} style={{ background: block.tableStripedRows && rowIndex % 2 === 1 ? "rgba(255,255,255,0.035)" : undefined }}>
+                        {row.cells.map((cell, cellIndex) => (
+                          <td key={`${row.id}-${cellIndex}`} className="align-top border-b" style={{ padding: tablePad, borderBottomColor: `${palette.border}66`, color: bodyColor }}>
+                            {isSelected ? (
+                              <textarea
+                                value={cell}
+                                onChange={(event) => updateTabbedReferenceCell(block.id, activeTab.id, row.id, cellIndex, event.target.value)}
+                                rows={2}
+                                className={`${retro.sunken} w-full bg-[#080A24] px-1.5 py-1 text-[10px] resize-y`}
+                                style={{ color: txt }}
+                              />
+                            ) : (
+                              cell
+                                ? block.tableLinkedCells
+                                  ? <RenderFormattedText text={cell} color={bodyColor} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
+                                  : cell
+                                : <span style={{ color: mutedText }}>Empty</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 rounded-md border border-dashed px-4 py-8 text-center text-[11px]" style={{ borderColor: `${palette.border}99`, color: mutedText }}>
+                Add a tab to start this button-cycle reference box.
+              </div>
+            )}
+          </div>
+        );
+      }
       case "keyValueBox":
         return (
           <div className="h-full flex flex-col" style={blockShellStyle}>
@@ -3383,6 +3676,19 @@ export function WikiEditor() {
             />
           </div>
         );
+      case "lineBox":
+        return (
+          <div
+            className="h-full w-full"
+            style={{
+              ...blockShellStyle,
+              padding: 0,
+              overflow: "hidden",
+            }}
+          >
+            {lineBoxElement(block.lineOrientation, block.appearance.dividerStyle, palette.border, palette.accent, block.lineThickness)}
+          </div>
+        );
       case "spacer":
         return (
           <div className="h-full rounded-md border border-dashed flex items-center justify-center text-[11px] m-2.5" style={{ borderColor: `${palette.border}99`, color: mutedText }}>
@@ -3417,7 +3723,7 @@ export function WikiEditor() {
           </div>
         );
     }
-  }, [blockIdToPage, editorPreviewMode, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock]);
+  }, [activeTabbedReferenceTabs, blockIdToPage, editorPreviewMode, inlinePreviewEditorTarget, mutedText, previewAsPlayerId, resolveBlockPalette, selectedBlockIds, txt, updateReferenceTableCell, updateSingleBlock, updateTabbedReferenceCell, updateTabbedReferenceTab]);
 
   const renderArticleChromeBox = useCallback((field: WikiArticleChromeField) => {
     const layout = articleChromeLayouts[field] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[field];
@@ -3635,7 +3941,9 @@ export function WikiEditor() {
     { label: "Add Heading Block", description: "Insert a title or section heading.", keywords: "heading title section", action: () => addBlock("heading") },
     { label: "Add Image Block", description: "Insert an empty image/media block.", keywords: "image media picture", action: () => addBlock("image") },
     { label: "Add Reference Table", description: "Insert a structured table for spells, items, or rules.", keywords: "table reference list spells", action: () => addBlock("referenceTable") },
+    { label: "Add Tabbed Reference", description: "Insert a button-cycle reference box for spell levels or grouped lists.", keywords: "tabbed reference spell tier level buttons cycle", action: () => addBlock("tabbedReference") },
     { label: "Add Key-Value Box", description: "Insert an infobox-style data block.", keywords: "infobox key value stats", action: () => addBlock("keyValueBox") },
+    { label: "Add Line Box", description: "Insert a resizeable horizontal or vertical decorative line.", keywords: "line box horizontal vertical divider rule", action: () => addBlock("lineBox") },
     { label: "Insert Spell Directory Template", description: "Add a grouped spell/reference page starter.", keywords: "spell directory template", action: () => addArticleTemplate("spell-directory") },
     { label: "Save Selection as Preset", description: "Create a reusable block preset from selected blocks.", keywords: "preset save reusable", action: () => void saveSelectionAsPreset(), disabled: selectedBlocks.length === 0 },
     { label: "Duplicate Selection", description: "Copy the selected block or block group.", keywords: "copy duplicate clone", action: duplicateSelectedBlocks, disabled: selectedBlocks.length === 0 },
@@ -3987,127 +4295,142 @@ export function WikiEditor() {
   if (usingBlockWorkspace) {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: "#07071F", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
-        <div className={`${retro.toolbar} flex items-center justify-between`} style={{ borderBottom: "2px solid #050520" }}>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => {
-                if (hasUnsaved && !window.confirm("You have unsaved changes. Leave anyway?")) return;
-                navigate("/interface/dm-area");
-              }}
-              className="text-[11px] hover:opacity-80 flex items-center gap-1"
-              style={S_ACCENT}
-            >
-              <ArrowLeft size={12} /> Back to DM Area
-            </button>
-            <span className="text-[11px]" style={S_DIM}>|</span>
-            <span className="text-[11px] flex items-center gap-1" style={S_LINK}>
-              <Globe size={11} /> Wiki Block Editor
-            </span>
-            <span className="text-[10px] px-2 py-0.5" style={{ color: "#7A9ABB", border: "1px solid #1A345B", background: "#09132A" }}>
-              Dense Canvas | 48 Columns | Fixed Frame
-            </span>
-            {hasUnsaved && (
-              <span className="text-[9px] px-2 py-0.5 animate-pulse" style={{ color: "#FFAA4A", background: "#1A1A0A", border: "1px solid #3A3A1A" }}>
-                UNSAVED CHANGES
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {saveFlash && (
-              <span className="text-[11px] px-3 py-1" style={{ color: "#4AFF6A", background: "#0A1A0A", border: "1px solid #1A3A1A" }}>
-                Saved!
-              </span>
-            )}
-            {error && (
-              <span className="text-[11px] px-3 py-1 flex items-center gap-1" style={{ color: "#FF6A6A", background: "#1A0A0A", border: "1px solid #3A1A1A" }}>
-                <AlertTriangle size={10} /> {error}
-              </span>
-            )}
-            {presetStatus && (
-              <span className="text-[11px] px-3 py-1" style={{ color: "#A8D8FF", background: "#08172E", border: "1px solid #1E4C7A" }}>
-                {presetStatus}
-              </span>
-            )}
-            {recoveryStatus && (
-              <span className="text-[11px] px-3 py-1" style={{ color: "#FFD37A", background: "#1A1308", border: "1px solid #5B4318" }}>
-                {recoveryStatus}
-              </span>
-            )}
-            <button onClick={handleUndo} disabled={undoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Undo (Ctrl+Z)" style={{ opacity: undoStack.length === 0 ? 0.3 : 1 }}>
-              <Undo2 size={11} style={S_LINK} />
-            </button>
-            <button onClick={handleRedo} disabled={redoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Redo (Ctrl+Y)" style={{ opacity: redoStack.length === 0 ? 0.3 : 1 }}>
-              <Redo2 size={11} style={S_LINK} />
-            </button>
-            <button onClick={() => setShowTemplatePicker(true)} className={`${retro.button} px-2 py-1`} title="Templates">
-              <BookOpen size={11} style={S_WARN} />
-            </button>
-            <button onClick={() => setShowTemplateManager(true)} className={`${retro.button} px-2 py-1`} title="Manage Templates">
-              <FolderOpen size={11} style={S_ACCENT} />
-            </button>
-            <button onClick={() => setShowCommandPalette(true)} className={`${retro.button} px-2 py-1`} title="Command Palette (Ctrl+K)">
-              <Keyboard size={11} style={{ color: "#A8D8FF" }} />
-            </button>
-            <button onClick={() => setShowRecoveryDrawer(true)} className={`${retro.button} px-2 py-1`} title="Recovery, Revisions, Export, and Import">
-              <History size={11} style={{ color: "#FFCC7A" }} />
-            </button>
-            <button onClick={() => navigate("/interface/wiki-graph")} className={`${retro.button} px-2 py-1`} title="Article Graph">
-              <Network size={11} style={{ color: "#9A7ABB" }} />
-            </button>
-            <button
-              onClick={handleSave}
-              className={`${retro.button} px-4 py-1 text-[11px] flex items-center gap-1`}
-              style={{ color: "#FFFFFF", background: "#2A5ABB", borderColor: "#4A7BFF" }}
-              title="Publish (Ctrl+S)"
-            >
-              <Save size={11} /> Publish
-            </button>
-            <div className="flex items-center rounded-md border overflow-hidden" style={{ borderColor: "#1A345B", background: "#081226" }}>
-              {([
-                ["edit", "Edit"],
-                ["clean", "Clean Canvas"],
-                ["player", "Player Preview"],
-              ] as [EditorCanvasMode, string][]).map(([mode, label]) => {
-                const active = editorCanvasMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => setEditorCanvasMode(mode)}
-                    className="px-3 py-1 text-[10px] transition-colors"
-                    style={{
-                      color: active ? "#FFFFFF" : "#7A8CAA",
-                      background: active ? (mode === "player" ? "#0C4F2B" : "#17305A") : "transparent",
-                      borderLeft: mode === "edit" ? "none" : "1px solid #1A345B",
-                      fontWeight: active ? 700 : 500,
-                    }}
-                    title={mode === "edit" ? "Show all editing tools" : mode === "clean" ? "Hide editor chrome for layout review" : "Show the player-facing article preview"}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+        <div className={`${retro.toolbar} flex flex-col gap-3 px-4 py-3`} style={{ borderBottom: "2px solid #050520", background: "linear-gradient(180deg, #101943 0%, #081129 100%)" }}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => {
+                  if (hasUnsaved && !window.confirm("You have unsaved changes. Leave anyway?")) return;
+                  navigate("/interface/wiki-studio");
+                }}
+                className="text-[11px] hover:opacity-80 flex items-center gap-1"
+                style={S_ACCENT}
+              >
+                <ArrowLeft size={12} /> Wiki Studio
+              </button>
+              <span className="text-[11px]" style={S_DIM}>|</span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[12px]" style={{ color: "#D3E1FF", fontWeight: 700 }}>
+                  <Globe size={12} style={S_LINK} />
+                  <span className="truncate max-w-[420px]">{page.title || "Untitled Article"}</span>
+                </div>
+                <div className="mt-0.5 text-[10px]" style={{ color: "#7A9ABB" }}>
+                  {page.category || "Uncategorized"} | {blockCountLabel} | {selectedStatusLabel}
+                </div>
+              </div>
             </div>
-            <div className="flex items-center rounded-md border overflow-hidden" style={{ borderColor: "#1A345B", background: "#081226" }}>
-              {(["desktop", "tablet", "mobile"] as ResponsiveFrameMode[]).map((mode) => {
-                const active = responsiveFrameMode === mode;
-                const option = RESPONSIVE_FRAME_OPTIONS[mode];
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => setResponsiveFrameMode(mode)}
-                    className="px-2.5 py-1 text-[10px] transition-colors"
-                    style={{
-                      color: active ? "#FFFFFF" : "#7A8CAA",
-                      background: active ? "#243B68" : "transparent",
-                      borderLeft: mode === "desktop" ? "none" : "1px solid #1A345B",
-                      fontWeight: active ? 700 : 500,
-                    }}
-                    title={option.description}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {saveFlash && (
+                <span className="text-[10px] px-2.5 py-1 rounded-md" style={{ color: "#4AFF6A", background: "#0A1A0A", border: "1px solid #1A3A1A" }}>
+                  Saved
+                </span>
+              )}
+              {hasUnsaved && (
+                <span className="text-[10px] px-2.5 py-1 rounded-md animate-pulse" style={{ color: "#FFAA4A", background: "#1A1A0A", border: "1px solid #3A3A1A" }}>
+                  Unsaved
+                </span>
+              )}
+              {error && (
+                <span className="text-[10px] px-2.5 py-1 rounded-md flex items-center gap-1" style={{ color: "#FF8A8A", background: "#1A0A0A", border: "1px solid #3A1A1A" }}>
+                  <AlertTriangle size={10} /> {error}
+                </span>
+              )}
+              {(presetStatus || recoveryStatus) && (
+                <span className="text-[10px] px-2.5 py-1 rounded-md" style={{ color: "#A8D8FF", background: "#08172E", border: "1px solid #1E4C7A" }}>
+                  {presetStatus || recoveryStatus}
+                </span>
+              )}
+              <button
+                onClick={handleSave}
+                className={`${retro.button} px-4 py-1.5 text-[11px] flex items-center gap-1`}
+                style={{ color: "#FFFFFF", background: "#2A5ABB", borderColor: "#4A7BFF", fontWeight: 700 }}
+                title="Publish (Ctrl+S)"
+              >
+                <Save size={12} /> Publish
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center rounded-md border overflow-hidden" style={{ borderColor: "#1A345B", background: "#081226" }}>
+                {([
+                  ["edit", "Edit"],
+                  ["clean", "Clean"],
+                  ["player", "Player"],
+                ] as [EditorCanvasMode, string][]).map(([mode, label]) => {
+                  const active = editorCanvasMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      onClick={() => setEditorCanvasMode(mode)}
+                      className="px-3 py-1.5 text-[10px] transition-colors"
+                      style={{
+                        color: active ? "#FFFFFF" : "#7A8CAA",
+                        background: active ? (mode === "player" ? "#0C4F2B" : "#17305A") : "transparent",
+                        borderLeft: mode === "edit" ? "none" : "1px solid #1A345B",
+                        fontWeight: active ? 700 : 500,
+                      }}
+                      title={editorModeCopy[mode].description}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[10px] px-2.5 py-1 rounded-md" style={{ color: currentModeCopy.tone, background: "#071126", border: `1px solid ${currentModeCopy.tone}55` }}>
+                {currentModeCopy.title}
+              </span>
+              <div className="flex items-center rounded-md border overflow-hidden" style={{ borderColor: "#1A345B", background: "#081226" }}>
+                {(["desktop", "tablet", "mobile"] as ResponsiveFrameMode[]).map((mode) => {
+                  const active = responsiveFrameMode === mode;
+                  const option = RESPONSIVE_FRAME_OPTIONS[mode];
+                  return (
+                    <button
+                      key={mode}
+                      onClick={() => setResponsiveFrameMode(mode)}
+                      className="px-2.5 py-1.5 text-[10px] transition-colors"
+                      style={{
+                        color: active ? "#FFFFFF" : "#7A8CAA",
+                        background: active ? "#243B68" : "transparent",
+                        borderLeft: mode === "desktop" ? "none" : "1px solid #1A345B",
+                        fontWeight: active ? 700 : 500,
+                      }}
+                      title={option.description}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[10px] px-2.5 py-1 rounded-md" style={{ color: articleHealth.color, background: "#071126", border: `1px solid ${articleHealth.color}55` }} title={articleHealth.detail}>
+                {articleHealth.label}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={handleUndo} disabled={undoStack.length === 0} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1 disabled:opacity-40`} title="Undo (Ctrl+Z)">
+                <Undo2 size={11} style={S_LINK} /> Undo
+              </button>
+              <button onClick={handleRedo} disabled={redoStack.length === 0} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1 disabled:opacity-40`} title="Redo (Ctrl+Y)">
+                <Redo2 size={11} style={S_LINK} /> Redo
+              </button>
+              <button onClick={() => setShowCommandPalette(true)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} title="Command Palette (Ctrl+K)">
+                <Keyboard size={11} style={{ color: "#A8D8FF" }} /> Commands
+              </button>
+              <button onClick={() => setShowTemplatePicker(true)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} title="Templates">
+                <BookOpen size={11} style={S_WARN} /> Templates
+              </button>
+              <button onClick={() => setShowTemplateManager(true)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} title="Manage Templates">
+                <FolderOpen size={11} style={S_ACCENT} /> Manage
+              </button>
+              <button onClick={() => setShowRecoveryDrawer(true)} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} title="Recovery, Revisions, Export, and Import">
+                <History size={11} style={{ color: "#FFCC7A" }} /> Recovery
+              </button>
+              <button onClick={() => navigate("/interface/wiki-graph")} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} title="Article Graph">
+                <Network size={11} style={{ color: "#9A7ABB" }} /> Graph
+              </button>
             </div>
           </div>
         </div>
@@ -4115,6 +4438,25 @@ export function WikiEditor() {
         <div className="flex-1 min-h-0 flex">
           {!editorPreviewMode && (
           <div className="w-[300px] shrink-0 border-r flex flex-col" style={{ borderRightColor: "#15264B", background: "#081129" }}>
+            <div className="border-b px-4 py-3" style={{ borderBottomColor: "#15264B", background: "linear-gradient(180deg, #0D1938 0%, #081129 100%)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#8AB4FF", fontWeight: 700 }}>Workspace</div>
+                  <div className="mt-1 text-[11px] leading-relaxed" style={{ color: "#9FB0CC" }}>
+                    Build the article from blocks, presets, images, and page settings.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCommandPalette(true)}
+                  className={`${retro.button} px-2 py-1 text-[9px]`}
+                  style={S_SUBTLE}
+                  title="Open command palette"
+                >
+                  Ctrl K
+                </button>
+              </div>
+            </div>
             <div className="grid grid-cols-4 border-b" style={{ borderBottomColor: "#15264B" }}>
               {([
                 { id: "outline", label: "Outline" },
@@ -4138,8 +4480,15 @@ export function WikiEditor() {
               ))}
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#19345E", background: "#09142D", color: "#7A9ABB" }}>
-                {blockCountLabel} active. {selectedBlockIds.length || 0} selected. The canvas uses the same block document the published article now renders.
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-md border px-3 py-2" style={{ borderColor: "#19345E", background: "#09142D" }}>
+                  <div className="text-[9px] uppercase tracking-[0.16em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Blocks</div>
+                  <div className="mt-1 text-[13px] font-bold" style={{ color: "#D3E1FF" }}>{pageBlocks.length}</div>
+                </div>
+                <div className="rounded-md border px-3 py-2" style={{ borderColor: "#19345E", background: "#09142D" }}>
+                  <div className="text-[9px] uppercase tracking-[0.16em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Selected</div>
+                  <div className="mt-1 text-[13px] font-bold" style={{ color: "#D3E1FF" }}>{selectedBlockIds.length || 0}</div>
+                </div>
               </div>
               {(sharedImageStorageFallback || sharedPresetFallback) && (
                 <div className="rounded-md border px-3 py-2 text-[10px]" style={{ borderColor: "#6A5520", background: "rgba(82, 52, 8, 0.28)", color: "#FFD37A" }}>
@@ -4182,6 +4531,25 @@ export function WikiEditor() {
 
               {workspaceRailTab === "outline" && (
                 <div className="space-y-3">
+                  {pageBlocks.length === 0 && (
+                    <div className="rounded-lg border border-dashed px-4 py-5 text-center" style={{ borderColor: "#28466F", background: "rgba(9, 20, 45, 0.72)" }}>
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border" style={{ borderColor: "#31578A", background: "#0D1B3B", color: "#A8D8FF" }}>
+                        <FileText size={18} />
+                      </div>
+                      <div className="text-[12px] font-bold" style={{ color: "#D3E1FF" }}>No blocks yet</div>
+                      <div className="mt-1 text-[10px] leading-relaxed" style={{ color: "#8CA0C2" }}>
+                        Start with a template, add a rich text block, or drag a preset onto the canvas.
+                      </div>
+                      <div className="mt-3 flex justify-center gap-2">
+                        <button onClick={() => setWorkspaceRailTab("library")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_ACCENT}>
+                          Add Blocks
+                        </button>
+                        <button onClick={() => setShowTemplatePicker(true)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_SUBTLE}>
+                          Templates
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {pageBlocks.map((block, index) => (
                     <div
                       key={block.id}
@@ -4229,17 +4597,19 @@ export function WikiEditor() {
                     <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>Block Palette</div>
                     <div className="grid grid-cols-2 gap-2">
                       {([
-                        ["richText", "Rich Text"],
-                        ["heading", "Heading"],
-                        ["image", "Image"],
-                        ["calloutPanel", "Callout"],
-                        ["referenceTable", "Ref Table"],
-                        ["keyValueBox", "Key-Value"],
-                        ["spoilerBlock", "Spoiler"],
-                        ["wikiLinksList", "Wiki Links"],
-                        ["divider", "Divider"],
-                        ["spacer", "Spacer"],
-                      ] as [WikiBlockType, string][]).map(([type, label]) => (
+                        ["richText", "Rich Text", "Lists, links, and body copy"],
+                        ["heading", "Heading", "Section title or anchor"],
+                        ["image", "Image", "Art, maps, portraits"],
+                        ["calloutPanel", "Callout", "Lore box or warning"],
+                        ["referenceTable", "Ref Table", "Sortable info grid"],
+                        ["tabbedReference", "Tabbed Ref", "Button-cycled lists"],
+                        ["keyValueBox", "Key-Value", "Infobox facts"],
+                        ["spoilerBlock", "Spoiler", "Reveal-gated content"],
+                        ["wikiLinksList", "Wiki Links", "Related pages"],
+                        ["divider", "Divider", "Section break"],
+                        ["lineBox", "Line Box", "Vertical or horizontal rule"],
+                        ["spacer", "Spacer", "Breathing room"],
+                      ] as [WikiBlockType, string, string][]).map(([type, label, description]) => (
                         <button
                           key={type}
                           draggable
@@ -4250,7 +4620,7 @@ export function WikiEditor() {
                           style={{ borderColor: "#1A345B", background: "#09142D", color: "#D3E1FF" }}
                         >
                           <div className="font-bold">{label}</div>
-                          <div style={{ color: "#7386A5" }}>Click or drag onto the canvas</div>
+                          <div style={{ color: "#7386A5" }}>{description}</div>
                         </button>
                       ))}
                     </div>
@@ -4500,24 +4870,28 @@ export function WikiEditor() {
             {!editorPreviewMode && (
             <div className="border-b px-5 py-3 flex flex-wrap items-start justify-between gap-4" style={{ borderBottomColor: "#172B52", background: "rgba(8,14,34,0.88)" }}>
               <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#A7BAD8" }}>
-                  <span>{selectedBlockIds.length || 0} selected</span>
-                  <span>|</span>
-                  <span>Zoom {(effectiveCanvasScale * 100).toFixed(0)}%</span>
-                  <span>|</span>
-                  <span>Frame {responsiveFrame.label}</span>
-                  <span>|</span>
-                  <span>{canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article"}</span>
-                  <span>|</span>
-                  <span>{layoutQaFindings.length === 0 ? "Layout QA clear" : `${layoutQaFindings.length} QA note${layoutQaFindings.length === 1 ? "" : "s"}`}</span>
+                <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                  {[
+                    `${selectedBlockIds.length || 0} selected`,
+                    `Zoom ${(effectiveCanvasScale * 100).toFixed(0)}%`,
+                    `Frame ${responsiveFrame.label}`,
+                    canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article",
+                    layoutQaFindings.length === 0 ? "Layout QA clear" : `${layoutQaFindings.length} QA note${layoutQaFindings.length === 1 ? "" : "s"}`,
+                  ].map((label) => (
+                    <span key={label} className="rounded-md border px-2 py-1" style={{ borderColor: "#1A345B", background: "#071126", color: "#A7BAD8" }}>
+                      {label}
+                    </span>
+                  ))}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>View</span>
                   <button onClick={() => setCanvasZoom((value) => Math.max(0.65, Number((value - 0.1).toFixed(2))))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Zoom Out</button>
                   <button onClick={() => setCanvasZoom(1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Reset Zoom</button>
                   <button onClick={() => setCanvasZoom((value) => Math.min(1.45, Number((value + 0.1).toFixed(2))))} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Zoom In</button>
                   <button onClick={() => void saveSelectionAsPreset()} disabled={selectedBlocks.length === 0} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_ACCENT}>Save Selection as Preset</button>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Arrange</span>
                   <button onClick={() => applySelectionLayoutAction("align-left")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Left</button>
                   <button onClick={() => applySelectionLayoutAction("align-center")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Center</button>
                   <button onClick={() => applySelectionLayoutAction("align-right")} disabled={selectedBlocks.length < 2} className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`} style={S_SUBTLE}>Align Right</button>
@@ -4642,6 +5016,8 @@ export function WikiEditor() {
                           const mobileDensity = block.behavior?.mobileDensity || "comfortable";
                           const baseHeight = block.type === "divider"
                             ? 54
+                            : block.type === "lineBox"
+                              ? (block.lineOrientation === "vertical" ? 140 : 42)
                             : block.type === "spacer"
                               ? Math.max(40, (block.spacerHeight || 1) * 18)
                               : Math.max(110, Math.min(responsiveFrameMode === "mobile" ? 430 : 560, block.layout.rowSpan * (block.fluid?.heightMode === "hug" ? 18 : 24)));
@@ -4803,10 +5179,12 @@ export function WikiEditor() {
                                 ["image", "Image"],
                                 ["calloutPanel", "Callout"],
                                 ["referenceTable", "Table"],
+                                ["tabbedReference", "Tabbed Ref"],
                                 ["keyValueBox", "Key-Value"],
                                 ["spoilerBlock", "Spoiler"],
                                 ["wikiLinksList", "Wiki Links"],
                                 ["divider", "Divider"],
+                                ["lineBox", "Line Box"],
                                 ["spacer", "Spacer"],
                               ] as [WikiBlockType, string][]).map(([type, label]) => (
                                 <button
@@ -4985,11 +5363,10 @@ export function WikiEditor() {
 
                   {!editorPreviewMode && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 px-6 text-[10px]" style={{ color: "#7A9ABB" }}>
-                    <span>Desktop canvas keeps a fixed article frame and a dense 48-column layout.</span>
+                    <span className="rounded-md border px-2 py-1" style={{ borderColor: "#1A345B", background: "#081129", color: "#A8D8FF" }}>Tip</span>
+                    <span>Drag blocks to move them, resize from the edges, and Shift-click empty space to insert exactly where you are working.</span>
                     <span>|</span>
-                    <span>Shift-click empty canvas space to place a new block or preset exactly where you want it.</span>
-                    <span>|</span>
-                    <span>Saving still refreshes legacy body and panel snapshots for compatibility.</span>
+                    <span>Use Clean Canvas or Player Preview when you want to review the article without editor controls.</span>
                   </div>
                   )}
                 </div>
@@ -5001,6 +5378,17 @@ export function WikiEditor() {
 
           {!editorPreviewMode && (
           <div className="w-[360px] shrink-0 border-l flex flex-col" style={{ borderLeftColor: "#15264B", background: "#081129" }}>
+            <div className="border-b px-4 py-3" style={{ borderBottomColor: "#15264B", background: "linear-gradient(180deg, #0D1938 0%, #081129 100%)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#8AB4FF", fontWeight: 700 }}>Inspector</div>
+                  <div className="mt-1 truncate text-[11px]" style={{ color: "#9FB0CC" }}>{selectedStatusLabel}</div>
+                </div>
+                <span className="shrink-0 rounded-md border px-2 py-1 text-[9px]" style={{ borderColor: "#1A345B", background: "#071126", color: selectedBlock ? "#8FF0B8" : "#FFD37A" }}>
+                  {selectedBlock ? "Ready" : "Select"}
+                </span>
+              </div>
+            </div>
             <div className="grid grid-cols-4 border-b" style={{ borderBottomColor: "#15264B" }}>
               {([
                 { id: "content", label: "Block" },
@@ -5065,6 +5453,26 @@ export function WikiEditor() {
                     <button onClick={() => nudgeBlock(selectedBlock.id, 1, 0)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Right</button>
                     <button onClick={() => nudgeBlock(selectedBlock.id, 0, -1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Up</button>
                     <button onClick={() => nudgeBlock(selectedBlock.id, 0, 1)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Down</button>
+                  </div>
+                </div>
+              )}
+
+              {!selectedBlock && selectedBlocks.length === 0 && (
+                <div className="rounded-lg border border-dashed px-4 py-6 text-center" style={{ borderColor: "#28466F", background: "rgba(9, 20, 45, 0.72)" }}>
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border" style={{ borderColor: "#31578A", background: "#0D1B3B", color: "#A8D8FF" }}>
+                    <Settings size={18} />
+                  </div>
+                  <div className="text-[12px] font-bold" style={{ color: "#D3E1FF" }}>Select a block to edit it</div>
+                  <div className="mt-1 text-[10px] leading-relaxed" style={{ color: "#8CA0C2" }}>
+                    Click a block on the canvas, choose one from the outline, or add a new block from the library.
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button onClick={() => setWorkspaceRailTab("outline")} className={`${retro.button} px-2 py-1.5 text-[10px]`} style={S_SUBTLE}>
+                      Outline
+                    </button>
+                    <button onClick={() => setWorkspaceRailTab("library")} className={`${retro.button} px-2 py-1.5 text-[10px]`} style={S_ACCENT}>
+                      Add Block
+                    </button>
                   </div>
                 </div>
               )}
@@ -5261,6 +5669,88 @@ export function WikiEditor() {
                       </div>
                     </div>
                   )}
+                  {selectedBlock.type === "tabbedReference" && (() => {
+                    const tabs = selectedBlock.tabs || [];
+                    const activeTabId = activeTabbedReferenceTabs[selectedBlock.id] || selectedBlock.activeTabId || tabs[0]?.id || "";
+                    const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label style={labelStyle}>Button Tabs</label>
+                          <button onClick={() => addTabbedReferenceTab(selectedBlock.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Add Tab</button>
+                        </div>
+                        <div className="rounded-md border p-2 space-y-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                          {tabs.length === 0 && (
+                            <div className="text-[10px]" style={{ color: "#7A9ABB" }}>
+                              Add a tab to create level buttons, spell tiers, or grouped reference lists.
+                            </div>
+                          )}
+                          {tabs.map((tab, tabIndex) => (
+                            <div key={tab.id} className="rounded-md border p-2 space-y-2" style={{ borderColor: tab.id === activeTab?.id ? "#3B6FAC" : "#15315A", background: tab.id === activeTab?.id ? "#0B1A36" : "#071126" }}>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setActiveTabbedReferenceTabs((prev) => ({ ...prev, [selectedBlock.id]: tab.id }))}
+                                  className={`${retro.button} px-2 py-1 text-[9px]`}
+                                  style={tab.id === activeTab?.id ? S_ACCENT : S_SUBTLE}
+                                >
+                                  Active
+                                </button>
+                                <input
+                                  value={tab.label}
+                                  onChange={(event) => updateTabbedReferenceTab(selectedBlock.id, tab.id, (entry) => ({ ...entry, label: event.target.value }))}
+                                  placeholder="Button label"
+                                  className={`${inputClass} flex-1`}
+                                  style={inputStyle}
+                                />
+                              </div>
+                              <input
+                                value={tab.title || ""}
+                                onChange={(event) => updateTabbedReferenceTab(selectedBlock.id, tab.id, (entry) => ({ ...entry, title: event.target.value }))}
+                                placeholder="Displayed title inside this tab"
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <button onClick={() => moveTabbedReferenceTab(selectedBlock.id, tab.id, -1)} disabled={tabIndex === 0} className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`} style={S_SUBTLE}>Up</button>
+                                <button onClick={() => moveTabbedReferenceTab(selectedBlock.id, tab.id, 1)} disabled={tabIndex === tabs.length - 1} className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`} style={S_SUBTLE}>Down</button>
+                                <button onClick={() => removeTabbedReferenceTab(selectedBlock.id, tab.id)} disabled={tabs.length <= 1} className={`${retro.button} px-2 py-1 text-[9px] disabled:opacity-40`} style={S_RED}>Delete</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {activeTab && (
+                          <div className="rounded-md border p-2 space-y-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                            <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>
+                              Active Tab Table
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button onClick={() => addTabbedReferenceRow(selectedBlock.id, activeTab.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Add Row</button>
+                              <button onClick={() => addTabbedReferenceColumn(selectedBlock.id, activeTab.id)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>Add Column</button>
+                              <button
+                                onClick={() => updateTabbedReferenceTab(selectedBlock.id, activeTab.id, (tab) => ({ ...tab, rows: tab.rows.slice(0, -1) }))}
+                                disabled={(activeTab.rows || []).length <= 1}
+                                className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`}
+                                style={S_RED}
+                              >
+                                Remove Last Row
+                              </button>
+                              <button
+                                onClick={() => updateTabbedReferenceTab(selectedBlock.id, activeTab.id, (tab) => ({ ...tab, columns: tab.columns.slice(0, -1), rows: tab.rows.map((row) => ({ ...row, cells: row.cells.slice(0, -1) })) }))}
+                                disabled={(activeTab.columns || []).length <= 1}
+                                className={`${retro.button} px-2 py-1 text-[10px] disabled:opacity-40`}
+                                style={S_RED}
+                              >
+                                Remove Last Column
+                              </button>
+                            </div>
+                            <div className="text-[10px] leading-relaxed" style={{ color: "#7A9ABB" }}>
+                              Edit column names and row cells directly inside the selected tabbed box on the canvas.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {selectedBlock.type === "keyValueBox" && (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -5525,9 +6015,9 @@ export function WikiEditor() {
                       </select>
                     </div>
                   </div>
-                  {selectedBlock.type === "divider" && (
+                  {(selectedBlock.type === "divider" || selectedBlock.type === "lineBox") && (
                     <div>
-                      <label style={labelStyle}>Divider Line Style</label>
+                      <label style={labelStyle}>Line Style</label>
                       <select
                         value={selectedBlock.appearance.dividerStyle || "line"}
                         onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
@@ -5546,6 +6036,45 @@ export function WikiEditor() {
                         <option value="glow">Glowing Line</option>
                         <option value="notched">Notched Divider</option>
                       </select>
+                    </div>
+                  )}
+                  {selectedBlock.type === "lineBox" && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Direction</label>
+                        <select
+                          value={selectedBlock.lineOrientation || "horizontal"}
+                          onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                            ...block,
+                            lineOrientation: event.target.value as WikiArticleBlock["lineOrientation"],
+                            layout: {
+                              ...block.layout,
+                              colSpan: event.target.value === "vertical" ? Math.min(block.layout.colSpan, 4) || 2 : Math.max(block.layout.colSpan, 8),
+                              rowSpan: event.target.value === "vertical" ? Math.max(block.layout.rowSpan, 8) : Math.min(Math.max(block.layout.rowSpan, 1), 4),
+                            },
+                          }))}
+                          className={`${inputClass} cursor-pointer`}
+                          style={inputStyle}
+                        >
+                          <option value="horizontal">Horizontal</option>
+                          <option value="vertical">Vertical</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Thickness</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          value={selectedBlock.lineThickness || 2}
+                          onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                            ...block,
+                            lineThickness: Math.max(1, Math.min(12, Number(event.target.value) || 2)),
+                          }))}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
                     </div>
                   )}
                   <div className="grid grid-cols-3 gap-2">
@@ -5758,6 +6287,25 @@ export function WikiEditor() {
                           <option value="none">None</option>
                         </select>
                       </div>
+                      <div className="col-span-2">
+                        <label style={labelStyle}>Corner Shape</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {([
+                            ["Square", 0],
+                            ["Rounded", 10],
+                            ["Soft Round", 22],
+                          ] as const).map(([label, radius]) => (
+                            <button
+                              key={label}
+                              onClick={() => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderRadius: radius } }))}
+                              className={`${retro.button} px-2 py-1.5 text-[10px]`}
+                              style={(selectedBlock.appearance.borderRadius ?? 10) === radius ? S_ACCENT : S_SUBTLE}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <div>
                         <label style={labelStyle}>Border Color</label>
                         <input type="color" value={selectedBlock.appearance.borderColor || "#20335B"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, borderColor: event.target.value } }))} className={inputClass} style={inputStyle} />
@@ -5867,7 +6415,7 @@ export function WikiEditor() {
                         </div>
                       </div>
                     )}
-                    {selectedBlock.type === "referenceTable" && (
+                    {(selectedBlock.type === "referenceTable" || selectedBlock.type === "tabbedReference") && (
                       <div className="space-y-2">
                         <div>
                           <label style={labelStyle}>Table Density</label>
@@ -5925,10 +6473,49 @@ export function WikiEditor() {
                         </select>
                       </div>
                     )}
-                    {selectedBlock.type === "divider" && (
+                    {(selectedBlock.type === "divider" || selectedBlock.type === "lineBox") && (
                       <div className="grid grid-cols-2 gap-2">
+                        {selectedBlock.type === "lineBox" && (
+                          <>
+                            <div>
+                              <label style={labelStyle}>Direction</label>
+                              <select
+                                value={selectedBlock.lineOrientation || "horizontal"}
+                                onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                                  ...block,
+                                  lineOrientation: event.target.value as WikiArticleBlock["lineOrientation"],
+                                  layout: {
+                                    ...block.layout,
+                                    colSpan: event.target.value === "vertical" ? Math.min(block.layout.colSpan, 4) || 2 : Math.max(block.layout.colSpan, 8),
+                                    rowSpan: event.target.value === "vertical" ? Math.max(block.layout.rowSpan, 8) : Math.min(Math.max(block.layout.rowSpan, 1), 4),
+                                  },
+                                }))}
+                                className={`${inputClass} cursor-pointer`}
+                                style={inputStyle}
+                              >
+                                <option value="horizontal">Horizontal</option>
+                                <option value="vertical">Vertical</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Thickness</label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={12}
+                                value={selectedBlock.lineThickness || 2}
+                                onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                                  ...block,
+                                  lineThickness: Math.max(1, Math.min(12, Number(event.target.value) || 2)),
+                                }))}
+                                className={inputClass}
+                                style={inputStyle}
+                              />
+                            </div>
+                          </>
+                        )}
                         <div>
-                          <label style={labelStyle}>Divider Style</label>
+                          <label style={labelStyle}>Line Style</label>
                           <select value={selectedBlock.appearance.dividerStyle || "line"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, dividerStyle: event.target.value as WikiArticleBlock["appearance"]["dividerStyle"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
                             <option value="line">Line</option>
                             <option value="double">Double</option>
@@ -5937,17 +6524,19 @@ export function WikiEditor() {
                             <option value="notched">Notched</option>
                           </select>
                         </div>
-                        <div>
-                          <label style={labelStyle}>Label Position</label>
-                          <select value={selectedBlock.appearance.dividerLabelPosition || "center"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, dividerLabelPosition: event.target.value as WikiArticleBlock["appearance"]["dividerLabelPosition"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
-                            <option value="above">Above</option>
-                            <option value="center">Centered</option>
-                            <option value="below">Below</option>
-                          </select>
-                        </div>
+                        {selectedBlock.type === "divider" && (
+                          <div>
+                            <label style={labelStyle}>Label Position</label>
+                            <select value={selectedBlock.appearance.dividerLabelPosition || "center"} onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({ ...block, appearance: { ...block.appearance, dividerLabelPosition: event.target.value as WikiArticleBlock["appearance"]["dividerLabelPosition"] } }))} className={`${inputClass} cursor-pointer`} style={inputStyle}>
+                              <option value="above">Above</option>
+                              <option value="center">Centered</option>
+                              <option value="below">Below</option>
+                            </select>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {!["image", "referenceTable", "keyValueBox", "wikiLinksList", "divider"].includes(selectedBlock.type) && (
+                    {!["image", "referenceTable", "tabbedReference", "keyValueBox", "wikiLinksList", "divider", "lineBox"].includes(selectedBlock.type) && (
                       <div className="rounded-md border px-2 py-2 text-[10px]" style={{ borderColor: "#17315A", background: "#071126", color: "#7A9ABB" }}>
                         This block type uses the shared surface, text, border, effects, and behavior settings above.
                       </div>
@@ -6298,12 +6887,12 @@ export function WikiEditor() {
           <button
             onClick={() => {
               if (hasUnsaved && !window.confirm("You have unsaved changes. Leave anyway?")) return;
-              navigate("/interface/dm-area");
+              navigate("/interface/wiki-studio");
             }}
             className="text-[11px] hover:opacity-80 flex items-center gap-1"
             style={S_ACCENT}
           >
-            <ArrowLeft size={12} /> Back to DM Area
+            <ArrowLeft size={12} /> Back to Wiki Studio
           </button>
           <span className="text-[11px]" style={S_DIM}>|</span>
           <span className="text-[11px] flex items-center gap-1" style={S_LINK}>

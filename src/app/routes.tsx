@@ -18,6 +18,7 @@ const interfaceChildren = [
   { path: "community", lazy: () => import("./components/community-page").then(m => ({ Component: m.CommunityPage })) },
   { path: "commerce", lazy: () => import("./components/commerce-page").then(m => ({ Component: m.CommercePage })) },
   { path: "calendar", lazy: () => import("./components/calendar-page").then(m => ({ Component: m.CalendarPage })) },
+  { path: "wiki-studio", lazy: () => import("./components/wiki-studio").then(m => ({ Component: m.WikiStudio })) },
   { path: "wiki-editor/new", lazy: () => import("./components/wiki-editor").then(m => ({ Component: m.WikiEditor })) },
   { path: "wiki-editor/:id", lazy: () => import("./components/wiki-editor").then(m => ({ Component: m.WikiEditor })) },
   { path: "wiki-graph", lazy: () => import("./components/wiki-graph").then(m => ({ Component: m.WikiGraph })) },

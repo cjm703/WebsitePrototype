@@ -3,7 +3,7 @@ import { logoutPlayerSession } from "@/lib/player-state-api";
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { S_MUTED, S_SUBTLE, S_TEXT, S_RED, S_ACCENT, S_GREEN_BTN, SUNKEN_INPUT } from "./shared-styles";
-import { Search, FileText, Building2, Map, ShieldAlert, LogOut, Bell, User, ArrowRight, AlertCircle, X, History, Trash2, ChevronDown, ChevronRight, MessageSquareWarning, Send, Cat, Paintbrush, Users, CalendarDays, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind, Store } from "lucide-react";
+import { Search, FileText, Building2, Map, ShieldAlert, LogOut, Bell, User, ArrowRight, AlertCircle, X, History, Trash2, ChevronDown, ChevronRight, MessageSquareWarning, Send, Cat, Paintbrush, Users, CalendarDays, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind, Store, BookOpen } from "lucide-react";
 import { submitReport } from "./error-logger";
 import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import mascotImg from "@/assets/figma/Gnarpy_Boss1.png";
@@ -35,6 +35,7 @@ export function IntelliInterface() {
   const DEFAULT_SECTION_DETAILS = {
     personalFiles: "View and manage your character sheet",
     inetSearch: "Browse the I-Net encyclopedia.",
+    wikiStudio: "Create, organize, and edit I-Net Wiki articles.",
     nexusNomad: "Company headquarters and operations.",
     intelliMaps: "13 sectors | Hexagonal deep city map with fog of war and path connections.",
     dmArea: "Campaign management tools.",
@@ -359,6 +360,14 @@ export function IntelliInterface() {
       icon: Search,
       description: "Browse the I-Net encyclopedia",
       details: sectionDetails.inetSearch
+    },
+    {
+      name: "Wiki Studio",
+      path: "/interface/wiki-studio",
+      icon: BookOpen,
+      description: "Create and edit wiki articles",
+      details: sectionDetails.wikiStudio,
+      dmOnly: true,
     },
     {
       name: "Community",

@@ -150,6 +150,29 @@ function getPanelStyle(styleId: string | undefined): { accent: string; bg: strin
   return BUILTIN_PANEL_STYLE_MAP.neutral;
 }
 
+function findSubcategoryArticlePath(
+  nodes: SubCategory[] | undefined,
+  targetArticleId: string,
+  pageTitleLookup: Map<string, string>,
+  trail: string[] = [],
+): string[] | null {
+  for (const node of nodes || []) {
+    const label = node.name || (node.articleId ? pageTitleLookup.get(node.articleId) : "") || (node.type === "folder" ? "Untitled Folder" : "Untitled Article");
+    const nextTrail = [...trail, label];
+    if (node.type === "article" && node.articleId === targetArticleId) return nextTrail;
+    const childPath = findSubcategoryArticlePath(node.children, targetArticleId, pageTitleLookup, nextTrail);
+    if (childPath) return childPath;
+  }
+  return null;
+}
+
+function compactRouteParts(parts: string[]): string[] {
+  return parts
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part, index, list) => index === 0 || part.toLowerCase() !== list[index - 1].toLowerCase());
+}
+
 const DEFAULTS = {
   bgColor: "#0C0C2E",
   headerColor: "#0E0E35",
@@ -282,11 +305,75 @@ function dividerLineElement(
   );
 }
 
+function lineBoxElement(
+  orientation: WikiArticleBlock["lineOrientation"] | undefined,
+  dividerStyle: WikiArticleBlock["appearance"]["dividerStyle"] | undefined,
+  borderColor: string,
+  accentColor: string,
+  thickness = 2,
+) {
+  const isVertical = orientation === "vertical";
+  const style = dividerStyle || "line";
+  const size = Math.max(1, Math.min(12, thickness));
+  const commonWrapper: React.CSSProperties = {
+    width: "100%",
+    height: "100%",
+    minHeight: isVertical ? 96 : Math.max(18, size + 8),
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 2,
+  };
+  const primaryLine: React.CSSProperties = isVertical
+    ? {
+        width: style === "glow" ? Math.max(size, 2) : size,
+        height: "100%",
+        minHeight: 72,
+        borderLeft: style === "dashed" ? `${size}px dashed ${accentColor}` : undefined,
+        background: style === "dashed" ? "transparent" : `linear-gradient(180deg, ${borderColor}, ${accentColor}, ${borderColor})`,
+        boxShadow: style === "glow" ? `0 0 16px ${accentColor}` : undefined,
+      }
+    : {
+        height: style === "glow" ? Math.max(size, 2) : size,
+        width: "100%",
+        minWidth: 12,
+        borderTop: style === "dashed" ? `${size}px dashed ${accentColor}` : undefined,
+        background: style === "dashed" ? "transparent" : `linear-gradient(90deg, ${borderColor}, ${accentColor}, ${borderColor})`,
+        boxShadow: style === "glow" ? `0 0 16px ${accentColor}` : undefined,
+      };
+
+  if (style === "double") {
+    return (
+      <div style={{ ...commonWrapper, flexDirection: isVertical ? "row" : "column", gap: Math.max(3, size) }}>
+        <div style={isVertical ? { width: size, height: "100%", background: accentColor } : { height: size, width: "100%", background: accentColor }} />
+        <div style={isVertical ? { width: size, height: "100%", background: borderColor } : { height: size, width: "100%", background: borderColor }} />
+      </div>
+    );
+  }
+
+  if (style === "notched") {
+    return (
+      <div style={{ ...commonWrapper, flexDirection: isVertical ? "column" : "row", gap: 8 }}>
+        <div style={isVertical ? { width: size, flex: 1, background: `linear-gradient(180deg, transparent, ${borderColor}, ${accentColor})` } : { height: size, flex: 1, background: `linear-gradient(90deg, transparent, ${borderColor}, ${accentColor})` }} />
+        <div style={{ width: 8, height: 8, transform: "rotate(45deg)", border: `1px solid ${accentColor}`, background: `${accentColor}33`, flex: "0 0 auto" }} />
+        <div style={isVertical ? { width: size, flex: 1, background: `linear-gradient(180deg, ${accentColor}, ${borderColor}, transparent)` } : { height: size, flex: 1, background: `linear-gradient(90deg, ${accentColor}, ${borderColor}, transparent)` }} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={commonWrapper}>
+      <div style={primaryLine} />
+    </div>
+  );
+}
+
 export function InetPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
   const [articleRevealed, setArticleRevealed] = useState(false);
+  const [activeTabbedReferenceTabs, setActiveTabbedReferenceTabs] = useState<Record<string, string>>({});
 
   const pages: SitePage[] = safeGetJson("inet-dm-sites", []);
   const wikiTagDefs: { id: string; name: string; description: string; fields: { id: string; name: string; type?: string; options?: string[]; placeholder?: string; required?: boolean }[] }[] = safeGetJson("inet-dm-wikiTags", []);
@@ -439,6 +526,14 @@ export function InetPage() {
     return aOrder - bOrder || compareWikiBlocksForLayout(a, b);
   });
   const pageTitleLookup = new Map(pages.map((entry) => [entry.id, entry.title]));
+  const wikiRouteParts = useMemo(() => {
+    const linkedPath = pages
+      .filter((entry) => entry.id !== page.id)
+      .map((entry) => findSubcategoryArticlePath(entry.subcategories, page.id, pageTitleLookup))
+      .find((path): path is string[] => Array.isArray(path) && path.length > 0);
+    const tail = linkedPath && linkedPath.length > 0 ? linkedPath : [page.title || "Untitled Article"];
+    return compactRouteParts(["Wiki", page.category || "Uncategorized", ...tail]);
+  }, [page.category, page.id, page.title, pages, pageTitleLookup]);
 
   const iconMode = page.pageIcon || "globe";
   const PageIcon = getPageIcon(iconMode === "none" || iconMode === "custom" ? undefined : iconMode);
@@ -594,7 +689,7 @@ export function InetPage() {
       color: bodyColor,
       textAlign: bodyAlign,
       overflow: overflowMode === "scroll" ? "auto" : "hidden",
-      padding: block.type === "divider" || block.type === "spacer"
+      padding: block.type === "divider" || block.type === "lineBox" || block.type === "spacer"
         ? 0
         : block.appearance.padding === "tight"
           ? 10
@@ -741,6 +836,77 @@ export function InetPage() {
             </div>
           </div>
         );
+      case "tabbedReference": {
+        const tabs = block.tabs || [];
+        const activeTabId = activeTabbedReferenceTabs[block.id] || block.activeTabId || tabs[0]?.id || "";
+        const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
+        return (
+          <div style={blockShellStyle}>
+            {(block.title || block.subtitle) && (
+              <div className="mb-3">
+                {block.title && <h3 className="text-[16px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
+                {block.subtitle && <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font, textAlign: titleAlign }}>{block.subtitle}</p>}
+              </div>
+            )}
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTabbedReferenceTabs((prev) => ({ ...prev, [block.id]: tab.id }))}
+                  className="rounded-md border px-2 py-1 text-[10px] hover:opacity-85"
+                  style={{
+                    borderColor: tab.id === activeTab?.id ? accentColor : `${borderTone}AA`,
+                    background: tab.id === activeTab?.id ? `${accentColor}22` : "rgba(255,255,255,0.035)",
+                    color: tab.id === activeTab?.id ? titleColor : bodyColor,
+                    fontFamily: font,
+                    fontWeight: tab.id === activeTab?.id ? 700 : 500,
+                  }}
+                >
+                  {tab.label || "Tab"}
+                </button>
+              ))}
+            </div>
+            {activeTab ? (
+              <div className="overflow-x-auto rounded-md border" style={{ borderColor: borderTone }}>
+                {(activeTab.title || activeTab.html) && (
+                  <div className="border-b px-3 py-2" style={{ borderBottomColor: `${borderTone}88`, background: "rgba(255,255,255,0.035)" }}>
+                    {activeTab.title && <div className="text-[12px] font-bold" style={{ color: titleColor, fontFamily: font }}>{activeTab.title}</div>}
+                    {activeTab.html && <RenderFormattedText text={activeTab.html} color={bodyColor} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />}
+                  </div>
+                )}
+                <table className="w-full text-[11px]" style={{ borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {(activeTab.columns || []).map((column, columnIndex) => (
+                        <th key={`${activeTab.id}-head-${columnIndex}`} className="text-left border-b" style={{ padding: tablePad, position: block.tableStickyHeader ? "sticky" : undefined, top: block.tableStickyHeader ? 0 : undefined, background: block.tableStickyHeader ? backgroundTone : undefined, color: titleColor, borderBottomColor: borderTone }}>
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(activeTab.rows || []).map((row, rowIndex) => (
+                      <tr key={row.id} style={{ background: block.tableStripedRows && rowIndex % 2 === 1 ? "rgba(255,255,255,0.035)" : undefined }}>
+                        {row.cells.map((cell, cellIndex) => (
+                          <td key={`${row.id}-${cellIndex}`} className="align-top border-b" style={{ padding: tablePad, color: bodyColor, borderBottomColor: `${borderTone}66` }}>
+                            {block.tableLinkedCells
+                              ? <RenderFormattedText text={cell || ""} color={bodyColor} font={font} currentPlayerId={isDM ? undefined : currentUserId} isDM={isDM} />
+                              : cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed px-4 py-8 text-center text-[11px]" style={{ borderColor: borderTone, color: mutedText, fontFamily: font }}>
+                This tabbed reference block has no tabs yet.
+              </div>
+            )}
+          </div>
+        );
+      }
       case "keyValueBox":
         return (
           <div style={blockShellStyle}>
@@ -779,6 +945,12 @@ export function InetPage() {
             {block.dividerLabel && block.appearance.dividerLabelPosition === "above" && <div className="text-[10px] mb-2 text-center uppercase tracking-[0.18em]" style={{ color: mutedText }}>{block.dividerLabel}</div>}
             {dividerLineElement(block.appearance.dividerStyle, borderTone, accentColor)}
             {block.dividerLabel && block.appearance.dividerLabelPosition !== "above" && <div className={`text-[10px] ${block.appearance.dividerLabelPosition === "below" ? "mt-2" : "mt-[-8px]"} text-center uppercase tracking-[0.18em]`} style={{ color: mutedText }}>{block.dividerLabel}</div>}
+          </div>
+        );
+      case "lineBox":
+        return (
+          <div style={{ ...blockShellStyle, padding: 0, minHeight: block.lineOrientation === "vertical" ? Math.max(96, block.layout.rowSpan * 24) : Math.max(18, block.layout.rowSpan * 14) }}>
+            {lineBoxElement(block.lineOrientation, block.appearance.dividerStyle, borderTone, accentColor, block.lineThickness)}
           </div>
         );
       case "spacer":
@@ -849,22 +1021,31 @@ export function InetPage() {
 
       {/* Breadcrumb bar */}
       <div
-        className="px-4 py-1.5 flex items-center gap-1.5 border-b text-[11px]"
+        className="px-4 py-1.5 flex flex-wrap items-center gap-1.5 border-b text-[11px]"
         style={{ background: "#0A0A30", borderBottomColor: "#1A1A4B" }}
       >
-        <button onClick={() => navigate("/interface/inet-search")} className="hover:underline" style={S_ACCENT}>
-          Wiki
-        </button>
-        <ChevronRight size={9} style={S_DIM} />
-        <button
-          onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(page.category)}`)}
-          className="hover:underline"
-          style={S_ACCENT}
-        >
-          {page.category}
-        </button>
-        <ChevronRight size={9} style={S_DIM} />
-        <span style={S_SUBTLE}>{page.title}</span>
+        <span className="uppercase tracking-[0.16em] text-[9px]" style={S_DIM}>Route</span>
+        <span style={S_DIM}>|</span>
+        {wikiRouteParts.map((part, index) => {
+          const isLast = index === wikiRouteParts.length - 1;
+          const isWikiRoot = index === 0;
+          return (
+            <React.Fragment key={`${part}-${index}`}>
+              {index > 0 && <span style={S_DIM}>/</span>}
+              {isLast ? (
+                <span style={S_SUBTLE}>{part}</span>
+              ) : (
+                <button
+                  onClick={() => navigate(isWikiRoot ? "/interface/inet-search" : `/interface/inet-search?q=${encodeURIComponent(part)}`)}
+                  className="hover:underline"
+                  style={S_ACCENT}
+                >
+                  {part}
+                </button>
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
 
       {/* Spoiler gate for entire article */}

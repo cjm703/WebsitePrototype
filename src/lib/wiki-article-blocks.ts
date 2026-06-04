@@ -37,10 +37,12 @@ export type WikiBlockType =
   | "image"
   | "calloutPanel"
   | "referenceTable"
+  | "tabbedReference"
   | "keyValueBox"
   | "spoilerBlock"
   | "wikiLinksList"
   | "divider"
+  | "lineBox"
   | "spacer";
 
 export type WikiBlockVisibilityMode = "visible" | "spoiler" | "hidden";
@@ -67,6 +69,7 @@ export type WikiReferenceTableDensity = "comfortable" | "compact" | "dense";
 export type WikiKeyValueDensity = "comfortable" | "compact" | "dense";
 export type WikiKeyValueLabelAlign = "left" | "right";
 export type WikiLinksDisplayMode = "list" | "cards" | "chips";
+export type WikiLineBoxOrientation = "horizontal" | "vertical";
 
 export interface WikiBlockLayout {
   colStart: number;
@@ -134,6 +137,15 @@ export interface WikiReferenceTableRow {
   cells: string[];
 }
 
+export interface WikiTabbedReferenceTab {
+  id: string;
+  label: string;
+  title?: string;
+  columns: string[];
+  rows: WikiReferenceTableRow[];
+  html?: string;
+}
+
 export interface WikiArticleBlock {
   id: string;
   type: WikiBlockType;
@@ -159,9 +171,13 @@ export interface WikiArticleBlock {
   cropMode?: WikiBlockCropMode;
   headingLevel?: 1 | 2 | 3 | 4;
   dividerLabel?: string;
+  lineOrientation?: WikiLineBoxOrientation;
+  lineThickness?: number;
   spacerHeight?: number;
   columns?: string[];
   rows?: WikiReferenceTableRow[];
+  tabs?: WikiTabbedReferenceTab[];
+  activeTabId?: string;
   tableDensity?: WikiReferenceTableDensity;
   tableStripedRows?: boolean;
   tableStickyHeader?: boolean;
@@ -210,6 +226,8 @@ export interface WikiBlockStylePreset {
     | "keyValueLabelAlign"
     | "keyValueRowDividers"
     | "wikiLinksDisplayMode"
+    | "lineOrientation"
+    | "lineThickness"
   >>;
 }
 
@@ -258,10 +276,12 @@ const DEFAULT_LAYOUTS: Record<WikiBlockType, Pick<WikiBlockLayout, "colSpan" | "
   image: { colSpan: 24, rowSpan: 18, minColSpan: 12, minRowSpan: 10 },
   calloutPanel: { colSpan: 24, rowSpan: 16, minColSpan: 12, minRowSpan: 10 },
   referenceTable: { colSpan: 48, rowSpan: 20, minColSpan: 20, minRowSpan: 12 },
+  tabbedReference: { colSpan: 48, rowSpan: 22, minColSpan: 20, minRowSpan: 12 },
   keyValueBox: { colSpan: 16, rowSpan: 14, minColSpan: 12, minRowSpan: 8 },
   spoilerBlock: { colSpan: 24, rowSpan: 16, minColSpan: 12, minRowSpan: 10 },
   wikiLinksList: { colSpan: 16, rowSpan: 14, minColSpan: 12, minRowSpan: 8 },
   divider: { colSpan: 48, rowSpan: 2, minColSpan: 24, minRowSpan: 2 },
+  lineBox: { colSpan: 12, rowSpan: 2, minColSpan: 1, minRowSpan: 1 },
   spacer: { colSpan: 48, rowSpan: 4, minColSpan: 24, minRowSpan: 2 },
 };
 
@@ -271,12 +291,64 @@ const DEFAULT_FLUID_SETTINGS: Record<WikiBlockType, WikiBlockFluidSettings> = {
   image: { widthMode: "fixed", heightMode: "fixed", keepAspectRatio: true, mobileBehavior: "stack" },
   calloutPanel: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
   referenceTable: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+  tabbedReference: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
   keyValueBox: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
   spoilerBlock: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
   wikiLinksList: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
   divider: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: false, mobileBehavior: "stack" },
+  lineBox: { widthMode: "fixed", heightMode: "fixed", keepAspectRatio: false, mobileBehavior: "stack" },
   spacer: { widthMode: "fill", heightMode: "fixed", keepAspectRatio: false, mobileBehavior: "compact" },
 };
+
+function createDefaultTabbedReferenceTabs(): WikiTabbedReferenceTab[] {
+  const columns = ["Name", "Level", "School", "Summary"];
+  return [
+    {
+      id: `tab-${uid()}`,
+      label: "Level 1",
+      title: "Level 1 Spells",
+      columns,
+      rows: [
+        { id: `row-${uid()}`, cells: ["[[Example Spell]]", "1", "Evocation", "Describe what this spell does."] },
+      ],
+    },
+    {
+      id: `tab-${uid()}`,
+      label: "Level 2",
+      title: "Level 2 Spells",
+      columns,
+      rows: [
+        { id: `row-${uid()}`, cells: ["[[Second Example]]", "2", "Abjuration", "Add the next tier of entries here."] },
+      ],
+    },
+  ];
+}
+
+function normalizeReferenceRows(rows: Partial<WikiReferenceTableRow>[] | null | undefined, columnCount: number): WikiReferenceTableRow[] {
+  return (rows || []).map((row) => {
+    const cells = Array.isArray(row.cells) ? row.cells : [];
+    return {
+      id: row.id || `row-${uid()}`,
+      cells: Array.from({ length: Math.max(1, columnCount) }, (_, index) => cells[index] || ""),
+    };
+  });
+}
+
+function normalizeTabbedReferenceTabs(tabs: Partial<WikiTabbedReferenceTab>[] | null | undefined): WikiTabbedReferenceTab[] {
+  const source = Array.isArray(tabs) && tabs.length > 0 ? tabs : createDefaultTabbedReferenceTabs();
+  return source.map((tab, index) => {
+    const columns = Array.isArray(tab.columns) && tab.columns.length > 0 ? tab.columns : ["Name", "Level", "School", "Summary"];
+    const rows = normalizeReferenceRows(tab.rows || [], columns.length);
+    return {
+      id: tab.id || `tab-${uid()}`,
+      label: tab.label || `Tab ${index + 1}`,
+      title: tab.title || tab.label || `Tab ${index + 1}`,
+      columns,
+      rows: rows.length > 0 ? rows : [{ id: `row-${uid()}`, cells: Array.from({ length: columns.length }, () => "") }],
+      html: tab.html || "",
+    };
+  });
+}
 
 function createPresetBlock(
   type: WikiBlockType,
@@ -908,7 +980,7 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
   return normalizeWikiArticleBlock({
     id: `wiki-block-${uid()}`,
     type,
-    title: type === "heading" ? "Heading" : type === "divider" ? "" : "",
+    title: type === "heading" ? "Heading" : type === "tabbedReference" ? "Tiered Reference" : type === "divider" ? "" : "",
     subtitle: "",
     html: type === "richText" ? "" : "",
     layout: {
@@ -920,19 +992,19 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
       minRowSpan: base.minRowSpan,
     },
     appearance: {
-      padding: type === "divider" || type === "spacer" ? "tight" : "normal",
-      borderStyle: type === "divider" ? "none" : "solid",
-      borderWidth: type === "divider" || type === "spacer" ? 0 : 1,
-      borderRadius: type === "divider" || type === "spacer" ? 0 : 10,
+      padding: type === "divider" || type === "lineBox" || type === "spacer" ? "tight" : "normal",
+      borderStyle: type === "divider" || type === "lineBox" ? "none" : "solid",
+      borderWidth: type === "divider" || type === "lineBox" || type === "spacer" ? 0 : 1,
+      borderRadius: type === "divider" || type === "lineBox" || type === "spacer" ? 0 : 10,
       opacity: 100,
       glowIntensity: 0,
-      shadowDepth: type === "divider" || type === "spacer" ? 0 : 1,
+      shadowDepth: type === "divider" || type === "lineBox" || type === "spacer" ? 0 : 1,
       titleAlign: "left",
       bodyAlign: "left",
       backgroundTreatment: "solid",
-      dividerStyle: type === "divider" ? "line" : undefined,
+      dividerStyle: type === "divider" || type === "lineBox" ? "line" : undefined,
       dividerLabelPosition: type === "divider" ? "center" : undefined,
-      surfaceStyle: type === "divider" || type === "spacer" ? "none" : "flat",
+      surfaceStyle: type === "divider" || type === "lineBox" || type === "spacer" ? "none" : "flat",
     },
     behavior: {
       collapsible: false,
@@ -956,13 +1028,16 @@ export function createDefaultBlock(type: WikiBlockType, rowStart = 1): WikiArtic
     imageFrameStyle: type === "image" ? "thin" : undefined,
     imageCaptionStyle: type === "image" ? "plain" : undefined,
     dividerLabel: type === "divider" ? "" : undefined,
+    lineOrientation: type === "lineBox" ? "horizontal" : undefined,
+    lineThickness: type === "lineBox" ? 2 : undefined,
     spacerHeight: type === "spacer" ? 1 : undefined,
     columns: type === "referenceTable" ? ["Name", "Type", "Notes"] : undefined,
     rows: type === "referenceTable" ? [{ id: `row-${uid()}`, cells: ["", "", ""] }] : undefined,
-    tableDensity: type === "referenceTable" ? "comfortable" : undefined,
-    tableStripedRows: type === "referenceTable" ? false : undefined,
-    tableStickyHeader: type === "referenceTable" ? false : undefined,
-    tableLinkedCells: type === "referenceTable" ? true : undefined,
+    tabs: type === "tabbedReference" ? createDefaultTabbedReferenceTabs() : undefined,
+    tableDensity: type === "referenceTable" || type === "tabbedReference" ? "comfortable" : undefined,
+    tableStripedRows: type === "referenceTable" || type === "tabbedReference" ? false : undefined,
+    tableStickyHeader: type === "referenceTable" || type === "tabbedReference" ? false : undefined,
+    tableLinkedCells: type === "referenceTable" || type === "tabbedReference" ? true : undefined,
     items: type === "keyValueBox" ? [{ id: `item-${uid()}`, label: "Label", value: "Value" }] : undefined,
     keyValueDensity: type === "keyValueBox" ? "comfortable" : undefined,
     keyValueLabelAlign: type === "keyValueBox" ? "left" : undefined,
@@ -998,21 +1073,21 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
       minRowSpan: base.minRowSpan,
     },
     appearance: {
-      padding: block.appearance?.padding || (type === "divider" || type === "spacer" ? "tight" : "normal"),
-      borderStyle: block.appearance?.borderStyle || (type === "divider" ? "none" : "solid"),
-      borderWidth: typeof block.appearance?.borderWidth === "number" ? clampInt(block.appearance.borderWidth, 0, 8) : (type === "divider" || type === "spacer" ? 0 : 1),
-      borderRadius: typeof block.appearance?.borderRadius === "number" ? clampInt(block.appearance.borderRadius, 0, 36) : (type === "divider" || type === "spacer" ? 0 : 10),
+      padding: block.appearance?.padding || (type === "divider" || type === "lineBox" || type === "spacer" ? "tight" : "normal"),
+      borderStyle: block.appearance?.borderStyle || (type === "divider" || type === "lineBox" ? "none" : "solid"),
+      borderWidth: typeof block.appearance?.borderWidth === "number" ? clampInt(block.appearance.borderWidth, 0, 8) : (type === "divider" || type === "lineBox" || type === "spacer" ? 0 : 1),
+      borderRadius: typeof block.appearance?.borderRadius === "number" ? clampInt(block.appearance.borderRadius, 0, 36) : (type === "divider" || type === "lineBox" || type === "spacer" ? 0 : 10),
       opacity: typeof block.appearance?.opacity === "number" ? clampInt(block.appearance.opacity, 10, 100) : 100,
       glowIntensity: typeof block.appearance?.glowIntensity === "number" ? clampInt(block.appearance.glowIntensity, 0, 100) : 0,
-      shadowDepth: typeof block.appearance?.shadowDepth === "number" ? clampInt(block.appearance.shadowDepth, 0, 5) : (type === "divider" || type === "spacer" ? 0 : 1),
+      shadowDepth: typeof block.appearance?.shadowDepth === "number" ? clampInt(block.appearance.shadowDepth, 0, 5) : (type === "divider" || type === "lineBox" || type === "spacer" ? 0 : 1),
       titleColor: block.appearance?.titleColor,
       bodyColor: block.appearance?.bodyColor,
       titleAlign: block.appearance?.titleAlign || "left",
       bodyAlign: block.appearance?.bodyAlign || "left",
       backgroundTreatment: block.appearance?.backgroundTreatment || "solid",
-      dividerStyle: block.appearance?.dividerStyle || (type === "divider" ? "line" : undefined),
+      dividerStyle: block.appearance?.dividerStyle || (type === "divider" || type === "lineBox" ? "line" : undefined),
       dividerLabelPosition: block.appearance?.dividerLabelPosition || (type === "divider" ? "center" : undefined),
-      surfaceStyle: block.appearance?.surfaceStyle || (type === "divider" || type === "spacer" ? "none" : "flat"),
+      surfaceStyle: block.appearance?.surfaceStyle || (type === "divider" || type === "lineBox" || type === "spacer" ? "none" : "flat"),
       accentColor: block.appearance?.accentColor,
       backgroundColor: block.appearance?.backgroundColor,
       borderColor: block.appearance?.borderColor,
@@ -1047,17 +1122,21 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     cropMode: block.cropMode || (type === "image" ? "cover" : "contain"),
     headingLevel: (block.headingLevel || (type === "heading" ? 2 : undefined)) as 1 | 2 | 3 | 4 | undefined,
     dividerLabel: block.dividerLabel || "",
+    lineOrientation: block.lineOrientation === "vertical" ? "vertical" : type === "lineBox" ? "horizontal" : undefined,
+    lineThickness: type === "lineBox" ? (typeof block.lineThickness === "number" ? clampInt(block.lineThickness, 1, 12) : 2) : undefined,
     spacerHeight: Math.max(1, block.spacerHeight || 1),
     columns: Array.isArray(block.columns) ? block.columns : type === "referenceTable" ? ["Name", "Type", "Notes"] : undefined,
     rows: Array.isArray(block.rows)
-      ? block.rows.map((row) => ({ id: row.id || `row-${uid()}`, cells: Array.isArray(row.cells) ? row.cells : [] }))
+      ? normalizeReferenceRows(block.rows, Array.isArray(block.columns) ? block.columns.length : 1)
       : type === "referenceTable"
         ? [{ id: `row-${uid()}`, cells: ["", "", ""] }]
         : undefined,
-    tableDensity: block.tableDensity || (type === "referenceTable" ? "comfortable" : undefined),
-    tableStripedRows: typeof block.tableStripedRows === "boolean" ? block.tableStripedRows : type === "referenceTable" ? false : undefined,
-    tableStickyHeader: typeof block.tableStickyHeader === "boolean" ? block.tableStickyHeader : type === "referenceTable" ? false : undefined,
-    tableLinkedCells: typeof block.tableLinkedCells === "boolean" ? block.tableLinkedCells : type === "referenceTable" ? true : undefined,
+    tabs: type === "tabbedReference" ? normalizeTabbedReferenceTabs(block.tabs) : undefined,
+    activeTabId: block.activeTabId || "",
+    tableDensity: block.tableDensity || (type === "referenceTable" || type === "tabbedReference" ? "comfortable" : undefined),
+    tableStripedRows: typeof block.tableStripedRows === "boolean" ? block.tableStripedRows : type === "referenceTable" || type === "tabbedReference" ? false : undefined,
+    tableStickyHeader: typeof block.tableStickyHeader === "boolean" ? block.tableStickyHeader : type === "referenceTable" || type === "tabbedReference" ? false : undefined,
+    tableLinkedCells: typeof block.tableLinkedCells === "boolean" ? block.tableLinkedCells : type === "referenceTable" || type === "tabbedReference" ? true : undefined,
     items: Array.isArray(block.items)
       ? block.items.map((item) => ({ id: item.id || `item-${uid()}`, label: item.label || "", value: item.value || "" }))
       : type === "keyValueBox"
@@ -1069,7 +1148,7 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     articleIds: Array.isArray(block.articleIds) ? block.articleIds : type === "wikiLinksList" ? [] : undefined,
     wikiLinksDisplayMode: block.wikiLinksDisplayMode || (type === "wikiLinksList" ? "list" : undefined),
     mobilePriority: typeof block.mobilePriority === "number" ? block.mobilePriority : undefined,
-    mobileCollapseMode: block.mobileCollapseMode || (type === "referenceTable" ? "scrollX" : "stack"),
+    mobileCollapseMode: block.mobileCollapseMode || (type === "referenceTable" || type === "tabbedReference" ? "scrollX" : "stack"),
     fluid: {
       widthMode: fluid.widthMode || baseFluid.widthMode,
       heightMode: fluid.heightMode || baseFluid.heightMode,
@@ -1377,7 +1456,7 @@ export function serializeWikiBlocksToLegacyContent(blocks: WikiArticleBlock[]): 
 
   sorted.forEach((block) => {
     const bodyHtml = getWikiBlockHtml(block);
-    if (block.type === "calloutPanel" || block.type === "spoilerBlock" || block.type === "keyValueBox" || block.type === "referenceTable" || block.type === "wikiLinksList") {
+    if (block.type === "calloutPanel" || block.type === "spoilerBlock" || block.type === "keyValueBox" || block.type === "referenceTable" || block.type === "tabbedReference" || block.type === "wikiLinksList") {
       const isSidebarLike = block.layout.colStart >= 31 && block.layout.colSpan <= 18;
       panels.push({
         id: block.id,
@@ -1417,12 +1496,21 @@ export function getWikiBlockHtml(block: WikiArticleBlock): string {
       return `${block.title ? `<h3>${escapeHtml(block.title)}</h3>` : ""}${block.subtitle ? `<p><em>${escapeHtml(block.subtitle)}</em></p>` : ""}${block.html || ""}`;
     case "referenceTable":
       return buildTableHtml(block.columns || [], block.rows || []);
+    case "tabbedReference":
+      return (block.tabs || []).map((tab) => {
+        const heading = `<h3>${escapeHtml(tab.title || tab.label)}</h3>`;
+        return `${heading}${buildTableHtml(tab.columns || [], tab.rows || [])}${tab.html || ""}`;
+      }).join("");
     case "keyValueBox":
       return buildKeyValueHtml(block.title, block.items || []);
     case "wikiLinksList":
       return buildWikiLinksListHtml(block.title, block.articleIds || []);
     case "divider":
       return `<hr />${block.dividerLabel ? `<p>${escapeHtml(block.dividerLabel)}</p>` : ""}`;
+    case "lineBox":
+      return block.lineOrientation === "vertical"
+        ? `<div aria-hidden="true" style="width:${Math.max(1, block.lineThickness || 2)}px;min-height:120px;border-left:${Math.max(1, block.lineThickness || 2)}px solid currentColor;"></div>`
+        : `<hr style="border-width:${Math.max(1, block.lineThickness || 2)}px 0 0 0;" />`;
     case "spacer":
       return `<div style="height:${Math.max(1, block.spacerHeight || 1) * 12}px;"></div>`;
     case "richText":
@@ -1441,6 +1529,13 @@ export function getWikiBlockSearchText(block: WikiArticleBlock): string {
     block.dividerLabel,
     ...(block.columns || []),
     ...(block.rows || []).flatMap((row) => row.cells),
+    ...(block.tabs || []).flatMap((tab) => [
+      tab.label,
+      tab.title,
+      stripHtml(tab.html || ""),
+      ...(tab.columns || []),
+      ...(tab.rows || []).flatMap((row) => row.cells),
+    ]),
     ...(block.items || []).flatMap((item) => [item.label, item.value]),
     ...(block.articleIds || []),
   ]

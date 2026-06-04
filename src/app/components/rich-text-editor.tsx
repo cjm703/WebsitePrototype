@@ -323,11 +323,20 @@ export function RichTextEditor({
 
   // Insert HTML at cursor
   const insertHtml = useCallback((html: string) => {
+    const range = savedSelectionRef.current;
+    if (range) {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+    editorRef.current?.focus();
     document.execCommand("insertHTML", false, html);
     emitChange();
   }, [emitChange]);
 
-  // ── Toolbar actions ──
+  // Toolbar actions
   const handleBold = () => execCmd("bold");
   const handleItalic = () => execCmd("italic");
   const handleAlignLeft = () => execCmd("justifyLeft");
@@ -462,6 +471,12 @@ export function RichTextEditor({
     setLayoutDropOpen(false);
   };
 
+  const handleLayoutButton = (layout: "spell-directory" | "spell-tier" | "reference-table") => (event: React.MouseEvent) => {
+    event.preventDefault();
+    saveSelection();
+    handleInsertWikiLayout(layout);
+  };
+
   // Close other popups when one opens
   const closeAllPopups = () => {
     setFontDropOpen(false);
@@ -535,7 +550,7 @@ export function RichTextEditor({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* ── Toolbar ── */}
+      {/* Toolbar */}
       <div
         style={{
           display: "flex",
@@ -584,7 +599,7 @@ export function RichTextEditor({
           ))}
         </ToolDropdown>
 
-        {/* Font Size — custom dropdown with scrolling list + number input */}
+        {/* Font Size - custom dropdown with scrolling list + number input */}
         <div ref={sizeDropRef} style={{ position: "relative", display: "inline-block" }}>
           <button
             type="button"
@@ -793,49 +808,34 @@ export function RichTextEditor({
         </ToolBtn>
 
         {enableWikiLayouts && (
-          <ToolDropdown
-            label="Wiki Layouts"
-            open={layoutDropOpen}
-            onToggle={() => togglePopup(setLayoutDropOpen, layoutDropOpen)}
-            width={132}
-          >
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleInsertWikiLayout("spell-directory");
-              }}
-              style={dropdownItemStyle}
-              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1A2A5A"; }}
-              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
-            >
-              Full Spell Directory
-            </button>
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleInsertWikiLayout("spell-tier");
-              }}
-              style={dropdownItemStyle}
-              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1A2A5A"; }}
-              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
-            >
-              Spell Tier Table
-            </button>
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleInsertWikiLayout("reference-table");
-              }}
-              style={dropdownItemStyle}
-              onMouseEnter={(e) => { (e.target as HTMLElement).style.background = "#1A2A5A"; }}
-              onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
-            >
-              Reference Table
-            </button>
-          </ToolDropdown>
+          <>
+            {([
+              ["spell-directory", "Wiki Layout"],
+              ["spell-tier", "Spell Tier Table"],
+              ["reference-table", "Reference Table"],
+            ] as const).map(([layout, label]) => (
+              <button
+                key={layout}
+                type="button"
+                onMouseDown={handleLayoutButton(layout)}
+                className="cursor-pointer"
+                title={`Insert ${label}`}
+                style={{
+                  height: 26,
+                  padding: "0 7px",
+                  borderRadius: 3,
+                  border: "1px solid #2A4A7A",
+                  background: "#101A3A",
+                  color: "#9FC4FF",
+                  fontSize: 10,
+                  fontFamily: "'Courier New', monospace",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </>
         )}
 
         {/* Separator */}
@@ -983,12 +983,14 @@ export function RichTextEditor({
         </div>
       </div>
 
-      {/* ── Editable Area ── */}
+      {/* Editable Area */}
       <div
         ref={editorRef}
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
+        onMouseUp={saveSelection}
+        onKeyUp={saveSelection}
         onFocus={() => setIsFocused(true)}
         onBlur={() => {
           setIsFocused(false);
