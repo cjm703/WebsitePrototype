@@ -90,13 +90,16 @@ export function IntelliInterface() {
         Array.isArray(n.assignedTo) && (n.assignedTo.includes("ALL") || n.assignedTo.includes(currentUser))
       );
 
-      const toDisplay = (n: DMNotification): DisplayNotification => ({
-        id: n.id,
-        subject: n.subject,
-        preview: n.message.length > 80 ? n.message.slice(0, 80) + "..." : n.message,
-        fullMessage: n.message,
-        timestamp: n.createdAt,
-      });
+      const toDisplay = (n: DMNotification): DisplayNotification => {
+        const message = String(n.message ?? "");
+        return {
+          id: String(n.id ?? `notification-${Date.now()}`),
+          subject: String(n.subject ?? "Notification"),
+          preview: message.length > 80 ? message.slice(0, 80) + "..." : message,
+          fullMessage: message,
+          timestamp: String(n.createdAt ?? ""),
+        };
+      };
 
       const active: DisplayNotification[] = [];
       const past: DisplayNotification[] = [];
@@ -151,6 +154,7 @@ export function IntelliInterface() {
         const totalPages = itemRows.length + cardRows.length + infoRows.length;
 
         setSectionDetails({
+          ...DEFAULT_SECTION_DETAILS,
           personalFiles: personalFiles + personalSuffix,
           inetSearch: `Browse the I-Net encyclopedia. Currently ${totalPages} article${totalPages !== 1 ? "s" : ""} indexed.`,
           nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} | ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged`,
@@ -414,8 +418,8 @@ export function IntelliInterface() {
     },
   ];
 
-  const normalizeInterfaceText = (text: string) =>
-    text
+  const normalizeInterfaceText = (text: unknown) =>
+    String(text ?? "")
       .replace(/\u2014/g, "-")
       .replace(/\u2122/g, "TM")
       .replace(/\u00A9/g, "(C)")
