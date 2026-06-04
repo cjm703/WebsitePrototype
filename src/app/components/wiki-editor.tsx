@@ -2297,6 +2297,26 @@ export function WikiEditor() {
           rowSpan: Math.max(block.layout.rowSpan, bounds.rowSpan),
         });
       });
+    } else {
+      let cursorCol = bounds.minColStart;
+      let cursorRow = bounds.minRowStart;
+      let currentRowHeight = 0;
+      sorted.forEach((block) => {
+        const blockSpan = Math.max(block.layout.minColSpan || 1, Math.min(block.layout.colSpan, Math.max(8, Math.floor(bounds.colSpan / 2))));
+        const wouldOverflow = cursorCol > bounds.minColStart && cursorCol + blockSpan - 1 > bounds.maxColEnd;
+        if (wouldOverflow) {
+          cursorCol = bounds.minColStart;
+          cursorRow += currentRowHeight + 1;
+          currentRowHeight = 0;
+        }
+        layoutById.set(block.id, {
+          colStart: cursorCol,
+          colSpan: Math.min(blockSpan, WIKI_BLOCK_COLUMNS - cursorCol + 1),
+          rowStart: cursorRow,
+        });
+        cursorCol += blockSpan + 1;
+        currentRowHeight = Math.max(currentRowHeight, block.layout.rowSpan);
+      });
     }
 
     const nextBlocks = pageBlocks.map((block) => {
@@ -2319,7 +2339,7 @@ export function WikiEditor() {
       });
     });
 
-    updateBlocks(resolveWikiBlockCollisions(nextBlocks, sorted[0]?.id));
+    updateBlocks(resolveWikiBlockCollisions(nextBlocks, sorted.map((block) => block.id)));
   }, [pageBlocks, selectedBlockIds, selectedBlocks, updateBlocks]);
 
   const ungroupSelectedBlocks = useCallback(() => {
@@ -2451,9 +2471,9 @@ export function WikiEditor() {
   const insertPreset = useCallback((preset: WikiBlockPreset, anchor?: { colStart: number; rowStart: number }) => {
     const nextBlocks = instantiateWikiBlockPreset(preset, anchor);
     if (!nextBlocks.length) return;
-    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, ...nextBlocks], nextBlocks[0]?.id));
+    updateBlocks(resolveWikiBlockCollisions([...pageBlocks, ...nextBlocks], nextBlocks.map((block) => block.id)));
     setSelectedBlockIds(nextBlocks.map((block) => block.id));
-    setInspectorTab("content");
+    setInspectorTab("layout");
     setCanvasInsertPicker(null);
     setPresetStatus(`Inserted preset: ${preset.name}`);
   }, [pageBlocks, updateBlocks]);

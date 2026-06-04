@@ -494,6 +494,379 @@ export const BUILTIN_WIKI_BLOCK_PRESETS: WikiBlockPreset[] = [
       }),
     ],
   },
+  {
+    id: "preset-archive-main-hub",
+    name: "Archive Main Hub",
+    description: "A classic wiki landing hub with welcome text, portal cards, updates, and a directory table.",
+    category: "Landing Pages",
+    builtIn: true,
+    previewLabel: "Welcome + portals + directory",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Welcome to the Archive",
+        subtitle: "A central index for lore, records, factions, rules, and active discoveries",
+        headingLevel: 1,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 6 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundTreatment: "gradient",
+          backgroundColor: "#08162E",
+          accentColor: "#8AB4FF",
+          borderColor: "#284A7C",
+          borderStyle: "double",
+          borderWidth: 2,
+          borderRadius: 14,
+          titleAlign: "center",
+          bodyAlign: "center",
+          glowIntensity: 10,
+          shadowDepth: 3,
+        },
+      }),
+      createPresetBlock("richText", 8, {
+        title: "Start Here",
+        html: "<p>Use this main page as a readable index for your campaign wiki. Add a short welcome, explain what players should read first, and point the DM toward maintenance sections.</p>",
+        layout: { colStart: 1, colSpan: 30, rowStart: 8, rowSpan: 12 },
+        appearance: {
+          surfaceStyle: "flat",
+          backgroundColor: "#071126",
+          accentColor: "#A7D7FF",
+          borderColor: "#25446E",
+          borderRadius: 10,
+        },
+      }),
+      createPresetBlock("keyValueBox", 8, {
+        title: "Archive Status",
+        items: [
+          { id: "archive-status-1", label: "Scope", value: "Campaign reference" },
+          { id: "archive-status-2", label: "Player Safety", value: "Spoilers marked per block" },
+          { id: "archive-status-3", label: "Last Review", value: "Not set" },
+          { id: "archive-status-4", label: "Maintainer", value: "DM" },
+        ],
+        keyValueRowDividers: true,
+        keyValueDensity: "compact",
+        layout: { colStart: 33, colSpan: 16, rowStart: 8, rowSpan: 12 },
+        appearance: {
+          surfaceStyle: "inset",
+          backgroundTreatment: "scanline",
+          backgroundColor: "#050A1C",
+          accentColor: "#67D3FF",
+          borderColor: "#1A456B",
+          borderRadius: 12,
+        },
+        fluid: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
+      }),
+      createPresetBlock("calloutPanel", 22, {
+        title: "Lore",
+        html: "<p>Link major setting pages, histories, cultures, and locations here.</p>",
+        layout: { colStart: 1, colSpan: 15, rowStart: 22, rowSpan: 10 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundColor: "#1B1327",
+          accentColor: "#D6B7FF",
+          borderColor: "#74579B",
+          borderRadius: 14,
+          glowIntensity: 8,
+        },
+      }),
+      createPresetBlock("calloutPanel", 22, {
+        title: "Rules",
+        html: "<p>Collect rules references, rulings, card systems, and player-facing mechanics.</p>",
+        layout: { colStart: 17, colSpan: 15, rowStart: 22, rowSpan: 10 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundColor: "#102019",
+          accentColor: "#8FF0B8",
+          borderColor: "#246B49",
+          borderRadius: 14,
+          glowIntensity: 8,
+        },
+      }),
+      createPresetBlock("calloutPanel", 22, {
+        title: "DM Records",
+        html: "<p>Use restricted blocks for hidden notes, unresolved secrets, and session maintenance.</p>",
+        layout: { colStart: 33, colSpan: 16, rowStart: 22, rowSpan: 10 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundColor: "#2A1604",
+          accentColor: "#FFB84A",
+          borderColor: "#8A5318",
+          borderRadius: 14,
+          glowIntensity: 12,
+        },
+        visibility: { assignedTo: [], mode: "spoiler" },
+      }),
+      createPresetBlock("referenceTable", 34, {
+        title: "Featured Directory",
+        columns: ["Page", "Type", "Status", "Notes"],
+        rows: [
+          { id: "archive-directory-1", cells: ["[[Important Location]]", "Location", "Needs review", "Short note"] },
+          { id: "archive-directory-2", cells: ["[[Known Faction]]", "Faction", "Active", "Short note"] },
+          { id: "archive-directory-3", cells: ["[[Rules Reference]]", "Rules", "Current", "Short note"] },
+        ],
+        tableDensity: "compact",
+        tableStripedRows: true,
+        tableStickyHeader: true,
+        tableLinkedCells: true,
+        layout: { colStart: 1, colSpan: 48, rowStart: 34, rowSpan: 18 },
+        appearance: {
+          surfaceStyle: "flat",
+          backgroundColor: "#071126",
+          accentColor: "#A7D7FF",
+          borderColor: "#25446E",
+          borderRadius: 8,
+        },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+      }),
+    ],
+  },
+  {
+    id: "preset-archive-navigation-grid",
+    name: "Archive Navigation Grid",
+    description: "A compact MediaWiki-style portal grid for category landing pages.",
+    category: "Navigation",
+    builtIn: true,
+    previewLabel: "Section index grid",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Browse the Archive",
+        subtitle: "Choose a category to begin",
+        headingLevel: 2,
+        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 5 },
+        appearance: {
+          surfaceStyle: "none",
+          accentColor: "#8AB4FF",
+          titleAlign: "center",
+          bodyAlign: "center",
+          borderStyle: "none",
+        },
+      }),
+      ...(["Characters", "Locations", "Factions", "Items", "Rules", "Timeline"] as const).map((title, index) => createPresetBlock("calloutPanel", 7 + Math.floor(index / 3) * 12, {
+        title,
+        html: `<p>Add links and a short description for ${title.toLowerCase()} pages.</p>`,
+        layout: {
+          colStart: 1 + (index % 3) * 16,
+          colSpan: 15,
+          rowStart: 7 + Math.floor(index / 3) * 12,
+          rowSpan: 10,
+        },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundTreatment: "gradient",
+          backgroundColor: index % 2 === 0 ? "#08162E" : "#0B1A28",
+          accentColor: index % 2 === 0 ? "#8AB4FF" : "#67D3FF",
+          borderColor: "#284A7C",
+          borderRadius: 12,
+          shadowDepth: 2,
+        },
+        behavior: { includeInToc: true, overflowMode: "clip", mobileDensity: "compact", mobileFullWidth: true },
+      })),
+      createPresetBlock("wikiLinksList", 32, {
+        title: "Fast Links",
+        articleIds: [],
+        wikiLinksDisplayMode: "chips",
+        layout: { colStart: 1, colSpan: 48, rowStart: 32, rowSpan: 8 },
+        appearance: {
+          surfaceStyle: "flat",
+          backgroundColor: "#071126",
+          accentColor: "#A7D7FF",
+          borderColor: "#25446E",
+          borderRadius: 10,
+        },
+      }),
+    ],
+  },
+  {
+    id: "preset-urbanshade-operations-landing",
+    name: "Operations Landing Page",
+    description: "A dark technical landing page with hero copy, feature cards, and a numbered workflow.",
+    category: "Landing Pages",
+    builtIn: true,
+    previewLabel: "Hero + features + process",
+    blocks: [
+      createPresetBlock("heading", 1, {
+        title: "Operations Index",
+        subtitle: "Field intelligence, active systems, and deployment priorities",
+        headingLevel: 1,
+        layout: { colStart: 1, colSpan: 30, rowStart: 1, rowSpan: 8 },
+        appearance: {
+          surfaceStyle: "glass",
+          backgroundTreatment: "gradient",
+          backgroundColor: "#08283A",
+          accentColor: "#5CE8FF",
+          borderColor: "#2CAFD2",
+          borderRadius: 18,
+          glowIntensity: 34,
+          shadowDepth: 3,
+        },
+      }),
+      createPresetBlock("calloutPanel", 1, {
+        title: "Mission Brief",
+        html: "<p>Summarize what this article tracks, who should use it, and which systems are currently active.</p>",
+        layout: { colStart: 33, colSpan: 16, rowStart: 1, rowSpan: 8 },
+        appearance: {
+          surfaceStyle: "inset",
+          backgroundTreatment: "terminal",
+          backgroundColor: "#06150E",
+          accentColor: "#54FF9B",
+          borderColor: "#1E6F4B",
+          borderRadius: 10,
+          glowIntensity: 18,
+        },
+      }),
+      ...(["Signals", "Assets", "Threats", "Response"] as const).map((title, index) => createPresetBlock("calloutPanel", 11, {
+        title,
+        html: `<p>Describe the ${title.toLowerCase()} layer, key metrics, and related pages.</p>`,
+        layout: { colStart: 1 + index * 12, colSpan: 11, rowStart: 11, rowSpan: 11 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundTreatment: "scanline",
+          backgroundColor: "#050A1C",
+          accentColor: index % 2 === 0 ? "#67D3FF" : "#8FF0B8",
+          borderColor: "#1A456B",
+          borderRadius: 14,
+          glowIntensity: 14,
+          shadowDepth: 3,
+        },
+        behavior: { includeInToc: true, overflowMode: "clip", mobileDensity: "compact", mobileFullWidth: true },
+      })),
+      createPresetBlock("referenceTable", 25, {
+        title: "Priority Matrix",
+        columns: ["Priority", "Target", "Signal", "Action"],
+        rows: [
+          { id: "ops-matrix-1", cells: ["01", "[[Target Page]]", "High", "Investigate"] },
+          { id: "ops-matrix-2", cells: ["02", "[[Asset Page]]", "Medium", "Monitor"] },
+          { id: "ops-matrix-3", cells: ["03", "[[Threat Page]]", "Unknown", "Escalate"] },
+        ],
+        tableDensity: "compact",
+        tableStripedRows: true,
+        tableStickyHeader: true,
+        tableLinkedCells: true,
+        layout: { colStart: 1, colSpan: 31, rowStart: 25, rowSpan: 17 },
+        appearance: {
+          surfaceStyle: "flat",
+          backgroundColor: "#071126",
+          accentColor: "#A7D7FF",
+          borderColor: "#25446E",
+          borderRadius: 8,
+        },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+      }),
+      createPresetBlock("keyValueBox", 25, {
+        title: "Live Snapshot",
+        items: [
+          { id: "ops-snapshot-1", label: "Phase", value: "01 - Assess" },
+          { id: "ops-snapshot-2", label: "Risk", value: "Unknown" },
+          { id: "ops-snapshot-3", label: "Owner", value: "Not set" },
+          { id: "ops-snapshot-4", label: "Next Check", value: "Not set" },
+        ],
+        keyValueDensity: "compact",
+        keyValueRowDividers: true,
+        layout: { colStart: 34, colSpan: 15, rowStart: 25, rowSpan: 17 },
+        appearance: {
+          surfaceStyle: "inset",
+          backgroundTreatment: "scanline",
+          backgroundColor: "#050A1C",
+          accentColor: "#67D3FF",
+          borderColor: "#1A456B",
+          borderRadius: 12,
+        },
+      }),
+    ],
+  },
+  {
+    id: "preset-research-dossier",
+    name: "Research Dossier",
+    description: "A technical dossier layout for entities, facilities, experiments, or classified lore.",
+    category: "Dossiers",
+    builtIn: true,
+    previewLabel: "Profile + warning + logs",
+    blocks: [
+      createPresetBlock("keyValueBox", 1, {
+        title: "Dossier",
+        items: [
+          { id: "dossier-1", label: "Designation", value: "" },
+          { id: "dossier-2", label: "Class", value: "" },
+          { id: "dossier-3", label: "Location", value: "" },
+          { id: "dossier-4", label: "Clearance", value: "" },
+          { id: "dossier-5", label: "Status", value: "" },
+        ],
+        keyValueDensity: "compact",
+        keyValueRowDividers: true,
+        layout: { colStart: 1, colSpan: 15, rowStart: 1, rowSpan: 22 },
+        appearance: {
+          surfaceStyle: "inset",
+          backgroundTreatment: "terminal",
+          backgroundColor: "#06150E",
+          accentColor: "#54FF9B",
+          borderColor: "#1E6F4B",
+          borderRadius: 10,
+          glowIntensity: 16,
+        },
+        fluid: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
+      }),
+      createPresetBlock("richText", 1, {
+        title: "Summary",
+        html: "<p>Write the player-safe summary here. Keep classification notes, observed behavior, and known history in separate restricted blocks if needed.</p>",
+        layout: { colStart: 18, colSpan: 31, rowStart: 1, rowSpan: 13 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundColor: "#071126",
+          accentColor: "#A7D7FF",
+          borderColor: "#25446E",
+          borderRadius: 12,
+          shadowDepth: 2,
+        },
+      }),
+      createPresetBlock("calloutPanel", 16, {
+        title: "Containment / Warning",
+        html: "<p>Add hazards, spoiler notices, or DM-only handling instructions here.</p>",
+        layout: { colStart: 18, colSpan: 31, rowStart: 16, rowSpan: 7 },
+        appearance: {
+          surfaceStyle: "raised",
+          backgroundColor: "#2A1604",
+          accentColor: "#FFB84A",
+          borderColor: "#8A5318",
+          borderStyle: "double",
+          borderRadius: 10,
+          glowIntensity: 24,
+        },
+      }),
+      createPresetBlock("referenceTable", 25, {
+        title: "Observation Log",
+        columns: ["Entry", "Observer", "Finding", "Follow-up"],
+        rows: [
+          { id: "dossier-log-1", cells: ["01", "Name", "Initial finding", "Next action"] },
+          { id: "dossier-log-2", cells: ["02", "Name", "New behavior", "Next action"] },
+        ],
+        tableDensity: "compact",
+        tableStripedRows: true,
+        tableStickyHeader: true,
+        layout: { colStart: 1, colSpan: 33, rowStart: 25, rowSpan: 18 },
+        appearance: {
+          surfaceStyle: "flat",
+          backgroundColor: "#071126",
+          accentColor: "#A7D7FF",
+          borderColor: "#25446E",
+          borderRadius: 8,
+        },
+        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+      }),
+      createPresetBlock("wikiLinksList", 25, {
+        title: "Connected Files",
+        articleIds: [],
+        wikiLinksDisplayMode: "cards",
+        layout: { colStart: 36, colSpan: 13, rowStart: 25, rowSpan: 18 },
+        appearance: {
+          surfaceStyle: "glass",
+          backgroundColor: "#08283A",
+          accentColor: "#5CE8FF",
+          borderColor: "#2CAFD2",
+          borderRadius: 14,
+          glowIntensity: 18,
+        },
+      }),
+    ],
+  },
 ];
 
 export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSettings> | null): WikiCanvasSettings {
@@ -872,10 +1245,14 @@ export function instantiateWikiBlockPreset(
   const rebasedColStart = Math.min(targetColStart, maxColStart);
   const colOffset = rebasedColStart - bounds.minColStart;
   const rowOffset = targetRowStart - bounds.minRowStart;
+  const presetGroupId = sourceBlocks.length > 1 ? `wiki-group-${uid()}` : "";
 
   return sourceBlocks.map((block) => normalizeWikiArticleBlock({
     ...block,
     id: `wiki-block-${uid()}`,
+    layoutGroupId: block.layoutGroupId || presetGroupId,
+    layoutGroupName: block.layoutGroupName || (presetGroupId ? preset.name : ""),
+    layoutGroupMode: block.layoutGroupMode || "manual",
     layout: {
       ...block.layout,
       colStart: block.layout.colStart + colOffset,
@@ -933,11 +1310,14 @@ export function placeWikiBlock(blocks: WikiArticleBlock[], blockId: string, next
   return resolveWikiBlockCollisions(next, blockId);
 }
 
-export function resolveWikiBlockCollisions(blocks: WikiArticleBlock[], priorityBlockId?: string): WikiArticleBlock[] {
+export function resolveWikiBlockCollisions(blocks: WikiArticleBlock[], priorityBlockIds?: string | string[]): WikiArticleBlock[] {
+  const priorityIds = new Set(Array.isArray(priorityBlockIds) ? priorityBlockIds : priorityBlockIds ? [priorityBlockIds] : []);
   const sorted = [...blocks].sort((a, b) => {
-    if (priorityBlockId) {
-      if (a.id === priorityBlockId) return -1;
-      if (b.id === priorityBlockId) return 1;
+    if (priorityIds.size > 0) {
+      const aPriority = priorityIds.has(a.id);
+      const bPriority = priorityIds.has(b.id);
+      if (aPriority && !bPriority) return -1;
+      if (!aPriority && bPriority) return 1;
     }
     return compareWikiBlocksForLayout(a, b);
   });
