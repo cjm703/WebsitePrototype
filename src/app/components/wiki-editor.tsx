@@ -375,6 +375,8 @@ function lineBoxElement(
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const getArticleChromeFieldLabel = (field: WikiArticleChromeField) =>
+  field === "title" ? "Title" : field === "subtitle" ? "Subtitle" : "Description";
 
 function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
   const existingPanels = normalizeWikiPanels(pg.panels);
@@ -779,6 +781,7 @@ export function WikiEditor() {
   const [draggedImageAssetId, setDraggedImageAssetId] = useState<string | null>(null);
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const [hoveredArticleChromeField, setHoveredArticleChromeField] = useState<WikiArticleChromeField | null>(null);
+  const [selectedArticleChromeField, setSelectedArticleChromeField] = useState<WikiArticleChromeField | null>(null);
   const [movingBlockId, setMovingBlockId] = useState<string | null>(null);
   const [movingArticleChromeField, setMovingArticleChromeField] = useState<WikiArticleChromeField | null>(null);
   const [activeTabbedReferenceTabs, setActiveTabbedReferenceTabs] = useState<Record<string, string>>({});
@@ -1756,6 +1759,8 @@ export function WikiEditor() {
     () => Math.max(12, ...articleChromeFields.map((field) => articleChromeLayouts[field].rowStart + articleChromeLayouts[field].rowSpan + 1)),
     [articleChromeFields, articleChromeLayouts],
   );
+  const selectedArticleChromeLayout = selectedArticleChromeField ? articleChromeLayouts[selectedArticleChromeField] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[selectedArticleChromeField] : null;
+  const selectedArticleChromeLabel = selectedArticleChromeField ? getArticleChromeFieldLabel(selectedArticleChromeField) : "";
   const contentCanvasRowOffset = articleChromeBottomRow;
   const canvasBottomRow = useMemo(
     () => Math.max(contentCanvasRowOffset + 48, ...renderedPageBlocks.map((block) => contentCanvasRowOffset + block.layout.rowStart + block.layout.rowSpan + 2)),
@@ -1793,7 +1798,9 @@ export function WikiEditor() {
     ? `${selectedBlocks.length} blocks selected`
     : selectedBlock
       ? selectedBlock.title || `Untitled ${selectedBlock.type}`
-      : "No block selected";
+      : selectedArticleChromeField
+        ? `Article ${selectedArticleChromeLabel} selected`
+      : "Nothing selected";
   const articleHealth = useMemo(() => {
     const missing: string[] = [];
     if (!page.title.trim()) missing.push("title");
@@ -1804,10 +1811,12 @@ export function WikiEditor() {
   }, [page.description, page.title, pageBlocks.length]);
 
   const selectExclusiveBlock = useCallback((blockId: string | null) => {
+    setSelectedArticleChromeField(null);
     setSelectedBlockIds(blockId ? [blockId] : []);
   }, []);
 
   const toggleBlockSelection = useCallback((blockId: string) => {
+    setSelectedArticleChromeField(null);
     setSelectedBlockIds((prev) => (
       prev.includes(blockId)
         ? prev.filter((entry) => entry !== blockId)
@@ -1822,6 +1831,12 @@ export function WikiEditor() {
     }
     selectExclusiveBlock(blockId);
   }, [selectExclusiveBlock, toggleBlockSelection]);
+
+  const selectArticleChromeField = useCallback((field: WikiArticleChromeField) => {
+    setSelectedArticleChromeField(field);
+    setSelectedBlockIds([]);
+    setInspectorTab("content");
+  }, []);
 
   useEffect(() => {
     setSelectedBlockIds((prev) => prev.filter((blockId) => pageBlocks.some((block) => block.id === blockId)));
@@ -2276,6 +2291,7 @@ export function WikiEditor() {
     if (!metricsRect || !layout) return;
     event.preventDefault();
     event.stopPropagation();
+    selectArticleChromeField(field);
     movingArticleChromeRef.current = {
       field,
       originColStart: layout.colStart,
@@ -2287,7 +2303,7 @@ export function WikiEditor() {
       colSpan: layout.colSpan,
     };
     setMovingArticleChromeField(field);
-  }, [articleChromeLayouts, canvasRowHeight, editorPreviewMode]);
+  }, [articleChromeLayouts, canvasRowHeight, editorPreviewMode, selectArticleChromeField]);
 
   const duplicateBlock = useCallback((blockId: string) => {
     const source = pageBlocks.find((block) => block.id === blockId);
@@ -3732,7 +3748,8 @@ export function WikiEditor() {
     const top = (layout.rowStart - 1) * canvasRowHeight;
     const height = layout.rowSpan * canvasRowHeight;
     const chromeVisible = !editorPreviewMode && (hoveredArticleChromeField === field || movingArticleChromeField === field);
-    const fieldLabel = field === "title" ? "Title" : field === "subtitle" ? "Subtitle" : "Description";
+    const isSelectedChrome = selectedArticleChromeField === field;
+    const fieldLabel = getArticleChromeFieldLabel(field);
     const outlineColor = field === "title" ? accent : field === "subtitle" ? "#8EA9D7" : "#6AAFAF";
 
     const content = (() => {
@@ -3791,11 +3808,17 @@ export function WikiEditor() {
         className="h-full overflow-hidden"
         onMouseEnter={() => setHoveredArticleChromeField(field)}
         onMouseLeave={() => setHoveredArticleChromeField((current) => (current === field ? null : current))}
+        onClick={(event) => {
+          if (editorPreviewMode) return;
+          event.stopPropagation();
+          selectArticleChromeField(field);
+        }}
         style={{
           position: "relative",
           borderRadius: 10,
-          border: editorPreviewMode ? "1px solid transparent" : `1px ${chromeVisible ? "solid" : "dashed"} ${chromeVisible ? outlineColor : `${outlineColor}66`}`,
+          border: editorPreviewMode ? "1px solid transparent" : `1px ${chromeVisible || isSelectedChrome ? "solid" : "dashed"} ${chromeVisible || isSelectedChrome ? outlineColor : `${outlineColor}66`}`,
           background: editorPreviewMode ? "transparent" : "rgba(6, 12, 30, 0.18)",
+          boxShadow: isSelectedChrome && !editorPreviewMode ? `0 0 0 1px ${outlineColor}55, 0 12px 28px rgba(0,0,0,0.2)` : undefined,
         }}
       >
         {!editorPreviewMode && (
@@ -3902,6 +3925,8 @@ export function WikiEditor() {
     page.description,
     page.subtitle,
     page.title,
+    selectArticleChromeField,
+    selectedArticleChromeField,
     txt,
     update,
     updateArticleChromeLayout,
@@ -4487,7 +4512,7 @@ export function WikiEditor() {
                 </div>
                 <div className="rounded-md border px-3 py-2" style={{ borderColor: "#19345E", background: "#09142D" }}>
                   <div className="text-[9px] uppercase tracking-[0.16em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Selected</div>
-                  <div className="mt-1 text-[13px] font-bold" style={{ color: "#D3E1FF" }}>{selectedBlockIds.length || 0}</div>
+                  <div className="mt-1 text-[13px] font-bold" style={{ color: "#D3E1FF" }}>{selectedArticleChromeField ? "Article" : selectedBlockIds.length || 0}</div>
                 </div>
               </div>
               {(sharedImageStorageFallback || sharedPresetFallback) && (
@@ -4531,6 +4556,24 @@ export function WikiEditor() {
 
               {workspaceRailTab === "outline" && (
                 <div className="space-y-3">
+                  <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Article Fields</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {articleChromeFields.map((field) => (
+                        <button
+                          key={`article-field-${field}`}
+                          onClick={() => selectArticleChromeField(field)}
+                          className={`${retro.button} px-2 py-1.5 text-[10px]`}
+                          style={selectedArticleChromeField === field ? S_ACCENT : S_SUBTLE}
+                        >
+                          {getArticleChromeFieldLabel(field)}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: "#8091AE" }}>
+                      Select these to edit their text, grid position, and size in the inspector.
+                    </div>
+                  </div>
                   {pageBlocks.length === 0 && (
                     <div className="rounded-lg border border-dashed px-4 py-5 text-center" style={{ borderColor: "#28466F", background: "rgba(9, 20, 45, 0.72)" }}>
                       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border" style={{ borderColor: "#31578A", background: "#0D1B3B", color: "#A8D8FF" }}>
@@ -4872,7 +4915,7 @@ export function WikiEditor() {
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2 text-[10px]">
                   {[
-                    `${selectedBlockIds.length || 0} selected`,
+                    selectedArticleChromeField ? `Article ${selectedArticleChromeLabel} selected` : `${selectedBlockIds.length || 0} selected`,
                     `Zoom ${(effectiveCanvasScale * 100).toFixed(0)}%`,
                     `Frame ${responsiveFrame.label}`,
                     canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article",
@@ -5384,8 +5427,8 @@ export function WikiEditor() {
                   <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#8AB4FF", fontWeight: 700 }}>Inspector</div>
                   <div className="mt-1 truncate text-[11px]" style={{ color: "#9FB0CC" }}>{selectedStatusLabel}</div>
                 </div>
-                <span className="shrink-0 rounded-md border px-2 py-1 text-[9px]" style={{ borderColor: "#1A345B", background: "#071126", color: selectedBlock ? "#8FF0B8" : "#FFD37A" }}>
-                  {selectedBlock ? "Ready" : "Select"}
+                <span className="shrink-0 rounded-md border px-2 py-1 text-[9px]" style={{ borderColor: "#1A345B", background: "#071126", color: selectedBlock || selectedArticleChromeField ? "#8FF0B8" : "#FFD37A" }}>
+                  {selectedBlock || selectedArticleChromeField ? "Ready" : "Select"}
                 </span>
               </div>
             </div>
@@ -5457,7 +5500,31 @@ export function WikiEditor() {
                 </div>
               )}
 
-              {!selectedBlock && selectedBlocks.length === 0 && (
+              {selectedArticleChromeField && (
+                <div className="rounded-md border p-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Selected Article Field</div>
+                      <div className="text-[13px] font-bold" style={{ color: "#D3E1FF" }}>Article {selectedArticleChromeLabel}</div>
+                    </div>
+                    <button onClick={() => setSelectedArticleChromeField(null)} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Clear</button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {articleChromeFields.map((field) => (
+                      <button
+                        key={`selected-article-field-${field}`}
+                        onClick={() => selectArticleChromeField(field)}
+                        className={`${retro.button} px-2 py-1 text-[9px]`}
+                        style={selectedArticleChromeField === field ? S_ACCENT : S_SUBTLE}
+                      >
+                        {getArticleChromeFieldLabel(field)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!selectedBlock && selectedBlocks.length === 0 && !selectedArticleChromeField && (
                 <div className="rounded-lg border border-dashed px-4 py-6 text-center" style={{ borderColor: "#28466F", background: "rgba(9, 20, 45, 0.72)" }}>
                   <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border" style={{ borderColor: "#31578A", background: "#0D1B3B", color: "#A8D8FF" }}>
                     <Settings size={18} />
@@ -5473,6 +5540,59 @@ export function WikiEditor() {
                     <button onClick={() => setWorkspaceRailTab("library")} className={`${retro.button} px-2 py-1.5 text-[10px]`} style={S_ACCENT}>
                       Add Block
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {inspectorTab === "content" && selectedArticleChromeField && (
+                <div className="space-y-3">
+                  <div>
+                    <label style={labelStyle}>Article Field</label>
+                    <div className="text-[11px] px-3 py-2 rounded-md border" style={{ borderColor: "#1A345B", background: "#09142D", color: "#D3E1FF" }}>
+                      Article {selectedArticleChromeLabel}
+                    </div>
+                  </div>
+                  {selectedArticleChromeField === "title" && (
+                    <div>
+                      <label style={labelStyle}>Title *</label>
+                      <input
+                        value={page.title}
+                        onChange={(event) => {
+                          update("title", event.target.value);
+                          if (!urlManuallyEdited.current) update("url", toSlug(event.target.value));
+                        }}
+                        className={inputClass}
+                        style={inputStyle}
+                      />
+                    </div>
+                  )}
+                  {selectedArticleChromeField === "subtitle" && (
+                    <div>
+                      <label style={labelStyle}>Subtitle</label>
+                      <input
+                        value={page.subtitle || ""}
+                        onChange={(event) => update("subtitle", event.target.value)}
+                        placeholder="Optional subtitle"
+                        className={inputClass}
+                        style={inputStyle}
+                      />
+                    </div>
+                  )}
+                  {selectedArticleChromeField === "description" && (
+                    <div>
+                      <label style={labelStyle}>Article Description *</label>
+                      <textarea
+                        value={page.description || ""}
+                        onChange={(event) => update("description", event.target.value)}
+                        rows={5}
+                        placeholder="Short search and article intro description"
+                        className={`${inputClass} resize-y`}
+                        style={inputStyle}
+                      />
+                    </div>
+                  )}
+                  <div className="rounded-md border px-3 py-2 text-[10px] leading-relaxed" style={{ borderColor: "#1A345B", background: "#071126", color: "#8EA9D7" }}>
+                    Use the Layout tab to move or resize this article field on the canvas. Page colors and icon settings are under the Article tab.
                   </div>
                 </div>
               )}
@@ -5860,6 +5980,83 @@ export function WikiEditor() {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {inspectorTab === "layout" && selectedArticleChromeField && selectedArticleChromeLayout && (
+                <div className="space-y-3">
+                  <div className="rounded-md border p-3 space-y-3" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Article Field Layout</div>
+                      <div className="text-[12px] font-bold mt-1" style={{ color: "#D3E1FF" }}>
+                        Article {selectedArticleChromeLabel}
+                      </div>
+                      <div className="text-[10px] mt-1 leading-relaxed" style={{ color: "#8EA9D7" }}>
+                        These controls use the same snap grid as blocks, but stay in the article header region above the main content.
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label style={labelStyle}>Column Start</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={WIKI_BLOCK_COLUMNS}
+                          value={selectedArticleChromeLayout.colStart}
+                          onChange={(event) => updateArticleChromeLayout(selectedArticleChromeField, { colStart: Number(event.target.value) || 1 })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Column Span</label>
+                        <input
+                          type="number"
+                          min={selectedArticleChromeLayout.minColSpan || 6}
+                          max={WIKI_BLOCK_COLUMNS}
+                          value={selectedArticleChromeLayout.colSpan}
+                          onChange={(event) => updateArticleChromeLayout(selectedArticleChromeField, { colSpan: Number(event.target.value) || selectedArticleChromeLayout.colSpan })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Row Start</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={selectedArticleChromeLayout.rowStart}
+                          onChange={(event) => updateArticleChromeLayout(selectedArticleChromeField, { rowStart: Number(event.target.value) || 1 })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Row Span</label>
+                        <input
+                          type="number"
+                          min={selectedArticleChromeLayout.minRowSpan || 2}
+                          value={selectedArticleChromeLayout.rowSpan}
+                          onChange={(event) => updateArticleChromeLayout(selectedArticleChromeField, { rowSpan: Number(event.target.value) || selectedArticleChromeLayout.rowSpan })}
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      <button onClick={() => updateArticleChromeLayout(selectedArticleChromeField, { colStart: selectedArticleChromeLayout.colStart - 1 })} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Left</button>
+                      <button onClick={() => updateArticleChromeLayout(selectedArticleChromeField, { colStart: selectedArticleChromeLayout.colStart + 1 })} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Right</button>
+                      <button onClick={() => updateArticleChromeLayout(selectedArticleChromeField, { rowStart: selectedArticleChromeLayout.rowStart - 1 })} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Up</button>
+                      <button onClick={() => updateArticleChromeLayout(selectedArticleChromeField, { rowStart: selectedArticleChromeLayout.rowStart + 1 })} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_SUBTLE}>Down</button>
+                    </div>
+                    <button
+                      onClick={() => updateArticleChromeLayout(selectedArticleChromeField, DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[selectedArticleChromeField])}
+                      className={`${retro.button} w-full px-3 py-1.5 text-[10px]`}
+                      style={S_ACCENT}
+                    >
+                      Reset This Field Layout
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -6542,6 +6739,18 @@ export function WikiEditor() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {inspectorTab === "style" && selectedArticleChromeField && (
+                <div className="rounded-md border p-3 space-y-2" style={{ borderColor: "#1A345B", background: "#09142D" }}>
+                  <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#7A9ABB", fontWeight: 700 }}>Article Field Style</div>
+                  <div className="text-[10px] leading-relaxed" style={{ color: "#8EA9D7" }}>
+                    Article {selectedArticleChromeLabel} uses the page-level article colors so the header stays consistent in Edit, Clean Canvas, Player Preview, and published views.
+                  </div>
+                  <button onClick={() => setInspectorTab("article")} className={`${retro.button} w-full px-3 py-1.5 text-[10px]`} style={S_ACCENT}>
+                    Open Article Appearance
+                  </button>
                 </div>
               )}
 
