@@ -981,6 +981,8 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
   const visibility = block.visibility || { assignedTo: [], mode: "visible" as const };
   const fluid = block.fluid || ({} as Partial<WikiBlockFluidSettings>);
   const behavior = block.behavior || ({} as WikiBlockBehavior);
+  const normalizedColSpan = clampInt(layout.colSpan, base.minColSpan || 1, WIKI_BLOCK_COLUMNS);
+  const normalizedColStart = clampInt(layout.colStart, 1, Math.max(1, WIKI_BLOCK_COLUMNS - normalizedColSpan + 1));
   return {
     id: block.id || `wiki-block-${uid()}`,
     type,
@@ -988,8 +990,8 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     subtitle: block.subtitle || "",
     html: block.html || "",
     layout: {
-      colStart: clampInt(layout.colStart, 1, WIKI_BLOCK_COLUMNS),
-      colSpan: clampInt(layout.colSpan, base.minColSpan || 1, WIKI_BLOCK_COLUMNS),
+      colStart: normalizedColStart,
+      colSpan: normalizedColSpan,
       rowStart: Math.max(1, layout.rowStart || 1),
       rowSpan: Math.max(base.minRowSpan || 1, layout.rowSpan || base.rowSpan || WIKI_BLOCK_DEFAULT_ROW_SPAN),
       minColSpan: base.minColSpan,

@@ -423,6 +423,7 @@ export function InetPage() {
     ? (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION ? page.blocks : migrateLegacyArticleToBlocks(page))
     : migrateLegacyArticleToBlocks(page));
   const hasBlockLayout = blocks.length > 0 && (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION || (page.blocks && page.blocks.length > 0));
+  const articleShellMaxWidth = hasBlockLayout ? Math.max(900, canvasSettings.frameWidth + 244) : 900;
   const visibleBlocks = blocks
     .filter((block) => {
       const hasRestriction = block.visibility.assignedTo.length > 0;
@@ -940,8 +941,8 @@ export function InetPage() {
       )}
 
       {/* Article Content */}
-      <div className="flex-1 px-4 py-6" style={{ background: bg }}>
-        <div className="max-w-[900px] mx-auto">
+      <div className={hasBlockLayout ? "flex-1 px-0 py-6" : "flex-1 px-4 py-6"} style={{ background: bg }}>
+        <div className="mx-auto" style={{ maxWidth: articleShellMaxWidth }}>
           <div className="flex flex-col md:flex-row gap-4">
             {/* Sidebar: Table of Contents + Info */}
             <div className="w-full md:w-[220px] shrink-0 order-2 md:order-1">
@@ -1341,7 +1342,17 @@ export function InetPage() {
 
               {hasBlockLayout ? (
                 <>
-                  <div className="hidden md:grid gap-4 mb-6 mx-auto" style={{ maxWidth: canvasSettings.frameWidth, gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`, gridAutoRows: "minmax(20px, auto)" }}>
+                  <div
+                    className="hidden md:grid mb-6 mx-auto"
+                    style={{
+                      width: "100%",
+                      maxWidth: canvasSettings.frameWidth,
+                      gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`,
+                      gridAutoRows: "minmax(20px, auto)",
+                      columnGap: 0,
+                      rowGap: 0,
+                    }}
+                  >
                     {visibleBlocks.map((block) => (
                       <div
                         key={block.id}

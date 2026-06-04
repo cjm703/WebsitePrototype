@@ -4623,8 +4623,8 @@ export function WikiEditor() {
                   </div>
                 ) : isResponsiveReflowMode ? (
                   <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
-                    <div className="px-4 py-5">
-                      <div className="mb-4 px-1 py-2">
+                    <div className="py-5">
+                      <div className="mb-4 px-4 py-2">
                         <h1 className="m-0 leading-tight" style={{ color: txt, fontSize: responsiveFrameMode === "mobile" ? 24 : 30, fontWeight: 700 }}>
                           {page.title || "Untitled Article"}
                         </h1>
@@ -4679,9 +4679,9 @@ export function WikiEditor() {
                   </div>
                 ) : (
                 <div style={{ width: canvasRenderWidth, transform: `scale(${effectiveCanvasScale})`, transformOrigin: "top center" }}>
-                <div className="px-6 py-6">
+                <div className="py-6">
                   {!editorPreviewMode && (
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-6 text-[10px]" style={{ color: "#7A9ABB" }}>
                     <div className="flex flex-wrap items-center gap-2">
                       <span>{canvasSettings.preset === "referenceWide" ? "Reference Wide" : canvasSettings.preset === "large" ? "Large Article" : "Standard Article"}</span>
                       <span>|</span>
@@ -4716,7 +4716,7 @@ export function WikiEditor() {
                       }
                     }}
                     onDrop={editorPreviewMode ? undefined : handleCanvasDrop}
-                    className="relative rounded-lg border overflow-visible"
+                    className="relative border-y overflow-visible"
                     style={{
                       minHeight: canvasHeight,
                       borderColor: editorPreviewMode ? "transparent" : "#20335B",
@@ -4984,7 +4984,7 @@ export function WikiEditor() {
                   </div>
 
                   {!editorPreviewMode && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "#7A9ABB" }}>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 px-6 text-[10px]" style={{ color: "#7A9ABB" }}>
                     <span>Desktop canvas keeps a fixed article frame and a dense 48-column layout.</span>
                     <span>|</span>
                     <span>Shift-click empty canvas space to place a new block or preset exactly where you want it.</span>
