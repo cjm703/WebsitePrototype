@@ -5,7 +5,7 @@ import { appStore } from "@/lib/app-store";
 import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Users,
-  Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft,
+  Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft, ArrowRight,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
   Newspaper, Copy, Zap, ChevronUp, Dices, Images, BookOpen,
 } from "lucide-react";
@@ -1509,17 +1509,33 @@ const handleSaveItem = async () => {
 
       <div className="flex-1 flex flex-col px-4 py-6 xl:px-6 2xl:px-10 max-w-[1900px] mx-auto w-full">
         {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <ShieldAlert size={32} style={S_RED} />
-            <h1
-              className="text-[32px] tracking-tight"
-              style={DM_MAIN_TITLE}
-            >
-              Dungeon Master Area
-            </h1>
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <ShieldAlert size={32} style={S_RED} />
+              <h1
+                className="text-[32px] tracking-tight"
+                style={DM_MAIN_TITLE}
+              >
+                Dungeon Master Area
+              </h1>
+            </div>
+            <p className="text-[12px]" style={S_LABEL}>Campaign management and player content administration</p>
           </div>
-          <p className="text-[12px]" style={S_LABEL}>Campaign management and player content administration</p>
+          <button
+            onClick={() => navigate("/interface/wiki-studio")}
+            className={`${retro.raised} px-4 py-3 text-left hover:bg-[#1E1E58] transition-colors flex items-center gap-3`}
+            style={{ color: "#CFE0FF", background: "#121D46", borderColor: "#31578A" }}
+          >
+            <div className={`${retro.sunken} p-2`} style={{ background: "#081129" }}>
+              <BookOpen size={18} style={S_ACCENT} />
+            </div>
+            <div>
+              <div className="text-[12px] font-bold" style={S_ACCENT}>Open Wiki Studio</div>
+              <div className="text-[10px]" style={S_LABEL}>Create, organize, and edit I-Net Wiki articles.</div>
+            </div>
+            <ArrowRight size={14} style={S_ACCENT} />
+          </button>
         </div>
 
         {/* Nav Tabs */}
