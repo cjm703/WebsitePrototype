@@ -189,8 +189,6 @@ const LeaderboardRow = memo(function LeaderboardRow({
 export function Game() {
   const navigate = useNavigate();
   const currentUser = safeGetItem("inet-user") || "";
-  const currentUserId = safeGetItem("inet-user-id") || "";
-  const isDM = currentUserId === "dm";
   const [activeGame, setActiveGame] = useState<string | null>(null);
   const [activeAdventure, setActiveAdventure] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("games");
@@ -263,7 +261,7 @@ export function Game() {
               </span>
             </div>
           )}
-          {activeAdventure && isDM && (
+          {activeAdventure && (
             <div style={DISPLAY_CONTENTS}>
               <span className="text-[11px]" style={S_DIM}>
                 &gt;
@@ -315,7 +313,7 @@ export function Game() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-2">
-            {activeAdventure && isDM ? (
+            {activeAdventure ? (
               <Compass size={28} style={{ color: "#64E0FF" }} />
             ) : activeTab === "leaderboard" && !selectedGame ? (
               <Trophy size={28} style={{ color: "#FFD700" }} />
@@ -334,7 +332,7 @@ export function Game() {
             >
               {selectedGame
                 ? selectedGame.name
-                : activeAdventure && isDM
+                : activeAdventure
                 ? "Adventure"
                 : activeTab === "leaderboard"
                 ? "Leaderboards"
@@ -346,8 +344,8 @@ export function Game() {
           <div className="text-[12px]" style={S_MUTED}>
             {selectedGame
               ? selectedGame.description
-              : activeAdventure && isDM
-              ? "DM-only expedition console. This is separate from the standard Arcade game catalog."
+              : activeAdventure
+              ? "Multiplayer tactical expeditions. This is separate from the standard Arcade game catalog."
               : activeTab === "leaderboard"
               ? "All-time high scores across all I-NET arcade games."
               : activeTab === "store"
@@ -434,8 +432,8 @@ export function Game() {
                 onScoreSave={handleScoreSave(selectedGame.id, selectedGame.name)}
               />
             </Suspense>
-          ) : activeAdventure && isDM ? (
-            /* DM-only Adventure Section */
+          ) : activeAdventure ? (
+            /* Adventure Section */
             <Suspense fallback={
               <div className="flex items-center justify-center py-20">
                 <span className="text-[11px] font-mono" style={{ color: "#4A4A7A" }}>Loading adventure...</span>
@@ -458,41 +456,39 @@ export function Game() {
                 </div>
               </div>
 
-              {isDM && (
-                <div className="mb-5">
-                  <button
-                    onClick={() => {
-                      startTransition(() => {
-                        setActiveGame(null);
-                        setActiveAdventure(true);
-                        setActiveTab("games");
-                      });
-                    }}
-                    className={`${retro.raised} w-full p-4 text-left hover:bg-[#0D203A] transition-all cursor-pointer group`}
-                    style={{ borderLeft: "4px solid #64E0FF", background: "#08162A" }}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`${retro.sunken} bg-[#061126] p-3 group-hover:bg-[#081A32] transition-colors`}>
-                        <Compass size={28} style={{ color: "#64E0FF" }} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <div className="text-[15px]" style={{ color: "#64E0FF", fontWeight: 700, fontFamily: "'Courier New', monospace" }}>
-                            ADVENTURE
-                          </div>
-                          <span className="text-[9px] px-2 py-0.5" style={{ color: "#64E0FF", border: "1px solid #64E0FF55", background: "#64E0FF12" }}>
-                            DM ONLY
-                          </span>
-                        </div>
-                        <div className="text-[11px]" style={S_MUTED}>
-                          Launch the separate expedition console. This does not appear in the standard Arcade game catalog.
-                        </div>
-                        <div className="text-[10px] mt-2" style={{ color: "#64E0FF" }}>OPEN ADVENTURE</div>
-                      </div>
+              <div className="mb-5">
+                <button
+                  onClick={() => {
+                    startTransition(() => {
+                      setActiveGame(null);
+                      setActiveAdventure(true);
+                      setActiveTab("games");
+                    });
+                  }}
+                  className={`${retro.raised} w-full p-4 text-left hover:bg-[#0D203A] transition-all cursor-pointer group`}
+                  style={{ borderLeft: "4px solid #64E0FF", background: "#08162A" }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`${retro.sunken} bg-[#061126] p-3 group-hover:bg-[#081A32] transition-colors`}>
+                      <Compass size={28} style={{ color: "#64E0FF" }} />
                     </div>
-                  </button>
-                </div>
-              )}
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <div className="text-[15px]" style={{ color: "#64E0FF", fontWeight: 700, fontFamily: "'Courier New', monospace" }}>
+                          ADVENTURE
+                        </div>
+                        <span className="text-[9px] px-2 py-0.5" style={{ color: "#8FF0B8", border: "1px solid #8FF0B855", background: "#8FF0B812" }}>
+                          MULTIPLAYER
+                        </span>
+                      </div>
+                      <div className="text-[11px]" style={S_MUTED}>
+                        Launch the separate tactical adventure room system with classes, maps, enemies, and shared turns.
+                      </div>
+                      <div className="text-[10px] mt-2" style={{ color: "#64E0FF" }}>OPEN ADVENTURE</div>
+                    </div>
+                  </div>
+                </button>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {GAMES.map((game) => {
