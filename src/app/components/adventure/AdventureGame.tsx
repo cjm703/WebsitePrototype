@@ -6,12 +6,12 @@ import { safeGetItem, safeSetItem } from "../safe-storage";
 import { ADVENTURE_DIFFICULTIES, ADVENTURE_FRAMEWORK_REGISTRY, ADVENTURE_OBJECTIVES, ADVENTURE_THEMES, DEFAULT_ENCOUNTER_SETTINGS, DEFAULT_THEME, MAP_SIZE_OPTIONS, STARTER_GOLD } from "./data";
 import { makeAdventureAction, resolveAdventureAction } from "./actions";
 import { getAvailableCampaignNodes, getCurrentCampaignNode } from "./campaign";
-import { DEFAULT_ADVENTURE_CONTENT, getAdventureClass, getAdventureClasses, getAdventureLevelUpRule, getAdventureShopItems, normalizeAdventureContent } from "./content";
+import { DEFAULT_ADVENTURE_CONTENT, getAdventureCampaignTemplates, getAdventureClass, getAdventureClasses, getAdventureLevelUpRule, getAdventureShopItems, normalizeAdventureContent } from "./content";
 import { createAdventureSession, distance, getAbilityById, getActiveEnemy, getActivePlayer, getItemById, getUnitAt, makeId, tileKindLabel } from "./engine";
 import { createAdventureProfile, normalizeAdventureProfile, xpForLevel } from "./profile";
 import { pointKey, getDangerTiles, getReachableTiles, getTileActionReason, getValidTargetIds } from "./selectors";
 import { subscribeAdventureState, upsertAdventureSession, upsertAdventureState } from "./store";
-import type { AdventureActionMode, AdventureActionRequest, AdventureCampaignNode, AdventureClassDef, AdventureClassId, AdventureEncounterSettings, AdventureEquipmentSlot, AdventureFrameworkConfig, AdventureProfilesByPlayer, AdventureSession, AdventureStateDoc, AdventureTheme, AdventureTile } from "./types";
+import type { AdventureAbilityKind, AdventureActionMode, AdventureActionRequest, AdventureBehaviorDef, AdventureCampaignNode, AdventureCampaignTemplate, AdventureClassDef, AdventureClassId, AdventureEncounterSettings, AdventureEnemyTemplate, AdventureEquipmentSlot, AdventureEventTemplate, AdventureFrameworkConfig, AdventureLevelUpRule, AdventureProfilesByPlayer, AdventureSession, AdventureShopItem, AdventureShopItemKind, AdventureStateDoc, AdventureTheme, AdventureTile } from "./types";
 
 const SELECTED_SESSION_KEY = "inet-adventure-selected-session";
 
@@ -64,6 +64,52 @@ function equipmentSlotLabel(slot: AdventureEquipmentSlot) {
   if (slot === "weapon") return "Weapon";
   if (slot === "armor") return "Armor";
   return "Trinket";
+}
+
+function slugifyAdventureId(value: string, fallback = "custom") {
+  const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || `${fallback}-${Date.now().toString(36)}`;
+}
+
+const FIELD_STYLE = { color: "#C0D0F0", background: "#050A1A", border: "1px solid #1A1A4B", outline: "none" };
+const CREATOR_CARD_STYLE = { background: "#080E24", boxShadow: "inset 0 0 0 1px rgba(100, 224, 255, 0.08)" };
+const ABILITY_KIND_OPTIONS: AdventureAbilityKind[] = ["damage", "heal", "guard", "mark"];
+const SHOP_ITEM_KIND_OPTIONS: AdventureShopItemKind[] = ["consumable", "equipment"];
+const BEHAVIOR_TARGET_OPTIONS: AdventureBehaviorDef["targeting"][] = ["nearest", "wounded", "random"];
+
+function numberValue(value: string, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function withShopItemKind(item: AdventureShopItem, kind: AdventureShopItemKind): AdventureShopItem {
+  if (kind === "equipment") {
+    return {
+      ...item,
+      kind,
+      equipment: item.equipment || {
+        id: item.id,
+        name: item.name || "New Gear",
+        description: item.description || "A new equipment item.",
+        slot: "weapon",
+        price: item.price,
+        sellValue: item.sellValue,
+        basicDamageBonus: Math.max(1, item.item?.power || 1),
+      },
+    };
+  }
+  return {
+    ...item,
+    kind,
+    item: item.item || {
+      id: item.id,
+      name: item.name || "New Consumable",
+      description: item.description || "A new kit item.",
+      kind: "heal",
+      range: 2,
+      power: Math.max(1, item.equipment?.basicDamageBonus || 5),
+    },
+  };
 }
 
 export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (score: number) => void }) {
@@ -372,25 +418,109 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
     }
   };
 
+  const persistContentCatalog = useCallback((contentCatalog: typeof state.contentCatalog, message: string) => {
+    const normalized = normalizeAdventureContent(contentCatalog);
+    setCatalogDraft(JSON.stringify(normalized, null, 2));
+    void saveWholeState({ ...state, contentCatalog: normalized });
+    setNotice(message);
+  }, [saveWholeState, state]);
+
+  const closeExistingAndCreateV2 = useCallback(() => {
+    const contentCatalog = normalizeAdventureContent(DEFAULT_ADVENTURE_CONTENT);
+    const closedSessions = state.sessions.map((session) => ({
+      ...session,
+      status: session.status === "completed" ? session.status : "abandoned",
+      phase: "closed" as const,
+      outcome: session.outcome || "abandoned" as const,
+      updatedAt: new Date().toISOString(),
+      log: [
+        { id: makeId("log"), at: new Date().toISOString(), tone: "warning" as const, text: "Closed during Adventure V2 reset." },
+        ...session.log,
+      ].slice(0, 100),
+    }));
+    const session = createAdventureSession({
+      hostPlayerId: currentUserId,
+      hostName: currentUser,
+      classId: profile.preferredClassId,
+      name: "V2: First Cube Road",
+      mapSize: DEFAULT_ENCOUNTER_SETTINGS.mapSize,
+      theme: getAdventureCampaignTemplates(contentCatalog)[0]?.preferredTheme || DEFAULT_THEME,
+      content: contentCatalog,
+    });
+    const nextState: AdventureStateDoc = {
+      schemaVersion: 3,
+      sessions: [session, ...closedSessions].slice(0, 20),
+      profiles,
+      contentCatalog,
+    };
+    setSelectedSessionId(session.id);
+    setCatalogDraft(JSON.stringify(contentCatalog, null, 2));
+    void saveWholeState(nextState);
+    setNotice("Existing adventures closed. Clean Adventure V2 room and starter catalog created.");
+  }, [currentUser, currentUserId, profile.preferredClassId, profiles, saveWholeState, state.sessions]);
+
   const renderFrameworkBuilder = () => {
     if (!isDungeonMaster) return null;
     const content = normalizeAdventureContent(state.contentCatalog);
+    const saveCatalog = (next: typeof content, message: string) => persistContentCatalog(next, message);
+    const updateCampaign = (id: string, patch: Partial<AdventureCampaignTemplate>) => saveCatalog({ ...content, campaignTemplates: content.campaignTemplates.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Adventure template updated.");
+    const updateClass = (id: string, patch: Partial<AdventureClassDef>) => saveCatalog({ ...content, classes: { ...content.classes, [id]: { ...content.classes[id], ...patch } } }, "Class set updated.");
+    const updateItem = (id: string, patch: Partial<AdventureShopItem>) => saveCatalog({ ...content, shopItems: content.shopItems.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Item set updated.");
+    const updateEvent = (id: string, patch: Partial<AdventureEventTemplate>) => saveCatalog({ ...content, eventTemplates: content.eventTemplates.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Event set updated.");
+    const updateEnemy = (id: string, patch: Partial<AdventureEnemyTemplate>, boss = false) => {
+      const key = boss ? "bossTemplates" : "enemyTemplates";
+      saveCatalog({ ...content, [key]: content[key].map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, boss ? "Boss set updated." : "Enemy set updated.");
+    };
+    const updateBehavior = (id: string, patch: Partial<AdventureBehaviorDef>) => saveCatalog({ ...content, behaviors: content.behaviors.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Behavior set updated.");
+    const updateLevelRule = (id: string, patch: Partial<AdventureLevelUpRule>) => saveCatalog({ ...content, levelUpRules: content.levelUpRules.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Level-up set updated.");
+    const inputClass = "w-full px-2 py-1.5 text-[11px]";
+    const Field = ({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) => (
+      <label className="block text-[9px] uppercase tracking-[0.12em]" style={S_DIM}>
+        <span>{label}</span>
+        <div className="mt-1">{children}</div>
+        {hint && <div className="mt-1 normal-case tracking-normal text-[9px]" style={S_MUTED}>{hint}</div>}
+      </label>
+    );
+    const SectionSummary = ({ title, detail }: { title: string; detail: string }) => (
+      <summary className="cursor-pointer list-none">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[12px] font-bold" style={S_TEXT}>{title}</span>
+          <span className="text-[9px] px-2 py-0.5" style={{ ...S_DIM, border: "1px solid #1A1A4B", background: "#080E24" }}>{detail}</span>
+        </div>
+      </summary>
+    );
     return (
-      <div className={`${retro.raised} p-4`} style={{ background: "#080E24", borderLeft: "4px solid #FF8DFF" }}>
+      <div className={`${retro.raised} p-4`} style={{ background: "linear-gradient(135deg, #080E24, #160A24)", borderLeft: "4px solid #FF8DFF" }}>
         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3 mb-3">
           <div>
-            <div className="text-[14px] font-bold" style={{ color: "#FF8DFF" }}>DM Framework Builder</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-[14px] font-bold" style={{ color: "#FF8DFF" }}>DM Adventure V2 Creator</div>
+              <span className="text-[9px] px-2 py-0.5" style={{ color: "#FFD37A", border: "1px solid #51401E", background: "#151006" }}>DM tools</span>
+            </div>
             <div className="text-[11px] max-w-[760px]" style={S_MUTED}>
-              Edit the Adventure content catalog. New rooms snapshot this catalog, so the DM can add classes, abilities, level-up rules, shop items, enemies, bosses, behaviors, and text events without changing code.
+              Build the shared Adventure V2 catalog. New rooms snapshot these adventure templates, classes, abilities, item sets, event sets, enemies, bosses, behaviors, and level-up rules.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button onClick={() => setCatalogDraft(JSON.stringify(DEFAULT_ADVENTURE_CONTENT, null, 2))} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_WARN}>Load Built-Ins</button>
-            <button onClick={saveFrameworkCatalog} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_GREEN}>Save Catalog</button>
+            <button onClick={closeExistingAndCreateV2} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_RED}>Close Existing + Create V2</button>
+            <button onClick={() => persistContentCatalog(DEFAULT_ADVENTURE_CONTENT, "Built-in V2 starter catalog loaded.")} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_WARN}>Load V2 Starter</button>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2 mb-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
           {[
+            ["Reset Safely", "Close old rooms and seed a fresh V2 campaign without deleting profiles."],
+            ["Edit In Forms", "Catalog cards save through the shared Adventure state and remain editable as JSON."],
+            ["Snapshot Rooms", "New rooms copy the current catalog so later edits do not mutate live sessions."],
+          ].map(([title, body]) => (
+            <div key={title} className={`${retro.sunken} p-2`} style={{ background: "#050A1A" }}>
+              <div className="text-[10px] font-bold" style={S_TEXT}>{title}</div>
+              <div className="text-[9px] leading-relaxed" style={S_MUTED}>{body}</div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2 mb-3">
+          {[
+            ["Adventures", content.campaignTemplates.length],
             ["Classes", Object.keys(content.classes).length],
             ["Shop", content.shopItems.length],
             ["Enemies", content.enemyTemplates.length],
@@ -405,13 +535,241 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
             </div>
           ))}
         </div>
-        <textarea
-          value={catalogDraft}
-          onChange={(event) => setCatalogDraft(event.target.value)}
-          className="w-full min-h-[260px] px-3 py-2 text-[11px] font-mono"
-          spellCheck={false}
-          style={{ color: "#D7F6FF", background: "#050A1A", border: "1px solid #2A2A6A", outline: "none" }}
-        />
+
+        <div className="space-y-3">
+          <details open className={`${retro.sunken} p-3`} style={{ background: "#050A1A" }}>
+            <SectionSummary title="Basic Adventures" detail={`${content.campaignTemplates.length} templates`} />
+            <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {content.campaignTemplates.map((template) => (
+                <div key={template.id} className={`${retro.raised} p-3 space-y-2`} style={{ ...CREATOR_CARD_STYLE, borderLeft: "3px solid #64E0FF" }}>
+                  <Field label="Adventure Name">
+                    <input className={inputClass} style={FIELD_STYLE} value={template.name} onChange={(event) => updateCampaign(template.id, { name: event.target.value })} />
+                  </Field>
+                  <Field label="Description">
+                    <textarea className={`${inputClass} min-h-[54px]`} style={FIELD_STYLE} value={template.description} onChange={(event) => updateCampaign(template.id, { description: event.target.value })} />
+                  </Field>
+                  <Field label="Opening Text" hint="Shown when the party leaves the starter shop and begins the road.">
+                    <textarea className={`${inputClass} min-h-[54px]`} style={FIELD_STYLE} value={template.introText} onChange={(event) => updateCampaign(template.id, { introText: event.target.value })} />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Depth">
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={template.maxDepth} onChange={(event) => updateCampaign(template.id, { maxDepth: Math.max(2, numberValue(event.target.value, template.maxDepth)) })} />
+                    </Field>
+                    <Field label="Theme">
+                      <select className={inputClass} style={FIELD_STYLE} value={template.preferredTheme} onChange={(event) => updateCampaign(template.id, { preferredTheme: event.target.value as AdventureTheme })}>{(Object.keys(ADVENTURE_THEMES) as AdventureTheme[]).map((theme) => <option key={theme} value={theme}>{ADVENTURE_THEMES[theme].name}</option>)}</select>
+                    </Field>
+                  </div>
+                  <button onClick={() => saveCatalog({ ...content, campaignTemplates: content.campaignTemplates.filter((entry) => entry.id !== template.id) }, "Adventure template removed.")} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>Remove Adventure</button>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => {
+              const id = slugifyAdventureId(`adventure-${content.campaignTemplates.length + 1}`, "adventure");
+              saveCatalog({ ...content, campaignTemplates: [...content.campaignTemplates, { id, name: "New Adventure Road", description: "A new V2 road template.", maxDepth: 6, preferredTheme: "forest", introText: "The party steps onto a new cube road." }] }, "Adventure template added.");
+            }} className={`${retro.button} mt-3 px-3 py-2 text-[10px]`} style={S_GREEN}>Add Adventure Template</button>
+          </details>
+
+          <details className={`${retro.sunken} p-3`} style={{ background: "#050A1A" }}>
+            <SectionSummary title="Classes And Abilities" detail={`${Object.keys(content.classes).length} classes`} />
+            <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {Object.values(content.classes).map((classDef) => (
+                <div key={classDef.id} className={`${retro.raised} p-3 space-y-2`} style={{ ...CREATOR_CARD_STYLE, borderLeft: `3px solid ${classDef.color}` }}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Class Name">
+                      <input className={inputClass} style={FIELD_STYLE} value={classDef.name} onChange={(event) => updateClass(classDef.id, { name: event.target.value })} />
+                    </Field>
+                    <Field label="Accent Color">
+                      <input className={inputClass} style={FIELD_STYLE} value={classDef.color} onChange={(event) => updateClass(classDef.id, { color: event.target.value })} />
+                    </Field>
+                  </div>
+                  <Field label="Role">
+                    <input className={inputClass} style={FIELD_STYLE} value={classDef.role} onChange={(event) => updateClass(classDef.id, { role: event.target.value })} />
+                  </Field>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Field label="HP">
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={classDef.maxHp} onChange={(event) => updateClass(classDef.id, { maxHp: Math.max(1, numberValue(event.target.value, classDef.maxHp)) })} />
+                    </Field>
+                    <Field label="Move">
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={classDef.move} onChange={(event) => updateClass(classDef.id, { move: Math.max(1, numberValue(event.target.value, classDef.move)) })} />
+                    </Field>
+                    <Field label="Hit">
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={classDef.basicDamage} onChange={(event) => updateClass(classDef.id, { basicDamage: Math.max(1, numberValue(event.target.value, classDef.basicDamage)) })} />
+                    </Field>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[10px] font-bold" style={S_MUTED}>Abilities</div>
+                      <div className="hidden md:grid md:grid-cols-[1fr_90px_70px_70px_auto] gap-2 flex-1 text-[8px] uppercase tracking-[0.1em]" style={S_DIM}>
+                        <span>Name</span><span>Kind</span><span>Range</span><span>Power</span><span />
+                      </div>
+                    </div>
+                    {classDef.abilities.map((ability, index) => (
+                      <div key={ability.id} className="grid grid-cols-1 md:grid-cols-[1fr_90px_70px_70px_auto] gap-2">
+                        <input className={inputClass} style={FIELD_STYLE} value={ability.name} onChange={(event) => updateClass(classDef.id, { abilities: classDef.abilities.map((entry, i) => i === index ? { ...entry, name: event.target.value } : entry) })} />
+                        <select className={inputClass} style={FIELD_STYLE} value={ability.kind} onChange={(event) => updateClass(classDef.id, { abilities: classDef.abilities.map((entry, i) => i === index ? { ...entry, kind: event.target.value as AdventureAbilityKind } : entry) })}>{ABILITY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}</select>
+                        <input className={inputClass} style={FIELD_STYLE} type="number" value={ability.range} onChange={(event) => updateClass(classDef.id, { abilities: classDef.abilities.map((entry, i) => i === index ? { ...entry, range: numberValue(event.target.value, entry.range) } : entry) })} />
+                        <input className={inputClass} style={FIELD_STYLE} type="number" value={ability.power} onChange={(event) => updateClass(classDef.id, { abilities: classDef.abilities.map((entry, i) => i === index ? { ...entry, power: numberValue(event.target.value, entry.power) } : entry) })} />
+                        <button onClick={() => updateClass(classDef.id, { abilities: classDef.abilities.filter((_, i) => i !== index) })} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>X</button>
+                      </div>
+                    ))}
+                    <button onClick={() => updateClass(classDef.id, { abilities: [...classDef.abilities, { id: `ability-${Date.now().toString(36)}`, name: "New Ability", description: "Describe this ability.", kind: "damage", range: 1, power: 5 }] })} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_GREEN}>Add Ability</button>
+                  </div>
+                  <button onClick={() => {
+                    const next = { ...content.classes };
+                    delete next[classDef.id];
+                    saveCatalog({ ...content, classes: next }, "Class removed.");
+                  }} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>Remove Class</button>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => {
+              const id = slugifyAdventureId(`class-${Object.keys(content.classes).length + 1}`, "class");
+              saveCatalog({ ...content, classes: { ...content.classes, [id]: { id, name: "New Class", role: "Custom role", maxHp: 24, move: 4, basicDamage: 5, color: "#64E0FF", abilities: [], inventory: [] } } }, "Class added.");
+            }} className={`${retro.button} mt-3 px-3 py-2 text-[10px]`} style={S_GREEN}>Add Class</button>
+          </details>
+
+          <details className={`${retro.sunken} p-3`} style={{ background: "#050A1A" }}>
+            <SectionSummary title="Item Set" detail={`${content.shopItems.length} shop entries`} />
+            <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {content.shopItems.map((item) => (
+                <div key={item.id} className={`${retro.raised} p-3 space-y-2`} style={{ ...CREATOR_CARD_STYLE, borderLeft: `3px solid ${item.kind === "equipment" ? "#64E0FF" : "#FFD37A"}` }}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Field label="Item Name">
+                      <input className={inputClass} style={FIELD_STYLE} value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} />
+                    </Field>
+                    <Field label="Item Type">
+                      <select className={inputClass} style={FIELD_STYLE} value={item.kind} onChange={(event) => updateItem(item.id, withShopItemKind(item, event.target.value as AdventureShopItemKind))}>
+                        {SHOP_ITEM_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{kind === "equipment" ? "Equipment" : "Consumable"}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="Description">
+                    <textarea className={`${inputClass} min-h-[48px]`} style={FIELD_STYLE} value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} />
+                  </Field>
+                  <div className="grid grid-cols-4 gap-2">
+                    <Field label="Price"><input className={inputClass} style={FIELD_STYLE} type="number" value={item.price} onChange={(event) => updateItem(item.id, { price: numberValue(event.target.value, item.price) })} /></Field>
+                    <Field label="Sell"><input className={inputClass} style={FIELD_STYLE} type="number" value={item.sellValue} onChange={(event) => updateItem(item.id, { sellValue: numberValue(event.target.value, item.sellValue) })} /></Field>
+                    <Field label="Power"><input className={inputClass} style={FIELD_STYLE} type="number" value={item.item?.power || item.equipment?.basicDamageBonus || 0} onChange={(event) => item.kind === "equipment" ? updateItem(item.id, { equipment: { ...(item.equipment || { id: item.id, name: item.name, description: item.description, slot: "weapon", price: item.price, sellValue: item.sellValue }), basicDamageBonus: numberValue(event.target.value, 0) } }) : updateItem(item.id, { item: { ...(item.item || { id: item.id, name: item.name, description: item.description, kind: "heal", range: 2, power: 1 }), power: numberValue(event.target.value, 1) } })} /></Field>
+                    <Field label="Range"><input className={inputClass} style={FIELD_STYLE} type="number" value={item.item?.range || 0} onChange={(event) => updateItem(item.id, { item: { ...(item.item || { id: item.id, name: item.name, description: item.description, kind: "heal", range: 2, power: 1 }), range: numberValue(event.target.value, 1) } })} /></Field>
+                  </div>
+                  {item.kind === "equipment" && (
+                    <div className="grid grid-cols-4 gap-2">
+                      <Field label="Slot"><select className={inputClass} style={FIELD_STYLE} value={item.equipment?.slot || "weapon"} onChange={(event) => updateItem(item.id, { equipment: { ...(item.equipment || { id: item.id, name: item.name, description: item.description, slot: "weapon", price: item.price, sellValue: item.sellValue }), slot: event.target.value as AdventureEquipmentSlot } })}>{(["weapon", "armor", "trinket"] as AdventureEquipmentSlot[]).map((slot) => <option key={slot} value={slot}>{slot}</option>)}</select></Field>
+                      <Field label="HP"><input className={inputClass} style={FIELD_STYLE} type="number" value={item.equipment?.maxHpBonus || 0} onChange={(event) => updateItem(item.id, { equipment: { ...(item.equipment || { id: item.id, name: item.name, description: item.description, slot: "armor", price: item.price, sellValue: item.sellValue }), maxHpBonus: numberValue(event.target.value, 0) } })} /></Field>
+                      <Field label="Move"><input className={inputClass} style={FIELD_STYLE} type="number" value={item.equipment?.moveBonus || 0} onChange={(event) => updateItem(item.id, { equipment: { ...(item.equipment || { id: item.id, name: item.name, description: item.description, slot: "trinket", price: item.price, sellValue: item.sellValue }), moveBonus: numberValue(event.target.value, 0) } })} /></Field>
+                      <button onClick={() => saveCatalog({ ...content, shopItems: content.shopItems.filter((entry) => entry.id !== item.id) }, "Item removed.")} className={`${retro.button} px-2 py-1 text-[9px] self-end`} style={S_RED}>Remove</button>
+                    </div>
+                  )}
+                  {item.kind !== "equipment" && <button onClick={() => saveCatalog({ ...content, shopItems: content.shopItems.filter((entry) => entry.id !== item.id) }, "Item removed.")} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>Remove</button>}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-3">
+              <button onClick={() => {
+                const id = `potion-${Date.now().toString(36)}`;
+                saveCatalog({ ...content, shopItems: [...content.shopItems, { id, kind: "consumable", name: "New Consumable", description: "A new kit item.", price: 10, sellValue: 5, item: { id, name: "New Consumable", description: "A new kit item.", kind: "heal", range: 2, power: 5 } }] }, "Consumable added.");
+              }} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_GREEN}>Add Consumable</button>
+              <button onClick={() => {
+                const id = `gear-${Date.now().toString(36)}`;
+                saveCatalog({ ...content, shopItems: [...content.shopItems, { id, kind: "equipment", name: "New Gear", description: "A new equipment item.", price: 25, sellValue: 12, equipment: { id, name: "New Gear", description: "A new equipment item.", slot: "weapon", price: 25, sellValue: 12, basicDamageBonus: 1 } }] }, "Equipment added.");
+              }} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_GREEN}>Add Equipment</button>
+            </div>
+          </details>
+
+          <details className={`${retro.sunken} p-3`} style={{ background: "#050A1A" }}>
+            <SectionSummary title="Event Set" detail={`${content.eventTemplates.length} events`} />
+            <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {content.eventTemplates.map((event) => (
+                <div key={event.id} className={`${retro.raised} p-3 space-y-2`} style={{ ...CREATOR_CARD_STYLE, borderLeft: "3px solid #FFD37A" }}>
+                  <Field label="Event Title"><input className={inputClass} style={FIELD_STYLE} value={event.title} onChange={(entry) => updateEvent(event.id, { title: entry.target.value })} /></Field>
+                  <Field label="Outcome Text"><textarea className={`${inputClass} min-h-[60px]`} style={FIELD_STYLE} value={event.description} onChange={(entry) => updateEvent(event.id, { description: entry.target.value })} /></Field>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Field label="XP"><input className={inputClass} style={FIELD_STYLE} type="number" value={event.rewardXp} onChange={(entry) => updateEvent(event.id, { rewardXp: numberValue(entry.target.value, event.rewardXp) })} /></Field>
+                    <Field label="Gold"><input className={inputClass} style={FIELD_STYLE} type="number" value={event.rewardGold} onChange={(entry) => updateEvent(event.id, { rewardGold: numberValue(entry.target.value, event.rewardGold) })} /></Field>
+                    <button onClick={() => saveCatalog({ ...content, eventTemplates: content.eventTemplates.filter((entry) => entry.id !== event.id) }, "Event removed.")} className={`${retro.button} px-2 py-1 text-[9px] self-end`} style={S_RED}>Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => {
+              const id = `event-${Date.now().toString(36)}`;
+              saveCatalog({ ...content, eventTemplates: [...content.eventTemplates, { id, title: "New Event", description: "Describe the event outcome.", rewardXp: 25, rewardGold: 10, tags: ["event"] }] }, "Event added.");
+            }} className={`${retro.button} mt-3 px-3 py-2 text-[10px]`} style={S_GREEN}>Add Event</button>
+          </details>
+
+          <details className={`${retro.sunken} p-3`} style={{ background: "#050A1A" }}>
+            <SectionSummary title="Enemies, Bosses, Behaviors, And Level-Ups" detail={`${content.enemyTemplates.length + content.bossTemplates.length} combat templates`} />
+            <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {([
+                ["Enemies", content.enemyTemplates, false],
+                ["Bosses", content.bossTemplates, true],
+              ] as const).map(([label, list, boss]) => (
+                <div key={label} className={`${retro.raised} p-3`} style={CREATOR_CARD_STYLE}>
+                  <div className="text-[11px] font-bold mb-2" style={S_TEXT}>{label}</div>
+                  <div className="space-y-2">
+                    {list.map((enemy) => (
+                      <div key={enemy.id} className="grid grid-cols-1 md:grid-cols-[1fr_64px_64px_64px_auto] gap-2">
+                        <input className={inputClass} style={FIELD_STYLE} value={enemy.name} onChange={(event) => updateEnemy(enemy.id, { name: event.target.value }, boss)} />
+                        <input className={inputClass} style={FIELD_STYLE} type="number" value={enemy.maxHp} onChange={(event) => updateEnemy(enemy.id, { maxHp: numberValue(event.target.value, enemy.maxHp) }, boss)} />
+                        <input className={inputClass} style={FIELD_STYLE} type="number" value={enemy.damage} onChange={(event) => updateEnemy(enemy.id, { damage: numberValue(event.target.value, enemy.damage) }, boss)} />
+                        <input className={inputClass} style={FIELD_STYLE} type="number" value={enemy.attackRange} onChange={(event) => updateEnemy(enemy.id, { attackRange: numberValue(event.target.value, enemy.attackRange) }, boss)} />
+                        <button onClick={() => saveCatalog({ ...content, [boss ? "bossTemplates" : "enemyTemplates"]: list.filter((entry) => entry.id !== enemy.id) }, `${label.slice(0, -1)} removed.`)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>X</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => {
+                    const id = `${boss ? "boss" : "enemy"}-${Date.now().toString(36)}`;
+                    saveCatalog({ ...content, [boss ? "bossTemplates" : "enemyTemplates"]: [...list, { id, name: boss ? "New Boss" : "New Enemy", enemyType: boss ? "Boss" : "Enemy", maxHp: boss ? 42 : 18, damage: boss ? 9 : 5, attackRange: 1, intent: "Uses the selected behavior.", behaviorId: content.behaviors[0]?.id, boss }] }, `${label.slice(0, -1)} added.`);
+                  }} className={`${retro.button} mt-2 px-2 py-1 text-[9px]`} style={S_GREEN}>Add {label.slice(0, -1)}</button>
+                </div>
+              ))}
+              <div className={`${retro.raised} p-3`} style={CREATOR_CARD_STYLE}>
+                <div className="text-[11px] font-bold mb-2" style={S_TEXT}>Behaviors</div>
+                <div className="space-y-2">
+                  {content.behaviors.map((behavior) => (
+                    <div key={behavior.id} className="grid grid-cols-1 md:grid-cols-[1fr_120px_70px_auto] gap-2">
+                      <input className={inputClass} style={FIELD_STYLE} value={behavior.name} onChange={(event) => updateBehavior(behavior.id, { name: event.target.value })} />
+                      <select className={inputClass} style={FIELD_STYLE} value={behavior.targeting} onChange={(event) => updateBehavior(behavior.id, { targeting: event.target.value as AdventureBehaviorDef["targeting"] })}>{BEHAVIOR_TARGET_OPTIONS.map((targeting) => <option key={targeting} value={targeting}>{targeting}</option>)}</select>
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={behavior.aggression} onChange={(event) => updateBehavior(behavior.id, { aggression: numberValue(event.target.value, behavior.aggression) })} />
+                      <button onClick={() => saveCatalog({ ...content, behaviors: content.behaviors.filter((entry) => entry.id !== behavior.id) }, "Behavior removed.")} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>X</button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => {
+                  const id = `behavior-${Date.now().toString(36)}`;
+                  saveCatalog({ ...content, behaviors: [...content.behaviors, { id, name: "New Behavior", description: "Describe enemy behavior.", targeting: "nearest", aggression: 1 }] }, "Behavior added.");
+                }} className={`${retro.button} mt-2 px-2 py-1 text-[9px]`} style={S_GREEN}>Add Behavior</button>
+              </div>
+              <div className={`${retro.raised} p-3`} style={CREATOR_CARD_STYLE}>
+                <div className="text-[11px] font-bold mb-2" style={S_TEXT}>Level-Up Rules</div>
+                <div className="space-y-2">
+                  {content.levelUpRules.map((rule) => (
+                    <div key={rule.id} className="grid grid-cols-1 md:grid-cols-[1fr_64px_64px_64px_auto] gap-2">
+                      <input className={inputClass} style={FIELD_STYLE} value={rule.name} onChange={(event) => updateLevelRule(rule.id, { name: event.target.value })} />
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={rule.xpCost} onChange={(event) => updateLevelRule(rule.id, { xpCost: numberValue(event.target.value, rule.xpCost) })} />
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={rule.hpGain} onChange={(event) => updateLevelRule(rule.id, { hpGain: numberValue(event.target.value, rule.hpGain) })} />
+                      <input className={inputClass} style={FIELD_STYLE} type="number" value={rule.damageGain || 0} onChange={(event) => updateLevelRule(rule.id, { damageGain: numberValue(event.target.value, rule.damageGain || 0) })} />
+                      <button onClick={() => saveCatalog({ ...content, levelUpRules: content.levelUpRules.filter((entry) => entry.id !== rule.id) }, "Level-up rule removed.")} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>X</button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => {
+                  const id = `level-${Date.now().toString(36)}`;
+                  saveCatalog({ ...content, levelUpRules: [...content.levelUpRules, { id, name: "New Level Rule", xpCost: 100, hpGain: 4, damageGain: 1 }] }, "Level-up rule added.");
+                }} className={`${retro.button} mt-2 px-2 py-1 text-[9px]`} style={S_GREEN}>Add Level Rule</button>
+              </div>
+            </div>
+          </details>
+
+          <details className={`${retro.sunken} p-3`} style={{ background: "#050A1A" }}>
+            <SectionSummary title="Advanced JSON" detail="import/export catalog" />
+            <div className="flex flex-wrap gap-2 my-3">
+              <button onClick={saveFrameworkCatalog} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_GREEN}>Save JSON</button>
+              <button onClick={() => setCatalogDraft(JSON.stringify(content, null, 2))} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_ACCENT}>Refresh From Forms</button>
+            </div>
+            <textarea value={catalogDraft} onChange={(event) => setCatalogDraft(event.target.value)} className="w-full min-h-[220px] px-3 py-2 text-[11px] font-mono" spellCheck={false} style={{ color: "#D7F6FF", background: "#050A1A", border: "1px solid #2A2A6A", outline: "none" }} />
+          </details>
+        </div>
       </div>
     );
   };

@@ -1,5 +1,5 @@
 import { CAMP_SLEEP_LIMIT, STARTER_GOLD } from "./data";
-import { getAdventureClass, getAdventureEventTemplates, getAdventureLevelUpRule, getAdventureShopItems } from "./content";
+import { getAdventureCampaignTemplate, getAdventureClass, getAdventureEventTemplates, getAdventureLevelUpRule, getAdventureShopItems } from "./content";
 import { clamp, makeId, nowIso } from "./engine";
 import { addItemToInventory, applyEquipmentStats, removeOneInventoryItem } from "./kit";
 import type {
@@ -219,7 +219,8 @@ export function sellPlayerItem(session: AdventureSession, playerId: string, item
 
 export function beginCampaign(session: AdventureSession): AdventureSession {
   if (session.phase !== "shop") return session;
-  const campaign = generateCampaign(session.seed || Date.now(), 6, session.content);
+  const template = getAdventureCampaignTemplate(session.content, session.framework.campaignTemplateId);
+  const campaign = generateCampaign(session.seed || Date.now(), template.maxDepth, session.content);
   return withLog({
     ...session,
     status: "playing",
@@ -233,7 +234,7 @@ export function beginCampaign(session: AdventureSession): AdventureSession {
     fleeVotes: [],
     players: session.players.map((player) => applyEquipmentStats({ ...player, shopReady: true, ready: true })),
     updatedAt: nowIso(),
-  }, "Campaign started. The party begins on the empty cube and must move right through linked blocks.", "system");
+  }, template.introText || "Campaign started. The party begins on the empty cube and must move right through linked blocks.", "system");
 }
 
 export function getCurrentCampaignNode(session: AdventureSession) {

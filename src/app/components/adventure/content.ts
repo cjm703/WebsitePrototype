@@ -1,6 +1,7 @@
 import { ADVENTURE_CLASSES, ADVENTURE_SHOP_ITEMS, CAMP_LEVEL_UP_XP_COST } from "./data";
 import type {
   AdventureBehaviorDef,
+  AdventureCampaignTemplate,
   AdventureClassDef,
   AdventureContentCatalog,
   AdventureEnemyTemplate,
@@ -8,6 +9,17 @@ import type {
   AdventureLevelUpRule,
   AdventureShopItem,
 } from "./types";
+
+const BUILTIN_CAMPAIGNS: AdventureCampaignTemplate[] = [
+  {
+    id: "first-cube-road-v2",
+    name: "First Cube Road",
+    description: "A short starter road that teaches shop setup, branching blocks, events, towns, camping, and tactical combat.",
+    maxDepth: 6,
+    preferredTheme: "forest",
+    introText: "The party wakes on a silent cube with three glowing lines pointing right. Somewhere ahead, a gate waits.",
+  },
+];
 
 const BUILTIN_ENEMIES: AdventureEnemyTemplate[] = [
   { id: "skirmisher", enemyType: "Skirmisher", name: "Skirmisher", maxHp: 18, damage: 5, attackRange: 1, intent: "Rushes the nearest ally", behaviorId: "simple-pursuit-v2" },
@@ -32,9 +44,13 @@ const BUILTIN_LEVEL_UPS: AdventureLevelUpRule[] = [
 const BUILTIN_EVENTS: AdventureEventTemplate[] = [
   { id: "strange-cache", title: "Strange Cache", description: "The party finds a half-buried cache and decides how to split the supplies.", rewardXp: 35, rewardGold: 18, tags: ["event", "reward"] },
   { id: "old-warning", title: "Old Warning", description: "A warning carved into the cube hints at enemy behavior ahead.", rewardXp: 25, rewardGold: 10, tags: ["event", "lore"] },
+  { id: "merchant-signal", title: "Merchant Signal", description: "A blinking sign advertises a town route, but the shortcut hums with danger.", rewardXp: 30, rewardGold: 15, tags: ["event", "choice"] },
+  { id: "broken-shrine", title: "Broken Shrine", description: "A cracked shrine grants a moment of calm and leaves behind a handful of old coins.", rewardXp: 28, rewardGold: 22, tags: ["event", "rest"] },
+  { id: "cube-storm", title: "Cube Storm", description: "The road shudders. The party braces, shares supplies, and learns how the cubes drift.", rewardXp: 40, rewardGold: 8, tags: ["event", "hazard"] },
 ];
 
 export const DEFAULT_ADVENTURE_CONTENT: AdventureContentCatalog = {
+  campaignTemplates: BUILTIN_CAMPAIGNS,
   classes: ADVENTURE_CLASSES,
   shopItems: ADVENTURE_SHOP_ITEMS,
   enemyTemplates: BUILTIN_ENEMIES,
@@ -77,6 +93,7 @@ function normalizeArray<T>(value: unknown, fallback: T[]) {
 export function normalizeAdventureContent(value: unknown): AdventureContentCatalog {
   const raw = isRecord(value) ? value : {};
   return {
+    campaignTemplates: normalizeArray<AdventureCampaignTemplate>(raw.campaignTemplates, BUILTIN_CAMPAIGNS),
     classes: normalizeClasses(raw.classes),
     shopItems: normalizeArray<AdventureShopItem>(raw.shopItems, ADVENTURE_SHOP_ITEMS),
     enemyTemplates: normalizeArray<AdventureEnemyTemplate>(raw.enemyTemplates, BUILTIN_ENEMIES),
@@ -85,6 +102,15 @@ export function normalizeAdventureContent(value: unknown): AdventureContentCatal
     levelUpRules: normalizeArray<AdventureLevelUpRule>(raw.levelUpRules, BUILTIN_LEVEL_UPS),
     eventTemplates: normalizeArray<AdventureEventTemplate>(raw.eventTemplates, BUILTIN_EVENTS),
   };
+}
+
+export function getAdventureCampaignTemplates(content?: AdventureContentCatalog | null) {
+  return normalizeAdventureContent(content).campaignTemplates;
+}
+
+export function getAdventureCampaignTemplate(content: AdventureContentCatalog | null | undefined, templateId?: string) {
+  const templates = getAdventureCampaignTemplates(content);
+  return templates.find((template) => template.id === templateId) || templates[0] || BUILTIN_CAMPAIGNS[0];
 }
 
 export function getAdventureClasses(content?: AdventureContentCatalog | null) {

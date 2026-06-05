@@ -32,6 +32,7 @@ import { DMImageStorageSection } from "./dm-image-storage-section";
 import { DMInfoManagerSection } from "./dm-area-info-panel";
 import { DMCardManagerSection } from "./dm-card-manager-section";
 import { DMItemManagerSection } from "./dm-item-manager-section";
+import { AdventureGame } from "./adventure-game";
 import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer";
 import { safeGetItem, safeSetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import type {
@@ -500,6 +501,7 @@ const DM_SECTIONS = [
   { id: "customize" as const, label: "Customization Editing", icon: Paintbrush },
   { id: "calendar" as const, label: "Calendar & Weather", icon: CalendarDays },
   { id: "arcade" as const, label: "Arcade Manager", icon: Gamepad2 },
+  { id: "adventure" as const, label: "Adventure Creator", icon: Dices },
   { id: "reactions" as const, label: "Chat Reactions", icon: SmilePlus },
 ] as const;
 
@@ -2363,6 +2365,22 @@ const handleSaveItem = async () => {
                   level: p.level,
                 }))}
               />
+            </div>
+          )}
+
+          {/* ======================================================= */}
+          {/* ADVENTURE CREATOR                                        */}
+          {/* ======================================================= */}
+          {activeSection === "adventure" && (
+            <div style={DISPLAY_CONTENTS}>
+              <div className="flex items-center gap-3 mb-6">
+                <Dices size={20} style={DM_GOLD} />
+                <h2 className="text-[18px] font-bold" style={DM_GOLD}>Adventure Creator</h2>
+              </div>
+              <div className="text-[11px] mb-4" style={S_MUTED}>
+                Close old Adventure rooms, seed the clean V2 starter, and build classes, abilities, item sets, events, enemies, bosses, behaviors, and level-up rules.
+              </div>
+              <AdventureGame onBack={() => setActiveSection("arcade")} />
             </div>
           )}
 

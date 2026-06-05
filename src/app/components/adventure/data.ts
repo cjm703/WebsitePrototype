@@ -225,6 +225,7 @@ export const DEFAULT_ENCOUNTER_SETTINGS: AdventureEncounterSettings = {
 };
 
 export const DEFAULT_ADVENTURE_FRAMEWORK: AdventureFrameworkConfig = {
+  campaignTemplateId: "first-cube-road-v2",
   classSetId: "core-v2",
   abilitySetId: "core-v2",
   itemSetId: "starter-kit-v2",

@@ -131,7 +131,17 @@ export interface AdventureEventTemplate {
   tags?: string[];
 }
 
+export interface AdventureCampaignTemplate {
+  id: string;
+  name: string;
+  description: string;
+  maxDepth: number;
+  preferredTheme: AdventureTheme;
+  introText: string;
+}
+
 export interface AdventureContentCatalog {
+  campaignTemplates: AdventureCampaignTemplate[];
   classes: Record<string, AdventureClassDef>;
   shopItems: AdventureShopItem[];
   enemyTemplates: AdventureEnemyTemplate[];
@@ -253,6 +263,7 @@ export interface AdventureCampaignState {
 }
 
 export interface AdventureFrameworkConfig {
+  campaignTemplateId?: string;
   classSetId: string;
   abilitySetId: string;
   itemSetId: string;
