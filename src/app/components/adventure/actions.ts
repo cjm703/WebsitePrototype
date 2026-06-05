@@ -1,4 +1,23 @@
-import { ADVENTURE_CLASSES, ADVENTURE_OBJECTIVES, DEFAULT_ENCOUNTER_SETTINGS } from "./data";
+import { ADVENTURE_OBJECTIVES, DEFAULT_ADVENTURE_FRAMEWORK, DEFAULT_ENCOUNTER_SETTINGS } from "./data";
+import { getAdventureClass } from "./content";
+import {
+  beginCampaign,
+  buyShopItem,
+  campLevelUp,
+  campSleep,
+  campTradeItem,
+  campUseItem,
+  chooseCampaignNode,
+  getCurrentCampaignNode,
+  leaveCamp,
+  openStarterShop,
+  resolveCampaignEvent,
+  resolveTownBlock,
+  sellPlayerItem,
+  setShopReady,
+  townRest,
+  voteAfterNode,
+} from "./campaign";
 import {
   abandonSession,
   advanceTurn,
@@ -32,7 +51,25 @@ function actionSummary(request: AdventureActionRequest) {
     case "set_class": return "changed class";
     case "set_ready": return request.payload.ready ? "readied up" : "unreadied";
     case "configure": return "updated encounter setup";
-    case "start": return "started the encounter";
+    case "configure_framework": return "updated framework slots";
+    case "start": return "opened the starter shop";
+    case "shop_buy": return "bought starter gear";
+    case "shop_sell": return "sold gear";
+    case "shop_ready": return "readied in the starter shop";
+    case "start_campaign": return "started the campaign";
+    case "choose_campaign_node": return "chose a campaign block";
+    case "resolve_campaign_event": return "resolved a campaign event";
+    case "vote_camp": return "voted to camp";
+    case "vote_move": return "voted to move on";
+    case "leave_camp": return "left camp";
+    case "camp_sleep": return "slept at camp";
+    case "camp_level_up": return "leveled up at camp";
+    case "camp_use_item": return "used an item at camp";
+    case "camp_trade": return "traded an item at camp";
+    case "town_buy": return "bought town goods";
+    case "town_sell": return "sold town goods";
+    case "town_rest": return "rested in town";
+    case "leave_town": return "left town";
     case "move": return "moved";
     case "basic_attack": return "used a basic attack";
     case "ability": return "used an ability";
@@ -120,20 +157,28 @@ function resetToLobby(session: AdventureSession): AdventureSession {
     round: 1,
     fleeVotes: [],
     pendingRewards: [],
+    campaign: null,
+    framework: session.framework || { ...DEFAULT_ADVENTURE_FRAMEWORK },
     players: session.players.map((player) => {
-      const classDef = ADVENTURE_CLASSES[player.classId] || ADVENTURE_CLASSES.warrior;
+      const classDef = getAdventureClass(session.content, player.classId);
       return {
         ...player,
+        classDef,
         hp: classDef.maxHp,
         maxHp: classDef.maxHp,
         position: { x: 1, y: 1 },
         ready: false,
+        shopReady: false,
         moveRemaining: classDef.move,
         actionTaken: false,
         blockActive: false,
         marked: false,
         abilities: classDef.abilities.map((ability) => ({ ...ability })),
         inventory: classDef.inventory.map((item) => ({ ...item })),
+        equipment: {},
+        gold: 0,
+        xpBank: 0,
+        campaignLevel: 1,
       };
     }),
     updatedAt: nowIso(),
@@ -237,11 +282,119 @@ export function resolveAdventureAction(
       nextSession = applyConfigure(session, request.payload);
       break;
     }
+    case "configure_framework": {
+      if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can configure framework slots.");
+      if (session.phase !== "setup") return reject(session, profiles, "Framework slots are locked once the starter shop opens.");
+      nextSession = {
+        ...session,
+        framework: { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(session.framework || {}), ...request.payload },
+        updatedAt: nowIso(),
+      };
+      break;
+    }
     case "start": {
       if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can start the encounter.");
       if (session.players.length === 0) return reject(session, profiles, "At least one player must join.");
       if (!session.players.every((player) => player.ready)) return reject(session, profiles, "All joined players must be ready.");
-      nextSession = startAdventureEncounter(session);
+      if (session.phase !== "setup") return reject(session, profiles, "Starter shop can only open from room setup.");
+      nextSession = openStarterShop(session);
+      break;
+    }
+    case "shop_buy": {
+      if (!session.players.some((player) => player.playerId === request.actorId)) return reject(session, profiles, "Join the room first.");
+      nextSession = buyShopItem(session, request.actorId, request.payload.shopItemId);
+      if (nextSession === session) return reject(session, profiles, "That shop purchase is not available.");
+      break;
+    }
+    case "shop_sell": {
+      if (!session.players.some((player) => player.playerId === request.actorId)) return reject(session, profiles, "Join the room first.");
+      nextSession = sellPlayerItem(session, request.actorId, request.payload.itemId, request.payload.equipmentSlot);
+      if (nextSession === session) return reject(session, profiles, "That item cannot be sold right now.");
+      break;
+    }
+    case "shop_ready": {
+      if (session.phase !== "shop") return reject(session, profiles, "Starter shop is not open.");
+      if (!session.players.some((player) => player.playerId === request.actorId)) return reject(session, profiles, "Join the room first.");
+      nextSession = setShopReady(session, request.actorId, request.payload.ready);
+      break;
+    }
+    case "start_campaign": {
+      if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can start the campaign.");
+      if (session.phase !== "shop") return reject(session, profiles, "The starter shop must be open first.");
+      if (!session.players.every((player) => player.shopReady)) return reject(session, profiles, "All players must finish shopping.");
+      nextSession = beginCampaign(session);
+      break;
+    }
+    case "choose_campaign_node": {
+      if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can choose the next campaign block for now.");
+      if (session.phase !== "campaign") return reject(session, profiles, "The party is not on the campaign map.");
+      const chosen = chooseCampaignNode(session, request.payload.nodeId);
+      if (chosen === session) return reject(session, profiles, "That campaign block is not connected.");
+      const node = getCurrentCampaignNode(chosen);
+      nextSession = node?.kind === "combat" || node?.kind === "boss" ? startAdventureEncounter(chosen) : chosen;
+      break;
+    }
+    case "resolve_campaign_event": {
+      if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can resolve event placeholders for now.");
+      nextSession = resolveCampaignEvent(session);
+      if (nextSession === session) return reject(session, profiles, "No unresolved event is active.");
+      break;
+    }
+    case "vote_camp": {
+      nextSession = voteAfterNode(session, request.actorId, "camp");
+      if (nextSession === session) return reject(session, profiles, "Camp voting is not open.");
+      break;
+    }
+    case "vote_move": {
+      nextSession = voteAfterNode(session, request.actorId, "move");
+      if (nextSession === session) return reject(session, profiles, "Move voting is not open.");
+      break;
+    }
+    case "leave_camp": {
+      if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can break camp.");
+      nextSession = leaveCamp(session);
+      if (nextSession === session) return reject(session, profiles, "The party is not camping.");
+      break;
+    }
+    case "camp_sleep": {
+      nextSession = campSleep(session);
+      if (nextSession === session) return reject(session, profiles, "No campaign sleeps remain.");
+      break;
+    }
+    case "camp_level_up": {
+      nextSession = campLevelUp(session, request.actorId);
+      if (nextSession === session) return reject(session, profiles, "You need more banked XP to level up at camp.");
+      break;
+    }
+    case "camp_use_item": {
+      nextSession = campUseItem(session, request.actorId, request.payload.itemId, request.payload.targetPlayerId);
+      if (nextSession === session) return reject(session, profiles, "That camp item cannot be used.");
+      break;
+    }
+    case "camp_trade": {
+      nextSession = campTradeItem(session, request.actorId, request.payload.itemId, request.payload.targetPlayerId);
+      if (nextSession === session) return reject(session, profiles, "That trade cannot be completed.");
+      break;
+    }
+    case "town_buy": {
+      nextSession = buyShopItem(session, request.actorId, request.payload.shopItemId);
+      if (nextSession === session) return reject(session, profiles, "That town purchase is not available.");
+      break;
+    }
+    case "town_sell": {
+      nextSession = sellPlayerItem(session, request.actorId, request.payload.itemId, request.payload.equipmentSlot);
+      if (nextSession === session) return reject(session, profiles, "That item cannot be sold in town.");
+      break;
+    }
+    case "town_rest": {
+      nextSession = townRest(session, request.actorId);
+      if (nextSession === session) return reject(session, profiles, "Town rest costs 10 gold.");
+      break;
+    }
+    case "leave_town": {
+      if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can leave town.");
+      nextSession = resolveTownBlock(session);
+      if (nextSession === session) return reject(session, profiles, "The party is not in town.");
       break;
     }
     case "move": {

@@ -1,14 +1,15 @@
 import { appStore } from "@/lib/app-store";
 import { supabase } from "@/lib/supabaseClient";
 import { safeGetJson, safeSetJson } from "../safe-storage";
-import { DEFAULT_ENCOUNTER_SETTINGS, ADVENTURE_OBJECTIVES } from "./data";
+import { DEFAULT_ADVENTURE_FRAMEWORK, DEFAULT_ENCOUNTER_SETTINGS, ADVENTURE_OBJECTIVES } from "./data";
+import { DEFAULT_ADVENTURE_CONTENT, normalizeAdventureContent } from "./content";
 import { nowIso } from "./engine";
 import { normalizeAdventureProfile } from "./profile";
 import type { AdventureProfile, AdventureProfilesByPlayer, AdventureSession, AdventureStateDoc } from "./types";
 
 const LOCAL_KEY = "inet-adventure-sessions";
 const EVENT_NAME = "inet-adventure-sessions-updated";
-const DEFAULT_STATE: AdventureStateDoc = { schemaVersion: 2, sessions: [], profiles: {} };
+const DEFAULT_STATE: AdventureStateDoc = { schemaVersion: 3, sessions: [], profiles: {}, contentCatalog: DEFAULT_ADVENTURE_CONTENT };
 
 let remoteUnavailable = false;
 
@@ -17,6 +18,19 @@ function normalizeSession(value: unknown): AdventureSession | null {
   const raw = value as Partial<AdventureSession>;
   const settings = { ...DEFAULT_ENCOUNTER_SETTINGS, ...(raw.settings || {}) };
   const objective = raw.objective || ADVENTURE_OBJECTIVES[settings.objectiveType] || ADVENTURE_OBJECTIVES.defeat_all;
+  const campaign = raw.campaign && typeof raw.campaign === "object" ? {
+    ...raw.campaign,
+    id: raw.campaign.id || "campaign-migrated",
+    seed: Number(raw.campaign.seed || raw.seed || Date.now()),
+    currentNodeId: raw.campaign.currentNodeId || "node-0-0",
+    visitedNodeIds: Array.isArray(raw.campaign.visitedNodeIds) ? raw.campaign.visitedNodeIds : [],
+    nodes: Array.isArray(raw.campaign.nodes) ? raw.campaign.nodes : [],
+    maxDepth: Number(raw.campaign.maxDepth || 6),
+    sleepUsesRemaining: Number(raw.campaign.sleepUsesRemaining ?? 3),
+    awaitingPostNodeVote: Boolean(raw.campaign.awaitingPostNodeVote),
+    campVotes: Array.isArray(raw.campaign.campVotes) ? raw.campaign.campVotes : [],
+    moveVotes: Array.isArray(raw.campaign.moveVotes) ? raw.campaign.moveVotes : [],
+  } : null;
   return {
     id: raw.id!,
     name: raw.name || "Adventure Room",
@@ -31,12 +45,26 @@ function normalizeSession(value: unknown): AdventureSession | null {
     settings,
     objective: { ...objective, completed: Boolean(objective.completed) },
     map: raw.map || null,
-    players: Array.isArray(raw.players) ? raw.players : [],
+    players: Array.isArray(raw.players) ? raw.players.map((player: any) => ({
+      ...player,
+      ready: Boolean(player.ready),
+      shopReady: Boolean(player.shopReady),
+      inventory: Array.isArray(player.inventory) ? player.inventory : [],
+      abilities: Array.isArray(player.abilities) ? player.abilities : [],
+      equipment: player.equipment || {},
+      gold: Number(player.gold || 0),
+      xpBank: Number(player.xpBank || 0),
+      campaignLevel: Math.max(1, Number(player.campaignLevel || 1)),
+      lastSeenAt: player.lastSeenAt || nowIso(),
+    })) : [],
     enemies: Array.isArray(raw.enemies) ? raw.enemies : [],
     turnOrder: Array.isArray(raw.turnOrder) ? raw.turnOrder : [],
     activeTurnIndex: Number(raw.activeTurnIndex || 0),
     round: Number(raw.round || 1),
     fleeVotes: Array.isArray(raw.fleeVotes) ? raw.fleeVotes : [],
+    campaign,
+    framework: { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(raw.framework || {}) },
+    content: normalizeAdventureContent(raw.content),
     pendingRewards: Array.isArray(raw.pendingRewards) ? raw.pendingRewards : [],
     actionHistory: Array.isArray(raw.actionHistory) ? raw.actionHistory : [],
     lastResolvedActionId: raw.lastResolvedActionId,
@@ -64,9 +92,10 @@ function normalizeState(value: unknown): AdventureStateDoc {
   }
   const raw = (value && typeof value === "object" ? value : {}) as Partial<AdventureStateDoc>;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     sessions: Array.isArray(raw.sessions) ? raw.sessions.map(normalizeSession).filter(Boolean) as AdventureSession[] : [],
     profiles: normalizeProfiles(raw.profiles),
+    contentCatalog: normalizeAdventureContent(raw.contentCatalog),
   };
 }
 
@@ -134,9 +163,10 @@ export async function upsertAdventureSession(
     ? state.sessions.map((entry) => entry.id === session.id ? session : entry)
     : [session, ...state.sessions];
   const nextState = {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     sessions: sessions.slice(0, 20),
     profiles: profiles || state.profiles,
+    contentCatalog: state.contentCatalog,
   };
   const source = await saveAdventureState(nextState);
   return { ok: true, source, state: nextState };

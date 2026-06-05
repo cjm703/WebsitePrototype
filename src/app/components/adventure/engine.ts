@@ -1,7 +1,10 @@
-import { ADVENTURE_CLASSES, ADVENTURE_DIFFICULTIES, ADVENTURE_OBJECTIVES, ADVENTURE_THEMES, DEFAULT_ENCOUNTER_SETTINGS, DEFAULT_THEME } from "./data";
+import { ADVENTURE_DIFFICULTIES, ADVENTURE_OBJECTIVES, ADVENTURE_THEMES, DEFAULT_ADVENTURE_FRAMEWORK, DEFAULT_ENCOUNTER_SETTINGS, DEFAULT_THEME } from "./data";
+import { getAdventureBehavior, getAdventureClass, getAdventureEnemyTemplates, normalizeAdventureContent } from "./content";
+import { applyEquipmentStats, getPlayerBasicDamage, getPlayerMove } from "./kit";
 import type {
   AdventureAbility,
   AdventureClassId,
+  AdventureContentCatalog,
   AdventureEnemy,
   AdventureItem,
   AdventureLogEntry,
@@ -21,13 +24,6 @@ const PLAYER_SPAWNS = [
   { x: 2, yOffset: 0 },
   { x: 2, yOffset: -1 },
   { x: 2, yOffset: 1 },
-];
-
-const ENEMY_TYPES = [
-  { enemyType: "Skirmisher", name: "Skirmisher", maxHp: 18, damage: 5, attackRange: 1, intent: "Rushes the nearest ally" },
-  { enemyType: "Slinger", name: "Slinger", maxHp: 14, damage: 4, attackRange: 3, intent: "Harasses from range" },
-  { enemyType: "Brute", name: "Brute", maxHp: 26, damage: 7, attackRange: 1, intent: "Crushes blocked paths" },
-  { enemyType: "Hexer", name: "Hexer", maxHp: 16, damage: 6, attackRange: 3, intent: "Targets wounded allies" },
 ];
 
 export function nowIso() {
@@ -133,8 +129,8 @@ function withLog(session: AdventureSession, text: string, tone: AdventureLogEntr
   };
 }
 
-function normalizeClass(classId: AdventureClassId) {
-  return ADVENTURE_CLASSES[classId] || ADVENTURE_CLASSES.warrior;
+function normalizeClass(classId: AdventureClassId, session?: Pick<AdventureSession, "content">) {
+  return getAdventureClass(session?.content, classId);
 }
 
 export function createAdventureSession(params: {
@@ -144,6 +140,7 @@ export function createAdventureSession(params: {
   name?: string;
   mapSize?: number;
   theme?: AdventureTheme;
+  content?: AdventureContentCatalog;
 }): AdventureSession {
   const createdAt = nowIso();
   const seed = Math.floor(Math.random() * 9999999) + 1000;
@@ -170,6 +167,9 @@ export function createAdventureSession(params: {
     activeTurnIndex: 0,
     round: 1,
     fleeVotes: [],
+    campaign: null,
+    framework: { ...DEFAULT_ADVENTURE_FRAMEWORK },
+    content: normalizeAdventureContent(params.content),
     pendingRewards: [],
     actionHistory: [],
     log: [createLog("Adventure room created. Choose classes, ready up, and start when the party is assembled.")],
@@ -185,7 +185,7 @@ export function joinAdventureSession(
   playerName: string,
   classId: AdventureClassId,
 ): AdventureSession {
-  const classDef = normalizeClass(classId);
+  const classDef = normalizeClass(classId, session);
   const existing = session.players.find((player) => player.playerId === playerId);
   const stamp = nowIso();
   const maxPlayers = session.settings?.maxPlayers || DEFAULT_ENCOUNTER_SETTINGS.maxPlayers;
@@ -197,11 +197,16 @@ export function joinAdventureSession(
           ...player,
           playerName: playerName || player.playerName,
           classId,
+          classDef,
           name: playerName || player.playerName,
           maxHp: classDef.maxHp,
           hp: clamp(player.hp || classDef.maxHp, 1, classDef.maxHp),
           abilities: classDef.abilities,
           inventory: player.inventory.length ? player.inventory : classDef.inventory,
+          equipment: player.equipment || {},
+          gold: player.gold || 0,
+          xpBank: player.xpBank || 0,
+          campaignLevel: player.campaignLevel || 1,
           lastSeenAt: stamp,
         }
         : player),
@@ -215,14 +220,20 @@ export function joinAdventureSession(
     playerName: playerName || "Player",
     name: playerName || "Player",
     classId,
+    classDef,
     hp: classDef.maxHp,
     maxHp: classDef.maxHp,
     position: { x: 1, y: 1 },
     ready: false,
+    shopReady: false,
     moveRemaining: classDef.move,
     actionTaken: false,
     inventory: classDef.inventory.map((item) => ({ ...item })),
     abilities: classDef.abilities.map((ability) => ({ ...ability })),
+    equipment: {},
+    gold: 0,
+    xpBank: 0,
+    campaignLevel: 1,
     joinedAt: stamp,
     lastSeenAt: stamp,
   };
@@ -247,19 +258,20 @@ export function setPlayerReady(session: AdventureSession, playerId: string, read
 }
 
 export function setPlayerClass(session: AdventureSession, playerId: string, classId: AdventureClassId): AdventureSession {
-  const classDef = normalizeClass(classId);
+  const classDef = normalizeClass(classId, session);
   return withLog({
     ...session,
     players: session.players.map((player) => player.playerId === playerId
-      ? {
+      ? applyEquipmentStats({
         ...player,
         classId,
+        classDef,
         maxHp: classDef.maxHp,
         hp: classDef.maxHp,
         moveRemaining: classDef.move,
         abilities: classDef.abilities.map((ability) => ({ ...ability })),
         inventory: classDef.inventory.map((item) => ({ ...item })),
-      }
+      })
       : player),
     updatedAt: nowIso(),
   }, `${session.players.find((player) => player.playerId === playerId)?.playerName || "Player"} changed class to ${classDef.name}.`, "player");
@@ -291,12 +303,14 @@ function enemySpawns(count: number, map: AdventureMap, random: () => number): Ad
   return spawns;
 }
 
-function createEnemies(map: AdventureMap, playerCount: number, seed: number): AdventureEnemy[] {
+function createEnemies(map: AdventureMap, playerCount: number, seed: number, session: AdventureSession): AdventureEnemy[] {
   const random = seededRandom(seed + 77);
   const count = clamp(playerCount + 1, 2, 8);
   const spawns = enemySpawns(count, map, random);
+  const currentNode = session.campaign?.nodes.find((node) => node.id === session.campaign?.currentNodeId);
+  const templates = getAdventureEnemyTemplates(session.content, currentNode?.kind === "boss");
   return spawns.map((position, index) => {
-    const def = ENEMY_TYPES[index % ENEMY_TYPES.length];
+    const def = templates[index % Math.max(1, templates.length)];
     return {
       id: `enemy-${index + 1}`,
       name: `${def.name} ${index + 1}`,
@@ -307,34 +321,42 @@ function createEnemies(map: AdventureMap, playerCount: number, seed: number): Ad
       attackRange: def.attackRange,
       damage: def.damage,
       intent: def.intent,
+      behaviorId: def.behaviorId,
     };
   });
 }
 
 export function startAdventureEncounter(session: AdventureSession): AdventureSession {
-  if (session.status !== "lobby" || session.players.length === 0) return session;
+  const canStartLobbyEncounter = session.status === "lobby";
+  const canStartCampaignEncounter = session.status === "playing" && session.phase === "campaign" && !!session.campaign;
+  if ((!canStartLobbyEncounter && !canStartCampaignEncounter) || session.players.length === 0) return session;
   const settings = session.settings || DEFAULT_ENCOUNTER_SETTINGS;
   const difficulty = ADVENTURE_DIFFICULTIES[settings.difficulty] || ADVENTURE_DIFFICULTIES.standard;
   const mapSize = clamp(settings.mapSize || session.mapSize || 12, 12, 24);
   const theme = settings.theme || session.theme || DEFAULT_THEME;
   const map = generateAdventureMap(mapSize, mapSize, theme, session.seed || Date.now());
   const players = session.players.map((player, index) => {
-    const classDef = normalizeClass(player.classId);
-    return {
+    const classDef = normalizeClass(player.classId, session);
+    return applyEquipmentStats({
       ...player,
-      hp: classDef.maxHp,
-      maxHp: classDef.maxHp,
+      classDef,
+      hp: Math.max(1, player.hp || classDef.maxHp),
+      maxHp: player.maxHp || classDef.maxHp,
       position: playerSpawn(index, map),
       ready: true,
-      moveRemaining: classDef.move,
+      moveRemaining: getPlayerMove(player),
       actionTaken: false,
       blockActive: false,
       marked: false,
       abilities: classDef.abilities.map((ability) => ({ ...ability })),
-      inventory: classDef.inventory.map((item) => ({ ...item })),
-    };
+      inventory: player.inventory.length ? player.inventory.map((item) => ({ ...item })) : classDef.inventory.map((item) => ({ ...item })),
+      equipment: player.equipment || {},
+      gold: player.gold || 0,
+      xpBank: player.xpBank || 0,
+      campaignLevel: player.campaignLevel || 1,
+    });
   });
-  const enemies = createEnemies(map, players.length, session.seed || Date.now()).map((enemy) => ({
+  const enemies = createEnemies(map, players.length, session.seed || Date.now(), session).map((enemy) => ({
     ...enemy,
     hp: Math.max(1, Math.round(enemy.hp * difficulty.enemyScale)),
     maxHp: Math.max(1, Math.round(enemy.maxHp * difficulty.enemyScale)),
@@ -375,10 +397,9 @@ export function getActiveEnemy(session: AdventureSession): AdventureEnemy | null
 }
 
 function refreshPlayerTurn(player: AdventurePlayer): AdventurePlayer {
-  const classDef = normalizeClass(player.classId);
   return {
     ...player,
-    moveRemaining: classDef.move,
+    moveRemaining: getPlayerMove(player),
     actionTaken: false,
     blockActive: false,
     marked: false,
@@ -390,6 +411,7 @@ function checkEncounterOutcome(session: AdventureSession): AdventureSession {
   const livingEnemies = session.enemies.filter((enemy) => enemy.hp > 0);
   if (session.status !== "playing") return session;
   if (livingEnemies.length === 0) {
+    if (session.campaign) return completeCampaignCombat(session);
     return withLog({ ...session, status: "completed", phase: "rewards", outcome: "victory", objective: { ...session.objective, completed: true } }, "Victory. The party cleared the encounter.", "reward");
   }
   if (livingPlayers.length === 0) {
@@ -399,6 +421,39 @@ function checkEncounterOutcome(session: AdventureSession): AdventureSession {
     return withLog({ ...session, status: "completed", phase: "rewards", outcome: "victory", objective: { ...session.objective, completed: true } }, "Victory. The party survived the objective timer.", "reward");
   }
   return session;
+}
+
+function completeCampaignCombat(session: AdventureSession): AdventureSession {
+  const campaign = session.campaign;
+  const node = campaign?.nodes.find((entry) => entry.id === campaign.currentNodeId);
+  if (!campaign || !node) return session;
+  const xp = node.rewardXp || 55;
+  const gold = node.rewardGold || 32;
+  return withLog({
+    ...session,
+    status: "playing",
+    phase: "campaign",
+    outcome: undefined,
+    map: null,
+    enemies: [],
+    turnOrder: [],
+    activeTurnIndex: 0,
+    fleeVotes: [],
+    campaign: {
+      ...campaign,
+      nodes: campaign.nodes.map((entry) => entry.id === node.id ? { ...entry, resolved: true } : entry),
+      awaitingPostNodeVote: true,
+      campVotes: [],
+      moveVotes: [],
+      lastNodeOutcome: `${node.title} cleared.`,
+    },
+    players: session.players.map((player) => ({
+      ...player,
+      xpBank: (player.xpBank || 0) + xp,
+      gold: (player.gold || 0) + gold,
+    })),
+    updatedAt: nowIso(),
+  }, `${node.title} cleared. Each player gained ${xp} XP and ${gold} gold. Vote to camp or move on.`, "reward");
 }
 
 function nextTurnIndex(session: AdventureSession) {
@@ -519,14 +574,14 @@ export function basicAttack(session: AdventureSession, playerId: string, enemyId
   const active = getActivePlayer(session);
   const target = session.enemies.find((enemy) => enemy.id === enemyId && enemy.hp > 0);
   if (!active || active.playerId !== playerId || !target || active.actionTaken || distance(active.position, target.position) > 1) return session;
-  const classDef = normalizeClass(active.classId);
+  const damage = getPlayerBasicDamage(active);
   const next = {
     ...session,
     players: session.players.map((player) => player.id === active.id ? { ...player, actionTaken: true } : player),
-    enemies: session.enemies.map((enemy) => enemy.id === target.id ? applyDamageToEnemy(enemy, classDef.basicDamage) : enemy),
+    enemies: session.enemies.map((enemy) => enemy.id === target.id ? applyDamageToEnemy(enemy, damage) : enemy),
     updatedAt: nowIso(),
   };
-  return checkEncounterOutcome(withLog(next, `${active.playerName} attacked ${target.name} for ${classDef.basicDamage} damage.`, "player"));
+  return checkEncounterOutcome(withLog(next, `${active.playerName} attacked ${target.name} for ${damage} damage.`, "player"));
 }
 
 export function useAbility(session: AdventureSession, playerId: string, abilityId: string, targetId?: string): AdventureSession {
@@ -665,7 +720,12 @@ export function resolveEnemyTurn(session: AdventureSession): AdventureSession {
   if (!enemy || session.status !== "playing") return session;
   const targets = session.players.filter((player) => player.hp > 0);
   if (targets.length === 0) return checkEncounterOutcome(session);
-  const target = [...targets].sort((a, b) => distance(enemy.position, a.position) - distance(enemy.position, b.position))[0];
+  const behavior = getAdventureBehavior(session.content, enemy.behaviorId);
+  const target = [...targets].sort((a, b) => {
+    if (behavior.targeting === "wounded") return (a.hp / Math.max(1, a.maxHp)) - (b.hp / Math.max(1, b.maxHp));
+    if (behavior.targeting === "random") return a.id.localeCompare(b.id);
+    return distance(enemy.position, a.position) - distance(enemy.position, b.position);
+  })[0];
   let next = session;
   if (distance(enemy.position, target.position) <= enemy.attackRange) {
     next = {

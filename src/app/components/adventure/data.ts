@@ -1,4 +1,8 @@
-import type { AdventureClassDef, AdventureDifficulty, AdventureEncounterSettings, AdventureObjectiveState, AdventureObjectiveType, AdventureTheme } from "./types";
+import type { AdventureClassDef, AdventureDifficulty, AdventureEncounterSettings, AdventureFrameworkConfig, AdventureObjectiveState, AdventureObjectiveType, AdventureShopItem, AdventureTheme } from "./types";
+
+export const STARTER_GOLD = 100;
+export const CAMP_SLEEP_LIMIT = 3;
+export const CAMP_LEVEL_UP_XP_COST = 100;
 
 export const ADVENTURE_CLASSES: Record<string, AdventureClassDef> = {
   warrior: {
@@ -218,4 +222,82 @@ export const DEFAULT_ENCOUNTER_SETTINGS: AdventureEncounterSettings = {
   maxPlayers: 6,
   profilesEnabled: true,
   rewardsEnabled: true,
+};
+
+export const DEFAULT_ADVENTURE_FRAMEWORK: AdventureFrameworkConfig = {
+  classSetId: "core-v2",
+  abilitySetId: "core-v2",
+  itemSetId: "starter-kit-v2",
+  enemySetId: "placeholder-v2",
+  bossSetId: "placeholder-v2",
+  behaviorSetId: "simple-pursuit-v2",
+  levelUpSetId: "simple-100xp-v2",
+  notes: "Framework slots are intentionally data-driven so a later DM tool can swap class, enemy, boss, behavior, item, and level-up registries without rewriting the campaign shell.",
+};
+
+export const ADVENTURE_SHOP_ITEMS: AdventureShopItem[] = [
+  {
+    id: "minor-potion",
+    kind: "consumable",
+    name: "Minor Potion",
+    description: "Restore HP to an ally. Useful in combat, camp, or town travel.",
+    price: 15,
+    sellValue: 7,
+    item: { id: "minor-potion", name: "Minor Potion", description: "Restore HP to an ally in range.", kind: "heal", range: 2, power: 10, price: 15, sellValue: 7 },
+  },
+  {
+    id: "ember-bomb",
+    kind: "consumable",
+    name: "Ember Bomb",
+    description: "A throwable burst of fire for opening a fight.",
+    price: 25,
+    sellValue: 12,
+    item: { id: "ember-bomb", name: "Ember Bomb", description: "Throw a small bomb at an enemy.", kind: "damage", range: 3, power: 8, price: 25, sellValue: 12 },
+  },
+  {
+    id: "antitoxin",
+    kind: "consumable",
+    name: "Antitoxin",
+    description: "Cleanse a dangerous condition and recover a little HP.",
+    price: 20,
+    sellValue: 10,
+    item: { id: "antitoxin", name: "Antitoxin", description: "Cleanse a dangerous condition and restore a small amount of HP.", kind: "cleanse", range: 2, power: 6, price: 20, sellValue: 10 },
+  },
+  {
+    id: "iron-blade",
+    kind: "equipment",
+    name: "Iron Blade",
+    description: "Weapon slot. Adds a small bonus to basic attacks.",
+    price: 45,
+    sellValue: 22,
+    equipment: { id: "iron-blade", name: "Iron Blade", description: "A dependable starter weapon.", slot: "weapon", price: 45, sellValue: 22, basicDamageBonus: 2 },
+  },
+  {
+    id: "guard-vest",
+    kind: "equipment",
+    name: "Guard Vest",
+    description: "Armor slot. Increases max HP for the campaign.",
+    price: 40,
+    sellValue: 20,
+    equipment: { id: "guard-vest", name: "Guard Vest", description: "A reinforced vest for rough roads.", slot: "armor", price: 40, sellValue: 20, maxHpBonus: 8 },
+  },
+  {
+    id: "trail-boots",
+    kind: "equipment",
+    name: "Trail Boots",
+    description: "Trinket slot. Adds one movement during tactical fights.",
+    price: 35,
+    sellValue: 17,
+    equipment: { id: "trail-boots", name: "Trail Boots", description: "Light boots built for quick repositioning.", slot: "trinket", price: 35, sellValue: 17, moveBonus: 1 },
+  },
+];
+
+export const ADVENTURE_FRAMEWORK_REGISTRY = {
+  classSets: [{ id: "core-v2", name: "Core Classes", count: Object.keys(ADVENTURE_CLASSES).length }],
+  abilitySets: [{ id: "core-v2", name: "Core Starter Abilities", count: Object.values(ADVENTURE_CLASSES).reduce((total, def) => total + def.abilities.length, 0) }],
+  itemSets: [{ id: "starter-kit-v2", name: "Starter Kit Catalog", count: ADVENTURE_SHOP_ITEMS.length }],
+  enemySets: [{ id: "placeholder-v2", name: "Placeholder Enemy Set", count: 4 }],
+  bossSets: [{ id: "placeholder-v2", name: "Placeholder Boss Slots", count: 1 }],
+  behaviorSets: [{ id: "simple-pursuit-v2", name: "Simple Pursuit AI", count: 1 }],
+  levelUpSets: [{ id: "simple-100xp-v2", name: "100 XP Camp Level-Ups", count: 1 }],
 };
