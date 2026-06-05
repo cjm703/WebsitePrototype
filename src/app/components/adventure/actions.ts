@@ -280,6 +280,13 @@ export function resolveAdventureAction(
       if (!isHost(session, request.actorId)) return reject(session, profiles, "Only the host can configure the encounter.");
       if (session.status !== "lobby") return reject(session, profiles, "Encounter settings are locked after start.");
       nextSession = applyConfigure(session, request.payload);
+      if (request.payload.framework) {
+        nextSession = {
+          ...nextSession,
+          framework: { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(nextSession.framework || {}), ...request.payload.framework },
+          updatedAt: nowIso(),
+        };
+      }
       break;
     }
     case "configure_framework": {

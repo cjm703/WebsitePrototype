@@ -357,7 +357,7 @@ export type AdventureActionRequest =
   | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "join"; expectedVersion?: number; payload: { playerName: string; classId: AdventureClassId } }
   | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "set_class"; expectedVersion?: number; payload: { classId: AdventureClassId } }
   | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "set_ready"; expectedVersion?: number; payload: { ready: boolean } }
-  | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "configure"; expectedVersion?: number; payload: Partial<AdventureEncounterSettings> & { name?: string } }
+  | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "configure"; expectedVersion?: number; payload: Partial<AdventureEncounterSettings> & { name?: string; framework?: Partial<AdventureFrameworkConfig> } }
   | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "configure_framework"; expectedVersion?: number; payload: Partial<AdventureFrameworkConfig> }
   | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "start"; expectedVersion?: number }
   | { id: string; sessionId: string; actorId: string; actorKind: AdventureActorKind; type: "shop_buy"; expectedVersion?: number; payload: { shopItemId: string } }

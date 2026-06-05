@@ -1,17 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Axe, Backpack, Castle, Check, Compass, Eye, Heart, Loader2, Map, RotateCcw, Shield, SkipForward, Swords, Target, Trophy, Users, X } from "lucide-react";
 import { retro } from "../retro-styles";
 import { S_ACCENT, S_DIM, S_GREEN, S_MUTED, S_RED, S_TEXT, S_WARN } from "../shared-styles";
 import { safeGetItem, safeSetItem } from "../safe-storage";
-import { ADVENTURE_DIFFICULTIES, ADVENTURE_FRAMEWORK_REGISTRY, ADVENTURE_OBJECTIVES, ADVENTURE_THEMES, DEFAULT_ENCOUNTER_SETTINGS, DEFAULT_THEME, MAP_SIZE_OPTIONS, STARTER_GOLD } from "./data";
+import { ADVENTURE_DIFFICULTIES, ADVENTURE_FRAMEWORK_REGISTRY, ADVENTURE_OBJECTIVES, ADVENTURE_THEMES, DEFAULT_ADVENTURE_FRAMEWORK, DEFAULT_ENCOUNTER_SETTINGS, DEFAULT_THEME, MAP_SIZE_OPTIONS, STARTER_GOLD } from "./data";
 import { makeAdventureAction, resolveAdventureAction } from "./actions";
 import { getAvailableCampaignNodes, getCurrentCampaignNode } from "./campaign";
 import { DEFAULT_ADVENTURE_CONTENT, getAdventureCampaignTemplates, getAdventureClass, getAdventureClasses, getAdventureLevelUpRule, getAdventureShopItems, normalizeAdventureContent } from "./content";
 import { createAdventureSession, distance, getAbilityById, getActiveEnemy, getActivePlayer, getItemById, getUnitAt, makeId, tileKindLabel } from "./engine";
 import { createAdventureProfile, normalizeAdventureProfile, xpForLevel } from "./profile";
 import { pointKey, getDangerTiles, getReachableTiles, getTileActionReason, getValidTargetIds } from "./selectors";
-import { subscribeAdventureState, upsertAdventureSession, upsertAdventureState } from "./store";
-import type { AdventureAbilityKind, AdventureActionMode, AdventureActionRequest, AdventureBehaviorDef, AdventureCampaignNode, AdventureCampaignTemplate, AdventureClassDef, AdventureClassId, AdventureEncounterSettings, AdventureEnemyTemplate, AdventureEquipmentSlot, AdventureEventTemplate, AdventureFrameworkConfig, AdventureLevelUpRule, AdventureProfilesByPlayer, AdventureSession, AdventureShopItem, AdventureShopItemKind, AdventureStateDoc, AdventureTheme, AdventureTile } from "./types";
+import { loadAdventureState, subscribeAdventureState, upsertAdventureState } from "./store";
+import type { AdventureAbilityKind, AdventureActionMode, AdventureActionRequest, AdventureBehaviorDef, AdventureCampaignNode, AdventureCampaignTemplate, AdventureClassDef, AdventureClassId, AdventureContentCatalog, AdventureEncounterSettings, AdventureEnemyTemplate, AdventureEquipmentSlot, AdventureEventTemplate, AdventureFrameworkConfig, AdventureLevelUpRule, AdventureProfilesByPlayer, AdventureSession, AdventureShopItem, AdventureShopItemKind, AdventureStateDoc, AdventureTheme, AdventureTile } from "./types";
 
 const SELECTED_SESSION_KEY = "inet-adventure-selected-session";
 
@@ -77,6 +77,14 @@ const ABILITY_KIND_OPTIONS: AdventureAbilityKind[] = ["damage", "heal", "guard",
 const SHOP_ITEM_KIND_OPTIONS: AdventureShopItemKind[] = ["consumable", "equipment"];
 const BEHAVIOR_TARGET_OPTIONS: AdventureBehaviorDef["targeting"][] = ["nearest", "wounded", "random"];
 
+type SetupDraftState = {
+  sessionId: string;
+  name: string;
+  settings: AdventureEncounterSettings;
+  framework: AdventureFrameworkConfig;
+  dirty: boolean;
+};
+
 function numberValue(value: string, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -112,6 +120,24 @@ function withShopItemKind(item: AdventureShopItem, kind: AdventureShopItemKind):
   };
 }
 
+function mergePreferLocalAdventureState(local: AdventureStateDoc, incoming: AdventureStateDoc, keepLocalCatalog: boolean): AdventureStateDoc {
+  const sessionsById = new Map(incoming.sessions.map((session) => [session.id, session]));
+  for (const session of local.sessions) {
+    const remote = sessionsById.get(session.id);
+    if (!remote || session.version >= remote.version) {
+      sessionsById.set(session.id, session);
+    }
+  }
+  return {
+    schemaVersion: 3,
+    sessions: Array.from(sessionsById.values())
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, 20),
+    profiles: { ...incoming.profiles, ...local.profiles },
+    contentCatalog: keepLocalCatalog ? local.contentCatalog : incoming.contentCatalog,
+  };
+}
+
 export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (score: number) => void }) {
   const currentUser = safeGetItem("inet-user") || "Player";
   const currentUserId = safeGetItem("inet-user-id") || currentUser;
@@ -121,12 +147,18 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
   const [selectedClass, setSelectedClass] = useState<AdventureClassId>("warrior");
   const [newRoomName, setNewRoomName] = useState("");
   const [newSettings, setNewSettings] = useState<AdventureEncounterSettings>(DEFAULT_ENCOUNTER_SETTINGS);
+  const [catalogEditor, setCatalogEditor] = useState<AdventureContentCatalog>(() => normalizeAdventureContent(DEFAULT_ADVENTURE_CONTENT));
+  const [catalogDirty, setCatalogDirty] = useState(false);
   const [catalogDraft, setCatalogDraft] = useState(() => JSON.stringify(DEFAULT_ADVENTURE_CONTENT, null, 2));
+  const [setupDraft, setSetupDraft] = useState<SetupDraftState | null>(null);
   const [actionMode, setActionMode] = useState<AdventureActionMode>({ type: "move" });
   const [syncSource, setSyncSource] = useState<"remote" | "local">("local");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [hoverText, setHoverText] = useState("");
+  const catalogDirtyRef = useRef(false);
+  const localProtectUntilRef = useRef(0);
+  const actionBusyRef = useRef(false);
 
   const sessions = state.sessions;
   const profiles = state.profiles;
@@ -151,9 +183,20 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
   const fleeNeeded = Math.max(1, Math.ceil(livingPlayers.length / 2));
 
   useEffect(() => {
+    catalogDirtyRef.current = catalogDirty;
+  }, [catalogDirty]);
+
+  useEffect(() => {
     return subscribeAdventureState((nextState, source) => {
-      setState(nextState);
-      setCatalogDraft(JSON.stringify(nextState.contentCatalog || DEFAULT_ADVENTURE_CONTENT, null, 2));
+      setState((prev) => {
+        const shouldProtectLocal = Date.now() < localProtectUntilRef.current;
+        return shouldProtectLocal ? mergePreferLocalAdventureState(prev, nextState, catalogDirtyRef.current) : nextState;
+      });
+      if (!catalogDirtyRef.current) {
+        const normalized = normalizeAdventureContent(nextState.contentCatalog || DEFAULT_ADVENTURE_CONTENT);
+        setCatalogEditor(normalized);
+        setCatalogDraft(JSON.stringify(normalized, null, 2));
+      }
       setSyncSource(source);
     });
   }, []);
@@ -166,8 +209,26 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
     setActionMode({ type: "move" });
   }, [selectedSessionId, selectedSession?.activeTurnIndex, selectedSession?.round]);
 
+  useEffect(() => {
+    if (!selectedSession || selectedSession.phase !== "setup") {
+      setSetupDraft(null);
+      return;
+    }
+    setSetupDraft((current) => {
+      if (current?.sessionId === selectedSession.id && current.dirty) return current;
+      return {
+        sessionId: selectedSession.id,
+        name: selectedSession.name,
+        settings: { ...DEFAULT_ENCOUNTER_SETTINGS, ...(selectedSession.settings || {}) },
+        framework: { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(selectedSession.framework || {}) },
+        dirty: false,
+      };
+    });
+  }, [selectedSession?.id, selectedSession?.phase, selectedSession?.version]);
+
   const saveWholeState = useCallback(async (nextState: AdventureStateDoc) => {
     setBusy(true);
+    localProtectUntilRef.current = Date.now() + 5000;
     setState(nextState);
     try {
       setSyncSource(await upsertAdventureState(nextState));
@@ -176,29 +237,46 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
     }
   }, []);
 
-  const commitAction = useCallback(async (session: AdventureSession, request: AdventureActionRequest) => {
+  const commitAction = useCallback(async (session: AdventureSession, request: AdventureActionRequest): Promise<boolean> => {
+    if (actionBusyRef.current) {
+      setNotice("Adventure is already saving an action. Wait a moment, then try again.");
+      return false;
+    }
+    actionBusyRef.current = true;
     setBusy(true);
     setNotice("");
-    const result = resolveAdventureAction(session, request, profiles);
-    if (!result.ok) {
-      setNotice(result.reason || "Action rejected.");
+    try {
+      const loaded = await loadAdventureState().catch(() => ({ state, source: syncSource }));
+      const latestSession = loaded.state.sessions.find((entry) => entry.id === session.id);
+      if (!latestSession) {
+        setState(loaded.state);
+        setSyncSource(loaded.source);
+        setNotice("That Adventure room no longer exists.");
+        return false;
+      }
+      const latestRequest: AdventureActionRequest = { ...request, expectedVersion: latestSession.version } as AdventureActionRequest;
+      const result = resolveAdventureAction(latestSession, latestRequest, loaded.state.profiles || profiles);
+      if (!result.ok) {
+        setState(loaded.state);
+        setSyncSource(loaded.source);
+        setNotice(result.reason || "Action rejected.");
+        return false;
+      }
+      const nextState: AdventureStateDoc = {
+        schemaVersion: 3,
+        sessions: loaded.state.sessions.map((entry) => entry.id === result.session.id ? result.session : entry).slice(0, 20),
+        profiles: result.profiles,
+        contentCatalog: loaded.state.contentCatalog,
+      };
+      localProtectUntilRef.current = Date.now() + 5000;
+      setState(nextState);
+      setSyncSource(await upsertAdventureState(nextState));
+      return true;
+    } finally {
+      actionBusyRef.current = false;
       setBusy(false);
-      return;
     }
-    setState((prev) => ({
-      schemaVersion: 3,
-      sessions: prev.sessions.map((entry) => entry.id === result.session.id ? result.session : entry),
-      profiles: result.profiles,
-      contentCatalog: prev.contentCatalog,
-    }));
-    const saveResult = await upsertAdventureSession(result.session, result.profiles, request.expectedVersion);
-    setSyncSource(saveResult.source);
-    if (!saveResult.ok) {
-      setState(saveResult.state);
-      setNotice(saveResult.reason || "Room changed before save. Latest state loaded.");
-    }
-    setBusy(false);
-  }, [profiles]);
+  }, [profiles, state, syncSource]);
 
   const dispatch = useCallback((type: AdventureActionRequest["type"], extras: Partial<AdventureActionRequest> = {}) => {
     if (!selectedSession) return;
@@ -244,6 +322,10 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
   }, [commitAction, currentUser, currentUserId, profile.preferredClassId]);
 
   const handleTileClick = useCallback((tile: AdventureTile) => {
+    if (busy || actionBusyRef.current) {
+      setNotice("Adventure is saving the current action. Try again in a moment.");
+      return;
+    }
     if (!selectedSession || !myPlayer) return;
     const reason = getTileActionReason(selectedSession, myPlayer, tile, actionMode);
     if (reason) {
@@ -266,7 +348,7 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
     if (actionMode.type === "item" && unit) {
       dispatch("item", { payload: { itemId: actionMode.itemId, targetId: unit.unit.id } } as any);
     }
-  }, [actionMode, dispatch, myPlayer, selectedSession]);
+  }, [actionMode, busy, dispatch, myPlayer, selectedSession]);
 
   const openSessions = useMemo(
     () => sessions.filter((session) => session.phase !== "closed").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
@@ -410,6 +492,9 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
     try {
       const parsed = JSON.parse(catalogDraft);
       const contentCatalog = normalizeAdventureContent(parsed);
+      setCatalogEditor(contentCatalog);
+      setCatalogDirty(false);
+      localProtectUntilRef.current = Date.now() + 5000;
       void saveWholeState({ ...state, contentCatalog });
       setCatalogDraft(JSON.stringify(contentCatalog, null, 2));
       setNotice("Adventure framework catalog saved.");
@@ -418,9 +503,19 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
     }
   };
 
-  const persistContentCatalog = useCallback((contentCatalog: typeof state.contentCatalog, message: string) => {
+  const editContentCatalog = useCallback((contentCatalog: AdventureContentCatalog, message: string) => {
     const normalized = normalizeAdventureContent(contentCatalog);
+    setCatalogEditor(normalized);
     setCatalogDraft(JSON.stringify(normalized, null, 2));
+    setCatalogDirty(true);
+    setNotice(`${message} Save the catalog to publish these changes.`);
+  }, []);
+
+  const persistContentCatalog = useCallback((contentCatalog: AdventureContentCatalog, message: string) => {
+    const normalized = normalizeAdventureContent(contentCatalog);
+    setCatalogEditor(normalized);
+    setCatalogDraft(JSON.stringify(normalized, null, 2));
+    setCatalogDirty(false);
     void saveWholeState({ ...state, contentCatalog: normalized });
     setNotice(message);
   }, [saveWholeState, state]);
@@ -454,15 +549,17 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
       contentCatalog,
     };
     setSelectedSessionId(session.id);
+    setCatalogEditor(contentCatalog);
     setCatalogDraft(JSON.stringify(contentCatalog, null, 2));
+    setCatalogDirty(false);
     void saveWholeState(nextState);
     setNotice("Existing adventures closed. Clean Adventure V2 room and starter catalog created.");
   }, [currentUser, currentUserId, profile.preferredClassId, profiles, saveWholeState, state.sessions]);
 
   const renderFrameworkBuilder = () => {
     if (!isDungeonMaster) return null;
-    const content = normalizeAdventureContent(state.contentCatalog);
-    const saveCatalog = (next: typeof content, message: string) => persistContentCatalog(next, message);
+    const content = normalizeAdventureContent(catalogEditor);
+    const saveCatalog = (next: typeof content, message: string) => editContentCatalog(next, message);
     const updateCampaign = (id: string, patch: Partial<AdventureCampaignTemplate>) => saveCatalog({ ...content, campaignTemplates: content.campaignTemplates.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Adventure template updated.");
     const updateClass = (id: string, patch: Partial<AdventureClassDef>) => saveCatalog({ ...content, classes: { ...content.classes, [id]: { ...content.classes[id], ...patch } } }, "Class set updated.");
     const updateItem = (id: string, patch: Partial<AdventureShopItem>) => saveCatalog({ ...content, shopItems: content.shopItems.map((entry) => entry.id === id ? { ...entry, ...patch } : entry) }, "Item set updated.");
@@ -502,10 +599,23 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button disabled={!catalogDirty || busy} onClick={() => persistContentCatalog(content, "Adventure V2 catalog saved.")} className={`${retro.button} px-3 py-2 text-[10px] disabled:opacity-40`} style={catalogDirty ? S_GREEN : S_DIM}>Save Catalog</button>
+            <button disabled={!catalogDirty || busy} onClick={() => {
+              const normalized = normalizeAdventureContent(state.contentCatalog);
+              setCatalogEditor(normalized);
+              setCatalogDraft(JSON.stringify(normalized, null, 2));
+              setCatalogDirty(false);
+              setNotice("Unsaved Adventure catalog changes discarded.");
+            }} className={`${retro.button} px-3 py-2 text-[10px] disabled:opacity-40`} style={S_ACCENT}>Discard Draft</button>
             <button onClick={closeExistingAndCreateV2} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_RED}>Close Existing + Create V2</button>
-            <button onClick={() => persistContentCatalog(DEFAULT_ADVENTURE_CONTENT, "Built-in V2 starter catalog loaded.")} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_WARN}>Load V2 Starter</button>
+            <button onClick={() => editContentCatalog(DEFAULT_ADVENTURE_CONTENT, "Built-in V2 starter catalog loaded into the draft.")} className={`${retro.button} px-3 py-2 text-[10px]`} style={S_WARN}>Load V2 Starter Draft</button>
           </div>
         </div>
+        {catalogDirty && (
+          <div className={`${retro.sunken} px-3 py-2 text-[10px] mb-3`} style={{ color: "#FFD37A", background: "#151006" }}>
+            Unsaved catalog draft. Players and new rooms will keep using the last saved catalog until you press Save Catalog.
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
           {[
             ["Reset Safely", "Close old rooms and seed a fresh V2 campaign without deleting profiles."],
@@ -865,7 +975,44 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
 
   const renderRoomSetup = (session: AdventureSession) => {
     const joined = !!myPlayer;
-    const canStart = joined && isHost && session.players.length > 0 && session.players.every((player) => player.ready);
+    const draft = setupDraft?.sessionId === session.id ? setupDraft : {
+      sessionId: session.id,
+      name: session.name,
+      settings: { ...DEFAULT_ENCOUNTER_SETTINGS, ...(session.settings || {}) },
+      framework: { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(session.framework || {}) },
+      dirty: false,
+    };
+    const updateSetupDraft = (patch: Partial<SetupDraftState>) => {
+      setSetupDraft((current) => ({
+        sessionId: session.id,
+        name: current?.sessionId === session.id ? current.name : session.name,
+        settings: current?.sessionId === session.id ? current.settings : { ...DEFAULT_ENCOUNTER_SETTINGS, ...(session.settings || {}) },
+        framework: current?.sessionId === session.id ? current.framework : { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(session.framework || {}) },
+        ...patch,
+        dirty: true,
+      }));
+    };
+    const discardSetupDraft = () => {
+      setSetupDraft({
+        sessionId: session.id,
+        name: session.name,
+        settings: { ...DEFAULT_ENCOUNTER_SETTINGS, ...(session.settings || {}) },
+        framework: { ...DEFAULT_ADVENTURE_FRAMEWORK, ...(session.framework || {}) },
+        dirty: false,
+      });
+      setNotice("Unsaved setup changes discarded.");
+    };
+    const saveSetupDraft = async () => {
+      const request = makeAdventureAction(session, currentUserId, "configure", {
+        payload: { ...draft.settings, name: draft.name, framework: draft.framework },
+      } as any);
+      const saved = await commitAction(session, request);
+      if (saved) {
+        setSetupDraft((current) => current?.sessionId === session.id ? { ...current, dirty: false } : current);
+        setNotice("Campaign setup saved.");
+      }
+    };
+    const canStart = joined && isHost && !draft.dirty && session.players.length > 0 && session.players.every((player) => player.ready);
     return (
       <div className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -920,9 +1067,14 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
             <div className="text-[13px] font-bold" style={S_TEXT}>Campaign Setup</div>
             {isHost ? (
               <div className="space-y-3">
-                <input value={session.name} onChange={(event) => dispatch("configure", { payload: { name: event.target.value } } as any)} className="w-full px-3 py-2 text-[12px]" style={{ color: "#C0D0F0", background: "#050A1A", border: "1px solid #1A1A4B", outline: "none" }} />
-                {renderSetupFields(session.settings, (settings) => dispatch("configure", { payload: settings } as any))}
-                {renderFrameworkFields(session.framework, (framework) => dispatch("configure_framework", { payload: framework } as any))}
+                {draft.dirty && <div className={`${retro.sunken} px-3 py-2 text-[10px]`} style={{ color: "#FFD37A", background: "#151006" }}>Unsaved setup draft. Save setup before opening the starter shop.</div>}
+                <input value={draft.name} onChange={(event) => updateSetupDraft({ name: event.target.value })} className="w-full px-3 py-2 text-[12px]" style={{ color: "#C0D0F0", background: "#050A1A", border: "1px solid #1A1A4B", outline: "none" }} />
+                {renderSetupFields(draft.settings, (settings) => updateSetupDraft({ settings }))}
+                {renderFrameworkFields(draft.framework, (framework) => updateSetupDraft({ framework }))}
+                <div className="grid grid-cols-2 gap-2">
+                  <button disabled={!draft.dirty || busy} onClick={saveSetupDraft} className={`${retro.button} py-2 text-[11px] disabled:opacity-40`} style={draft.dirty ? S_GREEN : S_DIM}>Save Setup</button>
+                  <button disabled={!draft.dirty || busy} onClick={discardSetupDraft} className={`${retro.button} py-2 text-[11px] disabled:opacity-40`} style={S_ACCENT}>Discard</button>
+                </div>
               </div>
             ) : (
               <div className="text-[11px]" style={S_MUTED}>The host controls encounter setup.</div>
@@ -932,8 +1084,8 @@ export function AdventureGame({ onBack }: { onBack: () => void; onScoreSave?: (s
                 {myPlayer?.ready ? <X size={13} /> : <Check size={13} />} {myPlayer?.ready ? "Unready" : "Ready Up"}
               </button>
             )}
-            <button disabled={!canStart} onClick={() => dispatch("start")} className={`${retro.button} w-full py-2 text-[12px] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2`} style={canStart ? S_GREEN : S_DIM}>
-              <Backpack size={13} /> Open Starter Shop
+            <button disabled={!canStart || busy} onClick={() => dispatch("start")} className={`${retro.button} w-full py-2 text-[12px] disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2`} style={canStart ? S_GREEN : S_DIM}>
+              <Backpack size={13} /> {draft.dirty ? "Save Setup First" : "Open Starter Shop"}
             </button>
             {isHost && <button onClick={() => dispatch("abandon")} className={`${retro.button} w-full py-2 text-[12px]`} style={S_RED}>Abandon Room</button>}
           </div>
