@@ -394,6 +394,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
     { id: "osu", name: "Rhythm Circles" },
     { id: "doodlejump", name: "Doodle Jump" },
     { id: "bossfight", name: "Boss Fight" },
+    { id: "adventure", name: "Adventure" },
   ];
 
   const handleAddEntry = () => {
@@ -461,8 +462,8 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
         {selectedPlayer && (
           <div className="mt-2 text-[10px]" style={{ color: "#5A6A8A" }}>
             Managing: <span style={{ color: "#FFD700" }}>{selectedPlayer.name}</span>
-            {selectedPlayer.class && <span> · {selectedPlayer.class} Lv.{selectedPlayer.level}</span>}
-            <span> · ID: {selectedPlayer.id}</span>
+            {selectedPlayer.class && <span> - {selectedPlayer.class} Lv.{selectedPlayer.level}</span>}
+            <span> - ID: {selectedPlayer.id}</span>
           </div>
         )}
       </div>

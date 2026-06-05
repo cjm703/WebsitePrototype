@@ -2,7 +2,7 @@ import React, { useState, useCallback, Suspense, useMemo, memo, startTransition 
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_TEXT, S_ACCENT, S_GREEN, S_RED, S_ACCENT_HDR } from "./shared-styles";
-import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, Compass, type LucideIcon } from "lucide-react";
 
 const SnakeGame = React.lazy(() => import("./snake-game").then(m => ({ default: m.SnakeGame })));
 const RunnerGame = React.lazy(() => import("./runner-game").then(m => ({ default: m.RunnerGame })));
@@ -10,6 +10,7 @@ const PartyColor = React.lazy(() => import("./party-color").then(m => ({ default
 const OsuGame = React.lazy(() => import("./osu-game").then(m => ({ default: m.OsuGame })));
 const BossFightLauncher = React.lazy(() => import("./boss-fight-launcher").then(m => ({ default: m.BossFightLauncher })));
 const DoodleJumpGame = React.lazy(() => import("./doodle-jump-game").then(m => ({ default: m.DoodleJumpGame })));
+const AdventureGame = React.lazy(() => import("./adventure-game").then(m => ({ default: m.AdventureGame })));
 const ArcadeStore = React.lazy(() => import("./arcade-store").then(m => ({ default: m.ArcadeStore })));
 import {
   saveScore,
@@ -49,14 +50,14 @@ const GAMES: GameEntry[] = [
     id: "partycolor",
     name: "PARTY COLOR",
     icon: Palette,
-    description: "Shared pixel canvas. Everyone draws together — the DM sets the prompt!",
+    description: "Shared pixel canvas. Everyone draws together - the DM sets the prompt!",
     component: PartyColor,
   },
   {
     id: "osu",
     name: "RHYTHM CIRCLES",
     icon: CircleDot,
-    description: "Simplified Osu! — Click circles to the beat. Build combos for huge scores!",
+    description: "Simplified Osu! - Click circles to the beat. Build combos for huge scores!",
     component: OsuGame,
   },
   {
@@ -75,7 +76,7 @@ const GAMES: GameEntry[] = [
   },
 ];
 
-type Tab = "games" | "store" | "leaderboard";
+type Tab = "games" | "adventure" | "store" | "leaderboard";
 
 const G_GOLD = { color: "#FFD700" } as const;
 const G_GAME_CARD_BORDER = { borderLeft: "4px solid #2A2A6B" } as const;
@@ -126,7 +127,7 @@ const GameCard = memo(function GameCard({
           <div className="text-[15px] mb-1" style={G_GAME_TITLE}>{game.name}</div>
           <div className="text-[11px]" style={S_MUTED}>{game.description}</div>
           <div className="flex items-center justify-between mt-2">
-            <div className="text-[10px] flex items-center gap-1" style={S_GREEN}>▶ PLAY</div>
+            <div className="text-[10px] flex items-center gap-1" style={S_GREEN}>PLAY</div>
             {bestScore !== null && (
               <div className="text-[10px] flex items-center gap-1" style={G_GOLD}>
                 <Trophy size={9} /> {bestScore}
@@ -188,11 +189,14 @@ const LeaderboardRow = memo(function LeaderboardRow({
 export function Game() {
   const navigate = useNavigate();
   const currentUser = safeGetItem("inet-user") || "";
+  const currentUserId = safeGetItem("inet-user-id") || "";
+  const isDM = currentUserId === "dm";
   const [activeGame, setActiveGame] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("games");
   const [leaderboardFilter, setLeaderboardFilter] = useState<string>("all");
   const [leaderboardVersion, setLeaderboardVersion] = useState(0);
 
+  const arcadeGameIds = useMemo(() => new Set(GAMES.map((game) => game.id)), []);
   const selectedGame = GAMES.find((g) => g.id === activeGame);
 
   const handleScoreSave = useCallback(
@@ -210,6 +214,7 @@ export function Game() {
   const getFilteredEntries = (): LeaderboardEntry[] => {
     if (leaderboardFilter === "all") {
       return getLeaderboard()
+        .filter((entry) => arcadeGameIds.has(entry.gameId))
         .sort((a, b) => b.score - a.score)
         .slice(0, 50);
     }
@@ -239,7 +244,7 @@ export function Game() {
       <div className={`${retro.toolbar} flex items-center justify-between`}>
         <div className="flex items-center gap-3">
           <span className="text-[11px]" style={S_ACCENT}>
-            ● I-NET Interface™
+            I-NET Interface
           </span>
           <span className="text-[11px]" style={S_DIM}>
             |
@@ -277,6 +282,16 @@ export function Game() {
               </span>
             </div>
           )}
+          {!selectedGame && activeTab === "adventure" && isDM && (
+            <div style={DISPLAY_CONTENTS}>
+              <span className="text-[11px]" style={S_DIM}>
+                &gt;
+              </span>
+              <span className="text-[11px]" style={S_MUTED}>
+                Adventure
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[11px]" style={S_MUTED}>
@@ -299,7 +314,9 @@ export function Game() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-2">
-            {activeTab === "leaderboard" && !selectedGame ? (
+            {activeTab === "adventure" && !selectedGame && isDM ? (
+              <Compass size={28} style={{ color: "#64E0FF" }} />
+            ) : activeTab === "leaderboard" && !selectedGame ? (
               <Trophy size={28} style={{ color: "#FFD700" }} />
             ) : activeTab === "store" && !selectedGame ? (
               <ShoppingBag size={28} style={{ color: "#FFD700" }} />
@@ -316,6 +333,8 @@ export function Game() {
             >
               {selectedGame
                 ? selectedGame.name
+                : activeTab === "adventure" && isDM
+                ? "Adventure"
                 : activeTab === "leaderboard"
                 ? "Leaderboards"
                 : activeTab === "store"
@@ -326,11 +345,13 @@ export function Game() {
           <div className="text-[12px]" style={S_MUTED}>
             {selectedGame
               ? selectedGame.description
+              : activeTab === "adventure" && isDM
+              ? "DM-only expedition console. This is separate from the standard Arcade game catalog."
               : activeTab === "leaderboard"
               ? "All-time high scores across all I-NET arcade games."
               : activeTab === "store"
               ? "Browse and purchase additional I-NET arcade content."
-              : `I-NET Game Module · ${GAMES.length} game${GAMES.length !== 1 ? "s" : ""} available`}
+              : `I-NET Game Module - ${GAMES.length} game${GAMES.length !== 1 ? "s" : ""} available`}
           </div>
         </div>
 
@@ -353,6 +374,27 @@ export function Game() {
             >
               <Gamepad2 size={13} /> GAMES
             </button>
+            {isDM && (
+              <button
+                onClick={() => setActiveTab("adventure")}
+                className="px-5 py-2 text-[12px] flex items-center gap-2 transition-colors"
+                style={{
+                  color: activeTab === "adventure" ? "#64E0FF" : "#3A4A6A",
+                  background: activeTab === "adventure" ? "#12123A" : "transparent",
+                  borderTop:
+                    activeTab === "adventure" ? "2px solid #64E0FF" : "2px solid transparent",
+                  borderLeft:
+                    activeTab === "adventure" ? "1px solid #1A1A4B" : "1px solid transparent",
+                  borderRight:
+                    activeTab === "adventure" ? "1px solid #1A1A4B" : "1px solid transparent",
+                  borderBottom: activeTab === "adventure" ? "2px solid #12123A" : "none",
+                  marginBottom: "-2px",
+                  cursor: "pointer",
+                }}
+              >
+                <Compass size={13} /> ADVENTURE
+              </button>
+            )}
             <button
               onClick={() => setActiveTab("store")}
               className="px-5 py-2 text-[12px] flex items-center gap-2 transition-colors"
@@ -412,7 +454,19 @@ export function Game() {
                 onScoreSave={handleScoreSave(selectedGame.id, selectedGame.name)}
               />
             </Suspense>
-          ) : activeTab === "games" ? (
+          ) : activeTab === "adventure" && isDM ? (
+            /* DM-only Adventure Section */
+            <Suspense fallback={
+              <div className="flex items-center justify-center py-20">
+                <span className="text-[11px] font-mono" style={{ color: "#4A4A7A" }}>Loading adventure...</span>
+              </div>
+            }>
+              <AdventureGame
+                onBack={() => setActiveTab("games")}
+                onScoreSave={handleScoreSave("adventure", "Adventure")}
+              />
+            </Suspense>
+          ) : activeTab === "games" || (activeTab === "adventure" && !isDM) ? (
             /* Game Menu */
             <div>
               <div className="mb-4 pb-3" style={{ borderBottom: "1px solid #1A1A4B" }}>
