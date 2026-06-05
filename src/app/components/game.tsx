@@ -76,7 +76,7 @@ const GAMES: GameEntry[] = [
   },
 ];
 
-type Tab = "games" | "adventure" | "store" | "leaderboard";
+type Tab = "games" | "store" | "leaderboard";
 
 const G_GOLD = { color: "#FFD700" } as const;
 const G_GAME_CARD_BORDER = { borderLeft: "4px solid #2A2A6B" } as const;
@@ -192,6 +192,7 @@ export function Game() {
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
   const [activeGame, setActiveGame] = useState<string | null>(null);
+  const [activeAdventure, setActiveAdventure] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("games");
   const [leaderboardFilter, setLeaderboardFilter] = useState<string>("all");
   const [leaderboardVersion, setLeaderboardVersion] = useState(0);
@@ -262,6 +263,16 @@ export function Game() {
               </span>
             </div>
           )}
+          {activeAdventure && isDM && (
+            <div style={DISPLAY_CONTENTS}>
+              <span className="text-[11px]" style={S_DIM}>
+                &gt;
+              </span>
+              <span className="text-[11px]" style={S_MUTED}>
+                Adventure
+              </span>
+            </div>
+          )}
           {!selectedGame && activeTab === "leaderboard" && (
             <div style={DISPLAY_CONTENTS}>
               <span className="text-[11px]" style={S_DIM}>
@@ -279,16 +290,6 @@ export function Game() {
               </span>
               <span className="text-[11px]" style={S_MUTED}>
                 Store
-              </span>
-            </div>
-          )}
-          {!selectedGame && activeTab === "adventure" && isDM && (
-            <div style={DISPLAY_CONTENTS}>
-              <span className="text-[11px]" style={S_DIM}>
-                &gt;
-              </span>
-              <span className="text-[11px]" style={S_MUTED}>
-                Adventure
               </span>
             </div>
           )}
@@ -314,7 +315,7 @@ export function Game() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-2">
-            {activeTab === "adventure" && !selectedGame && isDM ? (
+            {activeAdventure && isDM ? (
               <Compass size={28} style={{ color: "#64E0FF" }} />
             ) : activeTab === "leaderboard" && !selectedGame ? (
               <Trophy size={28} style={{ color: "#FFD700" }} />
@@ -333,7 +334,7 @@ export function Game() {
             >
               {selectedGame
                 ? selectedGame.name
-                : activeTab === "adventure" && isDM
+                : activeAdventure && isDM
                 ? "Adventure"
                 : activeTab === "leaderboard"
                 ? "Leaderboards"
@@ -345,7 +346,7 @@ export function Game() {
           <div className="text-[12px]" style={S_MUTED}>
             {selectedGame
               ? selectedGame.description
-              : activeTab === "adventure" && isDM
+              : activeAdventure && isDM
               ? "DM-only expedition console. This is separate from the standard Arcade game catalog."
               : activeTab === "leaderboard"
               ? "All-time high scores across all I-NET arcade games."
@@ -356,7 +357,7 @@ export function Game() {
         </div>
 
         {/* Tabs - only show when not in a game */}
-        {!selectedGame && (
+        {!selectedGame && !activeAdventure && (
           <div className="flex mb-4 gap-0" style={{ borderBottom: "2px solid #1A1A4B" }}>
             <button
               onClick={() => setActiveTab("games")}
@@ -374,27 +375,6 @@ export function Game() {
             >
               <Gamepad2 size={13} /> GAMES
             </button>
-            {isDM && (
-              <button
-                onClick={() => setActiveTab("adventure")}
-                className="px-5 py-2 text-[12px] flex items-center gap-2 transition-colors"
-                style={{
-                  color: activeTab === "adventure" ? "#64E0FF" : "#3A4A6A",
-                  background: activeTab === "adventure" ? "#12123A" : "transparent",
-                  borderTop:
-                    activeTab === "adventure" ? "2px solid #64E0FF" : "2px solid transparent",
-                  borderLeft:
-                    activeTab === "adventure" ? "1px solid #1A1A4B" : "1px solid transparent",
-                  borderRight:
-                    activeTab === "adventure" ? "1px solid #1A1A4B" : "1px solid transparent",
-                  borderBottom: activeTab === "adventure" ? "2px solid #12123A" : "none",
-                  marginBottom: "-2px",
-                  cursor: "pointer",
-                }}
-              >
-                <Compass size={13} /> ADVENTURE
-              </button>
-            )}
             <button
               onClick={() => setActiveTab("store")}
               className="px-5 py-2 text-[12px] flex items-center gap-2 transition-colors"
@@ -454,7 +434,7 @@ export function Game() {
                 onScoreSave={handleScoreSave(selectedGame.id, selectedGame.name)}
               />
             </Suspense>
-          ) : activeTab === "adventure" && isDM ? (
+          ) : activeAdventure && isDM ? (
             /* DM-only Adventure Section */
             <Suspense fallback={
               <div className="flex items-center justify-center py-20">
@@ -462,11 +442,11 @@ export function Game() {
               </div>
             }>
               <AdventureGame
-                onBack={() => setActiveTab("games")}
+                onBack={() => setActiveAdventure(false)}
                 onScoreSave={handleScoreSave("adventure", "Adventure")}
               />
             </Suspense>
-          ) : activeTab === "games" || (activeTab === "adventure" && !isDM) ? (
+          ) : activeTab === "games" ? (
             /* Game Menu */
             <div>
               <div className="mb-4 pb-3" style={{ borderBottom: "1px solid #1A1A4B" }}>
@@ -477,6 +457,42 @@ export function Game() {
                   Choose from the available I-NET arcade titles below.
                 </div>
               </div>
+
+              {isDM && (
+                <div className="mb-5">
+                  <button
+                    onClick={() => {
+                      startTransition(() => {
+                        setActiveGame(null);
+                        setActiveAdventure(true);
+                        setActiveTab("games");
+                      });
+                    }}
+                    className={`${retro.raised} w-full p-4 text-left hover:bg-[#0D203A] transition-all cursor-pointer group`}
+                    style={{ borderLeft: "4px solid #64E0FF", background: "#08162A" }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`${retro.sunken} bg-[#061126] p-3 group-hover:bg-[#081A32] transition-colors`}>
+                        <Compass size={28} style={{ color: "#64E0FF" }} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <div className="text-[15px]" style={{ color: "#64E0FF", fontWeight: 700, fontFamily: "'Courier New', monospace" }}>
+                            ADVENTURE
+                          </div>
+                          <span className="text-[9px] px-2 py-0.5" style={{ color: "#64E0FF", border: "1px solid #64E0FF55", background: "#64E0FF12" }}>
+                            DM ONLY
+                          </span>
+                        </div>
+                        <div className="text-[11px]" style={S_MUTED}>
+                          Launch the separate expedition console. This does not appear in the standard Arcade game catalog.
+                        </div>
+                        <div className="text-[10px] mt-2" style={{ color: "#64E0FF" }}>OPEN ADVENTURE</div>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {GAMES.map((game) => {
