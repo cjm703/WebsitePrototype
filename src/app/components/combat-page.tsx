@@ -94,6 +94,8 @@ interface ActiveMusicTrack {
   loop: boolean;
   muted?: boolean;
   effects?: AudioEffectSettings;
+  seekTo?: number;
+  seekRequestId?: string;
   startedAt: number;
   updatedAt: string;
 }
@@ -110,6 +112,14 @@ interface MusicUploadProgress {
   label: string;
   percent: number;
   phase: "reading" | "saving";
+}
+
+interface PlaybackStatus {
+  currentTime: number;
+  duration: number;
+  paused: boolean;
+  waiting: boolean;
+  error?: string;
 }
 
 interface DiceRollResult {
@@ -283,6 +293,10 @@ function hasPlayableSource(track: MusicTrack) {
   return true;
 }
 
+function supportsLiveAudioEffects(track: MusicTrack) {
+  return track.sourceType === "file" && typeof track.url === "string" && track.url.startsWith("data:");
+}
+
 function isInlineFileAudio(track: MusicTrack) {
   return track.sourceType === "file" && typeof track.url === "string" && track.url.startsWith("data:");
 }
@@ -340,6 +354,14 @@ function formatTime(iso: string) {
   return new Date(parsed).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatPlaybackTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const whole = Math.floor(seconds);
+  const minutes = Math.floor(whole / 60);
+  const remainingSeconds = whole % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
+}
+
 function buildLocalPlayerFallback(): PlayerData[] {
   return safeGetJson<PlayerData[]>("inet-dm-players", []);
 }
@@ -392,6 +414,8 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
             loop: Boolean(entry.loop),
             muted: Boolean(entry.muted),
             effects: normalizeAudioEffects(entry.effects),
+            seekTo: Number.isFinite(Number(entry.seekTo)) ? Math.max(0, Number(entry.seekTo)) : undefined,
+            seekRequestId: typeof entry.seekRequestId === "string" ? entry.seekRequestId : "",
             startedAt: Number.isFinite(Number(entry.startedAt)) ? Number(entry.startedAt) : Date.now(),
             updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
           }))
@@ -425,6 +449,8 @@ export function CombatPage() {
   const [musicSearch, setMusicSearch] = useState("");
   const [musicSort, setMusicSort] = useState<MusicSort>("recent");
   const [previewTrackId, setPreviewTrackId] = useState("");
+  const [playbackStatuses, setPlaybackStatuses] = useState<Record<string, PlaybackStatus>>({});
+  const [seekDrafts, setSeekDrafts] = useState<Record<string, number>>({});
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [sceneDraft, setSceneDraft] = useState("");
   const [sceneDraftDirty, setSceneDraftDirty] = useState(false);
@@ -497,6 +523,43 @@ export function CombatPage() {
   useEffect(() => {
     if (!sceneDraftDirty) setSceneDraft(combatState.scene || "");
   }, [combatState.scene, sceneDraftDirty]);
+
+  useEffect(() => {
+    const trackIds = new Set(musicState.tracks.map((track) => track.id));
+    setPlaybackStatuses((previous) => {
+      const next = Object.fromEntries(Object.entries(previous).filter(([trackId]) => trackIds.has(trackId)));
+      return Object.keys(next).length === Object.keys(previous).length ? previous : next;
+    });
+    setSeekDrafts((previous) => {
+      const next = Object.fromEntries(Object.entries(previous).filter(([trackId]) => trackIds.has(trackId)));
+      return Object.keys(next).length === Object.keys(previous).length ? previous : next;
+    });
+  }, [musicState.tracks]);
+
+  const enableCombatAudio = useCallback(() => {
+    setAudioEnabled(true);
+    const context = getSharedAudioContext();
+    if (context?.state === "suspended") {
+      void context.resume().catch(() => {});
+    }
+  }, []);
+
+  const handlePlaybackStatus = useCallback((trackId: string, patch: Partial<PlaybackStatus>) => {
+    setPlaybackStatuses((previous) => {
+      const current = previous[trackId] || { currentTime: 0, duration: 0, paused: true, waiting: false };
+      const next = { ...current, ...patch };
+      if (
+        current.currentTime === next.currentTime &&
+        current.duration === next.duration &&
+        current.paused === next.paused &&
+        current.waiting === next.waiting &&
+        current.error === next.error
+      ) {
+        return previous;
+      }
+      return { ...previous, [trackId]: next };
+    });
+  }, []);
 
   const savePlayers = useCallback(async (nextPlayers: PlayerData[]) => {
     setPlayers(nextPlayers);
@@ -947,6 +1010,33 @@ export function CombatPage() {
     });
   };
 
+  const toggleTrackPlayback = async (trackId: string) => {
+    const existing = activeById.get(trackId);
+    const nextPlaying = !existing?.playing;
+    if (nextPlaying) enableCombatAudio();
+    await upsertActiveTrack(trackId, {
+      playing: nextPlaying,
+      startedAt: existing?.startedAt || Date.now(),
+    });
+  };
+
+  const commitTrackSeek = async (trackId: string, rawSeconds: number) => {
+    const status = playbackStatuses[trackId];
+    const duration = status?.duration || 0;
+    const seconds = duration > 0 ? clampNumber(rawSeconds, 0, duration) : Math.max(0, rawSeconds);
+    const existing = activeById.get(trackId);
+    setSeekDrafts((previous) => {
+      const next = { ...previous };
+      delete next[trackId];
+      return next;
+    });
+    await upsertActiveTrack(trackId, {
+      playing: existing?.playing ?? false,
+      seekTo: seconds,
+      seekRequestId: uid("seek"),
+    });
+  };
+
   const stopTrack = async (trackId: string) => {
     await saveMusic({ ...musicState, active: musicState.active.filter((entry) => entry.trackId !== trackId) });
   };
@@ -963,17 +1053,27 @@ export function CombatPage() {
   const renderMusicTrackCard = (track: MusicTrack) => {
     const active = activeById.get(track.id);
     const effects = normalizeAudioEffects(active?.effects);
-    const isEditableAudio = track.sourceType !== "youtube";
+    const isAudioTrack = track.sourceType !== "youtube";
+    const effectsAvailable = supportsLiveAudioEffects(track);
+    const playbackStatus = playbackStatuses[track.id];
+    const duration = playbackStatus?.duration || 0;
+    const currentTime = clampNumber(playbackStatus?.currentTime ?? 0, 0, Math.max(duration, 0));
+    const seekValue = clampNumber(seekDrafts[track.id] ?? currentTime, 0, Math.max(duration, 1));
     const playable = hasPlayableSource(track);
     const borderColor = active?.muted ? "#FF6A6A" : active?.playing ? "#4AFF7A" : "#2A355F";
+    const trackKind = track.sourceType === "youtube"
+      ? "YouTube link"
+      : effectsAvailable
+        ? "Live editable audio"
+        : "Audio link";
 
     return (
       <div key={track.id} className={`${retro.raised} p-4`} style={{ background: "#0D1230", borderLeft: `4px solid ${borderColor}` }}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[13px] truncate" style={{ color: "#D8E5FF", fontWeight: 700 }}>{track.title}</div>
-            <div className="text-[10px] mt-1" style={isEditableAudio ? S_GREEN : S_DIM}>
-              {isEditableAudio ? "Editable audio" : "YouTube link"} | {sourceLabel(track)}
+            <div className="text-[10px] mt-1" style={effectsAvailable ? S_GREEN : S_DIM}>
+              {trackKind} | {sourceLabel(track)}
             </div>
           </div>
           {isDM && (
@@ -1014,10 +1114,7 @@ export function CombatPage() {
             <div style={DISPLAY_CONTENTS}>
               <button
                 disabled={!playable}
-                onClick={() => void upsertActiveTrack(track.id, {
-                  playing: !active?.playing,
-                  startedAt: !active?.playing ? Date.now() : active?.startedAt || Date.now(),
-                })}
+                onClick={() => void toggleTrackPlayback(track.id)}
                 className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1 disabled:opacity-40`}
                 style={active?.playing ? S_WARN : S_GREEN}
               >
@@ -1028,14 +1125,14 @@ export function CombatPage() {
                 <Square size={11} /> Stop
               </button>
               <button
-                onClick={() => void upsertActiveTrack(track.id, { loop: !active?.loop, playing: active?.playing ?? true })}
+                onClick={() => void upsertActiveTrack(track.id, { loop: !active?.loop, playing: active?.playing ?? false })}
                 className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1`}
                 style={active?.loop ? S_ACCENT : S_MUTED}
               >
                 <RotateCcw size={11} /> Loop
               </button>
               <button
-                onClick={() => void upsertActiveTrack(track.id, { muted: !active?.muted, playing: active?.playing ?? true })}
+                onClick={() => void upsertActiveTrack(track.id, { muted: !active?.muted, playing: active?.playing ?? false })}
                 disabled={!active}
                 className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1 disabled:opacity-40`}
                 style={active?.muted ? S_RED : S_MUTED}
@@ -1051,6 +1148,43 @@ export function CombatPage() {
           )}
         </div>
 
+        <div className="mt-3 p-2" style={{ background: "#070B22", border: "1px solid #172044" }}>
+          <div className="flex items-center justify-between gap-3 text-[10px] mb-1" style={S_DIM}>
+            <span>
+              {playbackStatus?.waiting ? "Buffering" : active?.playing ? "Playing" : active ? "Paused" : "Ready"}
+            </span>
+            <span>
+              {formatPlaybackTime(seekValue)} / {duration > 0 ? formatPlaybackTime(duration) : "--:--"}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(1, Math.ceil(duration || 1))}
+            step={1}
+            value={Math.round(seekValue)}
+            disabled={!isDM || !playable || duration <= 0}
+            onChange={(event) => {
+              const value = parseFloat(event.target.value);
+              setSeekDrafts((previous) => ({ ...previous, [track.id]: value }));
+            }}
+            onMouseUp={(event) => void commitTrackSeek(track.id, parseFloat(event.currentTarget.value))}
+            onTouchEnd={(event) => void commitTrackSeek(track.id, parseFloat(event.currentTarget.value))}
+            onKeyUp={(event) => {
+              if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) {
+                void commitTrackSeek(track.id, parseFloat(event.currentTarget.value));
+              }
+            }}
+            onBlur={(event) => {
+              if (seekDrafts[track.id] !== undefined) void commitTrackSeek(track.id, parseFloat(event.currentTarget.value));
+            }}
+            className="w-full"
+          />
+          {playbackStatus?.error && (
+            <div className="text-[9px] mt-1 leading-relaxed" style={S_RED}>{playbackStatus.error}</div>
+          )}
+        </div>
+
         <div className="mt-3 flex items-center gap-2">
           {active?.muted ? <VolumeX size={12} style={S_RED} /> : <Volume2 size={12} style={S_DIM} />}
           <input
@@ -1059,21 +1193,27 @@ export function CombatPage() {
             max={100}
             value={Math.round((active?.volume ?? 0.65) * 100)}
             disabled={!isDM}
-            onChange={(event) => void upsertActiveTrack(track.id, { volume: parseInt(event.target.value, 10) / 100, playing: active?.playing ?? true })}
+            onChange={(event) => void upsertActiveTrack(track.id, { volume: parseInt(event.target.value, 10) / 100, playing: active?.playing ?? false })}
             className="flex-1"
           />
           <span className="text-[10px] w-9 text-right" style={S_DIM}>{Math.round((active?.volume ?? 0.65) * 100)}%</span>
         </div>
 
-        {isDM && isEditableAudio && (
-          <AudioEffectsControls
-            effects={effects}
-            onChange={(patch) => void updateTrackEffects(track.id, patch)}
-            onReset={() => void updateTrackEffects(track.id, DEFAULT_AUDIO_EFFECTS)}
-          />
+        {isDM && isAudioTrack && (
+          effectsAvailable ? (
+            <AudioEffectsControls
+              effects={effects}
+              onChange={(patch) => void updateTrackEffects(track.id, patch)}
+              onReset={() => void updateTrackEffects(track.id, DEFAULT_AUDIO_EFFECTS)}
+            />
+          ) : (
+            <div className="mt-3 text-[10px] leading-relaxed" style={S_DIM}>
+              Live effects are available for uploaded audio files. Direct audio links play normally but may block browser effects.
+            </div>
+          )
         )}
 
-        {!isEditableAudio && (
+        {!isAudioTrack && (
           <div className="mt-3 text-[10px]" style={S_DIM}>
             YouTube playback stays separate from editable audio effects.
           </div>
@@ -1125,7 +1265,7 @@ export function CombatPage() {
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
       }}
     >
-      <AudioPlaybackLayer musicState={musicState} audioEnabled={audioEnabled} />
+      <AudioPlaybackLayer musicState={musicState} audioEnabled={audioEnabled} onStatus={handlePlaybackStatus} />
 
       <div className={`${retro.toolbar} flex items-center justify-between`}>
         <div className="flex items-center gap-3">
@@ -1552,7 +1692,7 @@ export function CombatPage() {
                     {activeTracks.filter(({ active }) => active.playing).length} playing | {visibleTracks.length}/{musicState.tracks.length} shown | master {musicState.muted ? "muted" : `${Math.round((musicState.masterVolume ?? 0.85) * 100)}%`}
                   </div>
                 </div>
-                <button onClick={() => setAudioEnabled(true)} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-2`} style={audioEnabled ? S_GREEN : S_WARN}>
+                <button onClick={enableCombatAudio} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-2`} style={audioEnabled ? S_GREEN : S_WARN}>
                   <Volume2 size={13} /> {audioEnabled ? "Audio Enabled" : "Enable Audio"}
                 </button>
               </div>
@@ -1618,7 +1758,7 @@ export function CombatPage() {
               ) : (
                 <div className="space-y-5">
                   <MusicTrackGroup
-                    title="Editable Audio"
+                    title="Audio Tracks"
                     detail={`${editableVisibleTracks.length} uploaded/direct audio track${editableVisibleTracks.length === 1 ? "" : "s"}`}
                   >
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -1647,7 +1787,7 @@ export function CombatPage() {
 
       {!audioEnabled && musicState.active.some((entry) => entry.playing) && (
         <button
-          onClick={() => setAudioEnabled(true)}
+          onClick={enableCombatAudio}
           className={`${retro.button} fixed right-4 bottom-4 z-50 px-4 py-3 text-[12px] flex items-center gap-2`}
           style={{ color: "#FFD37A", background: "#12163A", border: "1px solid #4A3A1A" }}
         >
@@ -2023,19 +2163,27 @@ function EffectSlider({ label, value, onChange }: { label: string; value: number
   );
 }
 
-function AudioPlaybackLayer({ musicState, audioEnabled }: { musicState: CombatMusicState; audioEnabled: boolean }) {
+function AudioPlaybackLayer({
+  musicState,
+  audioEnabled,
+  onStatus,
+}: {
+  musicState: CombatMusicState;
+  audioEnabled: boolean;
+  onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
+}) {
   const tracksById = useMemo(() => new Map(musicState.tracks.map((track) => [track.id, track])), [musicState.tracks]);
   const masterVolume = musicState.muted ? 0 : clampNumber(musicState.masterVolume ?? 0.85, 0, 1);
   return (
-    <div style={{ position: "fixed", width: 1, height: 1, overflow: "hidden", opacity: 0, pointerEvents: "none" }}>
+    <div style={{ position: "fixed", left: -260, top: -260, width: 240, height: 240, overflow: "hidden", opacity: 0.01, pointerEvents: "none" }}>
       {musicState.active.map((active) => {
         const track = tracksById.get(active.trackId);
         if (!track) return null;
         if (!hasPlayableSource(track)) return null;
         if (track.sourceType === "youtube") {
-          return <HiddenYouTubeTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} />;
+          return <HiddenYouTubeTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} />;
         }
-        return <HiddenAudioTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} />;
+        return <HiddenAudioTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} />;
       })}
     </div>
   );
@@ -2141,20 +2289,80 @@ function disconnectAudioGraph(graph: AudioGraphNodes | null) {
   });
 }
 
-function HiddenAudioTrack({ track, active, audioEnabled, masterVolume }: { track: MusicTrack; active: ActiveMusicTrack; audioEnabled: boolean; masterVolume: number }) {
+function HiddenAudioTrack({
+  track,
+  active,
+  audioEnabled,
+  masterVolume,
+  onStatus,
+}: {
+  track: MusicTrack;
+  active: ActiveMusicTrack;
+  audioEnabled: boolean;
+  masterVolume: number;
+  onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
+}) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const graphRef = useRef<AudioGraphNodes | null>(null);
   const lastStartRef = useRef<number>(0);
+  const lastSeekRequestRef = useRef<string>("");
+
+  const reportStatus = useCallback((patch: Partial<PlaybackStatus> = {}) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    onStatus(track.id, {
+      currentTime: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
+      duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+      paused: audio.paused,
+      waiting: false,
+      error: "",
+      ...patch,
+    });
+  }, [onStatus, track.id]);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || graphRef.current) return undefined;
+    if (!audio || graphRef.current || !supportsLiveAudioEffects(track)) return undefined;
     graphRef.current = createAudioGraph(audio);
     return () => {
       disconnectAudioGraph(graphRef.current);
       graphRef.current = null;
     };
-  }, []);
+  }, [track.id, track.sourceType, track.url]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return undefined;
+    const reportReady = () => reportStatus({ waiting: false, error: "" });
+    const reportWaiting = () => reportStatus({ waiting: true });
+    const reportError = () => reportStatus({
+      waiting: false,
+      error: audio.error ? "Audio could not load. Try re-uploading it or using a different link." : "Audio playback failed.",
+    });
+
+    audio.addEventListener("loadedmetadata", reportReady);
+    audio.addEventListener("durationchange", reportReady);
+    audio.addEventListener("timeupdate", reportReady);
+    audio.addEventListener("play", reportReady);
+    audio.addEventListener("playing", reportReady);
+    audio.addEventListener("pause", reportReady);
+    audio.addEventListener("seeked", reportReady);
+    audio.addEventListener("waiting", reportWaiting);
+    audio.addEventListener("error", reportError);
+    reportReady();
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", reportReady);
+      audio.removeEventListener("durationchange", reportReady);
+      audio.removeEventListener("timeupdate", reportReady);
+      audio.removeEventListener("play", reportReady);
+      audio.removeEventListener("playing", reportReady);
+      audio.removeEventListener("pause", reportReady);
+      audio.removeEventListener("seeked", reportReady);
+      audio.removeEventListener("waiting", reportWaiting);
+      audio.removeEventListener("error", reportError);
+    };
+  }, [reportStatus]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -2182,24 +2390,50 @@ function HiddenAudioTrack({ track, active, audioEnabled, masterVolume }: { track
       audio.currentTime = 0;
       lastStartRef.current = active.startedAt;
     }
+
+    if (active.seekRequestId && lastSeekRequestRef.current !== active.seekRequestId) {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const targetTime = duration > 0
+        ? clampNumber(active.seekTo ?? 0, 0, duration)
+        : Math.max(0, active.seekTo ?? 0);
+      try {
+        audio.currentTime = targetTime;
+        lastSeekRequestRef.current = active.seekRequestId;
+        reportStatus({ currentTime: targetTime, waiting: false, error: "" });
+      } catch {
+        reportStatus({ error: "Could not seek this track yet. Wait for it to finish loading." });
+      }
+    }
+
     if (audioEnabled && active.playing) {
       if (graph?.context.state === "suspended") void graph.context.resume().catch(() => {});
-      void audio.play().catch(() => {});
+      void audio.play()
+        .then(() => reportStatus({ waiting: false, error: "" }))
+        .catch(() => {
+          reportStatus({
+            waiting: false,
+            error: "Playback was blocked. Press Enable Audio, then try Play again.",
+          });
+        });
     } else {
       audio.pause();
+      reportStatus({ waiting: false });
     }
   }, [
     active.effects,
     active.loop,
     active.muted,
     active.playing,
+    active.seekRequestId,
+    active.seekTo,
     active.startedAt,
     active.volume,
     audioEnabled,
     masterVolume,
+    reportStatus,
   ]);
 
-  return <audio ref={audioRef} src={track.url} preload="auto" crossOrigin={track.sourceType === "audio-url" ? "anonymous" : undefined} />;
+  return <audio ref={audioRef} src={track.url} preload="auto" />;
 }
 
 let youtubeApiPromise: Promise<void> | null = null;
@@ -2225,11 +2459,25 @@ function ensureYouTubeApi(): Promise<void> {
   return youtubeApiPromise;
 }
 
-function HiddenYouTubeTrack({ track, active, audioEnabled, masterVolume }: { track: MusicTrack; active: ActiveMusicTrack; audioEnabled: boolean; masterVolume: number }) {
+function HiddenYouTubeTrack({
+  track,
+  active,
+  audioEnabled,
+  masterVolume,
+  onStatus,
+}: {
+  track: MusicTrack;
+  active: ActiveMusicTrack;
+  audioEnabled: boolean;
+  masterVolume: number;
+  onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
+}) {
   const mountIdRef = useRef(uid("yt"));
   const playerRef = useRef<any>(null);
   const activeRef = useRef(active);
   const masterVolumeRef = useRef(masterVolume);
+  const audioEnabledRef = useRef(audioEnabled);
+  const lastSeekRequestRef = useRef<string>("");
   const videoId = getYouTubeVideoId(track.url);
 
   useEffect(() => {
@@ -2241,14 +2489,18 @@ function HiddenYouTubeTrack({ track, active, audioEnabled, masterVolume }: { tra
   }, [masterVolume]);
 
   useEffect(() => {
+    audioEnabledRef.current = audioEnabled;
+  }, [audioEnabled]);
+
+  useEffect(() => {
     if (!videoId) return;
     let cancelled = false;
     void ensureYouTubeApi().then(() => {
       if (cancelled || playerRef.current) return;
       const YT = (window as any).YT;
       playerRef.current = new YT.Player(mountIdRef.current, {
-        width: "1",
-        height: "1",
+        width: "220",
+        height: "220",
         videoId,
         playerVars: {
           controls: 0,
@@ -2262,10 +2514,33 @@ function HiddenYouTubeTrack({ track, active, audioEnabled, masterVolume }: { tra
           onReady: (event: any) => {
             const latest = activeRef.current;
             event.target.setVolume(Math.round(clampNumber((latest.muted ? 0 : latest.volume) * masterVolumeRef.current, 0, 1) * 100));
-            if (audioEnabled && latest.playing) event.target.playVideo();
+            onStatus(track.id, {
+              currentTime: Number(event.target.getCurrentTime?.() || 0),
+              duration: Number(event.target.getDuration?.() || 0),
+              paused: !latest.playing,
+              waiting: false,
+              error: "",
+            });
+            if (audioEnabledRef.current && latest.playing) event.target.playVideo();
           },
           onStateChange: (event: any) => {
+            onStatus(track.id, {
+              currentTime: Number(event.target.getCurrentTime?.() || 0),
+              duration: Number(event.target.getDuration?.() || 0),
+              paused: event.data !== 1,
+              waiting: event.data === 3,
+              error: "",
+            });
             if (event.data === 0 && activeRef.current.loop) event.target.playVideo();
+          },
+          onError: () => {
+            onStatus(track.id, {
+              currentTime: 0,
+              duration: 0,
+              paused: true,
+              waiting: false,
+              error: "YouTube could not play this link. Try opening the preview or using another link.",
+            });
           },
         },
       });
@@ -2277,17 +2552,38 @@ function HiddenYouTubeTrack({ track, active, audioEnabled, masterVolume }: { tra
       }
       playerRef.current = null;
     };
-  }, [audioEnabled, videoId]);
+  }, [onStatus, track.id, videoId]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const player = playerRef.current;
+      if (!player?.getCurrentTime) return;
+      try {
+        onStatus(track.id, {
+          currentTime: Number(player.getCurrentTime() || 0),
+          duration: Number(player.getDuration?.() || 0),
+          paused: !activeRef.current.playing,
+          waiting: false,
+          error: "",
+        });
+      } catch {}
+    }, 500);
+    return () => window.clearInterval(interval);
+  }, [onStatus, track.id]);
 
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
     try {
       player.setVolume(Math.round(clampNumber((active.muted ? 0 : active.volume) * masterVolume, 0, 1) * 100));
+      if (active.seekRequestId && lastSeekRequestRef.current !== active.seekRequestId && Number.isFinite(Number(active.seekTo))) {
+        player.seekTo(Math.max(0, Number(active.seekTo)), true);
+        lastSeekRequestRef.current = active.seekRequestId;
+      }
       if (audioEnabled && active.playing) player.playVideo();
       else player.pauseVideo();
     } catch {}
-  }, [active.muted, active.playing, active.volume, audioEnabled, masterVolume]);
+  }, [active.muted, active.playing, active.seekRequestId, active.seekTo, active.volume, audioEnabled, masterVolume]);
 
   if (!videoId) return null;
   return <div id={mountIdRef.current} />;
