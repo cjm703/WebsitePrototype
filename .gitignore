@@ -1,0 +1,12 @@
+node_modules
+dist
+.idea
+.env
+.env.*
+*.env
+*.env.*
+.codex-vite.log
+.codex-vite.err.log
+src/imports/figma-sprig-logs.txt
+src/imports/figma-sprig-logs-1.txt
+src/imports/pasted_text/figma-sprig-logs.txt

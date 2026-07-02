@@ -1,0 +1,22 @@
+export const DISPLAY_CONTENTS = { display: "contents" } as const;
+export const SUNKEN_INPUT = { background: "#0A0A28", border: "1px solid #1A1A4B" } as const;
+export const SUNKEN_INPUT_DIM = { color: "#5A6A8A", background: "#0A0A28", border: "1px solid #1A1A4B" } as const;
+
+export const S_MUTED = { color: "#5A6A8A" } as const;
+export const S_DIM = { color: "#3A4A6A" } as const;
+export const S_TEXT = { color: "#C0D0F0" } as const;
+export const S_ACCENT = { color: "#4A7BFF" } as const;
+export const S_GREEN = { color: "#4AFF4A" } as const;
+export const S_RED = { color: "#FF6A6A" } as const;
+export const S_SUBTLE = { color: "#7A8AAA" } as const;
+export const S_WARN = { color: "#FFAA4A" } as const;
+export const S_GREEN_BTN = { color: "#4A9A5A" } as const;
+export const S_LABEL = { color: "#5A7ABB" } as const;
+export const S_SECTION_HDR = { color: "#5A7ABB", fontWeight: 600 } as const;
+export const S_ACCENT_HDR = { color: "#4A7BFF", fontWeight: 600 } as const;
+export const S_TEXT_BOLD = { color: "#C0D0F0", fontWeight: 600 } as const;
+export const S_WARN_HDR = { color: "#FFAA4A", fontWeight: 600 } as const;
+export const S_LINK = { color: "#6A9AFF" } as const;
+export const S_SAVE_BTN = { color: "#FFFFFF", background: "#2A5ABB", border: "1px solid #4A7BFF" } as const;
+export const S_BORDER_B = { borderBottom: "1px solid #1A1A4B" } as const;
+export const S_BORDER_R = { borderRight: "1px solid #1A1A4B" } as const;
