@@ -106,6 +106,12 @@ interface CombatMusicState {
   updatedAt: string;
 }
 
+interface MusicUploadProgress {
+  label: string;
+  percent: number;
+  phase: "reading" | "saving";
+}
+
 interface DiceRollResult {
   formula: string;
   total: number;
@@ -199,11 +205,19 @@ function inferTrackSource(url: string): TrackSource {
   return getYouTubeVideoId(url) ? "youtube" : "audio-url";
 }
 
-function fileToDataUrl(file: File): Promise<string> {
+function fileToDataUrl(file: File, onProgress?: (percent: number) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onload = () => {
+      onProgress?.(100);
+      resolve(String(reader.result || ""));
+    };
     reader.onerror = () => reject(reader.error || new Error("Failed to read audio file."));
+    reader.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress?.(Math.round((event.loaded / event.total) * 90));
+      }
+    };
     reader.readAsDataURL(file);
   });
 }
@@ -257,7 +271,7 @@ function highpassFromThin(amount: number) {
 }
 
 function sourceLabel(track: MusicTrack) {
-  if (track.audioDataOmitted && !track.url) return `${track.fileName || "Uploaded file"} (shared copy needed)`;
+  if (track.audioDataOmitted && !track.url) return `${track.fileName || "Uploaded file"} (local file needed)`;
   if (track.sourceType === "youtube") return "YouTube";
   if (track.sourceType === "file") return track.fileName || "Uploaded file";
   return "Audio URL";
@@ -269,23 +283,53 @@ function hasPlayableSource(track: MusicTrack) {
   return true;
 }
 
+function isInlineFileAudio(track: MusicTrack) {
+  return track.sourceType === "file" && typeof track.url === "string" && track.url.startsWith("data:");
+}
+
+function omitInlineFileAudio(track: MusicTrack): MusicTrack {
+  return {
+    ...track,
+    url: "",
+    audioDataOmitted: true,
+  };
+}
+
 function buildLocalMusicCacheState(state: CombatMusicState): CombatMusicState {
   return {
     ...state,
     tracks: state.tracks.map((track) => {
       const shouldOmitAudioData =
-        track.sourceType === "file" &&
-        typeof track.url === "string" &&
-        track.url.startsWith("data:") &&
+        isInlineFileAudio(track) &&
         track.url.length > LOCAL_AUDIO_CACHE_OMIT_THRESHOLD;
 
-      if (!shouldOmitAudioData) return track;
+      return shouldOmitAudioData ? omitInlineFileAudio(track) : track;
+    }),
+  };
+}
 
-      return {
-        ...track,
-        url: "",
-        audioDataOmitted: true,
-      };
+function buildSharedMusicState(state: CombatMusicState): CombatMusicState {
+  return {
+    ...state,
+    tracks: state.tracks.map((track) => (
+      isInlineFileAudio(track) ? omitInlineFileAudio(track) : track
+    )),
+  };
+}
+
+function rememberLocalAudioSources(state: CombatMusicState, sources: Map<string, string>) {
+  state.tracks.forEach((track) => {
+    if (isInlineFileAudio(track)) sources.set(track.id, track.url);
+  });
+}
+
+function restoreLocalAudioSources(state: CombatMusicState, sources: Map<string, string>): CombatMusicState {
+  return {
+    ...state,
+    tracks: state.tracks.map((track) => {
+      if (track.sourceType !== "file" || track.url) return track;
+      const localUrl = sources.get(track.id);
+      return localUrl ? { ...track, url: localUrl, audioDataOmitted: false } : track;
     }),
   };
 }
@@ -377,6 +421,7 @@ export function CombatPage() {
   const [musicUrl, setMusicUrl] = useState("");
   const [musicTitle, setMusicTitle] = useState("");
   const [musicStatus, setMusicStatus] = useState("");
+  const [musicUploadProgress, setMusicUploadProgress] = useState<MusicUploadProgress | null>(null);
   const [musicSearch, setMusicSearch] = useState("");
   const [musicSort, setMusicSort] = useState<MusicSort>("recent");
   const [previewTrackId, setPreviewTrackId] = useState("");
@@ -384,6 +429,9 @@ export function CombatPage() {
   const [sceneDraft, setSceneDraft] = useState("");
   const [sceneDraftDirty, setSceneDraftDirty] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
+  const localAudioSourcesRef = useRef<Map<string, string>>(new Map());
+  const musicLoadFailuresRef = useRef(0);
+  const musicLoadRetryAtRef = useRef(0);
 
   const nonDmPlayers = useMemo(
     () => players.filter((player) => player.id !== "dm" && player.name !== "DM"),
@@ -402,18 +450,38 @@ export function CombatPage() {
   }, [currentPlayer?.id, nonDmPlayers, sharePlayerId]);
 
   const hydrate = useCallback(async () => {
+    const localMusicFallback = safeGetJson<CombatMusicState>(LOCAL_MUSIC_STATE_KEY, DEFAULT_MUSIC_STATE);
+    const shouldRetryMusicLoad = Date.now() >= musicLoadRetryAtRef.current;
+    const musicLoad = shouldRetryMusicLoad
+      ? appStore.loadCombatMusicState<CombatMusicState>(DEFAULT_MUSIC_STATE)
+          .then((state) => {
+            musicLoadFailuresRef.current = 0;
+            musicLoadRetryAtRef.current = 0;
+            return state;
+          })
+          .catch(() => {
+            musicLoadFailuresRef.current += 1;
+            if (musicLoadFailuresRef.current >= 3) {
+              musicLoadRetryAtRef.current = Date.now() + 30000;
+            }
+            return localMusicFallback;
+          })
+      : Promise.resolve(localMusicFallback);
+
     const [nextPlayers, nextCards, nextItems, nextCombat, nextMusic] = await Promise.all([
       appStore.listPlayers<PlayerData>().catch(() => buildLocalPlayerFallback()),
       appStore.listCards<ManagedCard>().catch(() => buildLocalCardsFallback()),
       appStore.listItems<ManagedItem>().catch(() => buildLocalItemsFallback()),
       appStore.loadCombatState<CombatState>(DEFAULT_COMBAT_STATE).catch(() => safeGetJson<CombatState>(LOCAL_COMBAT_STATE_KEY, DEFAULT_COMBAT_STATE)),
-      appStore.loadCombatMusicState<CombatMusicState>(DEFAULT_MUSIC_STATE).catch(() => safeGetJson<CombatMusicState>(LOCAL_MUSIC_STATE_KEY, DEFAULT_MUSIC_STATE)),
+      musicLoad,
     ]);
     setPlayers(Array.isArray(nextPlayers) ? nextPlayers : []);
     setCards(Array.isArray(nextCards) ? nextCards : []);
     setItems(Array.isArray(nextItems) ? nextItems : []);
     setCombatState(normalizeCombatState(nextCombat));
-    setMusicState(normalizeMusicState(nextMusic));
+    const normalizedMusic = normalizeMusicState(nextMusic);
+    rememberLocalAudioSources(normalizedMusic, localAudioSourcesRef.current);
+    setMusicState(restoreLocalAudioSources(normalizedMusic, localAudioSourcesRef.current));
   }, []);
 
   useEffect(() => {
@@ -445,13 +513,18 @@ export function CombatPage() {
 
   const saveMusic = useCallback(async (nextState: CombatMusicState) => {
     const normalized = normalizeMusicState({ ...nextState, updatedAt: new Date().toISOString() });
+    rememberLocalAudioSources(normalized, localAudioSourcesRef.current);
     setMusicState(normalized);
     safeSetJson(LOCAL_MUSIC_STATE_KEY, buildLocalMusicCacheState(normalized));
     try {
-      await appStore.saveCombatMusicState(normalized);
+      await appStore.saveCombatMusicState(buildSharedMusicState(normalized));
+      musicLoadFailuresRef.current = 0;
+      musicLoadRetryAtRef.current = 0;
       return true;
     } catch (error) {
       console.warn("[combat music] shared save failed", error);
+      musicLoadFailuresRef.current = Math.max(musicLoadFailuresRef.current, 3);
+      musicLoadRetryAtRef.current = Date.now() + 30000;
       return false;
     }
   }, []);
@@ -725,7 +798,7 @@ export function CombatPage() {
   const exportMusicLibrary = () => {
     const payload = {
       exportedAt: new Date().toISOString(),
-      tracks: musicState.tracks,
+      tracks: buildSharedMusicState(musicState).tracks,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -736,7 +809,7 @@ export function CombatPage() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setMusicStatus("Music library exported.");
+    setMusicStatus("Music library metadata exported.");
   };
 
   const importMusicLibrary = async (file: File | null | undefined) => {
@@ -791,16 +864,25 @@ export function CombatPage() {
   const addFileTrack = async (file: File | null | undefined) => {
     if (!file) return;
     if (!file.type.startsWith("audio/")) {
+      setMusicUploadProgress(null);
       setMusicStatus("Choose an audio file.");
       return;
     }
     if (file.size > MAX_AUDIO_FILE_BYTES) {
+      setMusicUploadProgress(null);
       setMusicStatus("That file is too large for the current shared-data upload path. Use a direct link for now.");
       return;
     }
     try {
+      setMusicUploadProgress({ label: file.name, percent: 0, phase: "reading" });
       setMusicStatus(`Reading ${file.name}...`);
-      const url = await fileToDataUrl(file);
+      const url = await fileToDataUrl(file, (percent) => {
+        setMusicUploadProgress({
+          label: file.name,
+          percent: clampNumber(percent, 0, 90),
+          phase: "reading",
+        });
+      });
       const cleanName = file.name.replace(/\.[^.]+$/, "") || "Uploaded Track";
       const nextTrack: MusicTrack = {
         id: uid("track"),
@@ -815,14 +897,20 @@ export function CombatPage() {
         tags: [],
         notes: "",
       };
+      setMusicUploadProgress({ label: cleanName, percent: 95, phase: "saving" });
       setMusicStatus(`Saving ${cleanName}...`);
       const sharedSaved = await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
+      setMusicUploadProgress({ label: cleanName, percent: 100, phase: "saving" });
       setMusicStatus(
         sharedSaved
-          ? `${cleanName} uploaded. Browser fallback saved metadata only to avoid storage quota errors.`
+          ? `${cleanName} added for this browser. Shared controls saved without embedding the audio file.`
           : `${cleanName} is available in this browser for now, but the shared save failed. Try a smaller file or a direct audio URL.`,
       );
+      window.setTimeout(() => {
+        setMusicUploadProgress((current) => current?.label === cleanName ? null : current);
+      }, 1200);
     } catch (error) {
+      setMusicUploadProgress(null);
       setMusicStatus(error instanceof Error ? error.message : "Failed to read audio file.");
     }
   };
@@ -917,7 +1005,7 @@ export function CombatPage() {
 
         {!playable && (
           <div className="mt-2 text-[10px] leading-relaxed" style={S_WARN}>
-            Audio data is not available in this browser fallback. Reconnect to shared storage or re-upload the file.
+            Audio data is not available in this browser. Re-upload the file here or use a direct audio URL.
           </div>
         )}
 
@@ -1391,8 +1479,27 @@ export function CombatPage() {
                         }}
                       />
                     </label>
+                    {musicUploadProgress && (
+                      <div className="mt-3">
+                        <div className="flex items-center justify-between gap-3 text-[9px] mb-1" style={S_DIM}>
+                          <span className="truncate">
+                            {musicUploadProgress.phase === "reading" ? "Reading" : "Saving"} {musicUploadProgress.label}
+                          </span>
+                          <span>{Math.round(musicUploadProgress.percent)}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden" style={{ background: "#05071C", border: "1px solid #172044" }}>
+                          <div
+                            className="h-full transition-all duration-200"
+                            style={{
+                              width: `${clampNumber(musicUploadProgress.percent, 0, 100)}%`,
+                              background: musicUploadProgress.phase === "saving" ? "#FFD37A" : "#6AA8FF",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                     <div className="text-[9px] mt-2 leading-relaxed" style={S_DIM}>
-                      Small audio files can be saved here. Large MP3 libraries should move to real file storage before heavy use.
+                      Uploaded files are editable local audio for this browser. Shared playback for every device needs real file storage or a direct audio URL.
                     </div>
                   </div>
 
