@@ -71,6 +71,9 @@ interface MusicTrack {
   addedBy: string;
   createdAt: string;
   fileName?: string;
+  contentType?: string;
+  sizeBytes?: number;
+  audioDataOmitted?: boolean;
   tags?: string[];
   notes?: string;
   updatedAt?: string;
@@ -119,6 +122,7 @@ const DEFAULT_AUDIO_EFFECTS: AudioEffectSettings = { reverb: 0, echo: 0, muffle:
 const QUICK_FLAGS = ["Guarded", "Concentrating", "Prone", "Hidden", "Bloodied", "Stunned"];
 const MAX_FEED_MESSAGES = 150;
 const MAX_AUDIO_FILE_BYTES = 12 * 1024 * 1024;
+const LOCAL_AUDIO_CACHE_OMIT_THRESHOLD = 256 * 1024;
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -253,9 +257,37 @@ function highpassFromThin(amount: number) {
 }
 
 function sourceLabel(track: MusicTrack) {
+  if (track.audioDataOmitted && !track.url) return `${track.fileName || "Uploaded file"} (shared copy needed)`;
   if (track.sourceType === "youtube") return "YouTube";
   if (track.sourceType === "file") return track.fileName || "Uploaded file";
   return "Audio URL";
+}
+
+function hasPlayableSource(track: MusicTrack) {
+  if (!track.url) return false;
+  if (track.sourceType === "youtube") return Boolean(getYouTubeVideoId(track.url));
+  return true;
+}
+
+function buildLocalMusicCacheState(state: CombatMusicState): CombatMusicState {
+  return {
+    ...state,
+    tracks: state.tracks.map((track) => {
+      const shouldOmitAudioData =
+        track.sourceType === "file" &&
+        typeof track.url === "string" &&
+        track.url.startsWith("data:") &&
+        track.url.length > LOCAL_AUDIO_CACHE_OMIT_THRESHOLD;
+
+      if (!shouldOmitAudioData) return track;
+
+      return {
+        ...track,
+        url: "",
+        audioDataOmitted: true,
+      };
+    }),
+  };
 }
 
 function formatTime(iso: string) {
@@ -299,6 +331,9 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
               : inferTrackSource(track.url),
             tags: normalizeTrackTags(track.tags),
             notes: typeof track.notes === "string" ? track.notes : "",
+            contentType: typeof track.contentType === "string" ? track.contentType : "",
+            sizeBytes: Number.isFinite(Number(track.sizeBytes)) ? Number(track.sizeBytes) : undefined,
+            audioDataOmitted: Boolean(track.audioDataOmitted),
             createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
             updatedAt: typeof track.updatedAt === "string" ? track.updatedAt : "",
           }))
@@ -411,8 +446,14 @@ export function CombatPage() {
   const saveMusic = useCallback(async (nextState: CombatMusicState) => {
     const normalized = normalizeMusicState({ ...nextState, updatedAt: new Date().toISOString() });
     setMusicState(normalized);
-    safeSetJson(LOCAL_MUSIC_STATE_KEY, normalized);
-    await appStore.saveCombatMusicState(normalized).catch(() => {});
+    safeSetJson(LOCAL_MUSIC_STATE_KEY, buildLocalMusicCacheState(normalized));
+    try {
+      await appStore.saveCombatMusicState(normalized);
+      return true;
+    } catch (error) {
+      console.warn("[combat music] shared save failed", error);
+      return false;
+    }
   }, []);
 
   const postFeedMessage = useCallback(async (message: Omit<CombatFeedMessage, "id" | "createdAt">) => {
@@ -758,6 +799,7 @@ export function CombatPage() {
       return;
     }
     try {
+      setMusicStatus(`Reading ${file.name}...`);
       const url = await fileToDataUrl(file);
       const cleanName = file.name.replace(/\.[^.]+$/, "") || "Uploaded Track";
       const nextTrack: MusicTrack = {
@@ -766,13 +808,20 @@ export function CombatPage() {
         sourceType: "file",
         url,
         fileName: file.name,
+        contentType: file.type || "audio/*",
+        sizeBytes: file.size,
         addedBy: currentUser || "DM",
         createdAt: new Date().toISOString(),
         tags: [],
         notes: "",
       };
-      setMusicStatus(`${cleanName} uploaded.`);
-      await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
+      setMusicStatus(`Saving ${cleanName}...`);
+      const sharedSaved = await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
+      setMusicStatus(
+        sharedSaved
+          ? `${cleanName} uploaded. Browser fallback saved metadata only to avoid storage quota errors.`
+          : `${cleanName} is available in this browser for now, but the shared save failed. Try a smaller file or a direct audio URL.`,
+      );
     } catch (error) {
       setMusicStatus(error instanceof Error ? error.message : "Failed to read audio file.");
     }
@@ -827,6 +876,7 @@ export function CombatPage() {
     const active = activeById.get(track.id);
     const effects = normalizeAudioEffects(active?.effects);
     const isEditableAudio = track.sourceType !== "youtube";
+    const playable = hasPlayableSource(track);
     const borderColor = active?.muted ? "#FF6A6A" : active?.playing ? "#4AFF7A" : "#2A355F";
 
     return (
@@ -840,7 +890,7 @@ export function CombatPage() {
           </div>
           {isDM && (
             <div className="flex items-center gap-1">
-              <button onClick={() => setPreviewTrackId(previewTrackId === track.id ? "" : track.id)} className={`${retro.button} p-2`} style={previewTrackId === track.id ? S_WARN : S_MUTED} title="Preview track">
+              <button disabled={!playable} onClick={() => setPreviewTrackId(previewTrackId === track.id ? "" : track.id)} className={`${retro.button} p-2 disabled:opacity-40`} style={previewTrackId === track.id ? S_WARN : S_MUTED} title="Preview track">
                 <FileText size={13} />
               </button>
               <button onClick={() => void deleteTrack(track.id)} className={`${retro.button} p-2`} style={S_RED} title="Delete track">
@@ -865,15 +915,22 @@ export function CombatPage() {
           </div>
         )}
 
+        {!playable && (
+          <div className="mt-2 text-[10px] leading-relaxed" style={S_WARN}>
+            Audio data is not available in this browser fallback. Reconnect to shared storage or re-upload the file.
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-2 mt-4">
           {isDM ? (
             <div style={DISPLAY_CONTENTS}>
               <button
+                disabled={!playable}
                 onClick={() => void upsertActiveTrack(track.id, {
                   playing: !active?.playing,
                   startedAt: !active?.playing ? Date.now() : active?.startedAt || Date.now(),
                 })}
-                className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1`}
+                className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1 disabled:opacity-40`}
                 style={active?.playing ? S_WARN : S_GREEN}
               >
                 {active?.playing ? <Pause size={12} /> : <Play size={12} />}
@@ -1867,6 +1924,7 @@ function AudioPlaybackLayer({ musicState, audioEnabled }: { musicState: CombatMu
       {musicState.active.map((active) => {
         const track = tracksById.get(active.trackId);
         if (!track) return null;
+        if (!hasPlayableSource(track)) return null;
         if (track.sourceType === "youtube") {
           return <HiddenYouTubeTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} />;
         }
