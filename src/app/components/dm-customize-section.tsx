@@ -40,11 +40,14 @@ const DEFAULT_BORED_LINES = [
 ];
 const CUSTOMIZE_EVENT = "inet-dm-customize-updated";
 
+<<<<<<< HEAD
 interface PartyColorStateDoc {
   canvasData?: string;
   prompt?: string;
 }
 
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 
 export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[] }) {
@@ -76,11 +79,15 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
       void appStore.saveDmCustomizeState({ mascotTriggers, partyColorPrompt, boredLines })
+<<<<<<< HEAD
         .then(async () => {
           try {
             const partyColorState = await appStore.loadPartyColorState<PartyColorStateDoc>({ canvasData: "", prompt: "" });
             await appStore.savePartyColorState({ ...partyColorState, prompt: partyColorPrompt });
           } catch {}
+=======
+        .then(() => {
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
           window.dispatchEvent(new CustomEvent(CUSTOMIZE_EVENT));
         })
         .catch(() => {});

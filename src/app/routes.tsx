@@ -10,7 +10,10 @@ const interfaceChildren = [
   { path: "inet-news", lazy: () => import("./components/inet-news").then(m => ({ Component: m.InetNews })) },
   { path: "inet-page/:id", lazy: () => import("./components/inet-page").then(m => ({ Component: m.InetPage })) },
   { path: "personal-files", lazy: () => import("./components/personal-files").then(m => ({ Component: m.PersonalFiles })) },
+<<<<<<< HEAD
   { path: "combat", lazy: () => import("./components/combat-page").then(m => ({ Component: m.CombatPage })) },
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   { path: "nexus-nomad", lazy: () => import("./components/nexus-nomad").then(m => ({ Component: m.NexusNomad })) },
   { path: "intelli-maps", lazy: () => import("./components/intelli-maps").then(m => ({ Component: m.IntelliMaps })) },
   { path: "dm-area", lazy: () => import("./components/dm-area").then(m => ({ Component: m.DMArea })) },

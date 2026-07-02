@@ -13,7 +13,10 @@ import gnarpyImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { SUNKEN_INPUT, S_MUTED, S_DIM, S_ACCENT, S_TEXT, S_SUBTLE, S_LINK, S_ACCENT_HDR, S_TEXT_BOLD, S_WARN_HDR, S_WARN, S_LABEL, S_GREEN_BTN } from "./shared-styles";
 import { getWikiBlockSearchText, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
+<<<<<<< HEAD
 import { appStore } from "@/lib/app-store";
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 // ========================
 // Types
@@ -163,6 +166,7 @@ export function InetSearch() {
   // ========================
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
+<<<<<<< HEAD
   const [sitePages, setSitePages] = useState<SitePage[]>(() => safeGetJson("inet-dm-sites", []));
   const [wikiTagDefs, setWikiTagDefs] = useState<{ id: string; name: string; description: string }[]>(() => safeGetJson("inet-dm-wikiTags", []));
 
@@ -195,12 +199,22 @@ export function InetSearch() {
 
   const allPages = useMemo((): SitePage[] => {
     const raw: SitePage[] = sitePages;
+=======
+  const wikiTagDefs: { id: string; name: string; description: string }[] = useMemo(() => safeGetJson("inet-dm-wikiTags", []), [hasSearched]);
+
+  const allPages = useMemo((): SitePage[] => {
+    const raw: SitePage[] = safeGetJson("inet-dm-sites", []);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
     if (isDM) return raw;
     return raw.filter((p) => {
       const vis = p.playerVisibility?.[currentUserId];
       return vis !== "hidden";
     });
+<<<<<<< HEAD
   }, [currentUserId, isDM, sitePages]);
+=======
+  }, [hasSearched]);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
   const loadAllResults = useCallback((): SearchResult[] => {
     return allPages.map((page) => ({

@@ -8,6 +8,12 @@ import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_GREEN, S_TEXT } from "./shared-styl
 
 const CANVAS_SIZE = 250;
 const PIXEL_SCALE = 5;
+<<<<<<< HEAD
+=======
+const STORAGE_KEY = "inet-party-color-canvas";
+const PROMPT_KEY = "inet-dm-party-color-prompt";
+const CURSORS_KEY = "inet-party-color-cursors";
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 const CURSOR_STALE_MS = 4000;
 const CURSOR_HIDE_RADIUS = 60;
 
@@ -25,6 +31,7 @@ interface PartyColorStateDoc {
   prompt: string;
 }
 
+<<<<<<< HEAD
 interface DmCustomizePromptState {
   partyColorPrompt?: string;
 }
@@ -41,6 +48,8 @@ async function loadPartyColorStateWithPromptFallback(): Promise<PartyColorStateD
   };
 }
 
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 const COLOR_PALETTE = [
   { name: "Black", hex: "#000000" },
   { name: "White", hex: "#FFFFFF" },
@@ -154,7 +163,11 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
       }
     };
 
+<<<<<<< HEAD
     void loadPartyColorStateWithPromptFallback().then(applyState).catch(() => {});
+=======
+    void appStore.loadPartyColorState<PartyColorStateDoc>({ canvasData: "", prompt: "" }).then(applyState).catch(() => {});
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
     if (!isPageVisible) return () => { cancelled = true; };
     const interval = setInterval(() => {
@@ -664,4 +677,8 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
       </div>
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9

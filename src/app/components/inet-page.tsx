@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import React, { useEffect, useMemo, useState } from "react";
+=======
+import React, { useMemo, useState } from "react";
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 import { useParams, useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_ACCENT, S_SUBTLE, S_RED, S_WARN } from "./shared-styles";
@@ -10,7 +14,10 @@ import {
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { getPageIcon } from "./page-icons";
 import { RenderFormattedText } from "./render-text";
+<<<<<<< HEAD
 import { appStore } from "@/lib/app-store";
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 import {
   DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS,
   WIKI_BLOCK_COLUMNS,
@@ -55,6 +62,7 @@ interface WikiArticleRelationship {
   note?: string;
 }
 
+<<<<<<< HEAD
 interface WikiTagField {
   id: string;
   name: string;
@@ -78,6 +86,8 @@ interface CustomPanelStyle {
   border: string;
 }
 
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 interface SitePage {
   id: string;
   title: string;
@@ -171,11 +181,22 @@ const BUILTIN_PANEL_STYLE_MAP: Record<string, { accent: string; bg: string; bord
   secret: { accent: "#FF6A6A", bg: "#1A0A0A", border: "#3A1A1A" },
 };
 
+<<<<<<< HEAD
 function getPanelStyle(styleId: string | undefined, customStyles: CustomPanelStyle[] = safeGetJson("inet-custom-panel-styles", [])): { accent: string; bg: string; border: string } {
   const id = styleId || "neutral";
   if (BUILTIN_PANEL_STYLE_MAP[id]) return BUILTIN_PANEL_STYLE_MAP[id];
   const found = customStyles.find((c) => c.id === id);
   if (found) return { accent: found.accent, bg: found.bg, border: found.border };
+=======
+function getPanelStyle(styleId: string | undefined): { accent: string; bg: string; border: string } {
+  const id = styleId || "neutral";
+  if (BUILTIN_PANEL_STYLE_MAP[id]) return BUILTIN_PANEL_STYLE_MAP[id];
+  try {
+    const custom: { id: string; accent: string; bg: string; border: string }[] = safeGetJson("inet-custom-panel-styles", []);
+    const found = custom.find((c) => c.id === id);
+    if (found) return { accent: found.accent, bg: found.bg, border: found.border };
+  } catch {}
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   return BUILTIN_PANEL_STYLE_MAP.neutral;
 }
 
@@ -403,6 +424,7 @@ export function InetPage() {
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
   const [articleRevealed, setArticleRevealed] = useState(false);
   const [activeTabbedReferenceTabs, setActiveTabbedReferenceTabs] = useState<Record<string, string>>({});
+<<<<<<< HEAD
   const [pages, setPages] = useState<SitePage[]>(() => safeGetJson("inet-dm-sites", []));
   const [wikiTagDefs, setWikiTagDefs] = useState<WikiTagDef[]>(() => safeGetJson("inet-dm-wikiTags", []));
   const [customPanelStyles, setCustomPanelStyles] = useState<CustomPanelStyle[]>(() => safeGetJson("inet-custom-panel-styles", []));
@@ -437,6 +459,11 @@ export function InetPage() {
     };
   }, []);
 
+=======
+
+  const pages: SitePage[] = safeGetJson("inet-dm-sites", []);
+  const wikiTagDefs: { id: string; name: string; description: string; fields: { id: string; name: string; type?: string; options?: string[]; placeholder?: string; required?: boolean }[] }[] = safeGetJson("inet-dm-wikiTags", []);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   const page = pages.find((p) => p.id === id);
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
@@ -632,7 +659,11 @@ export function InetPage() {
 
   const renderArticlePanel = (panel: WikiPanel, zone: WikiPanelPlacement) => {
     if (!panel.title && !panel.content && !panel.mediaUrl) return null;
+<<<<<<< HEAD
     const ps = getPanelStyle(panel.style, customPanelStyles);
+=======
+    const ps = getPanelStyle(panel.style);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
     const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
     const vMode = panel.visibilityMode || "spoiler";
     const isAllowed = !hasRestriction || isDM || panel.assignedTo.includes(currentUserId);
@@ -738,7 +769,11 @@ export function InetPage() {
     const showBlockContent = requiresGlobalReveal
       ? isRevealed
       : isDM || isAllowed || block.visibility.mode === "visible" || isRevealed;
+<<<<<<< HEAD
     const ps = getPanelStyle(block.style, customPanelStyles);
+=======
+    const ps = getPanelStyle(block.style);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
     const accentColor = block.appearance.accentColor || ps.accent || accent;
     const borderTone = block.appearance.borderColor || ps.border || borderColor;
     const backgroundTone = block.appearance.backgroundColor || (ps.bg === "transparent" ? "rgba(8, 10, 34, 0.68)" : ps.bg || bg);
@@ -1489,8 +1524,13 @@ export function InetPage() {
                 const appliedTags = wt.map((name) => ({
                   name,
                   def: wikiTagDefs.find((d) => d.name === name),
+<<<<<<< HEAD
                 })).filter((t) => t.def && (t.def.fields || []).length > 0);
                 const hasAnyValue = appliedTags.some((t) => (t.def!.fields || []).some((f) => fields[`${t.name}::${f.name}`]));
+=======
+                })).filter((t) => t.def && t.def.fields.length > 0);
+                const hasAnyValue = appliedTags.some((t) => t.def!.fields.some((f) => fields[`${t.name}::${f.name}`]));
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
                 if (appliedTags.length === 0 || !hasAnyValue) return null;
                 return (
                   <div className="mb-6" id="article-properties">
@@ -1502,7 +1542,11 @@ export function InetPage() {
                     </h2>
                     <div className="space-y-3">
                       {appliedTags.map((t) => {
+<<<<<<< HEAD
                         const filledFields = (t.def!.fields || []).filter((f) => fields[`${t.name}::${f.name}`]);
+=======
+                        const filledFields = t.def!.fields.filter((f) => fields[`${t.name}::${f.name}`]);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
                         if (filledFields.length === 0) return null;
                         return (
                           <div key={t.name}>
@@ -1725,7 +1769,11 @@ export function InetPage() {
 
               {false && panels.map((panel, idx) => {
                 if (!panel.title && !panel.content) return null;
+<<<<<<< HEAD
                 const ps = getPanelStyle(panel.style, customPanelStyles);
+=======
+                const ps = getPanelStyle(panel.style);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
                 const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
                 const vMode = panel.visibilityMode || "spoiler";
                 const isAllowed = !hasRestriction || isDM || panel.assignedTo.includes(currentUserId);

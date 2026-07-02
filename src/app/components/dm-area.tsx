@@ -480,7 +480,10 @@ type SectionId =
   | "customize"
   | "calendar"
   | "arcade"
+<<<<<<< HEAD
   | "adventure"
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   | "reactions"
   | "nodetrees";
 

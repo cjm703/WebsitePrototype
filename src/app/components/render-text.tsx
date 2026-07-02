@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { safeGetItem } from "./safe-storage";
@@ -10,6 +11,11 @@ interface ArticleLookupEntry {
 
 let sharedArticleLookupPromise: Promise<Map<string, ArticleLookupEntry>> | null = null;
 let sharedArticleLookupCache: Map<string, ArticleLookupEntry> | null = null;
+=======
+import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router";
+import { safeGetItem } from "./safe-storage";
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 /**
  * Detects whether a string contains HTML tags (from the rich text editor).
@@ -20,6 +26,7 @@ function containsHtml(text: string): boolean {
 
 /**
  * Builds a lookup map from article title (lowercased) → { id, title }
+<<<<<<< HEAD
  * Uses shared wiki data with local storage fallback.
  */
 function buildArticleLookup(pages: ArticleLookupEntry[]): Map<string, ArticleLookupEntry> {
@@ -56,6 +63,22 @@ function loadSharedArticleLookup(): Promise<Map<string, ArticleLookupEntry>> {
       });
   }
   return sharedArticleLookupPromise;
+=======
+ * from the DM sites stored in localStorage. Cached per render via useMemo.
+ */
+function loadArticleLookup(): Map<string, { id: string; title: string }> {
+  const map = new Map<string, { id: string; title: string }>();
+  try {
+    const raw = safeGetItem("inet-dm-sites");
+    if (raw) {
+      const pages: { id: string; title: string }[] = JSON.parse(raw);
+      for (const p of pages) {
+        if (p.title) map.set(p.title.toLowerCase(), { id: p.id, title: p.title });
+      }
+    }
+  } catch {}
+  return map;
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 }
 
 function escapeHtml(str: string): string {
@@ -68,7 +91,11 @@ function escapeHtml(str: string): string {
  */
 function parseWikiLinks(
   line: string,
+<<<<<<< HEAD
   lookup: Map<string, ArticleLookupEntry>,
+=======
+  lookup: Map<string, { id: string; title: string }>,
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   navigate: (path: string) => void,
 ): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
@@ -151,6 +178,7 @@ export function RenderFormattedText({
   sectionRevealed?: boolean;
 }) {
   const navigate = useNavigate();
+<<<<<<< HEAD
   const [articleLookup, setArticleLookup] = useState<Map<string, ArticleLookupEntry>>(() => loadLocalArticleLookup());
   const contentRef = useRef<HTMLDivElement>(null);
   const [revealedSpoilers, setRevealedSpoilers] = useState<Set<string>>(new Set());
@@ -169,6 +197,12 @@ export function RenderFormattedText({
     };
   }, []);
 
+=======
+  const articleLookup = useMemo(() => loadArticleLookup(), []);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [revealedSpoilers, setRevealedSpoilers] = useState<Set<string>>(new Set());
+
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   const handleLinkClick = (e: React.MouseEvent) => {
     const target = (e.target as HTMLElement).closest("a[href]");
     if (target) {

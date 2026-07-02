@@ -5,7 +5,10 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Cloud, CloudRain, CloudDrizzle, C
 import { getPlayerTheme, buildPageGradient, firstColor, ts } from "./player-theme";
 import { safeGetItem } from "./safe-storage";
 import { DISPLAY_CONTENTS } from "./shared-styles";
+<<<<<<< HEAD
 import { appStore } from "@/lib/app-store";
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 const CALENDAR_MONTHS = [
   "Lunara", "Selene", "Artemina", "Diantha", "Solyndra", "Astraeus", "Eosara",
@@ -293,6 +296,7 @@ interface DayForecast {
   temp: string;
 }
 
+<<<<<<< HEAD
 interface CalendarWeatherState {
   calendarDate?: CalendarDate;
   calendar?: CalendarDate;
@@ -329,6 +333,8 @@ const loadLegacyForecast = (): Record<string, DayForecast> => {
   }
 };
 
+=======
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 const getSegmentMidAngle = (segIdx: number) => {
   if (segIdx === 14) {
     return 13 * MONTH_ARC + STARFALL_ARC / 2;
@@ -340,6 +346,7 @@ export function CalendarPage() {
   const navigate = useNavigate();
   const theme = getPlayerTheme();
 
+<<<<<<< HEAD
   const [currentDate, setCurrentDate] = useState<CalendarDate>(loadLegacyCalendarDate);
   const [flavorTexts, setFlavorTexts] = useState<Record<string, string>>(loadLegacyFlavorTexts);
   const [selectedMonth, setSelectedMonth] = useState(currentDate.isStarfall ? 14 : currentDate.month);
@@ -387,6 +394,46 @@ export function CalendarPage() {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
+=======
+
+  const loadCal = (): CalendarDate => {
+    try {
+      const raw = safeGetItem("inet-dm-calendar");
+      return raw ? JSON.parse(raw) : { month: 1, day: 1, year: 1, isStarfall: false };
+    } catch { return { month: 1, day: 1, year: 1, isStarfall: false }; }
+  };
+
+  const loadFlavorTexts = (): Record<string, string> => {
+    try {
+      const raw = safeGetItem("inet-dm-month-flavors");
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  };
+
+  const [currentDate, setCurrentDate] = useState<CalendarDate>(loadCal);
+  const [flavorTexts, setFlavorTexts] = useState<Record<string, string>>(loadFlavorTexts);
+  const [selectedMonth, setSelectedMonth] = useState(currentDate.isStarfall ? 14 : currentDate.month);
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
+  const [wheelRotation, setWheelRotation] = useState(() => -getSegmentMidAngle(currentDate.isStarfall ? 14 : currentDate.month));
+  const [forecast, setForecast] = useState<Record<string, DayForecast>>(() => {
+    try {
+      const raw = safeGetItem("inet-dm-forecast");
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+
+  useEffect(() => {
+    const onFocus = () => {
+      setCurrentDate(loadCal());
+      setFlavorTexts(loadFlavorTexts());
+      try {
+        const raw = safeGetItem("inet-dm-forecast");
+        setForecast(raw ? JSON.parse(raw) : {});
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   }, []);
 
   useEffect(() => {
@@ -1164,4 +1211,8 @@ export function CalendarPage() {
       `}</style>
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9

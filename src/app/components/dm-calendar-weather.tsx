@@ -78,7 +78,11 @@ export function DMCalendarWeather() {
     let cancelled = false;
     void appStore.loadCalendarWeatherState({ calendarDate: DEFAULT_CALENDAR, weather: DEFAULT_WEATHER, monthFlavorTexts: {}, dailyForecast: {} }).then((state: any) => {
       if (cancelled) return;
+<<<<<<< HEAD
       setCalendarDate(state.calendarDate || state.calendar || DEFAULT_CALENDAR);
+=======
+      setCalendarDate(state.calendarDate || DEFAULT_CALENDAR);
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
       setWeather(state.weather || DEFAULT_WEATHER);
       setMonthFlavorTexts(state.monthFlavorTexts || {});
       setDailyForecast(state.dailyForecast || {});
@@ -468,4 +472,8 @@ export function DMCalendarWeather() {
       </div>
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
