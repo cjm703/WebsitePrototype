@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+﻿import React, { useState, useEffect, useRef, useCallback } from "react";
 import { retro } from "./retro-styles";
 import { Eraser, Download, Eye, EyeOff, Grid3x3 } from "lucide-react";
 import { usePageVisibility } from "./use-visibility";
@@ -8,12 +8,6 @@ import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_GREEN, S_TEXT } from "./shared-styl
 
 const CANVAS_SIZE = 250;
 const PIXEL_SCALE = 5;
-<<<<<<< HEAD
-=======
-const STORAGE_KEY = "inet-party-color-canvas";
-const PROMPT_KEY = "inet-dm-party-color-prompt";
-const CURSORS_KEY = "inet-party-color-cursors";
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 const CURSOR_STALE_MS = 4000;
 const CURSOR_HIDE_RADIUS = 60;
 
@@ -31,7 +25,6 @@ interface PartyColorStateDoc {
   prompt: string;
 }
 
-<<<<<<< HEAD
 interface DmCustomizePromptState {
   partyColorPrompt?: string;
 }
@@ -48,8 +41,6 @@ async function loadPartyColorStateWithPromptFallback(): Promise<PartyColorStateD
   };
 }
 
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 const COLOR_PALETTE = [
   { name: "Black", hex: "#000000" },
   { name: "White", hex: "#FFFFFF" },
@@ -163,11 +154,7 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
       }
     };
 
-<<<<<<< HEAD
     void loadPartyColorStateWithPromptFallback().then(applyState).catch(() => {});
-=======
-    void appStore.loadPartyColorState<PartyColorStateDoc>({ canvasData: "", prompt: "" }).then(applyState).catch(() => {});
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
     if (!isPageVisible) return () => { cancelled = true; };
     const interval = setInterval(() => {
@@ -403,7 +390,7 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
                   imageRendering: "pixelated",
                 }}
               />
-              {/* Grid overlay canvas — sits on top, receives all mouse events */}
+              {/* Grid overlay canvas â€” sits on top, receives all mouse events */}
               <canvas
                 ref={gridRef}
                 width={displaySize}
@@ -479,11 +466,11 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
             style={{ color: "#3A4A6A", fontFamily: "'Courier New', monospace" }}
           >
             <span>{CANVAS_SIZE}x{CANVAS_SIZE}px</span>
-            <span>·</span>
+            <span>Â·</span>
             <span>Shared canvas</span>
             {showOtherPlayers && Object.keys(otherCursors).length > 0 && (
               <div style={DISPLAY_CONTENTS}>
-                <span>·</span>
+                <span>Â·</span>
                 <span style={S_GREEN}>
                   {Object.keys(otherCursors).length} other{Object.keys(otherCursors).length !== 1 ? "s" : ""} drawing
                 </span>
@@ -668,17 +655,13 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
           style={{ color: "#3A4A6A", fontFamily: "'Courier New', monospace" }}
         >
           <div>
-            <span style={S_MUTED}>CONTROLS:</span> Click and drag to draw · Select colors from the palette · Use the eraser to correct mistakes
+            <span style={S_MUTED}>CONTROLS:</span> Click and drag to draw Â· Select colors from the palette Â· Use the eraser to correct mistakes
           </div>
           <div>
-            <span style={S_MUTED}>INFO:</span> Shared canvas — all players draw on the same board. Toggle the pixel grid in Settings to see cell boundaries.
+            <span style={S_MUTED}>INFO:</span> Shared canvas â€” all players draw on the same board. Toggle the pixel grid in Settings to see cell boundaries.
           </div>
         </div>
       </div>
     </div>
   );
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+﻿import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { SearchLogo } from "./search-logo";
 import { usePageVisibility } from "./use-visibility";
@@ -13,10 +13,7 @@ import gnarpyImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { SUNKEN_INPUT, S_MUTED, S_DIM, S_ACCENT, S_TEXT, S_SUBTLE, S_LINK, S_ACCENT_HDR, S_TEXT_BOLD, S_WARN_HDR, S_WARN, S_LABEL, S_GREEN_BTN } from "./shared-styles";
 import { getWikiBlockSearchText, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
-<<<<<<< HEAD
 import { appStore } from "@/lib/app-store";
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 // ========================
 // Types
@@ -166,7 +163,6 @@ export function InetSearch() {
   // ========================
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
-<<<<<<< HEAD
   const [sitePages, setSitePages] = useState<SitePage[]>(() => safeGetJson("inet-dm-sites", []));
   const [wikiTagDefs, setWikiTagDefs] = useState<{ id: string; name: string; description: string }[]>(() => safeGetJson("inet-dm-wikiTags", []));
 
@@ -199,22 +195,12 @@ export function InetSearch() {
 
   const allPages = useMemo((): SitePage[] => {
     const raw: SitePage[] = sitePages;
-=======
-  const wikiTagDefs: { id: string; name: string; description: string }[] = useMemo(() => safeGetJson("inet-dm-wikiTags", []), [hasSearched]);
-
-  const allPages = useMemo((): SitePage[] => {
-    const raw: SitePage[] = safeGetJson("inet-dm-sites", []);
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
     if (isDM) return raw;
     return raw.filter((p) => {
       const vis = p.playerVisibility?.[currentUserId];
       return vis !== "hidden";
     });
-<<<<<<< HEAD
   }, [currentUserId, isDM, sitePages]);
-=======
-  }, [hasSearched]);
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
   const loadAllResults = useCallback((): SearchResult[] => {
     return allPages.map((page) => ({
@@ -617,7 +603,7 @@ export function InetSearch() {
                   <span style={S_TEXT_BOLD}>"{initialQuery}"</span>
                 </span>
               ) : (
-                <span> — showing all articles</span>
+                <span> â€” showing all articles</span>
               )}
               {" "}({searchTime}s)
             </span>
@@ -759,7 +745,7 @@ export function InetSearch() {
           {/* Footer */}
           <div className="text-center pb-4 mt-8">
             <span className="text-[10px]" style={{ color: "#2A3A5A" }}>
-              I-Net™ Wiki · An Intelli Corporation Product © 2026 · {allResults.length} articles indexed
+              I-Netâ„¢ Wiki Â· An Intelli Corporation Product Â© 2026 Â· {allResults.length} articles indexed
             </span>
           </div>
         </div>
@@ -1032,7 +1018,7 @@ export function InetSearch() {
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                 <div className="flex-1">
                   <h1 className="text-[22px] mb-2" style={{ color: "#C0D0F0", fontWeight: 700 }}>
-                    Welcome to I-Net™ Wiki
+                    Welcome to I-Netâ„¢ Wiki
                   </h1>
                   <p className="text-[13px] leading-relaxed" style={S_SUBTLE}>
                     The comprehensive encyclopedia of the realm, maintained by the scholars of the Intelli Corporation.
@@ -1162,7 +1148,7 @@ export function InetSearch() {
             </div>
           )}
 
-          {/* ── Welcome ── */}
+          {/* â”€â”€ Welcome â”€â”€ */}
           <WikiSection
             title="Welcome to the I-Net Wiki"
             icon={<Globe size={14} style={S_ACCENT} />}
@@ -1170,7 +1156,7 @@ export function InetSearch() {
           >
             <div className="text-[13px] leading-relaxed" style={{ color: "#8A9ABB" }}>
               <p className="mb-2">
-                The <span style={{ color: "#5A9AFF", fontWeight: 600 }}>I-Net Wiki Encyclopedia</span> is your comprehensive guide to everything within our campaign world. This community-curated archive serves as the collective memory of our adventure — chronicling the lands we explore, the heroes and villains we encounter, and the lore that binds it all together.
+                The <span style={{ color: "#5A9AFF", fontWeight: 600 }}>I-Net Wiki Encyclopedia</span> is your comprehensive guide to everything within our campaign world. This community-curated archive serves as the collective memory of our adventure â€” chronicling the lands we explore, the heroes and villains we encounter, and the lore that binds it all together.
               </p>
               <p style={{ color: "#6A7A9A" }}>
                 Browse by category, search for specific topics, or explore a random article. All entries are maintained by the Dungeon Master and may evolve as the story unfolds.
@@ -1178,7 +1164,7 @@ export function InetSearch() {
             </div>
           </WikiSection>
 
-          {/* ── Introduction ── */}
+          {/* â”€â”€ Introduction â”€â”€ */}
           <WikiSection
             title="Introduction"
             icon={<BookOpen size={14} style={S_ACCENT} />}
@@ -1191,7 +1177,7 @@ export function InetSearch() {
                   <span className="text-[12px] font-semibold" style={{ color: "#5A9AFF" }}>Browse</span>
                 </div>
                 <p className="text-[11px] leading-relaxed" style={{ color: "#6A7A9A" }}>
-                  Explore articles organized by category — from <span style={S_SUBTLE}>Characters</span> and <span style={S_SUBTLE}>Locations</span> to <span style={S_SUBTLE}>Lore</span> and <span style={S_SUBTLE}>Items</span>. Use the category portals below to find what you need.
+                  Explore articles organized by category â€” from <span style={S_SUBTLE}>Characters</span> and <span style={S_SUBTLE}>Locations</span> to <span style={S_SUBTLE}>Lore</span> and <span style={S_SUBTLE}>Items</span>. Use the category portals below to find what you need.
                 </p>
               </div>
               <div className="space-y-2">
@@ -1293,7 +1279,7 @@ export function InetSearch() {
                         >
                           {page.title}
                         </button>
-                        {excerpt ? ` — ${excerpt}` : "?"}
+                        {excerpt ? ` â€” ${excerpt}` : "?"}
                       </div>
                     ))}
                   </div>
@@ -1456,10 +1442,10 @@ export function InetSearch() {
           <div className="text-center pb-4 flex flex-col items-center gap-1">
             <WikiDivider />
             <span className="text-[10px]" style={S_DIM}>
-              I-Net™ Wiki is a project of the Intelli Corporation. Content is available under the Intelli Free Documentation License.
+              I-Netâ„¢ Wiki is a project of the Intelli Corporation. Content is available under the Intelli Free Documentation License.
             </span>
             <span className="text-[9px]" style={{ color: "#2A3A5A" }}>
-              Best viewed at 800x600 · I-Net™ Wiki © 2026
+              Best viewed at 800x600 Â· I-Netâ„¢ Wiki Â© 2026
             </span>
             <span
               ref={motdRef}

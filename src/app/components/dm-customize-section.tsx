@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
 import { S_MUTED, S_TEXT, S_ACCENT_HDR, S_SECTION_HDR, S_GREEN_BTN, S_RED, S_ACCENT, S_SUBTLE, S_WARN } from "./dm-styles";
@@ -40,14 +40,11 @@ const DEFAULT_BORED_LINES = [
 ];
 const CUSTOMIZE_EVENT = "inet-dm-customize-updated";
 
-<<<<<<< HEAD
 interface PartyColorStateDoc {
   canvasData?: string;
   prompt?: string;
 }
 
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 
 export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[] }) {
@@ -79,15 +76,11 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
       void appStore.saveDmCustomizeState({ mascotTriggers, partyColorPrompt, boredLines })
-<<<<<<< HEAD
         .then(async () => {
           try {
             const partyColorState = await appStore.loadPartyColorState<PartyColorStateDoc>({ canvasData: "", prompt: "" });
             await appStore.savePartyColorState({ ...partyColorState, prompt: partyColorPrompt });
           } catch {}
-=======
-        .then(() => {
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
           window.dispatchEvent(new CustomEvent(CUSTOMIZE_EVENT));
         })
         .catch(() => {});
@@ -268,14 +261,14 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
                 className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] w-full outline-none`}
                 style={{ ...S_TEXT, border: "1px solid #2A2A5B" }}
               >
-                <option value="" style={S_MUTED}>— Select a status effect —</option>
+                <option value="" style={S_MUTED}>â€” Select a status effect â€”</option>
                 {statusTags.map((tag) => (
                   <option key={tag.id} value={tag.name}>{tag.name}</option>
                 ))}
               </select>
               {editingTrigger.statusEffectName && !statusTags.some(t => t.name === editingTrigger.statusEffectName) && (
                 <div className="text-[9px] mt-1" style={S_WARN}>
-                  ⚠ "{editingTrigger.statusEffectName}" is not in the current status effects list.
+                  âš  "{editingTrigger.statusEffectName}" is not in the current status effects list.
                 </div>
               )}
             </div>
@@ -309,7 +302,7 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
               <div className="mt-3">
                 <label className="text-[10px] block mb-1" style={S_MUTED}>
                   Filter by Status Effect:
-                  <span className="ml-1" style={S_MUTED}>(optional — leave as "Any" to count all effects)</span>
+                  <span className="ml-1" style={S_MUTED}>(optional â€” leave as "Any" to count all effects)</span>
                 </label>
                 <select
                   value={editingTrigger.statusEffectName}
@@ -324,7 +317,7 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
                 </select>
                 {editingTrigger.statusEffectName && !statusTags.some(t => t.name === editingTrigger.statusEffectName) && (
                   <div className="text-[9px] mt-1" style={S_WARN}>
-                    ⚠ "{editingTrigger.statusEffectName}" is not in the current status effects list.
+                    âš  "{editingTrigger.statusEffectName}" is not in the current status effects list.
                   </div>
                 )}
               </div>
@@ -432,7 +425,7 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
                       )}
                       {trigger.type === "status_effect_count" && (
                         <span className="text-[10px]" style={{ color: "#4AE0C0" }}>
-                          Count ≥ {trigger.threshold}{trigger.statusEffectName ? ` (${trigger.statusEffectName})` : " (any)"}
+                          Count â‰¥ {trigger.threshold}{trigger.statusEffectName ? ` (${trigger.statusEffectName})` : " (any)"}
                         </span>
                       )}
                       <span className="text-[10px]" style={S_MUTED}>

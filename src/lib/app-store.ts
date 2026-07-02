@@ -1,4 +1,4 @@
-import {
+﻿import {
   listCollection,
   replaceCollection,
   listTagCollection,
@@ -208,7 +208,6 @@ export const appStore = {
   saveAdventureSessionsState: <T>(data: T) =>
     saveSingletonDataDoc<T>("app_arcade_catalog_state", "adventure-sessions", data),
 
-<<<<<<< HEAD
   loadCombatState: <T>(fallback: T) =>
     loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "combat-state", fallback),
   saveCombatState: <T>(data: T) =>
@@ -219,6 +218,4 @@ export const appStore = {
   saveCombatMusicState: <T>(data: T) =>
     saveSingletonDataDoc<T>("app_arcade_catalog_state", "combat-music-state", data),
 
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 };

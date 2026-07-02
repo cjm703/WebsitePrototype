@@ -1,12 +1,8 @@
-import React, { useState, useCallback, Suspense, useMemo, memo, startTransition } from "react";
+﻿import React, { useState, useCallback, Suspense, useMemo, memo, startTransition } from "react";
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_TEXT, S_ACCENT, S_GREEN, S_RED, S_ACCENT_HDR } from "./shared-styles";
-<<<<<<< HEAD
 import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, type LucideIcon } from "lucide-react";
-=======
-import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, Compass, type LucideIcon } from "lucide-react";
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 
 const SnakeGame = React.lazy(() => import("./snake-game").then(m => ({ default: m.SnakeGame })));
 const RunnerGame = React.lazy(() => import("./runner-game").then(m => ({ default: m.RunnerGame })));
@@ -14,10 +10,6 @@ const PartyColor = React.lazy(() => import("./party-color").then(m => ({ default
 const OsuGame = React.lazy(() => import("./osu-game").then(m => ({ default: m.OsuGame })));
 const BossFightLauncher = React.lazy(() => import("./boss-fight-launcher").then(m => ({ default: m.BossFightLauncher })));
 const DoodleJumpGame = React.lazy(() => import("./doodle-jump-game").then(m => ({ default: m.DoodleJumpGame })));
-<<<<<<< HEAD
-=======
-const AdventureGame = React.lazy(() => import("./adventure-game").then(m => ({ default: m.AdventureGame })));
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 const ArcadeStore = React.lazy(() => import("./arcade-store").then(m => ({ default: m.ArcadeStore })));
 import {
   saveScore,
@@ -197,10 +189,6 @@ export function Game() {
   const navigate = useNavigate();
   const currentUser = safeGetItem("inet-user") || "";
   const [activeGame, setActiveGame] = useState<string | null>(null);
-<<<<<<< HEAD
-=======
-  const [activeAdventure, setActiveAdventure] = useState(false);
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   const [activeTab, setActiveTab] = useState<Tab>("games");
   const [leaderboardFilter, setLeaderboardFilter] = useState<string>("all");
   const [leaderboardVersion, setLeaderboardVersion] = useState(0);
@@ -271,19 +259,6 @@ export function Game() {
               </span>
             </div>
           )}
-<<<<<<< HEAD
-=======
-          {activeAdventure && (
-            <div style={DISPLAY_CONTENTS}>
-              <span className="text-[11px]" style={S_DIM}>
-                &gt;
-              </span>
-              <span className="text-[11px]" style={S_MUTED}>
-                Adventure
-              </span>
-            </div>
-          )}
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
           {!selectedGame && activeTab === "leaderboard" && (
             <div style={DISPLAY_CONTENTS}>
               <span className="text-[11px]" style={S_DIM}>
@@ -326,13 +301,7 @@ export function Game() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-2">
-<<<<<<< HEAD
             {activeTab === "leaderboard" && !selectedGame ? (
-=======
-            {activeAdventure ? (
-              <Compass size={28} style={{ color: "#64E0FF" }} />
-            ) : activeTab === "leaderboard" && !selectedGame ? (
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
               <Trophy size={28} style={{ color: "#FFD700" }} />
             ) : activeTab === "store" && !selectedGame ? (
               <ShoppingBag size={28} style={{ color: "#FFD700" }} />
@@ -349,11 +318,6 @@ export function Game() {
             >
               {selectedGame
                 ? selectedGame.name
-<<<<<<< HEAD
-=======
-                : activeAdventure
-                ? "Adventure"
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
                 : activeTab === "leaderboard"
                 ? "Leaderboards"
                 : activeTab === "store"
@@ -364,11 +328,6 @@ export function Game() {
           <div className="text-[12px]" style={S_MUTED}>
             {selectedGame
               ? selectedGame.description
-<<<<<<< HEAD
-=======
-              : activeAdventure
-              ? "Multiplayer tactical expeditions. This is separate from the standard Arcade game catalog."
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
               : activeTab === "leaderboard"
               ? "All-time high scores across all I-NET arcade games."
               : activeTab === "store"
@@ -378,11 +337,7 @@ export function Game() {
         </div>
 
         {/* Tabs - only show when not in a game */}
-<<<<<<< HEAD
         {!selectedGame && (
-=======
-        {!selectedGame && !activeAdventure && (
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
           <div className="flex mb-4 gap-0" style={{ borderBottom: "2px solid #1A1A4B" }}>
             <button
               onClick={() => setActiveTab("games")}
@@ -459,21 +414,6 @@ export function Game() {
                 onScoreSave={handleScoreSave(selectedGame.id, selectedGame.name)}
               />
             </Suspense>
-<<<<<<< HEAD
-=======
-          ) : activeAdventure ? (
-            /* Adventure Section */
-            <Suspense fallback={
-              <div className="flex items-center justify-center py-20">
-                <span className="text-[11px] font-mono" style={{ color: "#4A4A7A" }}>Loading adventure...</span>
-              </div>
-            }>
-              <AdventureGame
-                onBack={() => setActiveAdventure(false)}
-                onScoreSave={handleScoreSave("adventure", "Adventure")}
-              />
-            </Suspense>
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
           ) : activeTab === "games" ? (
             /* Game Menu */
             <div>
@@ -486,43 +426,6 @@ export function Game() {
                 </div>
               </div>
 
-<<<<<<< HEAD
-=======
-              <div className="mb-5">
-                <button
-                  onClick={() => {
-                    startTransition(() => {
-                      setActiveGame(null);
-                      setActiveAdventure(true);
-                      setActiveTab("games");
-                    });
-                  }}
-                  className={`${retro.raised} w-full p-4 text-left hover:bg-[#0D203A] transition-all cursor-pointer group`}
-                  style={{ borderLeft: "4px solid #64E0FF", background: "#08162A" }}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`${retro.sunken} bg-[#061126] p-3 group-hover:bg-[#081A32] transition-colors`}>
-                      <Compass size={28} style={{ color: "#64E0FF" }} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <div className="text-[15px]" style={{ color: "#64E0FF", fontWeight: 700, fontFamily: "'Courier New', monospace" }}>
-                          ADVENTURE
-                        </div>
-                        <span className="text-[9px] px-2 py-0.5" style={{ color: "#8FF0B8", border: "1px solid #8FF0B855", background: "#8FF0B812" }}>
-                          MULTIPLAYER
-                        </span>
-                      </div>
-                      <div className="text-[11px]" style={S_MUTED}>
-                        Launch the separate tactical adventure room system with classes, maps, enemies, and shared turns.
-                      </div>
-                      <div className="text-[10px] mt-2" style={{ color: "#64E0FF" }}>OPEN ADVENTURE</div>
-                    </div>
-                  </div>
-                </button>
-              </div>
-
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {GAMES.map((game) => {
                   const Icon = game.icon;

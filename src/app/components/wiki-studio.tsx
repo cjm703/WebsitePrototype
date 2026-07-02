@@ -1,17 +1,10 @@
-<<<<<<< HEAD
-import React, { useEffect, useState } from "react";
-=======
-import React from "react";
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
+﻿import React, { useEffect, useState } from "react";
 import { useNavigate, Navigate } from "react-router";
 import { ArrowLeft, BookOpen, Database, GitBranch, Images, ShieldAlert } from "lucide-react";
 import { retro } from "./retro-styles";
 import { DMWikiSection } from "./dm-wiki-section";
 import { safeGetItem, safeGetJson } from "./safe-storage";
-<<<<<<< HEAD
 import { appStore } from "@/lib/app-store";
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 import {
   DM_MAIN_TITLE,
   DM_NAV_GREEN,
@@ -34,7 +27,6 @@ interface SitePageSummary {
 export function WikiStudio() {
   const navigate = useNavigate();
   const currentUser = safeGetItem("inet-user") || "";
-<<<<<<< HEAD
   const [pages, setPages] = useState<SitePageSummary[]>(() => safeGetJson("inet-dm-sites", []));
   const blockPages = pages.filter((page) => Array.isArray(page.blocks) && page.blocks.length > 0).length;
   const categories = new Set(pages.map((page) => page.category || "Uncategorized"));
@@ -53,12 +45,6 @@ export function WikiStudio() {
     };
   }, []);
 
-=======
-  const pages = safeGetJson<SitePageSummary[]>("inet-dm-sites", []);
-  const blockPages = pages.filter((page) => Array.isArray(page.blocks) && page.blocks.length > 0).length;
-  const categories = new Set(pages.map((page) => page.category || "Uncategorized"));
-
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   if (currentUser !== "DM") return <Navigate to="/interface" replace />;
 
   return (

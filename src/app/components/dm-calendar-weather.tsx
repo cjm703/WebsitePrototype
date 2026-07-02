@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
 import { S_MUTED, S_TEXT, S_SECTION_HDR, S_GREEN_BTN } from "./dm-styles";
@@ -78,11 +78,7 @@ export function DMCalendarWeather() {
     let cancelled = false;
     void appStore.loadCalendarWeatherState({ calendarDate: DEFAULT_CALENDAR, weather: DEFAULT_WEATHER, monthFlavorTexts: {}, dailyForecast: {} }).then((state: any) => {
       if (cancelled) return;
-<<<<<<< HEAD
       setCalendarDate(state.calendarDate || state.calendar || DEFAULT_CALENDAR);
-=======
-      setCalendarDate(state.calendarDate || DEFAULT_CALENDAR);
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
       setWeather(state.weather || DEFAULT_WEATHER);
       setMonthFlavorTexts(state.monthFlavorTexts || {});
       setDailyForecast(state.dailyForecast || {});
@@ -112,7 +108,7 @@ export function DMCalendarWeather() {
           <div>
             <div className="text-[16px] mb-1" style={{ color: "#7AB0FF", fontWeight: 600 }}>{formatCalendarDate(calendarDate)}</div>
             <div className="text-[11px]" style={S_MUTED}>
-              {calendarDate.isStarfall ? "Outside the regular months" : `Month ${calendarDate.month} of 13 · Day ${calendarDate.day} of ${DAYS_PER_MONTH}`}
+              {calendarDate.isStarfall ? "Outside the regular months" : `Month ${calendarDate.month} of 13 Â· Day ${calendarDate.day} of ${DAYS_PER_MONTH}`}
             </div>
           </div>
           <div className="h-10 w-px" style={{ background: "#1A1A4B" }} />
@@ -120,7 +116,7 @@ export function DMCalendarWeather() {
             {(() => { const WIcon = WEATHER_ICONS[weather.condition] || Cloud; return <WIcon size={28} style={{ color: "#6A8ABB" }} />; })()}
             <div>
               <div className="text-[14px]" style={{ color: "#9AAFCF", fontWeight: 600 }}>{weather.condition}</div>
-              <div className="text-[11px]" style={S_MUTED}>{weather.temperature} · {weather.wind}</div>
+              <div className="text-[11px]" style={S_MUTED}>{weather.temperature} Â· {weather.wind}</div>
             </div>
           </div>
         </div>
@@ -146,7 +142,7 @@ export function DMCalendarWeather() {
               {CALENDAR_MONTHS.map((m, i) => (
                 <option key={m} value={i + 1}>{i + 1}. {m}</option>
               ))}
-              <option value="starfall">✦ Starfall</option>
+              <option value="starfall">âœ¦ Starfall</option>
             </select>
           </div>
           <div>
@@ -218,20 +214,20 @@ export function DMCalendarWeather() {
               onClick={() => setCalendarDate(prev => ({ ...prev, month: 13, day: 1, isStarfall: true }))}
               className={`text-[9px] px-1.5 py-1 ${calendarDate.isStarfall ? retro.sunken : retro.raised + " hover:bg-[#1E1E58]"} transition-colors`}
               style={{ color: calendarDate.isStarfall ? "#FFD700" : "#5A6A8A", fontWeight: calendarDate.isStarfall ? 600 : 400 }}
-            >★ Starfall</button>
+            >â˜… Starfall</button>
           </div>
         </div>
       </div>
 
       <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-        <div className="text-[12px] mb-1" style={{ color: "#6A8ABB", fontWeight: 600 }}>WEATHER & FORECAST — The Great City</div>
+        <div className="text-[12px] mb-1" style={{ color: "#6A8ABB", fontWeight: 600 }}>WEATHER & FORECAST â€” The Great City</div>
         <div className="text-[10px] mb-4" style={S_MUTED}>
           Set today's weather below. Changes sync to the current day in the forecast grid. Players see the week's forecast on the Celestial Calendar.
         </div>
 
         <div className={`${retro.raised} bg-[#0A0A2A] p-4 mb-5`}>
           <div className="text-[10px] mb-3" style={{ color: "#7AB0FF", fontWeight: 600 }}>
-            TODAY — {calendarDate.isStarfall ? "Starfall Day" : `${calendarDate.day} ${CALENDAR_MONTHS[calendarDate.month - 1]}, Year ${calendarDate.year}`}
+            TODAY â€” {calendarDate.isStarfall ? "Starfall Day" : `${calendarDate.day} ${CALENDAR_MONTHS[calendarDate.month - 1]}, Year ${calendarDate.year}`}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div>
@@ -318,7 +314,7 @@ export function DMCalendarWeather() {
         </div>
 
         <div className="text-[10px] mb-3" style={S_SECTION_HDR}>
-          MONTH FORECAST — {calendarDate.isStarfall ? "Starfall Days" : CALENDAR_MONTHS[calendarDate.month - 1]}
+          MONTH FORECAST â€” {calendarDate.isStarfall ? "Starfall Days" : CALENDAR_MONTHS[calendarDate.month - 1]}
         </div>
         {!calendarDate.isStarfall && (() => {
           const weeks = [1, 2, 3, 4];
@@ -330,7 +326,7 @@ export function DMCalendarWeather() {
                 return (
                   <div key={week}>
                     <div className="text-[10px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-                      Week {week} (Day {weekStart}–{weekStart + 6})
+                      Week {week} (Day {weekStart}â€“{weekStart + 6})
                     </div>
                     <div className="grid grid-cols-7 gap-1">
                       {weekDays.map((d, i) => {
@@ -364,7 +360,7 @@ export function DMCalendarWeather() {
                               className={`${retro.sunken} bg-[#0A0A28] text-[9px] w-full outline-none px-0.5 py-0.5 mb-1`}
                               style={S_TEXT}
                             >
-                              <option value="">—</option>
+                              <option value="">â€”</option>
                               {WEATHER_CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                             <select
@@ -458,7 +454,7 @@ export function DMCalendarWeather() {
           ))}
           <div>
             <label className="text-[10px] block mb-1" style={{ color: "#FFD700", fontWeight: 600 }}>
-              ★ Starfall Days
+              â˜… Starfall Days
             </label>
             <textarea
               value={monthFlavorTexts["Starfall"] || ""}
@@ -472,8 +468,4 @@ export function DMCalendarWeather() {
       </div>
     </div>
   );
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9

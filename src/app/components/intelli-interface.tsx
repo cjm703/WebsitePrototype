@@ -1,13 +1,9 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+﻿import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { logoutPlayerSession } from "@/lib/player-state-api";
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { S_MUTED, S_SUBTLE, S_TEXT, S_RED, S_ACCENT, S_GREEN_BTN, SUNKEN_INPUT } from "./shared-styles";
-<<<<<<< HEAD
 import { Search, FileText, Building2, Map, ShieldAlert, LogOut, Bell, User, ArrowRight, AlertCircle, X, History, Trash2, ChevronDown, ChevronRight, MessageSquareWarning, Send, Cat, Paintbrush, Users, CalendarDays, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind, Store, Swords } from "lucide-react";
-=======
-import { Search, FileText, Building2, Map, ShieldAlert, LogOut, Bell, User, ArrowRight, AlertCircle, X, History, Trash2, ChevronDown, ChevronRight, MessageSquareWarning, Send, Cat, Paintbrush, Users, CalendarDays, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind, Store } from "lucide-react";
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 import { submitReport } from "./error-logger";
 import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import mascotImg from "@/assets/figma/Gnarpy_Boss1.png";
@@ -43,10 +39,7 @@ export function IntelliInterface() {
     intelliMaps: "13 sectors | Hexagonal deep city map with fog of war and path connections.",
     dmArea: "Campaign management tools.",
     community: "Share updates and messages with your party.",
-<<<<<<< HEAD
     combat: "Track HP, wounds, quick rolls, shared cards, and table music.",
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
     sessionLog: "Chronicle your campaign adventures.",
   };
 
@@ -168,7 +161,6 @@ export function IntelliInterface() {
           intelliMaps: DEFAULT_SECTION_DETAILS.intelliMaps,
           dmArea: `${playerRows.length} player${playerRows.length !== 1 ? "s" : ""} | ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} | ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} | ${infoRows.length} info entr${infoRows.length !== 1 ? "ies" : "y"} | ${notifRows.length} notification${notifRows.length !== 1 ? "s" : ""}`,
           community: DEFAULT_SECTION_DETAILS.community,
-<<<<<<< HEAD
           combat: `${playerRows.length} combat profile${playerRows.length !== 1 ? "s" : ""} | ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} ready to share`,
           sessionLog: `${sessionRows.length} session${sessionRows.length !== 1 ? "s" : ""} recorded | Chronicle your campaign adventures.`,
         });
@@ -176,13 +168,6 @@ export function IntelliInterface() {
         const savedCalendar = calendarWeatherState?.calendarDate ?? calendarWeatherState?.calendar;
         const nextCalendar = savedCalendar && typeof savedCalendar === "object"
           ? { ...DEFAULT_CALENDAR, ...savedCalendar }
-=======
-          sessionLog: `${sessionRows.length} session${sessionRows.length !== 1 ? "s" : ""} recorded | Chronicle your campaign adventures.`,
-        });
-
-        const nextCalendar = calendarWeatherState?.calendar && typeof calendarWeatherState.calendar === "object"
-          ? { ...DEFAULT_CALENDAR, ...calendarWeatherState.calendar }
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
           : DEFAULT_CALENDAR;
         const nextWeather = calendarWeatherState?.weather && typeof calendarWeatherState.weather === "object"
           ? { ...DEFAULT_WEATHER, ...calendarWeatherState.weather }
@@ -397,7 +382,6 @@ export function IntelliInterface() {
       details: sectionDetails.personalFiles,
     },
     {
-<<<<<<< HEAD
       name: "Combat",
       path: "/interface/combat",
       icon: Swords,
@@ -405,8 +389,6 @@ export function IntelliInterface() {
       details: sectionDetails.combat,
     },
     {
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
       name: "Commerce",
       path: "/interface/commerce",
       icon: Store,
@@ -1075,7 +1057,3 @@ export function IntelliInterface() {
     </div>
   );
 }
-<<<<<<< HEAD
-=======
-
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9

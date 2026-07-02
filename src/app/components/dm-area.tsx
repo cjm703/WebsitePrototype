@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+﻿import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
@@ -83,7 +83,7 @@ const defaultStats: PlayerStats = { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10
 
 const cfKey = (tagName: string, fieldName: string) => `${tagName}::${fieldName}`;
 
-// Migrate legacy string assignedTo → string[] for backward compatibility
+// Migrate legacy string assignedTo â†’ string[] for backward compatibility
 function migrateAssignedTo<T extends { assignedTo: unknown }>(items: T[]): (T & { assignedTo: string[] })[] {
   return items.map((item) => ({
     ...item,
@@ -268,16 +268,16 @@ function sanitizeInfoSubTabsForLoad(rawTabs: Partial<InfoSubTab>[] | null | unde
 }
 
 const BUILTIN_EMOJI_PREVIEW = [
-  { emoji: "👍", label: "Thumbs Up" },
-  { emoji: "❤️", label: "Heart" },
-  { emoji: "😂", label: "Laugh" },
-  { emoji: "🔥", label: "Fire" },
-  { emoji: "💀", label: "Skull" },
-  { emoji: "⚔️", label: "Swords" },
-  { emoji: "🎲", label: "Dice" },
-  { emoji: "🐉", label: "Dragon" },
-  { emoji: "🛡️", label: "Shield" },
-  { emoji: "✨", label: "Sparkles" },
+  { emoji: "ðŸ‘", label: "Thumbs Up" },
+  { emoji: "â¤ï¸", label: "Heart" },
+  { emoji: "ðŸ˜‚", label: "Laugh" },
+  { emoji: "ðŸ”¥", label: "Fire" },
+  { emoji: "ðŸ’€", label: "Skull" },
+  { emoji: "âš”ï¸", label: "Swords" },
+  { emoji: "ðŸŽ²", label: "Dice" },
+  { emoji: "ðŸ‰", label: "Dragon" },
+  { emoji: "ðŸ›¡ï¸", label: "Shield" },
+  { emoji: "âœ¨", label: "Sparkles" },
 ];
 
 function DMReactionManager({
@@ -422,7 +422,7 @@ function DMReactionManager({
               type="text"
               value={newEmoji}
               onChange={(e) => setNewEmoji(e.target.value)}
-              placeholder="🎉"
+              placeholder="ðŸŽ‰"
               className={inputClass}
               style={{ ...inputStyle, width: 60 }}
               maxLength={4}
@@ -480,10 +480,7 @@ type SectionId =
   | "customize"
   | "calendar"
   | "arcade"
-<<<<<<< HEAD
   | "adventure"
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   | "reactions"
   | "nodetrees";
 
@@ -522,7 +519,7 @@ export function DMArea() {
   // Recently deleted players (reversible)
   const [deletedPlayers, setDeletedPlayers] = useState<PlayerData[]>([]);
 
-  // Deletion flow state machine: null → "confirm1" → "confirm2" → deleted
+  // Deletion flow state machine: null â†’ "confirm1" â†’ "confirm2" â†’ deleted
   const [deleteTarget, setDeleteTarget] = useState<PlayerData | null>(null);
   const [deleteStep, setDeleteStep] = useState<"confirm1" | "confirm2" | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
@@ -531,7 +528,7 @@ export function DMArea() {
   // Pending auth code: plain-text value the DM is typing (never persisted)
   const [pendingAuthCode, setPendingAuthCode] = useState("");
 
-  // Server-side auth code status: profileId → hasCode
+  // Server-side auth code status: profileId â†’ hasCode
   const [hasAuthCodeMap, setHasAuthCodeMap] = useState<Record<string, boolean>>({});
 
   // Tags
@@ -1038,10 +1035,10 @@ async function persistCustomReactions(next: CustomReaction[]) {
     const profiles: LoginProfile[] = playerList.map((p) => ({
       id: p.id,
       name: p.name,
-      description: `${p.class} · Level ${p.level}`,
+      description: `${p.class} Â· Level ${p.level}`,
     }));
     // Always include the DM profile (auth codes live on server, not here)
-    profiles.push({ id: "dm", name: "DM", description: "System Administrator · Full Access" });
+    profiles.push({ id: "dm", name: "DM", description: "System Administrator Â· Full Access" });
     safeSetJson("inet-profiles", profiles);
   }, []);
 
@@ -1121,7 +1118,7 @@ async function persistCustomReactions(next: CustomReaction[]) {
     setDeletePassword("");
     setDeletePasswordError(false);
   };
-  // Step 2: First confirm → advance to password screen
+  // Step 2: First confirm â†’ advance to password screen
   const advanceDeleteStep = () => {
     setDeleteStep("confirm2");
     setDeletePassword("");
@@ -1838,7 +1835,7 @@ const handleSaveItem = async () => {
                       <div key={player.id} className={`${retro.raised} bg-[#12122E] p-3 flex items-center justify-between`}>
                         <div>
                           <div className="text-[13px]" style={DM_PLAYER_NAME}>{player.name}</div>
-                          <div className="text-[10px]" style={DM_PLAYER_CLASS}>{player.class} · Level {player.level}</div>
+                          <div className="text-[10px]" style={DM_PLAYER_CLASS}>{player.class} Â· Level {player.level}</div>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
@@ -2176,7 +2173,7 @@ const handleSaveItem = async () => {
                             <div className="text-[13px] mb-0.5 truncate" style={S_TEXT_BOLD}>{notif.subject}</div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-[10px]" style={S_MUTED}>{notif.createdAt}</span>
-                              <span className="text-[9px]" style={S_DIM}>·</span>
+                              <span className="text-[9px]" style={S_DIM}>Â·</span>
                               <span className="text-[10px]" style={dmNotifTarget(notif.assignedTo.includes("ALL"))}>
                                 {notif.assignedTo.includes("ALL") ? "All Players" : notif.assignedTo.join(", ")}
                               </span>

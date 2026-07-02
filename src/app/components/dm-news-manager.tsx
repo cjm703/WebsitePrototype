@@ -1,17 +1,10 @@
-<<<<<<< HEAD
-import React, { useEffect, useRef, useState } from "react";
-=======
-import React, { useState } from "react";
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
+﻿import React, { useEffect, useRef, useState } from "react";
 import { retro } from "./retro-styles";
 import { S_ACCENT, S_DIM, S_GREEN_BTN, S_MUTED, S_RED, S_TEXT, S_WARN, S_SECTION_HDR, S_ACCENT_HDR } from "./dm-styles";
 import { RichTextEditor } from "./rich-text-editor";
 import { useDebouncedJsonStorage } from "./use-debounced-storage";
 import { safeGetJson } from "./safe-storage";
-<<<<<<< HEAD
 import { appStore } from "@/lib/app-store";
-=======
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
 import {
   Plus, Save, X, Edit, Trash2, Newspaper,
 } from "lucide-react";
@@ -55,7 +48,6 @@ export function DMNewsManager() {
   const [newsArticles, setNewsArticles] = useState<NewsArticle[]>(() => safeGetJson("inet-dm-news", []));
   const [editingNews, setEditingNews] = useState<NewsArticle | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
-<<<<<<< HEAD
   const hydratedRef = useRef(false);
 
   useDebouncedJsonStorage("inet-dm-news", newsArticles, 400);
@@ -86,11 +78,6 @@ export function DMNewsManager() {
     return () => window.clearTimeout(handle);
   }, [newsArticles]);
 
-=======
-
-  useDebouncedJsonStorage("inet-dm-news", newsArticles, 400);
-
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
   const nowParts = parseDateParts("");
 
   const handleAdd = () => {
@@ -333,8 +320,4 @@ export function DMNewsManager() {
       </div>
     </div>
   );
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> d3f4b511234b6ce0be81d8d8b597af0266983bd9
