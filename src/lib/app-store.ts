@@ -62,6 +62,17 @@ async function saveSingletonDataDoc<T>(
   if (error) throw error;
 }
 
+async function deleteSingletonDataDoc(
+  table: string,
+  id: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from(table)
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+}
+
 export const appStore = {
   listNodeTrees: <T extends Identifiable>() => listCollection<T>("app_node_trees"),
   saveNodeTrees: <T extends Identifiable>(rows: T[]) => replaceCollection("app_node_trees", rows),
@@ -217,5 +228,11 @@ export const appStore = {
     loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "combat-music-state", fallback),
   saveCombatMusicState: <T>(data: T) =>
     saveSingletonDataDoc<T>("app_arcade_catalog_state", "combat-music-state", data),
+  loadCombatMusicFileChunk: <T>(chunkId: string, fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_arcade_catalog_state", chunkId, fallback),
+  saveCombatMusicFileChunk: <T>(chunkId: string, data: T) =>
+    saveSingletonDataDoc<T>("app_arcade_catalog_state", chunkId, data),
+  deleteCombatMusicFileChunk: (chunkId: string) =>
+    deleteSingletonDataDoc("app_arcade_catalog_state", chunkId),
 
 };

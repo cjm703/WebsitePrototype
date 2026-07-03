@@ -30,6 +30,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { appStore } from "@/lib/app-store";
+import { supabase } from "@/lib/supabaseClient";
 import { retro } from "./retro-styles";
 import { safeGetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_GREEN, S_MUTED, S_RED, S_TEXT, S_WARN } from "./shared-styles";
@@ -74,9 +75,29 @@ interface MusicTrack {
   contentType?: string;
   sizeBytes?: number;
   audioDataOmitted?: boolean;
+  sharedAudio?: SharedAudioRef;
   tags?: string[];
   notes?: string;
   updatedAt?: string;
+}
+
+interface SharedAudioRef {
+  kind: "state-chunks";
+  key: string;
+  chunkCount: number;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+interface SharedAudioChunk {
+  id: string;
+  trackId: string;
+  index: number;
+  total: number;
+  data: string;
+  contentType: string;
+  sizeBytes: number;
 }
 
 interface AudioEffectSettings {
@@ -96,6 +117,8 @@ interface ActiveMusicTrack {
   effects?: AudioEffectSettings;
   seekTo?: number;
   seekRequestId?: string;
+  position?: number;
+  positionUpdatedAt?: number;
   startedAt: number;
   updatedAt: string;
 }
@@ -139,6 +162,7 @@ const QUICK_FLAGS = ["Guarded", "Concentrating", "Prone", "Hidden", "Bloodied", 
 const MAX_FEED_MESSAGES = 150;
 const MAX_AUDIO_FILE_BYTES = 12 * 1024 * 1024;
 const LOCAL_AUDIO_CACHE_OMIT_THRESHOLD = 256 * 1024;
+const SHARED_AUDIO_CHUNK_SIZE = 160 * 1024;
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -281,6 +305,7 @@ function highpassFromThin(amount: number) {
 }
 
 function sourceLabel(track: MusicTrack) {
+  if (track.audioDataOmitted && !track.url && track.sharedAudio) return `${track.fileName || "Uploaded file"} (loading shared audio)`;
   if (track.audioDataOmitted && !track.url) return `${track.fileName || "Uploaded file"} (local file needed)`;
   if (track.sourceType === "youtube") return "YouTube";
   if (track.sourceType === "file") return track.fileName || "Uploaded file";
@@ -348,6 +373,87 @@ function restoreLocalAudioSources(state: CombatMusicState, sources: Map<string, 
   };
 }
 
+function sharedAudioChunkId(key: string, index: number) {
+  return `${key}-${index.toString().padStart(4, "0")}`;
+}
+
+function normalizeSharedAudioRef(raw: unknown): SharedAudioRef | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const ref = raw as Partial<SharedAudioRef>;
+  if (ref.kind !== "state-chunks" || typeof ref.key !== "string" || !ref.key.trim()) return undefined;
+  const chunkCount = Math.max(0, Math.floor(Number(ref.chunkCount || 0)));
+  if (chunkCount <= 0) return undefined;
+  return {
+    kind: "state-chunks",
+    key: ref.key,
+    chunkCount,
+    contentType: typeof ref.contentType === "string" ? ref.contentType : "audio/*",
+    sizeBytes: Number.isFinite(Number(ref.sizeBytes)) ? Number(ref.sizeBytes) : 0,
+    createdAt: typeof ref.createdAt === "string" ? ref.createdAt : "",
+  };
+}
+
+async function saveSharedAudioData(
+  trackId: string,
+  dataUrl: string,
+  file: { type?: string; size?: number },
+  onProgress?: (percent: number) => void,
+): Promise<SharedAudioRef> {
+  const key = `combat-music-audio-${trackId}`;
+  const chunkCount = Math.max(1, Math.ceil(dataUrl.length / SHARED_AUDIO_CHUNK_SIZE));
+  const createdAt = new Date().toISOString();
+
+  for (let index = 0; index < chunkCount; index += 1) {
+    const id = sharedAudioChunkId(key, index);
+    const chunk: SharedAudioChunk = {
+      id,
+      trackId,
+      index,
+      total: chunkCount,
+      data: dataUrl.slice(index * SHARED_AUDIO_CHUNK_SIZE, (index + 1) * SHARED_AUDIO_CHUNK_SIZE),
+      contentType: file.type || "audio/*",
+      sizeBytes: file.size || dataUrl.length,
+    };
+    await appStore.saveCombatMusicFileChunk(id, chunk);
+    onProgress?.(Math.round(((index + 1) / chunkCount) * 100));
+  }
+
+  return {
+    kind: "state-chunks",
+    key,
+    chunkCount,
+    contentType: file.type || "audio/*",
+    sizeBytes: file.size || dataUrl.length,
+    createdAt,
+  };
+}
+
+async function loadSharedAudioData(track: MusicTrack): Promise<string | null> {
+  const ref = track.sharedAudio;
+  if (!ref || ref.kind !== "state-chunks") return null;
+  const chunks: string[] = [];
+
+  for (let index = 0; index < ref.chunkCount; index += 1) {
+    const id = sharedAudioChunkId(ref.key, index);
+    const chunk = await appStore.loadCombatMusicFileChunk<SharedAudioChunk | null>(id, null);
+    if (!chunk || chunk.trackId !== track.id || chunk.index !== index || typeof chunk.data !== "string") {
+      return null;
+    }
+    chunks[index] = chunk.data;
+  }
+
+  return chunks.join("");
+}
+
+async function deleteSharedAudioData(ref: SharedAudioRef | undefined) {
+  if (!ref || ref.kind !== "state-chunks") return;
+  await Promise.all(
+    Array.from({ length: ref.chunkCount }, (_, index) => (
+      appStore.deleteCombatMusicFileChunk(sharedAudioChunkId(ref.key, index)).catch(() => {})
+    )),
+  );
+}
+
 function formatTime(iso: string) {
   const parsed = Date.parse(iso);
   if (!parsed) return "";
@@ -400,6 +506,7 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
             contentType: typeof track.contentType === "string" ? track.contentType : "",
             sizeBytes: Number.isFinite(Number(track.sizeBytes)) ? Number(track.sizeBytes) : undefined,
             audioDataOmitted: Boolean(track.audioDataOmitted),
+            sharedAudio: normalizeSharedAudioRef(track.sharedAudio),
             createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
             updatedAt: typeof track.updatedAt === "string" ? track.updatedAt : "",
           }))
@@ -416,6 +523,8 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
             effects: normalizeAudioEffects(entry.effects),
             seekTo: Number.isFinite(Number(entry.seekTo)) ? Math.max(0, Number(entry.seekTo)) : undefined,
             seekRequestId: typeof entry.seekRequestId === "string" ? entry.seekRequestId : "",
+            position: Number.isFinite(Number(entry.position)) ? Math.max(0, Number(entry.position)) : undefined,
+            positionUpdatedAt: Number.isFinite(Number(entry.positionUpdatedAt)) ? Number(entry.positionUpdatedAt) : undefined,
             startedAt: Number.isFinite(Number(entry.startedAt)) ? Number(entry.startedAt) : Date.now(),
             updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
           }))
@@ -456,6 +565,8 @@ export function CombatPage() {
   const [sceneDraftDirty, setSceneDraftDirty] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
   const localAudioSourcesRef = useRef<Map<string, string>>(new Map());
+  const sharedAudioLoadingRef = useRef<Set<string>>(new Set());
+  const sharedAudioFailedRef = useRef<Set<string>>(new Set());
   const musicLoadFailuresRef = useRef(0);
   const musicLoadRetryAtRef = useRef(0);
 
@@ -512,8 +623,29 @@ export function CombatPage() {
 
   useEffect(() => {
     void hydrate();
+    let refreshTimer: number | null = null;
+    const scheduleHydrate = () => {
+      if (refreshTimer != null) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void hydrate(), 120);
+    };
     const interval = window.setInterval(() => void hydrate(), 2500);
-    return () => window.clearInterval(interval);
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    try {
+      channel = supabase
+        .channel("combat-page-state")
+        .on("postgres_changes", { event: "*", schema: "public", table: "app_arcade_catalog_state", filter: "id=eq.combat-state" }, scheduleHydrate)
+        .on("postgres_changes", { event: "*", schema: "public", table: "app_arcade_catalog_state", filter: "id=eq.combat-music-state" }, scheduleHydrate)
+        .subscribe();
+    } catch {
+      channel = null;
+    }
+
+    return () => {
+      window.clearInterval(interval);
+      if (refreshTimer != null) window.clearTimeout(refreshTimer);
+      if (channel) void supabase.removeChannel(channel);
+    };
   }, [hydrate]);
 
   useEffect(() => {
@@ -523,6 +655,48 @@ export function CombatPage() {
   useEffect(() => {
     if (!sceneDraftDirty) setSceneDraft(combatState.scene || "");
   }, [combatState.scene, sceneDraftDirty]);
+
+  useEffect(() => {
+    musicState.tracks.forEach((track) => {
+      if (
+        track.sourceType !== "file" ||
+        track.url ||
+        !track.sharedAudio ||
+        sharedAudioLoadingRef.current.has(track.id) ||
+        sharedAudioFailedRef.current.has(track.id)
+      ) {
+        return;
+      }
+
+      sharedAudioLoadingRef.current.add(track.id);
+      void loadSharedAudioData(track)
+        .then((url) => {
+          if (!url) {
+            sharedAudioFailedRef.current.add(track.id);
+            return;
+          }
+          localAudioSourcesRef.current.set(track.id, url);
+          setMusicState((previous) => {
+            const nextState = {
+              ...previous,
+              tracks: previous.tracks.map((entry) => (
+                entry.id === track.id
+                  ? { ...entry, url, audioDataOmitted: false }
+                  : entry
+              )),
+            };
+            safeSetJson(LOCAL_MUSIC_STATE_KEY, buildLocalMusicCacheState(nextState));
+            return nextState;
+          });
+        })
+        .catch(() => {
+          sharedAudioFailedRef.current.add(track.id);
+        })
+        .finally(() => {
+          sharedAudioLoadingRef.current.delete(track.id);
+        });
+    });
+  }, [musicState.tracks]);
 
   useEffect(() => {
     const trackIds = new Set(musicState.tracks.map((track) => track.id));
@@ -947,14 +1121,32 @@ export function CombatPage() {
         });
       });
       const cleanName = file.name.replace(/\.[^.]+$/, "") || "Uploaded Track";
+      const trackId = uid("track");
+      let sharedAudio: SharedAudioRef | undefined;
+      let sharedAudioSaved = false;
+      try {
+        setMusicUploadProgress({ label: cleanName, percent: 91, phase: "saving" });
+        setMusicStatus(`Sharing ${cleanName} with players...`);
+        sharedAudio = await saveSharedAudioData(trackId, url, file, (percent) => {
+          setMusicUploadProgress({
+            label: cleanName,
+            percent: clampNumber(91 + Math.round(percent * 0.07), 91, 98),
+            phase: "saving",
+          });
+        });
+        sharedAudioSaved = true;
+      } catch (error) {
+        console.warn("[combat music] shared audio upload failed", error);
+      }
       const nextTrack: MusicTrack = {
-        id: uid("track"),
+        id: trackId,
         title: cleanName,
         sourceType: "file",
         url,
         fileName: file.name,
         contentType: file.type || "audio/*",
         sizeBytes: file.size,
+        sharedAudio,
         addedBy: currentUser || "DM",
         createdAt: new Date().toISOString(),
         tags: [],
@@ -965,9 +1157,11 @@ export function CombatPage() {
       const sharedSaved = await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
       setMusicUploadProgress({ label: cleanName, percent: 100, phase: "saving" });
       setMusicStatus(
-        sharedSaved
-          ? `${cleanName} added for this browser. Shared controls saved without embedding the audio file.`
-          : `${cleanName} is available in this browser for now, but the shared save failed. Try a smaller file or a direct audio URL.`,
+        sharedSaved && sharedAudioSaved
+          ? `${cleanName} uploaded and shared with players.`
+          : sharedAudioSaved
+            ? `${cleanName} uploaded here, but the shared track list did not save yet.`
+            : `${cleanName} is available in this browser, but the shared audio copy failed. Try again or use a direct audio URL.`,
       );
       window.setTimeout(() => {
         setMusicUploadProgress((current) => current?.label === cleanName ? null : current);
@@ -975,6 +1169,35 @@ export function CombatPage() {
     } catch (error) {
       setMusicUploadProgress(null);
       setMusicStatus(error instanceof Error ? error.message : "Failed to read audio file.");
+    }
+  };
+
+  const shareExistingTrackAudio = async (track: MusicTrack) => {
+    if (!isDM || !isInlineFileAudio(track)) return;
+    try {
+      setMusicUploadProgress({ label: track.title, percent: 91, phase: "saving" });
+      setMusicStatus(`Sharing ${track.title} with players...`);
+      const sharedAudio = await saveSharedAudioData(
+        track.id,
+        track.url,
+        { type: track.contentType || "audio/*", size: track.sizeBytes || track.url.length },
+        (percent) => {
+          setMusicUploadProgress({
+            label: track.title,
+            percent: clampNumber(91 + Math.round(percent * 0.07), 91, 98),
+            phase: "saving",
+          });
+        },
+      );
+      await updateMusicTrack(track.id, { sharedAudio });
+      setMusicUploadProgress({ label: track.title, percent: 100, phase: "saving" });
+      setMusicStatus(`${track.title} shared with players.`);
+      window.setTimeout(() => {
+        setMusicUploadProgress((current) => current?.label === track.title ? null : current);
+      }, 1200);
+    } catch (error) {
+      setMusicUploadProgress(null);
+      setMusicStatus(error instanceof Error ? error.message : "Failed to share this audio with players.");
     }
   };
 
@@ -991,6 +1214,8 @@ export function CombatPage() {
             loop: false,
             muted: false,
             effects: DEFAULT_AUDIO_EFFECTS,
+            position: 0,
+            positionUpdatedAt: Date.now(),
             startedAt: Date.now(),
             updatedAt: new Date().toISOString(),
             ...patch,
@@ -1013,9 +1238,12 @@ export function CombatPage() {
   const toggleTrackPlayback = async (trackId: string) => {
     const existing = activeById.get(trackId);
     const nextPlaying = !existing?.playing;
+    const currentPosition = playbackStatuses[trackId]?.currentTime ?? existing?.position ?? existing?.seekTo ?? 0;
     if (nextPlaying) enableCombatAudio();
     await upsertActiveTrack(trackId, {
       playing: nextPlaying,
+      position: Math.max(0, currentPosition),
+      positionUpdatedAt: Date.now(),
       startedAt: existing?.startedAt || Date.now(),
     });
   };
@@ -1034,6 +1262,8 @@ export function CombatPage() {
       playing: existing?.playing ?? false,
       seekTo: seconds,
       seekRequestId: uid("seek"),
+      position: seconds,
+      positionUpdatedAt: Date.now(),
     });
   };
 
@@ -1043,11 +1273,14 @@ export function CombatPage() {
 
   const deleteTrack = async (trackId: string) => {
     if (!isDM) return;
+    const track = musicState.tracks.find((entry) => entry.id === trackId);
     await saveMusic({
       ...musicState,
       tracks: musicState.tracks.filter((track) => track.id !== trackId),
       active: musicState.active.filter((entry) => entry.trackId !== trackId),
     });
+    localAudioSourcesRef.current.delete(trackId);
+    void deleteSharedAudioData(track?.sharedAudio);
   };
 
   const renderMusicTrackCard = (track: MusicTrack) => {
@@ -1105,7 +1338,9 @@ export function CombatPage() {
 
         {!playable && (
           <div className="mt-2 text-[10px] leading-relaxed" style={S_WARN}>
-            Audio data is not available in this browser. Re-upload the file here or use a direct audio URL.
+            {track.sharedAudio
+              ? "Shared audio is loading for this browser. If it stays here, the shared upload may have failed."
+              : "Audio data is not available in this browser. Re-upload the file here or use a direct audio URL."}
           </div>
         )}
 
@@ -1140,6 +1375,15 @@ export function CombatPage() {
                 {active?.muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
                 {active?.muted ? "Muted" : "Mute"}
               </button>
+              {isInlineFileAudio(track) && !track.sharedAudio && (
+                <button
+                  onClick={() => void shareExistingTrackAudio(track)}
+                  className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1`}
+                  style={S_ACCENT}
+                >
+                  <Upload size={11} /> Share
+                </button>
+              )}
             </div>
           ) : (
             <div className="text-[11px]" style={active?.muted ? S_RED : active?.playing ? S_GREEN : S_DIM}>
@@ -1639,7 +1883,7 @@ export function CombatPage() {
                       </div>
                     )}
                     <div className="text-[9px] mt-2 leading-relaxed" style={S_DIM}>
-                      Uploaded files are editable local audio for this browser. Shared playback for every device needs real file storage or a direct audio URL.
+                      Uploaded files are split into shared chunks so players can receive them. Direct audio URLs are still best for large libraries.
                     </div>
                   </div>
 
@@ -2306,6 +2550,7 @@ function HiddenAudioTrack({
   const graphRef = useRef<AudioGraphNodes | null>(null);
   const lastStartRef = useRef<number>(0);
   const lastSeekRequestRef = useRef<string>("");
+  const lastPositionSyncRef = useRef<string>("");
 
   const reportStatus = useCallback((patch: Partial<PlaybackStatus> = {}) => {
     const audio = audioRef.current;
@@ -2386,16 +2631,33 @@ function HiddenAudioTrack({
       graph.echoGain.gain.setTargetAtTime(effects.echo * 0.7, now, 0.035);
     }
 
-    if (lastStartRef.current !== active.startedAt) {
+    const positionSyncKey = `${active.positionUpdatedAt || ""}:${active.playing ? "1" : "0"}:${active.seekRequestId || ""}`;
+
+    if (lastStartRef.current !== active.startedAt && !active.positionUpdatedAt) {
       audio.currentTime = 0;
       lastStartRef.current = active.startedAt;
     }
 
+    if (active.positionUpdatedAt && lastPositionSyncRef.current !== positionSyncKey) {
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const elapsed = active.playing ? Math.max(0, (Date.now() - active.positionUpdatedAt) / 1000) : 0;
+      const targetTime = duration > 0
+        ? clampNumber((active.position ?? 0) + elapsed, 0, duration)
+        : Math.max(0, (active.position ?? 0) + elapsed);
+      try {
+        audio.currentTime = targetTime;
+        lastPositionSyncRef.current = positionSyncKey;
+        lastStartRef.current = active.startedAt;
+        reportStatus({ currentTime: targetTime, waiting: false, error: "" });
+      } catch {}
+    }
+
     if (active.seekRequestId && lastSeekRequestRef.current !== active.seekRequestId) {
       const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
+      const elapsed = active.playing && active.positionUpdatedAt ? Math.max(0, (Date.now() - active.positionUpdatedAt) / 1000) : 0;
       const targetTime = duration > 0
-        ? clampNumber(active.seekTo ?? 0, 0, duration)
-        : Math.max(0, active.seekTo ?? 0);
+        ? clampNumber((active.seekTo ?? 0) + elapsed, 0, duration)
+        : Math.max(0, (active.seekTo ?? 0) + elapsed);
       try {
         audio.currentTime = targetTime;
         lastSeekRequestRef.current = active.seekRequestId;
@@ -2424,6 +2686,8 @@ function HiddenAudioTrack({
     active.loop,
     active.muted,
     active.playing,
+    active.position,
+    active.positionUpdatedAt,
     active.seekRequestId,
     active.seekTo,
     active.startedAt,
@@ -2478,6 +2742,7 @@ function HiddenYouTubeTrack({
   const masterVolumeRef = useRef(masterVolume);
   const audioEnabledRef = useRef(audioEnabled);
   const lastSeekRequestRef = useRef<string>("");
+  const lastPositionSyncRef = useRef<string>("");
   const videoId = getYouTubeVideoId(track.url);
 
   useEffect(() => {
@@ -2576,14 +2841,25 @@ function HiddenYouTubeTrack({
     if (!player) return;
     try {
       player.setVolume(Math.round(clampNumber((active.muted ? 0 : active.volume) * masterVolume, 0, 1) * 100));
+      const positionSyncKey = `${active.positionUpdatedAt || ""}:${active.playing ? "1" : "0"}:${active.seekRequestId || ""}`;
+      if (active.positionUpdatedAt && lastPositionSyncRef.current !== positionSyncKey) {
+        const duration = Number(player.getDuration?.() || 0);
+        const elapsed = active.playing ? Math.max(0, (Date.now() - active.positionUpdatedAt) / 1000) : 0;
+        const targetTime = duration > 0
+          ? clampNumber((active.position ?? 0) + elapsed, 0, duration)
+          : Math.max(0, (active.position ?? 0) + elapsed);
+        player.seekTo(targetTime, true);
+        lastPositionSyncRef.current = positionSyncKey;
+      }
       if (active.seekRequestId && lastSeekRequestRef.current !== active.seekRequestId && Number.isFinite(Number(active.seekTo))) {
-        player.seekTo(Math.max(0, Number(active.seekTo)), true);
+        const elapsed = active.playing && active.positionUpdatedAt ? Math.max(0, (Date.now() - active.positionUpdatedAt) / 1000) : 0;
+        player.seekTo(Math.max(0, Number(active.seekTo) + elapsed), true);
         lastSeekRequestRef.current = active.seekRequestId;
       }
       if (audioEnabled && active.playing) player.playVideo();
       else player.pauseVideo();
     } catch {}
-  }, [active.muted, active.playing, active.seekRequestId, active.seekTo, active.volume, audioEnabled, masterVolume]);
+  }, [active.muted, active.playing, active.position, active.positionUpdatedAt, active.seekRequestId, active.seekTo, active.volume, audioEnabled, masterVolume]);
 
   if (!videoId) return null;
   return <div id={mountIdRef.current} />;
