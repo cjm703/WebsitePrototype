@@ -30,6 +30,12 @@ import {
   VolumeX,
 } from "lucide-react";
 import { appStore } from "@/lib/app-store";
+import {
+  COMBAT_MUSIC_BUCKET,
+  deleteCombatMusicFileFromStorage,
+  type CombatMusicStorageRef,
+  uploadCombatMusicFileToStorage,
+} from "@/lib/combat-music-storage";
 import { supabase } from "@/lib/supabaseClient";
 import { retro } from "./retro-styles";
 import { safeGetItem, safeGetJson, safeSetJson } from "./safe-storage";
@@ -77,6 +83,7 @@ interface MusicTrack {
   sizeBytes?: number;
   audioDataOmitted?: boolean;
   sharedAudio?: SharedAudioRef;
+  storageAudio?: CombatMusicStorageRef;
   tags?: string[];
   notes?: string;
   updatedAt?: string;
@@ -170,7 +177,7 @@ interface CombatPresenceState {
 interface MusicUploadProgress {
   label: string;
   percent: number;
-  phase: "reading" | "saving";
+  phase: "reading" | "uploading" | "saving";
 }
 
 interface PlaybackStatus {
@@ -198,7 +205,8 @@ const DEFAULT_COMBAT_PRESENCE_STATE: CombatPresenceState = { users: {}, updatedA
 const DEFAULT_AUDIO_EFFECTS: AudioEffectSettings = { reverb: 0, echo: 0, muffle: 0, thin: 0, bass: 0, mid: 0, treble: 0, speed: 1, pitch: 0 };
 const QUICK_FLAGS = ["Guarded", "Concentrating", "Prone", "Hidden", "Bloodied", "Stunned"];
 const MAX_FEED_MESSAGES = 150;
-const MAX_AUDIO_FILE_BYTES = 12 * 1024 * 1024;
+const MAX_STORAGE_AUDIO_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_SHARED_AUDIO_FILE_BYTES = 12 * 1024 * 1024;
 const LOCAL_AUDIO_CACHE_OMIT_THRESHOLD = 256 * 1024;
 const SHARED_AUDIO_CHUNK_SIZE = 160 * 1024;
 const LOCAL_AUDIO_DB_NAME = "inet-combat-audio-cache";
@@ -327,6 +335,25 @@ function fileToDataUrl(file: File, onProgress?: (percent: number) => void): Prom
   });
 }
 
+async function dataUrlToBlob(dataUrl: string) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) throw new Error("Failed to prepare audio for Supabase Storage.");
+  return response.blob();
+}
+
+function formatAudioBytes(value?: number) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "unknown size";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function storageSetupHint(error: unknown) {
+  const detail = error instanceof Error && error.message ? ` (${error.message})` : "";
+  return `Supabase Storage upload failed${detail}. Create a public "${COMBAT_MUSIC_BUCKET}" bucket and allow uploads from the site.`;
+}
+
 function trackLabelFromUrl(url: string) {
   try {
     const parsed = new URL(url);
@@ -379,7 +406,24 @@ function highpassFromThin(amount: number) {
   return Math.min(1800, 20 + (clampNumber(amount, 0, 1) * 1780));
 }
 
+function normalizeStorageAudioRef(raw: unknown): CombatMusicStorageRef | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const ref = raw as Partial<CombatMusicStorageRef>;
+  if (ref.kind !== "supabase-storage" || typeof ref.bucket !== "string" || typeof ref.path !== "string") return undefined;
+  const publicUrl = typeof ref.publicUrl === "string" ? ref.publicUrl : "";
+  return {
+    kind: "supabase-storage",
+    bucket: ref.bucket.trim() || COMBAT_MUSIC_BUCKET,
+    path: ref.path,
+    publicUrl,
+    contentType: typeof ref.contentType === "string" ? ref.contentType : "audio/*",
+    sizeBytes: Number.isFinite(Number(ref.sizeBytes)) ? Number(ref.sizeBytes) : 0,
+    createdAt: typeof ref.createdAt === "string" ? ref.createdAt : "",
+  };
+}
+
 function sourceLabel(track: MusicTrack) {
+  if (track.storageAudio) return `${track.fileName || "Uploaded file"} (Supabase Storage)`;
   if (track.audioDataOmitted && !track.url && track.sharedAudio) return `${track.fileName || "Uploaded file"} (loading shared audio)`;
   if (track.audioDataOmitted && !track.url) return `${track.fileName || "Uploaded file"} (local file needed)`;
   if (track.sourceType === "youtube") return "YouTube";
@@ -394,7 +438,9 @@ function hasPlayableSource(track: MusicTrack) {
 }
 
 function supportsLiveAudioEffects(track: MusicTrack) {
-  return track.sourceType === "file" && typeof track.url === "string" && track.url.startsWith("data:");
+  return track.sourceType === "file" && Boolean(track.url) && (
+    track.url.startsWith("data:") || Boolean(track.storageAudio)
+  );
 }
 
 function isInlineFileAudio(track: MusicTrack) {
@@ -633,22 +679,28 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
   return {
     tracks: Array.isArray(state?.tracks)
       ? state!.tracks
-          .filter((track) => track && typeof track.id === "string" && typeof track.url === "string")
-          .map((track) => ({
-            ...track,
-            title: typeof track.title === "string" && track.title.trim() ? track.title : trackLabelFromUrl(track.url),
-            sourceType: track.sourceType === "youtube" || track.sourceType === "file" || track.sourceType === "audio-url"
-              ? track.sourceType
-              : inferTrackSource(track.url),
-            tags: normalizeTrackTags(track.tags),
-            notes: typeof track.notes === "string" ? track.notes : "",
-            contentType: typeof track.contentType === "string" ? track.contentType : "",
-            sizeBytes: Number.isFinite(Number(track.sizeBytes)) ? Number(track.sizeBytes) : undefined,
-            audioDataOmitted: Boolean(track.audioDataOmitted),
-            sharedAudio: normalizeSharedAudioRef(track.sharedAudio),
-            createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
-            updatedAt: typeof track.updatedAt === "string" ? track.updatedAt : "",
-          }))
+          .filter((track) => track && typeof track.id === "string" && (typeof track.url === "string" || Boolean(normalizeStorageAudioRef(track.storageAudio))))
+          .map((track) => {
+            const storageAudio = normalizeStorageAudioRef(track.storageAudio);
+            const url = typeof track.url === "string" && track.url ? track.url : storageAudio?.publicUrl || "";
+            return {
+              ...track,
+              url,
+              title: typeof track.title === "string" && track.title.trim() ? track.title : trackLabelFromUrl(url),
+              sourceType: track.sourceType === "youtube" || track.sourceType === "file" || track.sourceType === "audio-url"
+                ? track.sourceType
+                : inferTrackSource(url),
+              tags: normalizeTrackTags(track.tags),
+              notes: typeof track.notes === "string" ? track.notes : "",
+              contentType: typeof track.contentType === "string" ? track.contentType : storageAudio?.contentType || "",
+              sizeBytes: Number.isFinite(Number(track.sizeBytes)) ? Number(track.sizeBytes) : storageAudio?.sizeBytes,
+              audioDataOmitted: Boolean(track.audioDataOmitted),
+              sharedAudio: normalizeSharedAudioRef(track.sharedAudio),
+              storageAudio,
+              createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
+              updatedAt: typeof track.updatedAt === "string" ? track.updatedAt : "",
+            };
+          })
       : [],
     active: Array.isArray(state?.active)
       ? state!.active
@@ -1343,49 +1395,73 @@ export function CombatPage() {
       setMusicStatus("Choose an audio file.");
       return;
     }
-    if (file.size > MAX_AUDIO_FILE_BYTES) {
+    if (file.size > MAX_STORAGE_AUDIO_FILE_BYTES) {
       setMusicUploadProgress(null);
-      setMusicStatus("That file is too large for the current shared-data upload path. Use a direct link for now.");
+      setMusicStatus(`That file is ${formatAudioBytes(file.size)}. Keep uploads under ${formatAudioBytes(MAX_STORAGE_AUDIO_FILE_BYTES)} for this Storage uploader.`);
       return;
     }
+
+    const cleanName = file.name.replace(/\.[^.]+$/, "") || "Uploaded Track";
+    const trackId = uid("track");
+    let trackUrl = "";
+    let storageAudio: CombatMusicStorageRef | undefined;
+    let sharedAudio: SharedAudioRef | undefined;
+    let storageSaved = false;
+    let sharedAudioSaved = false;
+
     try {
-      setMusicUploadProgress({ label: file.name, percent: 0, phase: "reading" });
-      setMusicStatus(`Reading ${file.name}...`);
-      const url = await fileToDataUrl(file, (percent) => {
-        setMusicUploadProgress({
-          label: file.name,
-          percent: clampNumber(percent, 0, 90),
-          phase: "reading",
-        });
-      });
-      const cleanName = file.name.replace(/\.[^.]+$/, "") || "Uploaded Track";
-      const trackId = uid("track");
-      void cacheLocalAudioSource(trackId, url);
-      let sharedAudio: SharedAudioRef | undefined;
-      let sharedAudioSaved = false;
       try {
-        setMusicUploadProgress({ label: cleanName, percent: 91, phase: "saving" });
-        setMusicStatus(`Sharing ${cleanName} with players...`);
-        sharedAudio = await saveSharedAudioData(trackId, url, file, (percent) => {
+        setMusicUploadProgress({ label: file.name, percent: 8, phase: "uploading" });
+        setMusicStatus(`Uploading ${file.name} to Supabase Storage...`);
+        storageAudio = await uploadCombatMusicFileToStorage(trackId, file);
+        trackUrl = storageAudio.publicUrl;
+        storageSaved = true;
+        setMusicUploadProgress({ label: cleanName, percent: 88, phase: "saving" });
+      } catch (storageError) {
+        console.warn("[combat music] Supabase Storage upload failed", storageError);
+        if (file.size > MAX_SHARED_AUDIO_FILE_BYTES) {
+          setMusicUploadProgress(null);
+          setMusicStatus(storageSetupHint(storageError));
+          return;
+        }
+
+        setMusicUploadProgress({ label: file.name, percent: 0, phase: "reading" });
+        setMusicStatus(`${storageSetupHint(storageError)} Using the smaller shared-data fallback for this upload...`);
+        trackUrl = await fileToDataUrl(file, (percent) => {
           setMusicUploadProgress({
-            label: cleanName,
-            percent: clampNumber(91 + Math.round(percent * 0.07), 91, 98),
-            phase: "saving",
+            label: file.name,
+            percent: clampNumber(percent, 0, 90),
+            phase: "reading",
           });
         });
-        sharedAudioSaved = true;
-      } catch (error) {
-        console.warn("[combat music] shared audio upload failed", error);
+        void cacheLocalAudioSource(trackId, trackUrl);
+
+        try {
+          setMusicUploadProgress({ label: cleanName, percent: 91, phase: "saving" });
+          setMusicStatus(`Sharing ${cleanName} with players through the fallback path...`);
+          sharedAudio = await saveSharedAudioData(trackId, trackUrl, file, (percent) => {
+            setMusicUploadProgress({
+              label: cleanName,
+              percent: clampNumber(91 + Math.round(percent * 0.07), 91, 98),
+              phase: "saving",
+            });
+          });
+          sharedAudioSaved = true;
+        } catch (error) {
+          console.warn("[combat music] shared audio upload failed", error);
+        }
       }
+
       const nextTrack: MusicTrack = {
         id: trackId,
         title: cleanName,
         sourceType: "file",
-        url,
+        url: trackUrl,
         fileName: file.name,
         contentType: file.type || "audio/*",
         sizeBytes: file.size,
         sharedAudio,
+        storageAudio,
         addedBy: currentUser || "DM",
         createdAt: new Date().toISOString(),
         tags: [],
@@ -1396,11 +1472,15 @@ export function CombatPage() {
       const sharedSaved = await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
       setMusicUploadProgress({ label: cleanName, percent: 100, phase: "saving" });
       setMusicStatus(
-        sharedSaved && sharedAudioSaved
-          ? `${cleanName} uploaded and shared with players.`
-          : sharedAudioSaved
-            ? `${cleanName} uploaded here, but the shared track list did not save yet.`
-            : `${cleanName} is available in this browser, but the shared audio copy failed. Try again or use a direct audio URL.`,
+        storageSaved && sharedSaved
+          ? `${cleanName} uploaded to Supabase Storage and shared with players.`
+          : storageSaved
+            ? `${cleanName} uploaded to Supabase Storage, but the shared track list did not save yet.`
+            : sharedSaved && sharedAudioSaved
+              ? `${cleanName} uploaded through the fallback path and shared with players.`
+              : sharedAudioSaved
+                ? `${cleanName} uploaded here, but the shared track list did not save yet.`
+                : `${cleanName} is available in this browser, but the shared audio copy failed. Try Supabase Storage again or use a direct audio URL.`,
       );
       window.setTimeout(() => {
         setMusicUploadProgress((current) => current?.label === cleanName ? null : current);
@@ -1415,8 +1495,32 @@ export function CombatPage() {
     if (!isDM || !isInlineFileAudio(track)) return;
     try {
       void cacheLocalAudioSource(track.id, track.url);
+      try {
+        setMusicUploadProgress({ label: track.title, percent: 8, phase: "uploading" });
+        setMusicStatus(`Uploading ${track.title} to Supabase Storage...`);
+        const blob = await dataUrlToBlob(track.url);
+        const file = new File([blob], track.fileName || `${track.title || "audio"}.mp3`, {
+          type: track.contentType || blob.type || "audio/mpeg",
+        });
+        const storageAudio = await uploadCombatMusicFileToStorage(track.id, file);
+        await updateMusicTrack(track.id, {
+          url: storageAudio.publicUrl,
+          storageAudio,
+          audioDataOmitted: false,
+        });
+        setMusicUploadProgress({ label: track.title, percent: 100, phase: "saving" });
+        setMusicStatus(`${track.title} saved to Supabase Storage and shared with players.`);
+        window.setTimeout(() => {
+          setMusicUploadProgress((current) => current?.label === track.title ? null : current);
+        }, 1200);
+        return;
+      } catch (storageError) {
+        console.warn("[combat music] Supabase Storage share failed", storageError);
+        setMusicStatus(`${storageSetupHint(storageError)} Using the smaller shared-data fallback...`);
+      }
+
       setMusicUploadProgress({ label: track.title, percent: 91, phase: "saving" });
-      setMusicStatus(`Sharing ${track.title} with players...`);
+      setMusicStatus(`Sharing ${track.title} with players through the fallback path...`);
       const sharedAudio = await saveSharedAudioData(
         track.id,
         track.url,
@@ -1431,7 +1535,7 @@ export function CombatPage() {
       );
       await updateMusicTrack(track.id, { sharedAudio });
       setMusicUploadProgress({ label: track.title, percent: 100, phase: "saving" });
-      setMusicStatus(`${track.title} shared with players.`);
+      setMusicStatus(`${track.title} shared with players through the fallback path.`);
       window.setTimeout(() => {
         setMusicUploadProgress((current) => current?.label === track.title ? null : current);
       }, 1200);
@@ -1609,6 +1713,9 @@ export function CombatPage() {
     localAudioSourcesRef.current.delete(trackId);
     void deleteCachedAudioSource(trackId);
     void deleteSharedAudioData(track?.sharedAudio);
+    void deleteCombatMusicFileFromStorage(track?.storageAudio).catch((error) => {
+      console.warn("[combat music] Supabase Storage delete failed", error);
+    });
   };
 
   const renderMusicTrackCard = (track: MusicTrack) => {
@@ -1666,7 +1773,9 @@ export function CombatPage() {
 
         {!playable && (
           <div className="mt-2 text-[10px] leading-relaxed" style={S_WARN}>
-            {track.sharedAudio
+            {track.storageAudio
+              ? "Supabase Storage has this track, but the saved public URL is missing or blocked for this browser."
+              : track.sharedAudio
               ? "Shared audio is loading for this browser. If it stays here, the shared upload may have failed."
               : "Audio data is not available in this browser. Re-upload the file here or use a direct audio URL."}
           </div>
@@ -1715,7 +1824,7 @@ export function CombatPage() {
                 {active?.muted ? <VolumeX size={11} /> : <Volume2 size={11} />}
                 {active?.muted ? "Muted" : "Mute"}
               </button>
-              {isInlineFileAudio(track) && !track.sharedAudio && (
+              {isInlineFileAudio(track) && !track.sharedAudio && !track.storageAudio && (
                 <button
                   onClick={() => void shareExistingTrackAudio(track)}
                   className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1`}
@@ -2249,7 +2358,7 @@ export function CombatPage() {
                       <div className="mt-3">
                         <div className="flex items-center justify-between gap-3 text-[9px] mb-1" style={S_DIM}>
                           <span className="truncate">
-                            {musicUploadProgress.phase === "reading" ? "Reading" : "Saving"} {musicUploadProgress.label}
+                            {musicUploadProgress.phase === "reading" ? "Reading" : musicUploadProgress.phase === "uploading" ? "Uploading" : "Saving"} {musicUploadProgress.label}
                           </span>
                           <span>{Math.round(musicUploadProgress.percent)}%</span>
                         </div>
@@ -2258,14 +2367,14 @@ export function CombatPage() {
                             className="h-full transition-all duration-200"
                             style={{
                               width: `${clampNumber(musicUploadProgress.percent, 0, 100)}%`,
-                              background: musicUploadProgress.phase === "saving" ? "#FFD37A" : "#6AA8FF",
+                              background: musicUploadProgress.phase === "saving" || musicUploadProgress.phase === "uploading" ? "#FFD37A" : "#6AA8FF",
                             }}
                           />
                         </div>
                       </div>
                     )}
                     <div className="text-[9px] mt-2 leading-relaxed" style={S_DIM}>
-                      Uploaded files are split into shared chunks so players can receive them. Direct audio URLs are still best for large libraries.
+                      Uploaded files save to the Supabase "{COMBAT_MUSIC_BUCKET}" bucket first. The older shared-data path is kept only as a fallback for small files.
                     </div>
                   </div>
 
@@ -2730,7 +2839,7 @@ function TrackPreview({ track }: { track: MusicTrack }) {
           allowFullScreen
         />
       ) : (
-        <audio controls src={track.url} className="w-full" preload="metadata" />
+        <audio controls src={track.url} crossOrigin={track.storageAudio ? "anonymous" : undefined} className="w-full" preload="metadata" />
       )}
     </div>
   );
@@ -3200,7 +3309,7 @@ function HiddenAudioTrack({
     return () => window.clearInterval(timer);
   }, [active, masterVolume]);
 
-  return <audio ref={audioRef} src={track.url} preload="auto" />;
+  return <audio ref={audioRef} src={track.url} crossOrigin={track.storageAudio ? "anonymous" : undefined} preload="auto" />;
 }
 
 let youtubeApiPromise: Promise<void> | null = null;
