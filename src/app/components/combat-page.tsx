@@ -8,6 +8,8 @@ import {
   Droplets,
   Eraser,
   FileText,
+  Database,
+  Folder,
   HeartPulse,
   Link as LinkIcon,
   Lock,
@@ -45,7 +47,7 @@ import type { ManagedCard, ManagedItem, PlayerData } from "./types";
 type CombatTab = "players" | "music";
 type FeedKind = "message" | "roll" | "wound" | "card" | "item" | "system";
 type TrackSource = "audio-url" | "youtube" | "file";
-type MusicSort = "recent" | "title" | "source" | "tag";
+type MusicSort = "recent" | "title" | "source" | "tag" | "folder";
 type MusicLayerId = "1" | "2";
 
 interface CombatFeedMessage {
@@ -84,6 +86,7 @@ interface MusicTrack {
   audioDataOmitted?: boolean;
   sharedAudio?: SharedAudioRef;
   storageAudio?: CombatMusicStorageRef;
+  folder?: string;
   tags?: string[];
   notes?: string;
   updatedAt?: string;
@@ -162,6 +165,7 @@ interface CombatPresenceUser {
   name: string;
   isDM: boolean;
   audioEnabled: boolean;
+  localVolume: number;
   activeTab: CombatTab;
   loadedTrackIds: string[];
   missingTrackIds: string[];
@@ -199,6 +203,7 @@ interface DiceRollResult {
 const LOCAL_COMBAT_STATE_KEY = "inet-combat-state";
 const LOCAL_MUSIC_STATE_KEY = "inet-combat-music-state";
 const LOCAL_COMBAT_PRESENCE_KEY = "inet-combat-presence-state";
+const LOCAL_PLAYER_MUSIC_VOLUME_KEY = "inet-combat-player-music-volume";
 const DEFAULT_COMBAT_STATE: CombatState = { messages: [], playerStates: {}, round: 1, scene: "", updatedAt: "" };
 const DEFAULT_MUSIC_STATE: CombatMusicState = { tracks: [], active: [], queue: [], crossfadeSeconds: 4, masterVolume: 0.85, muted: false, updatedAt: "" };
 const DEFAULT_COMBAT_PRESENCE_STATE: CombatPresenceState = { users: {}, updatedAt: "" };
@@ -212,6 +217,7 @@ const SHARED_AUDIO_CHUNK_SIZE = 160 * 1024;
 const LOCAL_AUDIO_DB_NAME = "inet-combat-audio-cache";
 const LOCAL_AUDIO_DB_STORE = "audio";
 const LOCAL_AUDIO_DB_VERSION = 1;
+const DEFAULT_TRACK_FOLDER = "Unsorted";
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -343,7 +349,8 @@ async function dataUrlToBlob(dataUrl: string) {
 
 function formatAudioBytes(value?: number) {
   const bytes = Number(value || 0);
-  if (!Number.isFinite(bytes) || bytes <= 0) return "unknown size";
+  if (!Number.isFinite(bytes) || bytes < 0) return "unknown size";
+  if (bytes === 0) return "0 B";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
@@ -376,6 +383,12 @@ function parseTrackTags(raw: string) {
       return true;
     })
     .slice(0, 12);
+}
+
+function normalizeTrackFolder(raw: unknown) {
+  if (typeof raw !== "string") return DEFAULT_TRACK_FOLDER;
+  const folder = raw.trim().replace(/\s+/g, " ").slice(0, 40);
+  return folder || DEFAULT_TRACK_FOLDER;
 }
 
 function normalizeTrackTags(raw: unknown) {
@@ -675,6 +688,11 @@ function normalizeCombatState(state: Partial<CombatState> | null | undefined): C
   };
 }
 
+function musicStateTimestamp(state: Partial<CombatMusicState> | null | undefined) {
+  const parsed = Date.parse(state?.updatedAt || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined): CombatMusicState {
   return {
     tracks: Array.isArray(state?.tracks)
@@ -690,6 +708,7 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
               sourceType: track.sourceType === "youtube" || track.sourceType === "file" || track.sourceType === "audio-url"
                 ? track.sourceType
                 : inferTrackSource(url),
+              folder: normalizeTrackFolder(track.folder),
               tags: normalizeTrackTags(track.tags),
               notes: typeof track.notes === "string" ? track.notes : "",
               contentType: typeof track.contentType === "string" ? track.contentType : storageAudio?.contentType || "",
@@ -753,6 +772,7 @@ function normalizeCombatPresenceState(state: Partial<CombatPresenceState> | null
         name: typeof user.name === "string" && user.name.trim() ? user.name : user.userId,
         isDM: Boolean(user.isDM),
         audioEnabled: Boolean(user.audioEnabled),
+        localVolume: clampNumber(Number(user.localVolume ?? 1), 0, 1.5),
         activeTab: user.activeTab === "music" ? "music" : "players",
         loadedTrackIds: Array.isArray(user.loadedTrackIds) ? user.loadedTrackIds.filter((id) => typeof id === "string") : [],
         missingTrackIds: Array.isArray(user.missingTrackIds) ? user.missingTrackIds.filter((id) => typeof id === "string") : [],
@@ -790,6 +810,10 @@ export function CombatPage() {
   const [musicUploadProgress, setMusicUploadProgress] = useState<MusicUploadProgress | null>(null);
   const [musicSearch, setMusicSearch] = useState("");
   const [musicSort, setMusicSort] = useState<MusicSort>("recent");
+  const [musicFolderFilter, setMusicFolderFilter] = useState("all");
+  const [localMusicVolume, setLocalMusicVolume] = useState(() => (
+    clampNumber(Number(safeGetJson<number>(LOCAL_PLAYER_MUSIC_VOLUME_KEY, 1)), 0, 1.5)
+  ));
   const [previewTrackId, setPreviewTrackId] = useState("");
   const [playbackStatuses, setPlaybackStatuses] = useState<Record<string, PlaybackStatus>>({});
   const [seekDrafts, setSeekDrafts] = useState<Record<string, number>>({});
@@ -797,6 +821,10 @@ export function CombatPage() {
   const [sceneDraft, setSceneDraft] = useState("");
   const [sceneDraftDirty, setSceneDraftDirty] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
+  const musicStateRef = useRef<CombatMusicState>(DEFAULT_MUSIC_STATE);
+  const musicPersistRequestedRef = useRef(false);
+  const musicPersistLoopRef = useRef<Promise<void> | null>(null);
+  const musicPersistResolversRef = useRef<Array<(saved: boolean) => void>>([]);
   const localAudioSourcesRef = useRef<Map<string, string>>(new Map());
   const sharedAudioLoadingRef = useRef<Set<string>>(new Set());
   const sharedAudioFailedRef = useRef<Set<string>>(new Set());
@@ -852,7 +880,11 @@ export function CombatPage() {
     setCombatState(normalizeCombatState(nextCombat));
     const normalizedMusic = normalizeMusicState(nextMusic);
     rememberLocalAudioSources(normalizedMusic, localAudioSourcesRef.current);
-    setMusicState(restoreLocalAudioSources(normalizedMusic, localAudioSourcesRef.current));
+    const restoredMusic = restoreLocalAudioSources(normalizedMusic, localAudioSourcesRef.current);
+    if (musicStateTimestamp(restoredMusic) >= musicStateTimestamp(musicStateRef.current)) {
+      musicStateRef.current = restoredMusic;
+      setMusicState(restoredMusic);
+    }
     setCombatPresence(normalizeCombatPresenceState(nextPresence));
   }, []);
 
@@ -923,6 +955,7 @@ export function CombatPage() {
                   : entry
               )),
             };
+            musicStateRef.current = nextState;
             safeSetJson(LOCAL_MUSIC_STATE_KEY, buildLocalMusicCacheState(nextState));
             return nextState;
           });
@@ -954,6 +987,12 @@ export function CombatPage() {
     if (context?.state === "suspended") {
       void context.resume().catch(() => {});
     }
+  }, []);
+
+  const updateLocalMusicVolume = useCallback((value: number) => {
+    const nextVolume = clampNumber(value, 0, 1.5);
+    setLocalMusicVolume(nextVolume);
+    safeSetJson(LOCAL_PLAYER_MUSIC_VOLUME_KEY, nextVolume);
   }, []);
 
   const handlePlaybackStatus = useCallback((trackId: string, patch: Partial<PlaybackStatus>) => {
@@ -993,6 +1032,7 @@ export function CombatPage() {
       name: currentUser,
       isDM,
       audioEnabled,
+      localVolume: localMusicVolume,
       activeTab,
       loadedTrackIds,
       missingTrackIds,
@@ -1003,7 +1043,7 @@ export function CombatPage() {
     setCombatPresence(nextPresence);
     safeSetJson(LOCAL_COMBAT_PRESENCE_KEY, nextPresence);
     await appStore.saveCombatPresenceState(nextPresence).catch(() => {});
-  }, [activeTab, audioEnabled, currentUser, currentUserId, isDM, musicState.active, musicState.tracks]);
+  }, [activeTab, audioEnabled, currentUser, currentUserId, isDM, localMusicVolume, musicState.active, musicState.tracks]);
 
   useEffect(() => {
     void publishCombatPresence();
@@ -1024,23 +1064,58 @@ export function CombatPage() {
     await appStore.saveCombatState(normalized).catch(() => {});
   }, []);
 
+  const runMusicPersistLoop = useCallback(async () => {
+    if (musicPersistLoopRef.current) return musicPersistLoopRef.current;
+
+    const loop = (async () => {
+      while (musicPersistRequestedRef.current) {
+        musicPersistRequestedRef.current = false;
+        const resolvers = musicPersistResolversRef.current.splice(0);
+        const stateToSave = musicStateRef.current;
+        let saved = false;
+
+        try {
+          await appStore.saveCombatMusicState(buildSharedMusicState(stateToSave));
+          musicLoadFailuresRef.current = 0;
+          musicLoadRetryAtRef.current = 0;
+          saved = true;
+        } catch (error) {
+          console.warn("[combat music] shared save failed", error);
+          musicLoadFailuresRef.current = Math.max(musicLoadFailuresRef.current, 3);
+          musicLoadRetryAtRef.current = Date.now() + 30000;
+        }
+
+        resolvers.forEach((resolve) => resolve(saved));
+      }
+    })().finally(() => {
+      musicPersistLoopRef.current = null;
+      if (musicPersistRequestedRef.current) void runMusicPersistLoop();
+    });
+
+    musicPersistLoopRef.current = loop;
+    return loop;
+  }, []);
+
+  const queueMusicPersist = useCallback(() => (
+    new Promise<boolean>((resolve) => {
+      musicPersistResolversRef.current.push(resolve);
+      musicPersistRequestedRef.current = true;
+      void runMusicPersistLoop();
+    })
+  ), [runMusicPersistLoop]);
+
   const saveMusic = useCallback(async (nextState: CombatMusicState) => {
     const normalized = normalizeMusicState({ ...nextState, updatedAt: new Date().toISOString() });
     rememberLocalAudioSources(normalized, localAudioSourcesRef.current);
+    musicStateRef.current = normalized;
     setMusicState(normalized);
     safeSetJson(LOCAL_MUSIC_STATE_KEY, buildLocalMusicCacheState(normalized));
-    try {
-      await appStore.saveCombatMusicState(buildSharedMusicState(normalized));
-      musicLoadFailuresRef.current = 0;
-      musicLoadRetryAtRef.current = 0;
-      return true;
-    } catch (error) {
-      console.warn("[combat music] shared save failed", error);
-      musicLoadFailuresRef.current = Math.max(musicLoadFailuresRef.current, 3);
-      musicLoadRetryAtRef.current = Date.now() + 30000;
-      return false;
-    }
-  }, []);
+    return queueMusicPersist();
+  }, [queueMusicPersist]);
+
+  const saveLatestMusic = useCallback(async (buildNextState: (current: CombatMusicState) => CombatMusicState) => (
+    saveMusic(buildNextState(musicStateRef.current))
+  ), [saveMusic]);
 
   const postFeedMessage = useCallback(async (message: Omit<CombatFeedMessage, "id" | "createdAt">) => {
     const nextMessage: CombatFeedMessage = {
@@ -1273,28 +1348,61 @@ export function CombatPage() {
       .sort((a, b) => a.localeCompare(b))
       .slice(0, 18)
   ), [musicState.tracks]);
+  const musicFolders = useMemo(() => (
+    Array.from(new Set(musicState.tracks.map((track) => normalizeTrackFolder(track.folder))))
+      .sort((a, b) => (a === DEFAULT_TRACK_FOLDER ? -1 : b === DEFAULT_TRACK_FOLDER ? 1 : a.localeCompare(b)))
+  ), [musicState.tracks]);
+  const folderCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    musicState.tracks.forEach((track) => {
+      const folder = normalizeTrackFolder(track.folder);
+      counts.set(folder, (counts.get(folder) || 0) + 1);
+    });
+    return counts;
+  }, [musicState.tracks]);
+  const musicStorageSummary = useMemo(() => {
+    const storageTracks = musicState.tracks.filter((track) => track.storageAudio);
+    const fallbackTracks = musicState.tracks.filter((track) => track.sharedAudio && !track.storageAudio);
+    const localOnlyTracks = musicState.tracks.filter((track) => isInlineFileAudio(track) && !track.storageAudio && !track.sharedAudio);
+    const storageBytes = storageTracks.reduce((sum, track) => sum + (track.storageAudio?.sizeBytes || track.sizeBytes || 0), 0);
+    const fallbackBytes = fallbackTracks.reduce((sum, track) => sum + (track.sharedAudio?.sizeBytes || track.sizeBytes || 0), 0);
+    return {
+      storageTracks,
+      fallbackTracks,
+      localOnlyTracks,
+      directAudioTracks: musicState.tracks.filter((track) => track.sourceType === "audio-url"),
+      youtubeTracks: musicState.tracks.filter((track) => track.sourceType === "youtube"),
+      storageBytes,
+      fallbackBytes,
+    };
+  }, [musicState.tracks]);
   const visibleTracks = useMemo(() => {
     const query = musicSearch.trim().toLowerCase();
+    const byFolder = musicFolderFilter === "all"
+      ? musicState.tracks
+      : musicState.tracks.filter((track) => normalizeTrackFolder(track.folder) === musicFolderFilter);
     const filtered = query
-      ? musicState.tracks.filter((track) => {
+      ? byFolder.filter((track) => {
           const haystack = [
             track.title,
             sourceLabel(track),
             track.fileName || "",
+            normalizeTrackFolder(track.folder),
             track.notes || "",
             ...(track.tags || []),
           ].join(" ").toLowerCase();
           return haystack.includes(query);
         })
-      : musicState.tracks;
+      : byFolder;
 
     return [...filtered].sort((a, b) => {
       if (musicSort === "title") return a.title.localeCompare(b.title);
       if (musicSort === "source") return sourceLabel(a).localeCompare(sourceLabel(b)) || a.title.localeCompare(b.title);
+      if (musicSort === "folder") return normalizeTrackFolder(a.folder).localeCompare(normalizeTrackFolder(b.folder)) || a.title.localeCompare(b.title);
       if (musicSort === "tag") return (a.tags?.[0] || "").localeCompare(b.tags?.[0] || "") || a.title.localeCompare(b.title);
       return (Date.parse(b.updatedAt || b.createdAt || "") || 0) - (Date.parse(a.updatedAt || a.createdAt || "") || 0);
     });
-  }, [musicSearch, musicSort, musicState.tracks]);
+  }, [musicFolderFilter, musicSearch, musicSort, musicState.tracks]);
   const editableVisibleTracks = useMemo(
     () => visibleTracks.filter((track) => track.sourceType !== "youtube"),
     [visibleTracks],
@@ -1312,14 +1420,14 @@ export function CombatPage() {
 
   const updateMusicTrack = async (trackId: string, patch: Partial<MusicTrack>) => {
     if (!isDM) return;
-    await saveMusic({
-      ...musicState,
-      tracks: musicState.tracks.map((track) => (
+    await saveLatestMusic((current) => ({
+      ...current,
+      tracks: current.tracks.map((track) => (
         track.id === trackId
           ? { ...track, ...patch, updatedAt: new Date().toISOString() }
           : track
       )),
-    });
+    }));
   };
 
   const exportMusicLibrary = () => {
@@ -1361,7 +1469,7 @@ export function CombatPage() {
         existingIds.add(nextTrack.id);
         return nextTrack;
       });
-      await saveMusic({ ...musicState, tracks: [...musicState.tracks, ...importedTracks] });
+      await saveLatestMusic((current) => ({ ...current, tracks: [...current.tracks, ...importedTracks] }));
       setMusicStatus(`${importedTracks.length} track${importedTracks.length === 1 ? "" : "s"} imported.`);
     } catch (error) {
       setMusicStatus(error instanceof Error ? error.message : "Failed to import music library.");
@@ -1379,13 +1487,14 @@ export function CombatPage() {
       url,
       addedBy: currentUser || "DM",
       createdAt: new Date().toISOString(),
+      folder: DEFAULT_TRACK_FOLDER,
       tags: [],
       notes: "",
     };
     setMusicUrl("");
     setMusicTitle("");
     setMusicStatus(`${title} added.`);
-    await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
+    await saveLatestMusic((current) => ({ ...current, tracks: [...current.tracks, nextTrack] }));
   };
 
   const addFileTrack = async (file: File | null | undefined) => {
@@ -1464,12 +1573,13 @@ export function CombatPage() {
         storageAudio,
         addedBy: currentUser || "DM",
         createdAt: new Date().toISOString(),
+        folder: DEFAULT_TRACK_FOLDER,
         tags: [],
         notes: "",
       };
       setMusicUploadProgress({ label: cleanName, percent: 95, phase: "saving" });
       setMusicStatus(`Saving ${cleanName}...`);
-      const sharedSaved = await saveMusic({ ...musicState, tracks: [...musicState.tracks, nextTrack] });
+      const sharedSaved = await saveLatestMusic((current) => ({ ...current, tracks: [...current.tracks, nextTrack] }));
       setMusicUploadProgress({ label: cleanName, percent: 100, phase: "saving" });
       setMusicStatus(
         storageSaved && sharedSaved
@@ -1546,11 +1656,12 @@ export function CombatPage() {
   };
 
   const upsertActiveTrack = async (trackId: string, patch: Partial<ActiveMusicTrack>) => {
-    const existing = activeById.get(trackId);
+    const sourceState = musicStateRef.current;
+    const existing = sourceState.active.find((entry) => entry.trackId === trackId);
     const nextActive = existing
-      ? musicState.active.map((entry) => entry.trackId === trackId ? { ...entry, ...patch, updatedAt: new Date().toISOString() } : entry)
+      ? sourceState.active.map((entry) => entry.trackId === trackId ? { ...entry, ...patch, updatedAt: new Date().toISOString() } : entry)
       : [
-          ...musicState.active,
+          ...sourceState.active,
           {
             trackId,
             layer: normalizeMusicLayer(patch.layer),
@@ -1566,10 +1677,10 @@ export function CombatPage() {
             ...patch,
           },
         ];
-    await saveMusic({ ...musicState, active: nextActive });
+    await saveMusic({ ...sourceState, active: nextActive });
   };
 
-  const playTrackOnLayer = async (trackId: string, layer: MusicLayerId, sourceState = musicState, queueIdToRemove = "") => {
+  const playTrackOnLayer = async (trackId: string, layer: MusicLayerId, sourceState = musicStateRef.current, queueIdToRemove = "") => {
     enableCombatAudio();
     const now = Date.now();
     const updatedAt = new Date().toISOString();
@@ -1607,36 +1718,98 @@ export function CombatPage() {
   };
 
   const queueTrackOnLayer = async (trackId: string, layer: MusicLayerId) => {
-    await saveMusic({
-      ...musicState,
+    await saveLatestMusic((current) => ({
+      ...current,
       queue: [
-        ...musicState.queue,
+        ...current.queue,
         { id: uid("queue"), trackId, layer, addedAt: new Date().toISOString() },
       ].slice(-20),
-    });
+    }));
   };
 
   const removeQueuedTrack = async (queueId: string) => {
-    await saveMusic({ ...musicState, queue: musicState.queue.filter((entry) => entry.id !== queueId) });
+    await saveLatestMusic((current) => ({ ...current, queue: current.queue.filter((entry) => entry.id !== queueId) }));
   };
 
   const startQueuedTrack = async (queueId: string) => {
-    const queued = musicState.queue.find((entry) => entry.id === queueId);
+    const sourceState = musicStateRef.current;
+    const queued = sourceState.queue.find((entry) => entry.id === queueId);
     if (!queued) return;
-    await playTrackOnLayer(queued.trackId, queued.layer, musicState, queueId);
+    await playTrackOnLayer(queued.trackId, queued.layer, sourceState, queueId);
   };
 
   const handleTrackEnded = async (trackId: string) => {
     if (!isDM) return;
-    const active = musicState.active.find((entry) => entry.trackId === trackId);
+    const sourceState = musicStateRef.current;
+    const active = sourceState.active.find((entry) => entry.trackId === trackId);
     if (!active || active.loop) return;
     const layer = normalizeMusicLayer(active.layer);
-    const queued = musicState.queue.find((entry) => entry.layer === layer);
+    const queued = sourceState.queue.find((entry) => entry.layer === layer);
     if (queued) {
-      await playTrackOnLayer(queued.trackId, queued.layer, musicState, queued.id);
+      await playTrackOnLayer(queued.trackId, queued.layer, sourceState, queued.id);
       return;
     }
-    await saveMusic({ ...musicState, active: musicState.active.filter((entry) => entry.trackId !== trackId) });
+    await saveLatestMusic((current) => ({ ...current, active: current.active.filter((entry) => entry.trackId !== trackId) }));
+  };
+
+  const fadeTrack = async (trackId: string, direction: "in" | "out") => {
+    const now = Date.now();
+    const seconds = clampNumber(musicStateRef.current.crossfadeSeconds || 4, 1, 20);
+    await saveLatestMusic((current) => ({
+      ...current,
+      muted: direction === "in" ? false : current.muted,
+      active: current.active.map((entry) => (
+        entry.trackId === trackId
+          ? {
+              ...entry,
+              playing: true,
+              muted: direction === "in" ? false : entry.muted,
+              fadeInStartedAt: direction === "in" ? now : undefined,
+              fadeInSeconds: direction === "in" ? seconds : undefined,
+              fadeOutStartedAt: direction === "out" ? now : undefined,
+              fadeOutSeconds: direction === "out" ? seconds : undefined,
+              updatedAt: new Date().toISOString(),
+            }
+          : entry
+      )),
+    }));
+  };
+
+  const fadeAllTracks = async (direction: "in" | "out") => {
+    const now = Date.now();
+    const seconds = clampNumber(musicStateRef.current.crossfadeSeconds || 4, 1, 20);
+    await saveLatestMusic((current) => ({
+      ...current,
+      muted: direction === "in" ? false : current.muted,
+      active: current.active.map((entry) => ({
+        ...entry,
+        playing: true,
+        muted: direction === "in" ? false : entry.muted,
+        fadeInStartedAt: direction === "in" ? now : undefined,
+        fadeInSeconds: direction === "in" ? seconds : undefined,
+        fadeOutStartedAt: direction === "out" ? now : undefined,
+        fadeOutSeconds: direction === "out" ? seconds : undefined,
+        updatedAt: new Date().toISOString(),
+      })),
+    }));
+  };
+
+  const panicMuteMusic = async () => {
+    await saveLatestMusic((current) => ({
+      ...current,
+      muted: true,
+      active: current.active.map((entry) => ({
+        ...entry,
+        playing: false,
+        muted: true,
+        fadeInStartedAt: undefined,
+        fadeInSeconds: undefined,
+        fadeOutStartedAt: undefined,
+        fadeOutSeconds: undefined,
+        updatedAt: new Date().toISOString(),
+      })),
+    }));
+    setMusicStatus("Panic mute engaged. All active tracks are paused and muted.");
   };
 
   useEffect(() => {
@@ -1645,17 +1818,17 @@ export function CombatPage() {
       .map((entry) => {
         const remaining = Math.max(100, (entry.fadeOutStartedAt! + entry.fadeOutSeconds! * 1000) - Date.now());
         return window.setTimeout(() => {
-          void saveMusic({
-            ...musicState,
-            active: musicState.active.filter((active) => active.trackId !== entry.trackId),
-          });
+          void saveLatestMusic((current) => ({
+            ...current,
+            active: current.active.filter((active) => active.trackId !== entry.trackId),
+          }));
         }, remaining);
       });
     return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [musicState, saveMusic]);
+  }, [musicState, saveLatestMusic]);
 
   const updateTrackEffects = async (trackId: string, patch: Partial<AudioEffectSettings>) => {
-    const existing = activeById.get(trackId);
+    const existing = musicStateRef.current.active.find((entry) => entry.trackId === trackId);
     await upsertActiveTrack(trackId, {
       playing: existing?.playing ?? false,
       effects: {
@@ -1699,23 +1872,29 @@ export function CombatPage() {
   };
 
   const stopTrack = async (trackId: string) => {
-    await saveMusic({ ...musicState, active: musicState.active.filter((entry) => entry.trackId !== trackId) });
+    await saveLatestMusic((current) => ({ ...current, active: current.active.filter((entry) => entry.trackId !== trackId) }));
   };
 
   const deleteTrack = async (trackId: string) => {
     if (!isDM) return;
-    const track = musicState.tracks.find((entry) => entry.id === trackId);
-    await saveMusic({
-      ...musicState,
-      tracks: musicState.tracks.filter((track) => track.id !== trackId),
-      active: musicState.active.filter((entry) => entry.trackId !== trackId),
-    });
+    const track = musicStateRef.current.tracks.find((entry) => entry.id === trackId);
+    await saveLatestMusic((current) => ({
+      ...current,
+      tracks: current.tracks.filter((track) => track.id !== trackId),
+      active: current.active.filter((entry) => entry.trackId !== trackId),
+    }));
     localAudioSourcesRef.current.delete(trackId);
     void deleteCachedAudioSource(trackId);
     void deleteSharedAudioData(track?.sharedAudio);
     void deleteCombatMusicFileFromStorage(track?.storageAudio).catch((error) => {
       console.warn("[combat music] Supabase Storage delete failed", error);
     });
+  };
+
+  const clearStorageBackedLocalCache = async () => {
+    const storageTracks = musicStateRef.current.tracks.filter((track) => track.storageAudio);
+    await Promise.all(storageTracks.map((track) => deleteCachedAudioSource(track.id)));
+    setMusicStatus(`Cleared local browser cache for ${storageTracks.length} Supabase-backed track${storageTracks.length === 1 ? "" : "s"}.`);
   };
 
   const renderMusicTrackCard = (track: MusicTrack) => {
@@ -1756,11 +1935,14 @@ export function CombatPage() {
           )}
         </div>
 
-        {(track.tags?.length || track.notes) && (
+        {(track.folder || track.tags?.length || track.notes) && (
           <div className="mt-2 space-y-1">
-            {track.tags?.length ? (
+            {(track.folder || track.tags?.length) ? (
               <div className="flex flex-wrap gap-1">
-                {track.tags.map((tag) => (
+                <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-1" style={{ color: "#FFD37A", border: "1px solid #4A3A1A", background: "#15110A" }}>
+                  <Folder size={9} /> {normalizeTrackFolder(track.folder)}
+                </span>
+                {(track.tags || []).map((tag) => (
                   <span key={tag} className="text-[9px] px-1.5 py-0.5" style={{ color: "#8AB4FF", border: "1px solid #263A67", background: "#071029" }}>
                     {tag}
                   </span>
@@ -1808,15 +1990,21 @@ export function CombatPage() {
               <button onClick={() => void stopTrack(track.id)} disabled={!active} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1 disabled:opacity-40`} style={S_RED}>
                 <Square size={11} /> Stop
               </button>
+              <button onClick={() => void fadeTrack(track.id, "in")} disabled={!active} className={`${retro.button} px-3 py-2 text-[11px] disabled:opacity-40`} style={S_GREEN}>
+                Fade In
+              </button>
+              <button onClick={() => void fadeTrack(track.id, "out")} disabled={!active} className={`${retro.button} px-3 py-2 text-[11px] disabled:opacity-40`} style={S_DIM}>
+                Fade Out
+              </button>
               <button
-                onClick={() => void upsertActiveTrack(track.id, { loop: !active?.loop, playing: active?.playing ?? false })}
+                onClick={() => void upsertActiveTrack(track.id, { loop: !active?.loop })}
                 className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1`}
                 style={active?.loop ? S_ACCENT : S_MUTED}
               >
                 <RotateCcw size={11} /> Loop
               </button>
               <button
-                onClick={() => void upsertActiveTrack(track.id, { muted: !active?.muted, playing: active?.playing ?? false })}
+                onClick={() => void upsertActiveTrack(track.id, { muted: !active?.muted })}
                 disabled={!active}
                 className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1 disabled:opacity-40`}
                 style={active?.muted ? S_RED : S_MUTED}
@@ -1886,7 +2074,7 @@ export function CombatPage() {
             max={100}
             value={Math.round((active?.volume ?? 0.65) * 100)}
             disabled={!isDM}
-            onChange={(event) => void upsertActiveTrack(track.id, { volume: parseInt(event.target.value, 10) / 100, playing: active?.playing ?? false })}
+            onChange={(event) => void upsertActiveTrack(track.id, { volume: parseInt(event.target.value, 10) / 100 })}
             className="flex-1"
           />
           <span className="text-[10px] w-9 text-right" style={S_DIM}>{Math.round((active?.volume ?? 0.65) * 100)}%</span>
@@ -1920,6 +2108,13 @@ export function CombatPage() {
                 const title = event.target.value.trim();
                 if (title && title !== track.title) void updateMusicTrack(track.id, { title });
               }}
+              className={`${retro.sunken} bg-[#05071C] px-2 py-1.5 text-[11px] outline-none`}
+              style={S_TEXT}
+            />
+            <input
+              defaultValue={normalizeTrackFolder(track.folder)}
+              onBlur={(event) => void updateMusicTrack(track.id, { folder: normalizeTrackFolder(event.target.value) })}
+              placeholder="Folder: Boss, Ambience, Town"
               className={`${retro.sunken} bg-[#05071C] px-2 py-1.5 text-[11px] outline-none`}
               style={S_TEXT}
             />
@@ -1958,7 +2153,7 @@ export function CombatPage() {
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
       }}
     >
-      <AudioPlaybackLayer musicState={musicState} audioEnabled={audioEnabled} onStatus={handlePlaybackStatus} onEnded={(trackId) => void handleTrackEnded(trackId)} />
+      <AudioPlaybackLayer musicState={musicState} audioEnabled={audioEnabled} localVolume={localMusicVolume} onStatus={handlePlaybackStatus} onEnded={(trackId) => void handleTrackEnded(trackId)} />
 
       <div className={`${retro.toolbar} flex items-center justify-between`}>
         <div className="flex items-center gap-3">
@@ -2256,7 +2451,7 @@ export function CombatPage() {
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="text-[10px]" style={S_MUTED}>Master Mix</div>
                       <button
-                        onClick={() => void saveMusic({ ...musicState, muted: !musicState.muted })}
+                        onClick={() => void saveLatestMusic((current) => ({ ...current, muted: !current.muted }))}
                         className={`${retro.button} px-2 py-1 text-[10px]`}
                         style={musicState.muted ? S_RED : S_GREEN}
                       >
@@ -2270,10 +2465,22 @@ export function CombatPage() {
                         min={0}
                         max={100}
                         value={Math.round((musicState.masterVolume ?? 0.85) * 100)}
-                        onChange={(event) => void saveMusic({ ...musicState, masterVolume: parseInt(event.target.value, 10) / 100, muted: false })}
+                        onChange={(event) => void saveLatestMusic((current) => ({ ...current, masterVolume: parseInt(event.target.value, 10) / 100, muted: false }))}
                         className="flex-1"
                       />
                       <span className="text-[10px] w-9 text-right" style={S_DIM}>{Math.round((musicState.masterVolume ?? 0.85) * 100)}%</span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <span className="text-[9px] w-16" style={S_DIM}>My Volume</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={150}
+                        value={Math.round(localMusicVolume * 100)}
+                        onChange={(event) => updateLocalMusicVolume(parseInt(event.target.value, 10) / 100)}
+                        className="flex-1"
+                      />
+                      <span className="text-[10px] w-9 text-right" style={S_DIM}>{Math.round(localMusicVolume * 100)}%</span>
                     </div>
                     <div className="mt-3">
                       <div className="flex items-center justify-between text-[9px] mb-1" style={S_DIM}>
@@ -2285,9 +2492,23 @@ export function CombatPage() {
                         min={0}
                         max={20}
                         value={Math.round(musicState.crossfadeSeconds ?? 0)}
-                        onChange={(event) => void saveMusic({ ...musicState, crossfadeSeconds: parseInt(event.target.value, 10) })}
+                        onChange={(event) => void saveLatestMusic((current) => ({ ...current, crossfadeSeconds: parseInt(event.target.value, 10) }))}
                         className="w-full"
                       />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                      <button onClick={() => void panicMuteMusic()} className={`${retro.button} px-2 py-2 text-[10px] flex items-center justify-center gap-1`} style={S_RED}>
+                        <VolumeX size={11} /> Panic Mute
+                      </button>
+                      <button onClick={() => void saveLatestMusic((current) => ({ ...current, muted: true }))} className={`${retro.button} px-2 py-2 text-[10px]`} style={S_WARN}>
+                        Full Mute
+                      </button>
+                      <button disabled={musicState.active.length === 0} onClick={() => void fadeAllTracks("in")} className={`${retro.button} px-2 py-2 text-[10px] disabled:opacity-40`} style={S_GREEN}>
+                        Fade In All
+                      </button>
+                      <button disabled={musicState.active.length === 0} onClick={() => void fadeAllTracks("out")} className={`${retro.button} px-2 py-2 text-[10px] disabled:opacity-40`} style={S_DIM}>
+                        Fade Out All
+                      </button>
                     </div>
                   </div>
 
@@ -2310,7 +2531,7 @@ export function CombatPage() {
                                 <span className="text-[9px]" style={user.audioEnabled ? S_GREEN : S_RED}>{user.audioEnabled ? "Audio On" : "Audio Off"}</span>
                               </div>
                               <div className="text-[9px] mt-1" style={activeMissing > 0 ? S_WARN : S_DIM}>
-                                {activeLoaded}/{user.activeTrackIds.length} active loaded{activeMissing > 0 ? ` | ${activeMissing} missing` : ""} | {user.activeTab}
+                                {activeLoaded}/{user.activeTrackIds.length} active loaded{activeMissing > 0 ? ` | ${activeMissing} missing` : ""} | {user.activeTab} | vol {Math.round((user.localVolume ?? 1) * 100)}%
                               </div>
                             </div>
                           );
@@ -2379,6 +2600,27 @@ export function CombatPage() {
                   </div>
 
                   <div className={`${retro.raised} p-3`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-[10px] flex items-center gap-1" style={S_MUTED}>
+                        <Database size={11} /> Storage Manager
+                      </div>
+                      <div className="text-[9px]" style={S_DIM}>{COMBAT_MUSIC_BUCKET}</div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <CombatStat label="Supabase" value={`${musicStorageSummary.storageTracks.length}`} color="#4AFF7A" />
+                      <CombatStat label="Stored" value={formatAudioBytes(musicStorageSummary.storageBytes)} color="#FFD37A" />
+                      <CombatStat label="Fallback" value={`${musicStorageSummary.fallbackTracks.length}`} color={musicStorageSummary.fallbackTracks.length ? "#FFAA4A" : "#8AB4FF"} />
+                      <CombatStat label="Local Only" value={`${musicStorageSummary.localOnlyTracks.length}`} color={musicStorageSummary.localOnlyTracks.length ? "#FF6A6A" : "#8AB4FF"} />
+                    </div>
+                    <div className="text-[9px] mt-2 leading-relaxed" style={S_DIM}>
+                      {musicStorageSummary.directAudioTracks.length} direct links | {musicStorageSummary.youtubeTracks.length} YouTube links | {formatAudioBytes(musicStorageSummary.fallbackBytes)} fallback data
+                    </div>
+                    <button onClick={() => void clearStorageBackedLocalCache()} className={`${retro.button} px-3 py-2 text-[10px] mt-3 w-full`} style={S_MUTED}>
+                      Clear Local Audio Cache
+                    </button>
+                  </div>
+
+                  <div className={`${retro.raised} p-3`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
                     <div className="text-[10px] mb-2" style={S_MUTED}>Library Tools</div>
                     <div className="flex flex-wrap gap-2">
                       <button onClick={exportMusicLibrary} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-2`} style={S_ACCENT}>
@@ -2413,6 +2655,20 @@ export function CombatPage() {
                     <div className="flex items-center justify-between text-[12px]" style={musicState.muted ? S_RED : S_GREEN}>
                       <span>{musicState.muted ? "Muted" : "Live"}</span>
                       <span>{Math.round((musicState.masterVolume ?? 0.85) * 100)}%</span>
+                    </div>
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-[9px] mb-1" style={S_DIM}>
+                        <span>My Volume</span>
+                        <span>{Math.round(localMusicVolume * 100)}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={150}
+                        value={Math.round(localMusicVolume * 100)}
+                        onChange={(event) => updateLocalMusicVolume(parseInt(event.target.value, 10) / 100)}
+                        className="w-full"
+                      />
                     </div>
                   </div>
                 </div>
@@ -2454,10 +2710,30 @@ export function CombatPage() {
                     >
                       <option value="recent">Recent</option>
                       <option value="title">Title</option>
+                      <option value="folder">Folder</option>
                       <option value="source">Source</option>
                       <option value="tag">Tag</option>
                     </select>
                   </div>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <button
+                    onClick={() => setMusicFolderFilter("all")}
+                    className={`${musicFolderFilter === "all" ? retro.sunken : retro.button} px-2 py-1 text-[9px] flex items-center gap-1`}
+                    style={musicFolderFilter === "all" ? S_ACCENT : S_MUTED}
+                  >
+                    <Folder size={10} /> All ({musicState.tracks.length})
+                  </button>
+                  {musicFolders.map((folder) => (
+                    <button
+                      key={folder}
+                      onClick={() => setMusicFolderFilter(folder)}
+                      className={`${musicFolderFilter === folder ? retro.sunken : retro.button} px-2 py-1 text-[9px] flex items-center gap-1`}
+                      style={musicFolderFilter === folder ? S_ACCENT : S_MUTED}
+                    >
+                      <Folder size={10} /> {folder} ({folderCounts.get(folder) || 0})
+                    </button>
+                  ))}
                 </div>
                 {musicTags.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
@@ -2509,6 +2785,50 @@ export function CombatPage() {
                         </span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {isDM && activeTracks.length > 0 && (
+                <div className={`${retro.raised} p-3 mb-4`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="text-[10px]" style={S_DIM}>Track Readiness</div>
+                    <div className="text-[9px]" style={S_DIM}>{onlinePresence.filter((user) => !user.isDM).length} player browser{onlinePresence.filter((user) => !user.isDM).length === 1 ? "" : "s"}</div>
+                  </div>
+                  <div className="space-y-2">
+                    {activeTracks.map(({ active, track }) => {
+                      const listeners = onlinePresence.filter((user) => !user.isDM);
+                      const readyCount = listeners.filter((user) => user.audioEnabled && user.loadedTrackIds.includes(track.id)).length;
+                      return (
+                        <div key={`ready-${track.id}`} className="px-2 py-2" style={{ background: "#070B22", border: "1px solid #172044" }}>
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-[11px] truncate" style={S_TEXT}>{track.title}</span>
+                            <span className="text-[9px]" style={readyCount === listeners.length && listeners.length > 0 ? S_GREEN : S_WARN}>
+                              {readyCount}/{listeners.length} ready
+                            </span>
+                          </div>
+                          {listeners.length === 0 ? (
+                            <div className="text-[10px]" style={S_DIM}>No player browsers are reporting yet.</div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {listeners.map((user) => {
+                                const ready = user.audioEnabled && user.loadedTrackIds.includes(track.id);
+                                const missing = user.missingTrackIds.includes(track.id);
+                                const label = !user.audioEnabled ? "Off" : ready ? "Ready" : missing ? "Missing" : "Loading";
+                                return (
+                                  <span key={`${track.id}-${user.userId}`} className="text-[9px] px-1.5 py-0.5" style={{ color: ready ? "#4AFF7A" : !user.audioEnabled || missing ? "#FFAA4A" : "#8AB4FF", border: "1px solid #172044", background: "#05071C" }}>
+                                    {user.name}: {label} {Math.round((user.localVolume ?? 1) * 100)}%
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <div className="text-[9px] mt-1" style={S_DIM}>
+                            Deck {normalizeMusicLayer(active.layer)} | {active.loop ? "Looping" : "Once"} | {active.playing ? "Playing" : "Paused"}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2970,16 +3290,18 @@ function RangeEffectSlider({
 function AudioPlaybackLayer({
   musicState,
   audioEnabled,
+  localVolume,
   onStatus,
   onEnded,
 }: {
   musicState: CombatMusicState;
   audioEnabled: boolean;
+  localVolume: number;
   onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
   onEnded: (trackId: string) => void;
 }) {
   const tracksById = useMemo(() => new Map(musicState.tracks.map((track) => [track.id, track])), [musicState.tracks]);
-  const masterVolume = musicState.muted ? 0 : clampNumber(musicState.masterVolume ?? 0.85, 0, 1);
+  const masterVolume = (musicState.muted ? 0 : clampNumber(musicState.masterVolume ?? 0.85, 0, 1)) * clampNumber(localVolume, 0, 1.5);
   return (
     <div style={{ position: "fixed", left: -260, top: -260, width: 240, height: 240, overflow: "hidden", opacity: 0.01, pointerEvents: "none" }}>
       {musicState.active.map((active) => {
