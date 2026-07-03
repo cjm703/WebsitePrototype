@@ -40,6 +40,7 @@ type CombatTab = "players" | "music";
 type FeedKind = "message" | "roll" | "wound" | "card" | "item" | "system";
 type TrackSource = "audio-url" | "youtube" | "file";
 type MusicSort = "recent" | "title" | "source" | "tag";
+type MusicLayerId = "1" | "2";
 
 interface CombatFeedMessage {
   id: string;
@@ -105,16 +106,25 @@ interface AudioEffectSettings {
   echo: number;
   muffle: number;
   thin: number;
+  bass: number;
+  mid: number;
+  treble: number;
   speed: number;
+  pitch: number;
 }
 
 interface ActiveMusicTrack {
   trackId: string;
+  layer?: MusicLayerId;
   playing: boolean;
   volume: number;
   loop: boolean;
   muted?: boolean;
   effects?: AudioEffectSettings;
+  fadeInStartedAt?: number;
+  fadeInSeconds?: number;
+  fadeOutStartedAt?: number;
+  fadeOutSeconds?: number;
   seekTo?: number;
   seekRequestId?: string;
   position?: number;
@@ -123,11 +133,37 @@ interface ActiveMusicTrack {
   updatedAt: string;
 }
 
+interface QueuedMusicTrack {
+  id: string;
+  trackId: string;
+  layer: MusicLayerId;
+  addedAt: string;
+}
+
 interface CombatMusicState {
   tracks: MusicTrack[];
   active: ActiveMusicTrack[];
+  queue: QueuedMusicTrack[];
+  crossfadeSeconds: number;
   masterVolume: number;
   muted: boolean;
+  updatedAt: string;
+}
+
+interface CombatPresenceUser {
+  userId: string;
+  name: string;
+  isDM: boolean;
+  audioEnabled: boolean;
+  activeTab: CombatTab;
+  loadedTrackIds: string[];
+  missingTrackIds: string[];
+  activeTrackIds: string[];
+  lastSeen: string;
+}
+
+interface CombatPresenceState {
+  users: Record<string, CombatPresenceUser>;
   updatedAt: string;
 }
 
@@ -155,14 +191,19 @@ interface DiceRollResult {
 
 const LOCAL_COMBAT_STATE_KEY = "inet-combat-state";
 const LOCAL_MUSIC_STATE_KEY = "inet-combat-music-state";
+const LOCAL_COMBAT_PRESENCE_KEY = "inet-combat-presence-state";
 const DEFAULT_COMBAT_STATE: CombatState = { messages: [], playerStates: {}, round: 1, scene: "", updatedAt: "" };
-const DEFAULT_MUSIC_STATE: CombatMusicState = { tracks: [], active: [], masterVolume: 0.85, muted: false, updatedAt: "" };
-const DEFAULT_AUDIO_EFFECTS: AudioEffectSettings = { reverb: 0, echo: 0, muffle: 0, thin: 0, speed: 1 };
+const DEFAULT_MUSIC_STATE: CombatMusicState = { tracks: [], active: [], queue: [], crossfadeSeconds: 4, masterVolume: 0.85, muted: false, updatedAt: "" };
+const DEFAULT_COMBAT_PRESENCE_STATE: CombatPresenceState = { users: {}, updatedAt: "" };
+const DEFAULT_AUDIO_EFFECTS: AudioEffectSettings = { reverb: 0, echo: 0, muffle: 0, thin: 0, bass: 0, mid: 0, treble: 0, speed: 1, pitch: 0 };
 const QUICK_FLAGS = ["Guarded", "Concentrating", "Prone", "Hidden", "Bloodied", "Stunned"];
 const MAX_FEED_MESSAGES = 150;
 const MAX_AUDIO_FILE_BYTES = 12 * 1024 * 1024;
 const LOCAL_AUDIO_CACHE_OMIT_THRESHOLD = 256 * 1024;
 const SHARED_AUDIO_CHUNK_SIZE = 160 * 1024;
+const LOCAL_AUDIO_DB_NAME = "inet-combat-audio-cache";
+const LOCAL_AUDIO_DB_STORE = "audio";
+const LOCAL_AUDIO_DB_VERSION = 1;
 
 function uid(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -170,6 +211,36 @@ function uid(prefix: string) {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
+}
+
+function normalizeMusicLayer(raw: unknown, fallback: MusicLayerId = "1"): MusicLayerId {
+  return raw === "2" ? "2" : fallback;
+}
+
+function fadeMultiplierForActive(active: ActiveMusicTrack, now = Date.now()) {
+  let multiplier = 1;
+  if (active.fadeInStartedAt && active.fadeInSeconds && active.fadeInSeconds > 0) {
+    const progress = clampNumber((now - active.fadeInStartedAt) / (active.fadeInSeconds * 1000), 0, 1);
+    multiplier = Math.min(multiplier, progress);
+  }
+  if (active.fadeOutStartedAt && active.fadeOutSeconds && active.fadeOutSeconds > 0) {
+    const progress = clampNumber((now - active.fadeOutStartedAt) / (active.fadeOutSeconds * 1000), 0, 1);
+    multiplier = Math.min(multiplier, 1 - progress);
+  }
+  return clampNumber(multiplier, 0, 1);
+}
+
+function hasActiveFade(active: ActiveMusicTrack) {
+  const now = Date.now();
+  return Boolean(
+    (active.fadeInStartedAt && active.fadeInSeconds && now - active.fadeInStartedAt < active.fadeInSeconds * 1000) ||
+    (active.fadeOutStartedAt && active.fadeOutSeconds && now - active.fadeOutStartedAt < active.fadeOutSeconds * 1000)
+  );
+}
+
+function isPresenceFresh(user: CombatPresenceUser) {
+  const lastSeen = Date.parse(user.lastSeen);
+  return Number.isFinite(lastSeen) && Date.now() - lastSeen < 45000;
 }
 
 function assignedToMatches(assignedTo: unknown, playerId: string) {
@@ -292,7 +363,11 @@ function normalizeAudioEffects(raw: Partial<AudioEffectSettings> | null | undefi
     echo: clampNumber(Number(raw?.echo ?? DEFAULT_AUDIO_EFFECTS.echo), 0, 1),
     muffle: clampNumber(Number(raw?.muffle ?? DEFAULT_AUDIO_EFFECTS.muffle), 0, 1),
     thin: clampNumber(Number(raw?.thin ?? DEFAULT_AUDIO_EFFECTS.thin), 0, 1),
+    bass: clampNumber(Number(raw?.bass ?? DEFAULT_AUDIO_EFFECTS.bass), -12, 12),
+    mid: clampNumber(Number(raw?.mid ?? DEFAULT_AUDIO_EFFECTS.mid), -12, 12),
+    treble: clampNumber(Number(raw?.treble ?? DEFAULT_AUDIO_EFFECTS.treble), -12, 12),
     speed: clampNumber(Number(raw?.speed ?? DEFAULT_AUDIO_EFFECTS.speed), 0.5, 1.5),
+    pitch: clampNumber(Number(raw?.pitch ?? DEFAULT_AUDIO_EFFECTS.pitch), -12, 12),
   };
 }
 
@@ -371,6 +446,70 @@ function restoreLocalAudioSources(state: CombatMusicState, sources: Map<string, 
       return localUrl ? { ...track, url: localUrl, audioDataOmitted: false } : track;
     }),
   };
+}
+
+function openLocalAudioDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("IndexedDB is not available."));
+      return;
+    }
+
+    const request = window.indexedDB.open(LOCAL_AUDIO_DB_NAME, LOCAL_AUDIO_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(LOCAL_AUDIO_DB_STORE)) {
+        db.createObjectStore(LOCAL_AUDIO_DB_STORE, { keyPath: "id" });
+      }
+    };
+    request.onerror = () => reject(request.error || new Error("Failed to open audio cache."));
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function cacheLocalAudioSource(trackId: string, url: string) {
+  if (!trackId || !url) return;
+  try {
+    const db = await openLocalAudioDb();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(LOCAL_AUDIO_DB_STORE, "readwrite");
+      transaction.objectStore(LOCAL_AUDIO_DB_STORE).put({ id: trackId, url, updatedAt: new Date().toISOString() });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("Failed to cache audio."));
+    });
+    db.close();
+  } catch {}
+}
+
+async function loadCachedAudioSource(trackId: string): Promise<string | null> {
+  if (!trackId) return null;
+  try {
+    const db = await openLocalAudioDb();
+    const result = await new Promise<{ url?: string } | undefined>((resolve, reject) => {
+      const transaction = db.transaction(LOCAL_AUDIO_DB_STORE, "readonly");
+      const request = transaction.objectStore(LOCAL_AUDIO_DB_STORE).get(trackId);
+      request.onsuccess = () => resolve(request.result as { url?: string } | undefined);
+      request.onerror = () => reject(request.error || new Error("Failed to read cached audio."));
+    });
+    db.close();
+    return typeof result?.url === "string" && result.url ? result.url : null;
+  } catch {
+    return null;
+  }
+}
+
+async function deleteCachedAudioSource(trackId: string) {
+  if (!trackId) return;
+  try {
+    const db = await openLocalAudioDb();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(LOCAL_AUDIO_DB_STORE, "readwrite");
+      transaction.objectStore(LOCAL_AUDIO_DB_STORE).delete(trackId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("Failed to delete cached audio."));
+    });
+    db.close();
+  } catch {}
 }
 
 function sharedAudioChunkId(key: string, index: number) {
@@ -516,11 +655,16 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
           .filter((entry) => entry && typeof entry.trackId === "string")
           .map((entry) => ({
             trackId: entry.trackId,
+            layer: normalizeMusicLayer(entry.layer),
             playing: Boolean(entry.playing),
             volume: clampNumber(Number(entry.volume ?? 0.65), 0, 1),
             loop: Boolean(entry.loop),
             muted: Boolean(entry.muted),
             effects: normalizeAudioEffects(entry.effects),
+            fadeInStartedAt: Number.isFinite(Number(entry.fadeInStartedAt)) ? Number(entry.fadeInStartedAt) : undefined,
+            fadeInSeconds: Number.isFinite(Number(entry.fadeInSeconds)) ? clampNumber(Number(entry.fadeInSeconds), 0, 30) : undefined,
+            fadeOutStartedAt: Number.isFinite(Number(entry.fadeOutStartedAt)) ? Number(entry.fadeOutStartedAt) : undefined,
+            fadeOutSeconds: Number.isFinite(Number(entry.fadeOutSeconds)) ? clampNumber(Number(entry.fadeOutSeconds), 0, 30) : undefined,
             seekTo: Number.isFinite(Number(entry.seekTo)) ? Math.max(0, Number(entry.seekTo)) : undefined,
             seekRequestId: typeof entry.seekRequestId === "string" ? entry.seekRequestId : "",
             position: Number.isFinite(Number(entry.position)) ? Math.max(0, Number(entry.position)) : undefined,
@@ -529,8 +673,44 @@ function normalizeMusicState(state: Partial<CombatMusicState> | null | undefined
             updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
           }))
       : [],
+    queue: Array.isArray(state?.queue)
+      ? state!.queue
+          .filter((entry) => entry && typeof entry.trackId === "string")
+          .map((entry) => ({
+            id: typeof entry.id === "string" ? entry.id : uid("queue"),
+            trackId: entry.trackId,
+            layer: normalizeMusicLayer(entry.layer),
+            addedAt: typeof entry.addedAt === "string" ? entry.addedAt : new Date().toISOString(),
+          }))
+          .slice(0, 20)
+      : [],
+    crossfadeSeconds: clampNumber(Number(state?.crossfadeSeconds ?? DEFAULT_MUSIC_STATE.crossfadeSeconds), 0, 20),
     masterVolume: clampNumber(Number(state?.masterVolume ?? DEFAULT_MUSIC_STATE.masterVolume), 0, 1),
     muted: Boolean(state?.muted),
+    updatedAt: typeof state?.updatedAt === "string" ? state.updatedAt : "",
+  };
+}
+
+function normalizeCombatPresenceState(state: Partial<CombatPresenceState> | null | undefined): CombatPresenceState {
+  const users: Record<string, CombatPresenceUser> = {};
+  if (state?.users && typeof state.users === "object") {
+    Object.values(state.users).forEach((user) => {
+      if (!user || typeof user.userId !== "string") return;
+      users[user.userId] = {
+        userId: user.userId,
+        name: typeof user.name === "string" && user.name.trim() ? user.name : user.userId,
+        isDM: Boolean(user.isDM),
+        audioEnabled: Boolean(user.audioEnabled),
+        activeTab: user.activeTab === "music" ? "music" : "players",
+        loadedTrackIds: Array.isArray(user.loadedTrackIds) ? user.loadedTrackIds.filter((id) => typeof id === "string") : [],
+        missingTrackIds: Array.isArray(user.missingTrackIds) ? user.missingTrackIds.filter((id) => typeof id === "string") : [],
+        activeTrackIds: Array.isArray(user.activeTrackIds) ? user.activeTrackIds.filter((id) => typeof id === "string") : [],
+        lastSeen: typeof user.lastSeen === "string" ? user.lastSeen : "",
+      };
+    });
+  }
+  return {
+    users,
     updatedAt: typeof state?.updatedAt === "string" ? state.updatedAt : "",
   };
 }
@@ -546,6 +726,7 @@ export function CombatPage() {
   const [items, setItems] = useState<ManagedItem[]>([]);
   const [combatState, setCombatState] = useState<CombatState>(DEFAULT_COMBAT_STATE);
   const [musicState, setMusicState] = useState<CombatMusicState>(DEFAULT_MUSIC_STATE);
+  const [combatPresence, setCombatPresence] = useState<CombatPresenceState>(DEFAULT_COMBAT_PRESENCE_STATE);
   const [feedText, setFeedText] = useState("");
   const [diceFormula, setDiceFormula] = useState("1d20");
   const [shareKind, setShareKind] = useState<"card" | "item">("card");
@@ -605,12 +786,13 @@ export function CombatPage() {
           })
       : Promise.resolve(localMusicFallback);
 
-    const [nextPlayers, nextCards, nextItems, nextCombat, nextMusic] = await Promise.all([
+    const [nextPlayers, nextCards, nextItems, nextCombat, nextMusic, nextPresence] = await Promise.all([
       appStore.listPlayers<PlayerData>().catch(() => buildLocalPlayerFallback()),
       appStore.listCards<ManagedCard>().catch(() => buildLocalCardsFallback()),
       appStore.listItems<ManagedItem>().catch(() => buildLocalItemsFallback()),
       appStore.loadCombatState<CombatState>(DEFAULT_COMBAT_STATE).catch(() => safeGetJson<CombatState>(LOCAL_COMBAT_STATE_KEY, DEFAULT_COMBAT_STATE)),
       musicLoad,
+      appStore.loadCombatPresenceState<CombatPresenceState>(DEFAULT_COMBAT_PRESENCE_STATE).catch(() => safeGetJson<CombatPresenceState>(LOCAL_COMBAT_PRESENCE_KEY, DEFAULT_COMBAT_PRESENCE_STATE)),
     ]);
     setPlayers(Array.isArray(nextPlayers) ? nextPlayers : []);
     setCards(Array.isArray(nextCards) ? nextCards : []);
@@ -619,6 +801,7 @@ export function CombatPage() {
     const normalizedMusic = normalizeMusicState(nextMusic);
     rememberLocalAudioSources(normalizedMusic, localAudioSourcesRef.current);
     setMusicState(restoreLocalAudioSources(normalizedMusic, localAudioSourcesRef.current));
+    setCombatPresence(normalizeCombatPresenceState(nextPresence));
   }, []);
 
   useEffect(() => {
@@ -636,6 +819,7 @@ export function CombatPage() {
         .channel("combat-page-state")
         .on("postgres_changes", { event: "*", schema: "public", table: "app_arcade_catalog_state", filter: "id=eq.combat-state" }, scheduleHydrate)
         .on("postgres_changes", { event: "*", schema: "public", table: "app_arcade_catalog_state", filter: "id=eq.combat-music-state" }, scheduleHydrate)
+        .on("postgres_changes", { event: "*", schema: "public", table: "app_arcade_catalog_state", filter: "id=eq.combat-presence-state" }, scheduleHydrate)
         .subscribe();
     } catch {
       channel = null;
@@ -669,13 +853,15 @@ export function CombatPage() {
       }
 
       sharedAudioLoadingRef.current.add(track.id);
-      void loadSharedAudioData(track)
+      void loadCachedAudioSource(track.id)
+        .then((cachedUrl) => cachedUrl || loadSharedAudioData(track))
         .then((url) => {
           if (!url) {
             sharedAudioFailedRef.current.add(track.id);
             return;
           }
           localAudioSourcesRef.current.set(track.id, url);
+          void cacheLocalAudioSource(track.id, url);
           setMusicState((previous) => {
             const nextState = {
               ...previous,
@@ -734,6 +920,44 @@ export function CombatPage() {
       return { ...previous, [trackId]: next };
     });
   }, []);
+
+  const publishCombatPresence = useCallback(async () => {
+    if (!currentUser) return;
+    const userId = currentUserId || currentUser;
+    const now = new Date().toISOString();
+    const loadedTrackIds = musicState.tracks.filter((track) => track.sourceType !== "file" || Boolean(track.url)).map((track) => track.id);
+    const missingTrackIds = musicState.tracks.filter((track) => track.sourceType === "file" && !track.url).map((track) => track.id);
+    const activeTrackIds = musicState.active.filter((entry) => entry.playing).map((entry) => entry.trackId);
+    const remote = await appStore
+      .loadCombatPresenceState<CombatPresenceState>(DEFAULT_COMBAT_PRESENCE_STATE)
+      .catch(() => safeGetJson<CombatPresenceState>(LOCAL_COMBAT_PRESENCE_KEY, DEFAULT_COMBAT_PRESENCE_STATE));
+    const normalized = normalizeCombatPresenceState(remote);
+    const nextUsers: Record<string, CombatPresenceUser> = {};
+    Object.values(normalized.users).forEach((user) => {
+      if (isPresenceFresh(user) || user.userId === userId) nextUsers[user.userId] = user;
+    });
+    nextUsers[userId] = {
+      userId,
+      name: currentUser,
+      isDM,
+      audioEnabled,
+      activeTab,
+      loadedTrackIds,
+      missingTrackIds,
+      activeTrackIds,
+      lastSeen: now,
+    };
+    const nextPresence = { users: nextUsers, updatedAt: now };
+    setCombatPresence(nextPresence);
+    safeSetJson(LOCAL_COMBAT_PRESENCE_KEY, nextPresence);
+    await appStore.saveCombatPresenceState(nextPresence).catch(() => {});
+  }, [activeTab, audioEnabled, currentUser, currentUserId, isDM, musicState.active, musicState.tracks]);
+
+  useEffect(() => {
+    void publishCombatPresence();
+    const interval = window.setInterval(() => void publishCombatPresence(), 10000);
+    return () => window.clearInterval(interval);
+  }, [publishCombatPresence]);
 
   const savePlayers = useCallback(async (nextPlayers: PlayerData[]) => {
     setPlayers(nextPlayers);
@@ -978,6 +1202,20 @@ export function CombatPage() {
       })
       .filter((entry): entry is { active: ActiveMusicTrack; track: MusicTrack } => Boolean(entry))
   ), [musicState.active, musicState.tracks]);
+  const queuedTracks = useMemo(() => (
+    musicState.queue
+      .map((queued) => {
+        const track = musicState.tracks.find((entry) => entry.id === queued.trackId);
+        return track ? { queued, track } : null;
+      })
+      .filter((entry): entry is { queued: QueuedMusicTrack; track: MusicTrack } => Boolean(entry))
+  ), [musicState.queue, musicState.tracks]);
+  const onlinePresence = useMemo(
+    () => Object.values(combatPresence.users)
+      .filter(isPresenceFresh)
+      .sort((a, b) => Number(b.isDM) - Number(a.isDM) || a.name.localeCompare(b.name)),
+    [combatPresence.users],
+  );
   const musicTags = useMemo(() => (
     Array.from(new Set(musicState.tracks.flatMap((track) => track.tags || [])))
       .sort((a, b) => a.localeCompare(b))
@@ -1122,6 +1360,7 @@ export function CombatPage() {
       });
       const cleanName = file.name.replace(/\.[^.]+$/, "") || "Uploaded Track";
       const trackId = uid("track");
+      void cacheLocalAudioSource(trackId, url);
       let sharedAudio: SharedAudioRef | undefined;
       let sharedAudioSaved = false;
       try {
@@ -1175,6 +1414,7 @@ export function CombatPage() {
   const shareExistingTrackAudio = async (track: MusicTrack) => {
     if (!isDM || !isInlineFileAudio(track)) return;
     try {
+      void cacheLocalAudioSource(track.id, track.url);
       setMusicUploadProgress({ label: track.title, percent: 91, phase: "saving" });
       setMusicStatus(`Sharing ${track.title} with players...`);
       const sharedAudio = await saveSharedAudioData(
@@ -1209,6 +1449,7 @@ export function CombatPage() {
           ...musicState.active,
           {
             trackId,
+            layer: normalizeMusicLayer(patch.layer),
             playing: true,
             volume: 0.65,
             loop: false,
@@ -1223,6 +1464,91 @@ export function CombatPage() {
         ];
     await saveMusic({ ...musicState, active: nextActive });
   };
+
+  const playTrackOnLayer = async (trackId: string, layer: MusicLayerId, sourceState = musicState, queueIdToRemove = "") => {
+    enableCombatAudio();
+    const now = Date.now();
+    const updatedAt = new Date().toISOString();
+    const crossfadeSeconds = clampNumber(sourceState.crossfadeSeconds ?? DEFAULT_MUSIC_STATE.crossfadeSeconds, 0, 20);
+    const existing = sourceState.active.find((entry) => entry.trackId === trackId);
+    const nextEntry: ActiveMusicTrack = {
+      trackId,
+      layer,
+      playing: true,
+      volume: existing?.volume ?? 0.65,
+      loop: existing?.loop ?? false,
+      muted: existing?.muted ?? false,
+      effects: normalizeAudioEffects(existing?.effects),
+      fadeInStartedAt: crossfadeSeconds > 0 ? now : undefined,
+      fadeInSeconds: crossfadeSeconds > 0 ? crossfadeSeconds : undefined,
+      position: 0,
+      positionUpdatedAt: now,
+      startedAt: now,
+      updatedAt,
+    };
+    const nextActive = sourceState.active
+      .filter((entry) => entry.trackId !== trackId && !(entry.layer === layer && crossfadeSeconds <= 0))
+      .map((entry) => (
+        entry.layer === layer && entry.playing && crossfadeSeconds > 0
+          ? { ...entry, fadeOutStartedAt: now, fadeOutSeconds: crossfadeSeconds, updatedAt }
+          : entry.layer === layer
+            ? { ...entry, playing: false, updatedAt }
+            : entry
+      ));
+    await saveMusic({
+      ...sourceState,
+      active: [...nextActive, nextEntry],
+      queue: sourceState.queue.filter((entry) => entry.id !== queueIdToRemove),
+    });
+  };
+
+  const queueTrackOnLayer = async (trackId: string, layer: MusicLayerId) => {
+    await saveMusic({
+      ...musicState,
+      queue: [
+        ...musicState.queue,
+        { id: uid("queue"), trackId, layer, addedAt: new Date().toISOString() },
+      ].slice(-20),
+    });
+  };
+
+  const removeQueuedTrack = async (queueId: string) => {
+    await saveMusic({ ...musicState, queue: musicState.queue.filter((entry) => entry.id !== queueId) });
+  };
+
+  const startQueuedTrack = async (queueId: string) => {
+    const queued = musicState.queue.find((entry) => entry.id === queueId);
+    if (!queued) return;
+    await playTrackOnLayer(queued.trackId, queued.layer, musicState, queueId);
+  };
+
+  const handleTrackEnded = async (trackId: string) => {
+    if (!isDM) return;
+    const active = musicState.active.find((entry) => entry.trackId === trackId);
+    if (!active || active.loop) return;
+    const layer = normalizeMusicLayer(active.layer);
+    const queued = musicState.queue.find((entry) => entry.layer === layer);
+    if (queued) {
+      await playTrackOnLayer(queued.trackId, queued.layer, musicState, queued.id);
+      return;
+    }
+    await saveMusic({ ...musicState, active: musicState.active.filter((entry) => entry.trackId !== trackId) });
+  };
+
+  useEffect(() => {
+    const timers = musicState.active
+      .filter((entry) => entry.fadeOutStartedAt && entry.fadeOutSeconds && Date.now() - entry.fadeOutStartedAt < entry.fadeOutSeconds * 1000)
+      .map((entry) => {
+        const remaining = Math.max(100, (entry.fadeOutStartedAt! + entry.fadeOutSeconds! * 1000) - Date.now());
+        return window.setTimeout(() => {
+          void saveMusic({
+            ...musicState,
+            active: musicState.active.filter((active) => active.trackId !== entry.trackId),
+          });
+        }, remaining);
+      });
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [musicState, saveMusic]);
 
   const updateTrackEffects = async (trackId: string, patch: Partial<AudioEffectSettings>) => {
     const existing = activeById.get(trackId);
@@ -1241,6 +1567,7 @@ export function CombatPage() {
     const currentPosition = playbackStatuses[trackId]?.currentTime ?? existing?.position ?? existing?.seekTo ?? 0;
     if (nextPlaying) enableCombatAudio();
     await upsertActiveTrack(trackId, {
+      layer: normalizeMusicLayer(existing?.layer),
       playing: nextPlaying,
       position: Math.max(0, currentPosition),
       positionUpdatedAt: Date.now(),
@@ -1280,6 +1607,7 @@ export function CombatPage() {
       active: musicState.active.filter((entry) => entry.trackId !== trackId),
     });
     localAudioSourcesRef.current.delete(trackId);
+    void deleteCachedAudioSource(trackId);
     void deleteSharedAudioData(track?.sharedAudio);
   };
 
@@ -1355,6 +1683,18 @@ export function CombatPage() {
               >
                 {active?.playing ? <Pause size={12} /> : <Play size={12} />}
                 {active?.playing ? "Pause" : "Play"}
+              </button>
+              <button disabled={!playable} onClick={() => void playTrackOnLayer(track.id, "1")} className={`${retro.button} px-3 py-2 text-[11px] disabled:opacity-40`} style={active?.layer === "1" ? S_ACCENT : S_MUTED}>
+                Deck 1
+              </button>
+              <button disabled={!playable} onClick={() => void playTrackOnLayer(track.id, "2")} className={`${retro.button} px-3 py-2 text-[11px] disabled:opacity-40`} style={active?.layer === "2" ? S_ACCENT : S_MUTED}>
+                Deck 2
+              </button>
+              <button disabled={!playable} onClick={() => void queueTrackOnLayer(track.id, "1")} className={`${retro.button} px-3 py-2 text-[11px] disabled:opacity-40`} style={S_DIM}>
+                Queue 1
+              </button>
+              <button disabled={!playable} onClick={() => void queueTrackOnLayer(track.id, "2")} className={`${retro.button} px-3 py-2 text-[11px] disabled:opacity-40`} style={S_DIM}>
+                Queue 2
               </button>
               <button onClick={() => void stopTrack(track.id)} disabled={!active} className={`${retro.button} px-3 py-2 text-[11px] flex items-center gap-1 disabled:opacity-40`} style={S_RED}>
                 <Square size={11} /> Stop
@@ -1509,7 +1849,7 @@ export function CombatPage() {
         fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif",
       }}
     >
-      <AudioPlaybackLayer musicState={musicState} audioEnabled={audioEnabled} onStatus={handlePlaybackStatus} />
+      <AudioPlaybackLayer musicState={musicState} audioEnabled={audioEnabled} onStatus={handlePlaybackStatus} onEnded={(trackId) => void handleTrackEnded(trackId)} />
 
       <div className={`${retro.toolbar} flex items-center justify-between`}>
         <div className="flex items-center gap-3">
@@ -1826,6 +2166,48 @@ export function CombatPage() {
                       />
                       <span className="text-[10px] w-9 text-right" style={S_DIM}>{Math.round((musicState.masterVolume ?? 0.85) * 100)}%</span>
                     </div>
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-[9px] mb-1" style={S_DIM}>
+                        <span>Crossfade</span>
+                        <span>{Math.round(musicState.crossfadeSeconds ?? 0)}s</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={20}
+                        value={Math.round(musicState.crossfadeSeconds ?? 0)}
+                        onChange={(event) => void saveMusic({ ...musicState, crossfadeSeconds: parseInt(event.target.value, 10) })}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+
+                  <div className={`${retro.raised} p-3`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-[10px]" style={S_MUTED}>Player Audio</div>
+                      <div className="text-[9px]" style={S_DIM}>{onlinePresence.length} online</div>
+                    </div>
+                    {onlinePresence.length === 0 ? (
+                      <div className="text-[11px]" style={S_DIM}>No one is reporting from Combat yet.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {onlinePresence.map((user) => {
+                          const activeLoaded = user.activeTrackIds.filter((trackId) => user.loadedTrackIds.includes(trackId)).length;
+                          const activeMissing = user.activeTrackIds.filter((trackId) => user.missingTrackIds.includes(trackId)).length;
+                          return (
+                            <div key={user.userId} className="px-2 py-1.5" style={{ background: "#070B22", border: "1px solid #172044" }}>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] truncate" style={user.isDM ? S_WARN : S_TEXT}>{user.name}{user.isDM ? " (DM)" : ""}</span>
+                                <span className="text-[9px]" style={user.audioEnabled ? S_GREEN : S_RED}>{user.audioEnabled ? "Audio On" : "Audio Off"}</span>
+                              </div>
+                              <div className="text-[9px] mt-1" style={activeMissing > 0 ? S_WARN : S_DIM}>
+                                {activeLoaded}/{user.activeTrackIds.length} active loaded{activeMissing > 0 ? ` | ${activeMissing} missing` : ""} | {user.activeTab}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   <div className={`${retro.raised} p-3`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
@@ -1979,6 +2361,33 @@ export function CombatPage() {
                 )}
               </div>
 
+              {isDM && (
+                <div className={`${retro.raised} p-3 mb-4`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="text-[10px]" style={S_DIM}>Queue</div>
+                    <div className="text-[9px]" style={S_DIM}>{queuedTracks.length} waiting</div>
+                  </div>
+                  {queuedTracks.length === 0 ? (
+                    <div className="text-[11px]" style={S_DIM}>Use Queue 1 or Queue 2 on any track.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {queuedTracks.map(({ queued, track }, index) => (
+                        <div key={queued.id} className="flex items-center justify-between gap-2 px-2 py-1.5" style={{ background: "#070B22", border: "1px solid #172044" }}>
+                          <div className="min-w-0">
+                            <div className="text-[11px] truncate" style={S_TEXT}>{index + 1}. {track.title}</div>
+                            <div className="text-[9px]" style={S_DIM}>Deck {queued.layer}</div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => void startQueuedTrack(queued.id)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_GREEN}>Start</button>
+                            <button onClick={() => void removeQueuedTrack(queued.id)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>Remove</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {activeTracks.length > 0 && (
                 <div className={`${retro.raised} p-3 mb-4`} style={{ background: "#0D1230", borderColor: "#1A2A4B" }}>
                   <div className="text-[10px] mb-2" style={S_DIM}>Live Stack</div>
@@ -1987,7 +2396,7 @@ export function CombatPage() {
                       <div key={track.id} className="flex items-center justify-between gap-2 px-2 py-1.5" style={{ background: "#070B22", border: "1px solid #172044" }}>
                         <span className="text-[11px] truncate" style={active.muted ? S_DIM : active.playing ? S_TEXT : S_DIM}>{track.title}</span>
                         <span className="text-[10px] shrink-0" style={active.muted ? S_RED : active.playing ? S_GREEN : S_WARN}>
-                          {active.muted ? "Muted" : active.playing ? "Playing" : "Paused"} | {active.loop ? "Loop" : "Once"} | {Math.round(active.volume * 100)}%
+                          Deck {normalizeMusicLayer(active.layer)} | {active.muted ? "Muted" : active.playing ? "Playing" : "Paused"} | {active.loop ? "Loop" : "Once"} | {Math.round(active.volume * 100)}%
                         </span>
                       </div>
                     ))}
@@ -2370,7 +2779,14 @@ function AudioEffectsControls({
         <EffectSlider label="Muffle" value={effects.muffle} onChange={(value) => onChange({ muffle: value })} />
         <EffectSlider label="Thin" value={effects.thin} onChange={(value) => onChange({ thin: value })} />
       </div>
-      <div className="mt-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+        <RangeEffectSlider label="Bass" value={effects.bass} min={-12} max={12} unit=" dB" onChange={(value) => onChange({ bass: value })} />
+        <RangeEffectSlider label="Mid" value={effects.mid} min={-12} max={12} unit=" dB" onChange={(value) => onChange({ mid: value })} />
+        <RangeEffectSlider label="Treble" value={effects.treble} min={-12} max={12} unit=" dB" onChange={(value) => onChange({ treble: value })} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+        <RangeEffectSlider label="Pitch" value={effects.pitch} min={-12} max={12} unit=" st" onChange={(value) => onChange({ pitch: value })} />
+        <div>
         <div className="flex items-center justify-between text-[9px] mb-1" style={S_DIM}>
           <span>Speed</span>
           <span>{Math.round(effects.speed * 100)}%</span>
@@ -2383,6 +2799,7 @@ function AudioEffectsControls({
           onChange={(event) => onChange({ speed: parseInt(event.target.value, 10) / 100 })}
           className="w-full"
         />
+        </div>
       </div>
     </div>
   );
@@ -2407,14 +2824,50 @@ function EffectSlider({ label, value, onChange }: { label: string; value: number
   );
 }
 
+function RangeEffectSlider({
+  label,
+  value,
+  min,
+  max,
+  unit,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  unit: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[9px] mb-1" style={S_DIM}>
+        <span>{label}</span>
+        <span>{value > 0 ? "+" : ""}{Math.round(value)}{unit}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={Math.round(value)}
+        onChange={(event) => onChange(parseInt(event.target.value, 10))}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
 function AudioPlaybackLayer({
   musicState,
   audioEnabled,
   onStatus,
+  onEnded,
 }: {
   musicState: CombatMusicState;
   audioEnabled: boolean;
   onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
+  onEnded: (trackId: string) => void;
 }) {
   const tracksById = useMemo(() => new Map(musicState.tracks.map((track) => [track.id, track])), [musicState.tracks]);
   const masterVolume = musicState.muted ? 0 : clampNumber(musicState.masterVolume ?? 0.85, 0, 1);
@@ -2425,9 +2878,9 @@ function AudioPlaybackLayer({
         if (!track) return null;
         if (!hasPlayableSource(track)) return null;
         if (track.sourceType === "youtube") {
-          return <HiddenYouTubeTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} />;
+          return <HiddenYouTubeTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} onEnded={onEnded} />;
         }
-        return <HiddenAudioTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} />;
+        return <HiddenAudioTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} onEnded={onEnded} />;
       })}
     </div>
   );
@@ -2438,6 +2891,9 @@ interface AudioGraphNodes {
   source: MediaElementAudioSourceNode;
   highpass: BiquadFilterNode;
   lowpass: BiquadFilterNode;
+  bassEq: BiquadFilterNode;
+  midEq: BiquadFilterNode;
+  trebleEq: BiquadFilterNode;
   convolver: ConvolverNode;
   dryGain: GainNode;
   reverbGain: GainNode;
@@ -2478,6 +2934,9 @@ function createAudioGraph(audio: HTMLAudioElement): AudioGraphNodes | null {
     const source = context.createMediaElementSource(audio);
     const highpass = context.createBiquadFilter();
     const lowpass = context.createBiquadFilter();
+    const bassEq = context.createBiquadFilter();
+    const midEq = context.createBiquadFilter();
+    const trebleEq = context.createBiquadFilter();
     const convolver = context.createConvolver();
     const dryGain = context.createGain();
     const reverbGain = context.createGain();
@@ -2488,6 +2947,13 @@ function createAudioGraph(audio: HTMLAudioElement): AudioGraphNodes | null {
 
     highpass.type = "highpass";
     lowpass.type = "lowpass";
+    bassEq.type = "lowshelf";
+    bassEq.frequency.value = 180;
+    midEq.type = "peaking";
+    midEq.frequency.value = 1000;
+    midEq.Q.value = 0.9;
+    trebleEq.type = "highshelf";
+    trebleEq.frequency.value = 4200;
     convolver.buffer = buildReverbImpulse(context);
     dryGain.gain.value = 1;
     reverbGain.gain.value = 0;
@@ -2497,19 +2963,22 @@ function createAudioGraph(audio: HTMLAudioElement): AudioGraphNodes | null {
 
     source.connect(highpass);
     highpass.connect(lowpass);
-    lowpass.connect(dryGain);
+    lowpass.connect(bassEq);
+    bassEq.connect(midEq);
+    midEq.connect(trebleEq);
+    trebleEq.connect(dryGain);
     dryGain.connect(outputGain);
-    lowpass.connect(convolver);
+    trebleEq.connect(convolver);
     convolver.connect(reverbGain);
     reverbGain.connect(outputGain);
-    lowpass.connect(delay);
+    trebleEq.connect(delay);
     delay.connect(feedbackGain);
     feedbackGain.connect(delay);
     delay.connect(echoGain);
     echoGain.connect(outputGain);
     outputGain.connect(context.destination);
 
-    return { context, source, highpass, lowpass, convolver, dryGain, reverbGain, delay, feedbackGain, echoGain, outputGain };
+    return { context, source, highpass, lowpass, bassEq, midEq, trebleEq, convolver, dryGain, reverbGain, delay, feedbackGain, echoGain, outputGain };
   } catch {
     return null;
   }
@@ -2521,6 +2990,9 @@ function disconnectAudioGraph(graph: AudioGraphNodes | null) {
     graph.source,
     graph.highpass,
     graph.lowpass,
+    graph.bassEq,
+    graph.midEq,
+    graph.trebleEq,
     graph.convolver,
     graph.dryGain,
     graph.reverbGain,
@@ -2539,12 +3011,14 @@ function HiddenAudioTrack({
   audioEnabled,
   masterVolume,
   onStatus,
+  onEnded,
 }: {
   track: MusicTrack;
   active: ActiveMusicTrack;
   audioEnabled: boolean;
   masterVolume: number;
   onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
+  onEnded: (trackId: string) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const graphRef = useRef<AudioGraphNodes | null>(null);
@@ -2584,6 +3058,10 @@ function HiddenAudioTrack({
       waiting: false,
       error: audio.error ? "Audio could not load. Try re-uploading it or using a different link." : "Audio playback failed.",
     });
+    const reportEnded = () => {
+      reportStatus({ currentTime: Number.isFinite(audio.duration) ? audio.duration : audio.currentTime, waiting: false });
+      if (!active.loop) onEnded(track.id);
+    };
 
     audio.addEventListener("loadedmetadata", reportReady);
     audio.addEventListener("durationchange", reportReady);
@@ -2594,6 +3072,7 @@ function HiddenAudioTrack({
     audio.addEventListener("seeked", reportReady);
     audio.addEventListener("waiting", reportWaiting);
     audio.addEventListener("error", reportError);
+    audio.addEventListener("ended", reportEnded);
     reportReady();
 
     return () => {
@@ -2606,25 +3085,29 @@ function HiddenAudioTrack({
       audio.removeEventListener("seeked", reportReady);
       audio.removeEventListener("waiting", reportWaiting);
       audio.removeEventListener("error", reportError);
+      audio.removeEventListener("ended", reportEnded);
     };
-  }, [reportStatus]);
+  }, [active.loop, onEnded, reportStatus, track.id]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const graph = graphRef.current;
     const effects = normalizeAudioEffects(active.effects);
-    const outputVolume = clampNumber((active.muted ? 0 : active.volume) * masterVolume, 0, 1);
+    const outputVolume = clampNumber((active.muted ? 0 : active.volume) * masterVolume * fadeMultiplierForActive(active), 0, 1);
 
     audio.volume = graph ? 1 : outputVolume;
     audio.loop = !!active.loop;
-    audio.playbackRate = effects.speed;
+    audio.playbackRate = clampNumber(effects.speed * Math.pow(2, effects.pitch / 12), 0.25, 2);
 
     if (graph) {
       const now = graph.context.currentTime;
       graph.outputGain.gain.setTargetAtTime(outputVolume, now, 0.025);
       graph.lowpass.frequency.setTargetAtTime(lowpassFromMuffle(effects.muffle), now, 0.035);
       graph.highpass.frequency.setTargetAtTime(highpassFromThin(effects.thin), now, 0.035);
+      graph.bassEq.gain.setTargetAtTime(effects.bass, now, 0.035);
+      graph.midEq.gain.setTargetAtTime(effects.mid, now, 0.035);
+      graph.trebleEq.gain.setTargetAtTime(effects.treble, now, 0.035);
       graph.reverbGain.gain.setTargetAtTime(effects.reverb * 0.75, now, 0.035);
       graph.delay.delayTime.setTargetAtTime(0.12 + effects.echo * 0.58, now, 0.035);
       graph.feedbackGain.gain.setTargetAtTime(effects.echo * 0.45, now, 0.035);
@@ -2683,6 +3166,10 @@ function HiddenAudioTrack({
     }
   }, [
     active.effects,
+    active.fadeInSeconds,
+    active.fadeInStartedAt,
+    active.fadeOutSeconds,
+    active.fadeOutStartedAt,
     active.loop,
     active.muted,
     active.playing,
@@ -2696,6 +3183,22 @@ function HiddenAudioTrack({
     masterVolume,
     reportStatus,
   ]);
+
+  useEffect(() => {
+    if (!hasActiveFade(active)) return undefined;
+    const timer = window.setInterval(() => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const graph = graphRef.current;
+      const outputVolume = clampNumber((active.muted ? 0 : active.volume) * masterVolume * fadeMultiplierForActive(active), 0, 1);
+      if (graph) {
+        graph.outputGain.gain.setTargetAtTime(outputVolume, graph.context.currentTime, 0.025);
+      } else {
+        audio.volume = outputVolume;
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [active, masterVolume]);
 
   return <audio ref={audioRef} src={track.url} preload="auto" />;
 }
@@ -2729,12 +3232,14 @@ function HiddenYouTubeTrack({
   audioEnabled,
   masterVolume,
   onStatus,
+  onEnded,
 }: {
   track: MusicTrack;
   active: ActiveMusicTrack;
   audioEnabled: boolean;
   masterVolume: number;
   onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
+  onEnded: (trackId: string) => void;
 }) {
   const mountIdRef = useRef(uid("yt"));
   const playerRef = useRef<any>(null);
@@ -2778,7 +3283,7 @@ function HiddenYouTubeTrack({
         events: {
           onReady: (event: any) => {
             const latest = activeRef.current;
-            event.target.setVolume(Math.round(clampNumber((latest.muted ? 0 : latest.volume) * masterVolumeRef.current, 0, 1) * 100));
+            event.target.setVolume(Math.round(clampNumber((latest.muted ? 0 : latest.volume) * masterVolumeRef.current * fadeMultiplierForActive(latest), 0, 1) * 100));
             onStatus(track.id, {
               currentTime: Number(event.target.getCurrentTime?.() || 0),
               duration: Number(event.target.getDuration?.() || 0),
@@ -2797,6 +3302,7 @@ function HiddenYouTubeTrack({
               error: "",
             });
             if (event.data === 0 && activeRef.current.loop) event.target.playVideo();
+            else if (event.data === 0) onEnded(track.id);
           },
           onError: () => {
             onStatus(track.id, {
@@ -2817,7 +3323,7 @@ function HiddenYouTubeTrack({
       }
       playerRef.current = null;
     };
-  }, [onStatus, track.id, videoId]);
+  }, [onEnded, onStatus, track.id, videoId]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -2840,7 +3346,7 @@ function HiddenYouTubeTrack({
     const player = playerRef.current;
     if (!player) return;
     try {
-      player.setVolume(Math.round(clampNumber((active.muted ? 0 : active.volume) * masterVolume, 0, 1) * 100));
+      player.setVolume(Math.round(clampNumber((active.muted ? 0 : active.volume) * masterVolume * fadeMultiplierForActive(active), 0, 1) * 100));
       const positionSyncKey = `${active.positionUpdatedAt || ""}:${active.playing ? "1" : "0"}:${active.seekRequestId || ""}`;
       if (active.positionUpdatedAt && lastPositionSyncRef.current !== positionSyncKey) {
         const duration = Number(player.getDuration?.() || 0);
@@ -2859,7 +3365,19 @@ function HiddenYouTubeTrack({
       if (audioEnabled && active.playing) player.playVideo();
       else player.pauseVideo();
     } catch {}
-  }, [active.muted, active.playing, active.position, active.positionUpdatedAt, active.seekRequestId, active.seekTo, active.volume, audioEnabled, masterVolume]);
+  }, [active.fadeInSeconds, active.fadeInStartedAt, active.fadeOutSeconds, active.fadeOutStartedAt, active.muted, active.playing, active.position, active.positionUpdatedAt, active.seekRequestId, active.seekTo, active.volume, audioEnabled, masterVolume]);
+
+  useEffect(() => {
+    if (!hasActiveFade(active)) return undefined;
+    const timer = window.setInterval(() => {
+      const player = playerRef.current;
+      if (!player?.setVolume) return;
+      try {
+        player.setVolume(Math.round(clampNumber((active.muted ? 0 : active.volume) * masterVolume * fadeMultiplierForActive(active), 0, 1) * 100));
+      } catch {}
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [active, masterVolume]);
 
   if (!videoId) return null;
   return <div id={mountIdRef.current} />;

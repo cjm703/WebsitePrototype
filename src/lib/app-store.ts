@@ -228,6 +228,10 @@ export const appStore = {
     loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "combat-music-state", fallback),
   saveCombatMusicState: <T>(data: T) =>
     saveSingletonDataDoc<T>("app_arcade_catalog_state", "combat-music-state", data),
+  loadCombatPresenceState: <T>(fallback: T) =>
+    loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "combat-presence-state", fallback),
+  saveCombatPresenceState: <T>(data: T) =>
+    saveSingletonDataDoc<T>("app_arcade_catalog_state", "combat-presence-state", data),
   loadCombatMusicFileChunk: <T>(chunkId: string, fallback: T) =>
     loadSingletonCollectionDoc<T>("app_arcade_catalog_state", chunkId, fallback),
   saveCombatMusicFileChunk: <T>(chunkId: string, data: T) =>
