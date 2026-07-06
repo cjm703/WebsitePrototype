@@ -208,6 +208,7 @@ const DEFAULT_COMBAT_STATE: CombatState = { messages: [], playerStates: {}, roun
 const DEFAULT_MUSIC_STATE: CombatMusicState = { tracks: [], active: [], queue: [], crossfadeSeconds: 4, masterVolume: 0.85, muted: false, updatedAt: "" };
 const DEFAULT_COMBAT_PRESENCE_STATE: CombatPresenceState = { users: {}, updatedAt: "" };
 const DEFAULT_AUDIO_EFFECTS: AudioEffectSettings = { reverb: 0, echo: 0, muffle: 0, thin: 0, bass: 0, mid: 0, treble: 0, speed: 1, pitch: 0 };
+const YOUTUBE_EMBED_HOST = "https://www.youtube-nocookie.com";
 const QUICK_FLAGS = ["Guarded", "Concentrating", "Prone", "Hidden", "Bloodied", "Stunned"];
 const MAX_FEED_MESSAGES = 150;
 const MAX_STORAGE_AUDIO_FILE_BYTES = 50 * 1024 * 1024;
@@ -318,6 +319,21 @@ function getYouTubeVideoId(url: string): string | null {
     }
   } catch {}
   return null;
+}
+
+function getBrowserOrigin() {
+  return typeof window === "undefined" ? "" : window.location.origin;
+}
+
+function getYouTubeEmbedUrl(videoId: string, params: Record<string, string | number> = {}) {
+  const search = new URLSearchParams({
+    rel: "0",
+    playsinline: "1",
+    ...Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)])),
+  });
+  const origin = getBrowserOrigin();
+  if (origin) search.set("origin", origin);
+  return `${YOUTUBE_EMBED_HOST}/embed/${encodeURIComponent(videoId)}?${search.toString()}`;
 }
 
 function inferTrackSource(url: string): TrackSource {
@@ -3152,7 +3168,7 @@ function TrackPreview({ track }: { track: MusicTrack }) {
       {videoId ? (
         <iframe
           title={`Preview ${track.title}`}
-          src={`https://www.youtube.com/embed/${videoId}`}
+          src={getYouTubeEmbedUrl(videoId)}
           className="w-full aspect-video"
           style={{ border: "1px solid #172044" }}
           allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -3301,17 +3317,27 @@ function AudioPlaybackLayer({
   onEnded: (trackId: string) => void;
 }) {
   const tracksById = useMemo(() => new Map(musicState.tracks.map((track) => [track.id, track])), [musicState.tracks]);
+  const renderableActive = useMemo(() => {
+    const seen = new Set<string>();
+    return musicState.active.filter((active) => {
+      const playbackKey = `${normalizeMusicLayer(active.layer)}:${active.trackId}`;
+      if (seen.has(playbackKey)) return false;
+      seen.add(playbackKey);
+      return true;
+    });
+  }, [musicState.active]);
   const masterVolume = (musicState.muted ? 0 : clampNumber(musicState.masterVolume ?? 0.85, 0, 1)) * clampNumber(localVolume, 0, 1.5);
   return (
     <div style={{ position: "fixed", left: -260, top: -260, width: 240, height: 240, overflow: "hidden", opacity: 0.01, pointerEvents: "none" }}>
-      {musicState.active.map((active) => {
+      {renderableActive.map((active) => {
         const track = tracksById.get(active.trackId);
+        const playbackKey = `${normalizeMusicLayer(active.layer)}:${active.trackId}`;
         if (!track) return null;
         if (!hasPlayableSource(track)) return null;
         if (track.sourceType === "youtube") {
-          return <HiddenYouTubeTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} onEnded={onEnded} />;
+          return <HiddenYouTubeTrack key={playbackKey} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} onEnded={onEnded} />;
         }
-        return <HiddenAudioTrack key={track.id} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} onEnded={onEnded} />;
+        return <HiddenAudioTrack key={playbackKey} track={track} active={active} audioEnabled={audioEnabled} masterVolume={masterVolume} onStatus={onStatus} onEnded={onEnded} />;
       })}
     </div>
   );
@@ -3715,7 +3741,9 @@ function HiddenYouTubeTrack({
       const playerMount = document.createElement("div");
       playerMount.id = mountIdRef.current;
       container.appendChild(playerMount);
+      const origin = getBrowserOrigin();
       playerRef.current = new YT.Player(playerMount, {
+        host: YOUTUBE_EMBED_HOST,
         width: "220",
         height: "220",
         videoId,
@@ -3724,7 +3752,7 @@ function HiddenYouTubeTrack({
           disablekb: 1,
           enablejsapi: 1,
           modestbranding: 1,
-          origin: window.location.origin,
+          ...(origin ? { origin } : {}),
           playsinline: 1,
           rel: 0,
           loop: 0,
