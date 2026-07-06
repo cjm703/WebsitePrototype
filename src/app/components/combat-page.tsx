@@ -3672,6 +3672,7 @@ function HiddenYouTubeTrack({
   onStatus: (trackId: string, patch: Partial<PlaybackStatus>) => void;
   onEnded: (trackId: string) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const mountIdRef = useRef(uid("yt"));
   const playerRef = useRef<any>(null);
   const activeRef = useRef(active);
@@ -3697,17 +3698,25 @@ function HiddenYouTubeTrack({
     if (!videoId) return;
     let cancelled = false;
     void ensureYouTubeApi().then(() => {
-      if (cancelled || playerRef.current) return;
+      const container = containerRef.current;
+      if (cancelled || playerRef.current || !container) return;
       const YT = (window as any).YT;
-      playerRef.current = new YT.Player(mountIdRef.current, {
+      container.replaceChildren();
+      const playerMount = document.createElement("div");
+      playerMount.id = mountIdRef.current;
+      container.appendChild(playerMount);
+      playerRef.current = new YT.Player(playerMount, {
         width: "220",
         height: "220",
         videoId,
         playerVars: {
           controls: 0,
           disablekb: 1,
+          enablejsapi: 1,
           modestbranding: 1,
+          origin: window.location.origin,
           playsinline: 1,
+          rel: 0,
           loop: active.loop ? 1 : 0,
           playlist: videoId,
         },
@@ -3753,6 +3762,11 @@ function HiddenYouTubeTrack({
         try { playerRef.current.destroy(); } catch {}
       }
       playerRef.current = null;
+      try {
+        containerRef.current?.replaceChildren();
+      } catch {
+        if (containerRef.current) containerRef.current.textContent = "";
+      }
     };
   }, [onEnded, onStatus, track.id, videoId]);
 
@@ -3811,5 +3825,5 @@ function HiddenYouTubeTrack({
   }, [active, masterVolume]);
 
   if (!videoId) return null;
-  return <div id={mountIdRef.current} />;
+  return <div ref={containerRef} data-youtube-track={track.id} />;
 }
