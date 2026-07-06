@@ -3678,6 +3678,8 @@ function HiddenYouTubeTrack({
   const activeRef = useRef(active);
   const masterVolumeRef = useRef(masterVolume);
   const audioEnabledRef = useRef(audioEnabled);
+  const onStatusRef = useRef(onStatus);
+  const onEndedRef = useRef(onEnded);
   const lastSeekRequestRef = useRef<string>("");
   const lastPositionSyncRef = useRef<string>("");
   const videoId = getYouTubeVideoId(track.url);
@@ -3693,6 +3695,14 @@ function HiddenYouTubeTrack({
   useEffect(() => {
     audioEnabledRef.current = audioEnabled;
   }, [audioEnabled]);
+
+  useEffect(() => {
+    onStatusRef.current = onStatus;
+  }, [onStatus]);
+
+  useEffect(() => {
+    onEndedRef.current = onEnded;
+  }, [onEnded]);
 
   useEffect(() => {
     if (!videoId) return;
@@ -3717,14 +3727,14 @@ function HiddenYouTubeTrack({
           origin: window.location.origin,
           playsinline: 1,
           rel: 0,
-          loop: active.loop ? 1 : 0,
+          loop: 0,
           playlist: videoId,
         },
         events: {
           onReady: (event: any) => {
             const latest = activeRef.current;
             event.target.setVolume(Math.round(clampNumber((latest.muted ? 0 : latest.volume) * masterVolumeRef.current * fadeMultiplierForActive(latest), 0, 1) * 100));
-            onStatus(track.id, {
+            onStatusRef.current(track.id, {
               currentTime: Number(event.target.getCurrentTime?.() || 0),
               duration: Number(event.target.getDuration?.() || 0),
               paused: !latest.playing,
@@ -3734,7 +3744,7 @@ function HiddenYouTubeTrack({
             if (audioEnabledRef.current && latest.playing) event.target.playVideo();
           },
           onStateChange: (event: any) => {
-            onStatus(track.id, {
+            onStatusRef.current(track.id, {
               currentTime: Number(event.target.getCurrentTime?.() || 0),
               duration: Number(event.target.getDuration?.() || 0),
               paused: event.data !== 1,
@@ -3742,10 +3752,10 @@ function HiddenYouTubeTrack({
               error: "",
             });
             if (event.data === 0 && activeRef.current.loop) event.target.playVideo();
-            else if (event.data === 0) onEnded(track.id);
+            else if (event.data === 0) onEndedRef.current(track.id);
           },
           onError: () => {
-            onStatus(track.id, {
+            onStatusRef.current(track.id, {
               currentTime: 0,
               duration: 0,
               paused: true,
@@ -3768,14 +3778,14 @@ function HiddenYouTubeTrack({
         if (containerRef.current) containerRef.current.textContent = "";
       }
     };
-  }, [onEnded, onStatus, track.id, videoId]);
+  }, [track.id, videoId]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
       const player = playerRef.current;
       if (!player?.getCurrentTime) return;
       try {
-        onStatus(track.id, {
+        onStatusRef.current(track.id, {
           currentTime: Number(player.getCurrentTime() || 0),
           duration: Number(player.getDuration?.() || 0),
           paused: !activeRef.current.playing,
@@ -3785,7 +3795,7 @@ function HiddenYouTubeTrack({
       } catch {}
     }, 500);
     return () => window.clearInterval(interval);
-  }, [onStatus, track.id]);
+  }, [track.id]);
 
   useEffect(() => {
     const player = playerRef.current;
