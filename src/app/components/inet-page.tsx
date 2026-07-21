@@ -9,8 +9,8 @@ import {
 } from "lucide-react";
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { getPageIcon } from "./page-icons";
-import { RenderFormattedText } from "./render-text";
-import { appStore } from "@/lib/app-store";
+import { RenderFormattedText, refreshWikiArticleLookup } from "./render-text";
+import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";
 import {
   DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS,
   WIKI_BLOCK_COLUMNS,
@@ -23,11 +23,14 @@ import {
   type WikiArticleChromeField,
   type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
+import { getInverseWikiRelationshipType } from "@/lib/wiki-article-relationships";
+import { filterBrowsableWikiArticles, getWikiArticleVisibility } from "@/lib/wiki-visibility";
 import {
   getWikiPanelMediaPosition,
   getWikiPanelPlacement,
   getWikiPanelWidth,
   groupBodyPanelsIntoRows,
+  migrateWikiSectionsToPanels,
   normalizeWikiPanels,
   type WikiPanelMediaPosition,
   type WikiPanelPlacement,
@@ -86,6 +89,9 @@ interface SitePage {
   category: string;
   subcategories: SubCategory[];
   dateAdded: string;
+  createdAt?: string;
+  updatedAt?: string;
+  serverUpdatedAt?: string;
   body: string;
   subtitle: string;
   marqueeText: string;
@@ -141,27 +147,6 @@ interface WikiPanel {
   mediaPosition?: WikiPanelMediaPosition;
 }
 
-function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
-  const existingPanels = normalizeWikiPanels(pg.panels);
-  const legacySections = pg.sections || [];
-  if (legacySections.length === 0) return existingPanels;
-  const converted: WikiPanel[] = legacySections.map((sec) => ({
-    id: sec.id.startsWith("sec-") ? sec.id.replace("sec-", "panel-") : `panel-${sec.id}`,
-    title: sec.heading || "",
-    subtitle: "",
-    content: sec.body || "",
-    assignedTo: [],
-    style: "blank",
-    placement: "body",
-    width: "full",
-    mediaUrl: "",
-    mediaCaption: "",
-    mediaAlt: "",
-    mediaPosition: "top",
-  }));
-  return [...converted, ...existingPanels];
-}
-
 const BUILTIN_PANEL_STYLE_MAP: Record<string, { accent: string; bg: string; border: string }> = {
   blank: { accent: "#5A6A8A", bg: "transparent", border: "#1A2A4B" },
   neutral: { accent: "#7A8AAA", bg: "#0A0A2A", border: "#2A3A5B" },
@@ -177,6 +162,13 @@ function getPanelStyle(styleId: string | undefined, customStyles: CustomPanelSty
   const found = customStyles.find((c) => c.id === id);
   if (found) return { accent: found.accent, bg: found.bg, border: found.border };
   return BUILTIN_PANEL_STYLE_MAP.neutral;
+}
+
+function formatWikiDate(value: string | undefined, fallback: string) {
+  const parsed = value ? new Date(value) : null;
+  return parsed && Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })
+    : fallback;
 }
 
 function findSubcategoryArticlePath(
@@ -411,20 +403,20 @@ export function InetPage() {
     let cancelled = false;
     const hydrateWikiData = async () => {
       try {
-        const [sites, tags, panelStyles] = await Promise.all([
-          appStore.listSites<SitePage>(),
-          appStore.listTags<WikiTagDef>("wiki"),
-          appStore.listCustomPanelStyles<CustomPanelStyle>(),
-        ]);
+        const bootstrap = await loadPlayerWikiBootstrap();
         if (cancelled) return;
-        setPages(Array.isArray(sites) ? sites : []);
-        setWikiTagDefs(Array.isArray(tags) ? tags : []);
-        setCustomPanelStyles(Array.isArray(panelStyles) ? panelStyles : []);
+        const sites = Array.isArray(bootstrap?.sites) ? bootstrap.sites as SitePage[] : [];
+        setPages(sites);
+        setWikiTagDefs(Array.isArray(bootstrap?.wikiTags) ? bootstrap.wikiTags : []);
+        setCustomPanelStyles(Array.isArray(bootstrap?.customPanelStyles) ? bootstrap.customPanelStyles : []);
+        refreshWikiArticleLookup(sites.map(({ id, title }) => ({ id, title })));
       } catch {
         if (cancelled) return;
-        setPages(safeGetJson("inet-dm-sites", []));
+        const localSites = safeGetJson<SitePage[]>("inet-dm-sites", []);
+        setPages(localSites);
         setWikiTagDefs(safeGetJson("inet-dm-wikiTags", []));
         setCustomPanelStyles(safeGetJson("inet-custom-panel-styles", []));
+        refreshWikiArticleLookup(localSites.map(({ id, title }) => ({ id, title })));
       }
     };
 
@@ -440,17 +432,22 @@ export function InetPage() {
   const page = pages.find((p) => p.id === id);
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
-  const pageTitleLookup = useMemo(() => new Map(pages.map((entry) => [entry.id, entry.title])), [pages]);
+  const browsablePages = useMemo(
+    () => filterBrowsableWikiArticles(pages, currentUserId),
+    [currentUserId, pages],
+  );
+  const pageTitleLookup = useMemo(
+    () => new Map(browsablePages.map((entry) => [entry.id, entry.title])),
+    [browsablePages],
+  );
 
   // Article-level visibility check
-  const articleVis = (!isDM && currentUserId && page?.playerVisibility)
-    ? (page.playerVisibility[currentUserId] || "visible")
-    : "visible";
+  const articleVis = getWikiArticleVisibility(page, currentUserId);
 
   // Random article handler
   const handleRandom = () => {
-    if (pages.length <= 1) return;
-    const others = pages.filter((p) => p.id !== id);
+    if (browsablePages.length <= 1) return;
+    const others = browsablePages.filter((p) => p.id !== id);
     if (others.length === 0) return;
     const pick = others[Math.floor(Math.random() * others.length)];
     navigate(`/interface/inet-page/${pick.id}`);
@@ -466,37 +463,66 @@ export function InetPage() {
     for (const rid of (page.relatedArticleIds || [])) {
       if (seen.has(rid)) continue;
       seen.add(rid);
-      const found = pages.find((p) => p.id === rid);
+      const found = browsablePages.find((p) => p.id === rid);
       if (found) result.push(found);
     }
     // Then same-category articles
-    for (const p of pages) {
+    for (const p of browsablePages) {
       if (seen.has(p.id) || p.category !== page.category) continue;
       seen.add(p.id);
       result.push(p);
       if (result.length >= 8) break;
     }
     return result.slice(0, 8);
-  }, [page, pages]);
+  }, [page, browsablePages]);
   const relationshipArticles = useMemo(() => {
     if (!page) return [];
-    return (page.relationships || [])
-      .map((relationship) => {
-        const target = pages.find((article) => article.id === relationship.targetArticleId);
-        if (!target) return null;
-        return { relationship, target };
-      })
-      .filter((entry): entry is { relationship: WikiArticleRelationship; target: SitePage } => !!entry);
-  }, [page, pages]);
+    const result: { relationship: WikiArticleRelationship; target: SitePage; inferred: boolean }[] = [];
+    const seen = new Set<string>();
+
+    (page.relationships || []).forEach((relationship) => {
+      const target = browsablePages.find((article) => article.id === relationship.targetArticleId);
+      if (!target) return;
+      seen.add(`${target.id}:${relationship.type.trim().toLowerCase()}`);
+      result.push({ relationship, target, inferred: false });
+    });
+
+    browsablePages.forEach((sourceArticle) => {
+      if (sourceArticle.id === page.id) return;
+      (sourceArticle.relationships || []).forEach((relationship) => {
+        if (relationship.targetArticleId !== page.id) return;
+        const inverseType = getInverseWikiRelationshipType(relationship.type);
+        if (!inverseType) return;
+        const relationshipKey = `${sourceArticle.id}:${inverseType}`;
+        if (seen.has(relationshipKey)) return;
+        seen.add(relationshipKey);
+        result.push({
+          relationship: {
+            id: `inferred-${sourceArticle.id}-${relationship.id}`,
+            type: inverseType,
+            targetArticleId: sourceArticle.id,
+            note: relationship.note,
+          },
+          target: sourceArticle,
+          inferred: true,
+        });
+      });
+    });
+
+    return result;
+  }, [page, browsablePages]);
   const wikiRouteParts = useMemo(() => {
     if (!page) return ["Wiki"];
-    const linkedPath = pages
+    const linkedPath = browsablePages
       .filter((entry) => entry.id !== page.id)
       .map((entry) => findSubcategoryArticlePath(entry.subcategories, page.id, pageTitleLookup))
       .find((path): path is string[] => Array.isArray(path) && path.length > 0);
     const tail = linkedPath && linkedPath.length > 0 ? linkedPath : [page.title || "Untitled Article"];
     return compactRouteParts(["Wiki", page.category || "Uncategorized", ...tail]);
-  }, [page, pages, pageTitleLookup]);
+  }, [page, browsablePages, pageTitleLookup]);
+  const displayedWikiRouteParts = articleVis === "spoiler" && !articleRevealed
+    ? ["Wiki", "Spoiler-protected article"]
+    : wikiRouteParts;
 
   // If hidden, show "not found" for non-DM players
   if (articleVis === "hidden") {
@@ -554,7 +580,7 @@ export function InetPage() {
   const accent = page.accentColor || DEFAULTS.accentColor;
   const txt = page.textColor || DEFAULTS.textColor;
   const font = page.fontFamily || DEFAULTS.fontFamily;
-  const panels = migrateSectionsToPanels(page);
+  const panels = migrateWikiSectionsToPanels(page) as WikiPanel[];
   const showDividers = page.showDividers ?? true;
   const borderColor = lighten(bg, 25);
   const mutedText = lighten(bg, 60);
@@ -590,6 +616,7 @@ export function InetPage() {
     ? (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION ? page.blocks : migrateLegacyArticleToBlocks(page))
     : migrateLegacyArticleToBlocks(page));
   const hasBlockLayout = blocks.length > 0 && (page.layoutVersion === WIKI_BLOCK_LAYOUT_VERSION || (page.blocks && page.blocks.length > 0));
+  const compactHeaderLayout = hasBlockLayout && hasAuthoredArticleChromeLayout && canvasSettings.compactHeaderLayout;
   const articleShellMaxWidth = hasBlockLayout ? Math.max(900, canvasSettings.frameWidth + 244) : 900;
   const visibleBlocks = blocks
     .filter((block) => {
@@ -1003,7 +1030,7 @@ export function InetPage() {
           <div style={blockShellStyle}>
             {block.title && <h3 className="mb-3 text-[16px]" style={{ color: titleColor, fontWeight: 700, fontFamily: font, textAlign: titleAlign }}>{block.title}</h3>}
             <div style={{ display: "flex", flexDirection: linkDisplayMode === "chips" ? "row" : "column", flexWrap: linkDisplayMode === "chips" ? "wrap" : undefined, gap: linkDisplayMode === "cards" ? 8 : 4 }}>
-              {(block.articleIds || []).map((articleId) => (
+              {(block.articleIds || []).filter((articleId) => pageTitleLookup.has(articleId)).map((articleId) => (
                 <button
                   key={articleId}
                   onClick={() => navigate(`/interface/inet-page/${articleId}`)}
@@ -1103,8 +1130,8 @@ export function InetPage() {
       >
         <span className="uppercase tracking-[0.16em] text-[9px]" style={S_DIM}>Route</span>
         <span style={S_DIM}>|</span>
-        {wikiRouteParts.map((part, index) => {
-          const isLast = index === wikiRouteParts.length - 1;
+        {displayedWikiRouteParts.map((part, index) => {
+          const isLast = index === displayedWikiRouteParts.length - 1;
           const isWikiRoot = index === 0;
           return (
             <React.Fragment key={`${part}-${index}`}>
@@ -1241,7 +1268,7 @@ export function InetPage() {
                     <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Last Updated</span>
                     <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: txt }}>
                       <Clock size={9} style={{ color: mutedText }} />
-                      {page.dateAdded}
+                      {formatWikiDate(page.updatedAt, page.dateAdded)}
                     </div>
                   </div>
                   {page.url && (
@@ -1295,7 +1322,8 @@ export function InetPage() {
               {(page.subcategories || []).length > 0 && (() => {
                 const renderScNode = (node: SubCategory, depth: number): React.ReactNode => {
                   const isFolder = node.type === "folder";
-                  const linkedArticle = node.articleId ? pages.find(p => p.id === node.articleId) : null;
+                  const linkedArticle = node.articleId ? browsablePages.find(p => p.id === node.articleId) : null;
+                  if (node.articleId && !linkedArticle && !isDM) return null;
                   return (
                     <div key={node.id}>
                       <div
@@ -1538,7 +1566,12 @@ export function InetPage() {
             {/* Main article body */}
             <div className="flex-1 min-w-0 order-1 md:order-2">
               {/* Article Header */}
-              <div className="mb-4 border-b-2 pb-4" style={{ borderBottomColor: borderColor }}>
+              <div
+                className={compactHeaderLayout
+                  ? "mb-4 border-b-2 pb-4 md:mb-0 md:border-b-0 md:pb-0"
+                  : "mb-4 border-b-2 pb-4"}
+                style={{ borderBottomColor: borderColor }}
+              >
                 {hasAuthoredArticleChromeLayout ? (
                   <>
                     <div
@@ -1647,9 +1680,11 @@ export function InetPage() {
                       width: "100%",
                       maxWidth: canvasSettings.frameWidth,
                       gridTemplateColumns: `repeat(${WIKI_BLOCK_COLUMNS}, minmax(0, 1fr))`,
-                      gridAutoRows: "minmax(20px, auto)",
+                      gridAutoRows: compactHeaderLayout ? `${articleChromeRowHeight}px` : "minmax(20px, auto)",
                       columnGap: 0,
                       rowGap: 0,
+                      marginTop: compactHeaderLayout ? -articleChromeCanvasHeight : undefined,
+                      minHeight: compactHeaderLayout ? articleChromeCanvasHeight : undefined,
                     }}
                   >
                     {visibleBlocks.map((block) => (
@@ -1861,7 +1896,7 @@ export function InetPage() {
               {/* See Also */}
               {(() => {
                 const seeAlsoIds = page.seeAlso || [];
-                const seeAlsoPages = seeAlsoIds.map(sid => pages.find(p => p.id === sid)).filter(Boolean) as SitePage[];
+                const seeAlsoPages = seeAlsoIds.map(sid => browsablePages.find(p => p.id === sid)).filter(Boolean) as SitePage[];
                 if (seeAlsoPages.length === 0) return null;
                 return (
                   <div className="mb-6" id="see-also">
@@ -1946,7 +1981,7 @@ export function InetPage() {
               <span className="text-[10px]" style={{ color: mutedText, fontFamily: font }}>{page.footerText}</span>
             ) : (
               <span className="text-[10px]" style={{ color: mutedText }}>
-                This article is part of the I-Net Wiki | Category: {page.category} | Last updated: {page.dateAdded}
+                This article is part of the I-Net Wiki | Category: {page.category} | Last updated: {formatWikiDate(page.updatedAt, page.dateAdded)}
               </span>
             )}
             <br />

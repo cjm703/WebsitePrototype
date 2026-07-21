@@ -1,4 +1,5 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
+import { sanitizeRichHtml } from "@/lib/sanitize-rich-html";
 import {
   Bold, Italic, AlignLeft, AlignCenter, AlignRight,
   List, ListOrdered, Table, ImageIcon, Palette, ChevronDown,
@@ -280,8 +281,7 @@ export function RichTextEditor({
   const [imageUrl, setImageUrl] = useState("");
   const [wikiLinkPopupOpen, setWikiLinkPopupOpen] = useState(false);
   const [wikiLinkQuery, setWikiLinkQuery] = useState("");
-  const [isHovered, setIsHovered] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
+  const [isToolbarHovered, setIsToolbarHovered] = useState(false);
 
   // Close size dropdown on outside click
   useEffect(() => {
@@ -305,7 +305,7 @@ export function RichTextEditor({
     const el = editorRef.current;
     if (!el) return;
     if (el.innerHTML !== value) {
-      el.innerHTML = value || "";
+      el.innerHTML = sanitizeRichHtml(value || "");
     }
   }, [value]);
 
@@ -541,7 +541,7 @@ export function RichTextEditor({
   };
 
   const hasOpenPopup = fontDropOpen || sizeDropOpen || layoutDropOpen || colorPickerOpen || tablePopupOpen || imagePopupOpen || wikiLinkPopupOpen;
-  const showToolbar = !floatingToolbar || isHovered || isFocused || hasOpenPopup;
+  const showToolbar = !floatingToolbar || isToolbarHovered || hasOpenPopup;
   const editableAreaStyle: React.CSSProperties = {
     position: "relative",
     minHeight: fillHeight ? undefined : minHeight,
@@ -570,11 +570,53 @@ export function RichTextEditor({
         minHeight,
         height: fillHeight ? "100%" : undefined,
       }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseMove={(event) => {
+        if (!floatingToolbar) return;
+        const hoverOffset = event.clientY - event.currentTarget.getBoundingClientRect().top;
+        if (hoverOffset <= 46) setIsToolbarHovered(true);
+        else if (!hasOpenPopup) setIsToolbarHovered(false);
+      }}
+      onMouseLeave={() => {
+        if (floatingToolbar && !hasOpenPopup) setIsToolbarHovered(false);
+      }}
     >
+      {floatingToolbar && !showToolbar && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 8,
+            right: 8,
+            height: 42,
+            zIndex: 14,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "flex-start",
+            paddingTop: 4,
+            pointerEvents: "none",
+          }}
+        >
+          <div style={{ width: 34, height: 3, borderRadius: 2, background: "rgba(138, 154, 187, 0.3)" }} />
+        </div>
+      )}
+
       {/* Toolbar */}
       <div
+        onMouseEnter={() => { if (floatingToolbar) setIsToolbarHovered(true); }}
+        onMouseMove={(event) => {
+          if (floatingToolbar) {
+            event.stopPropagation();
+            setIsToolbarHovered(true);
+          }
+        }}
+        onMouseLeave={() => { if (floatingToolbar && !hasOpenPopup) setIsToolbarHovered(false); }}
+        onFocusCapture={() => { if (floatingToolbar) setIsToolbarHovered(true); }}
+        onBlurCapture={(event) => {
+          if (floatingToolbar && !event.currentTarget.contains(event.relatedTarget as Node) && !hasOpenPopup) {
+            setIsToolbarHovered(false);
+          }
+        }}
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -583,7 +625,7 @@ export function RichTextEditor({
           background: floatingToolbar ? "rgba(14, 14, 40, 0.94)" : "linear-gradient(180deg, #16163A 0%, #0E0E28 100%)",
           borderBottom: floatingToolbar ? "none" : "1px solid #2A2A5A",
           border: floatingToolbar ? "1px solid #2A2A5A" : "none",
-          borderRadius: floatingToolbar ? 10 : 0,
+          borderRadius: floatingToolbar ? 8 : 0,
           alignItems: "center",
           position: floatingToolbar ? "absolute" : "relative",
           top: floatingToolbar ? 10 : undefined,
@@ -1095,11 +1137,7 @@ export function RichTextEditor({
         onInput={handleInput}
         onMouseUp={saveSelection}
         onKeyUp={saveSelection}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => {
-          setIsFocused(false);
-          emitChange();
-        }}
+        onBlur={emitChange}
         data-placeholder={placeholder}
         style={editableAreaStyle}
         className="rich-text-editable"

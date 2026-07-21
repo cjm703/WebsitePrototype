@@ -169,6 +169,9 @@ const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${pl
 const imageStorageKey = "inet-image-storage";
 const wikiBlockPresetsKey = "inet-wiki-block-presets";
 const wikiArticleRevisionsKey = "inet-wiki-article-revisions";
+const wikiDeletedSitesKey = "inet-wiki-deleted-sites";
+const wikiTemplatesKey = "inet-wiki-templates";
+const wikiBlockStylePresetsKey = "inet-wiki-block-style-presets";
 
 
 async function listEntityRows(table: "app_players" | "app_deleted_players") {
@@ -276,6 +279,36 @@ async function listCollectionRows(table: string) {
     id: row.id,
     ...(row.data ?? {}),
   }));
+}
+
+async function listWikiSiteRows() {
+  const supabase = admin();
+  const { data, error } = await supabase
+    .from("app_sites")
+    .select("id, data, updated_at")
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((row: any) => ({
+    ...(row.data ?? {}),
+    id: row.id,
+    serverUpdatedAt: row.updated_at ?? null,
+  }));
+}
+
+async function loadWikiSiteRow(id: string) {
+  const { data, error } = await admin()
+    .from("app_sites")
+    .select("id, data, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? {
+    ...(data.data ?? {}),
+    id: data.id,
+    serverUpdatedAt: data.updated_at ?? null,
+  } : null;
 }
 
 async function listPlayerScopedRows(table: string) {
@@ -1163,6 +1196,148 @@ function registerRoutes(prefix: string) {
     if (error) throw new Error(error.message);
   }
 
+  function stripWikiServerMetadata(site: any) {
+    const next = { ...(site ?? {}) };
+    delete next.serverUpdatedAt;
+    return next;
+  }
+
+  function normalizeWikiUrl(value: unknown) {
+    return String(value ?? "")
+      .trim()
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/$/, "")
+      .toLowerCase();
+  }
+
+  function getWikiVisibility(site: any, playerId: string) {
+    if (playerId === "dm") return "visible";
+    const mode = site?.playerVisibility?.[playerId];
+    return mode === "hidden" || mode === "spoiler" ? mode : "visible";
+  }
+
+  function mapWikiSubcategories(nodes: any, mapNode: (node: any) => any): any[] {
+    if (!Array.isArray(nodes)) return [];
+    return nodes.map((rawNode) => {
+      const node = { ...(rawNode ?? {}) };
+      node.children = mapWikiSubcategories(node.children, mapNode);
+      return mapNode(node);
+    });
+  }
+
+  function cleanWikiReferences(site: any, targetId: string) {
+    const next = stripWikiServerMetadata(site);
+    if (Array.isArray(next.relatedArticleIds)) {
+      next.relatedArticleIds = next.relatedArticleIds.filter((id: unknown) => id !== targetId);
+    }
+    if (Array.isArray(next.seeAlso)) {
+      next.seeAlso = next.seeAlso.filter((id: unknown) => id !== targetId);
+    }
+    if (Array.isArray(next.relationships)) {
+      next.relationships = next.relationships.filter((relationship: any) => relationship?.targetArticleId !== targetId);
+    }
+    if (Array.isArray(next.subcategories)) {
+      next.subcategories = mapWikiSubcategories(next.subcategories, (node) => (
+        node.articleId === targetId ? { ...node, articleId: undefined } : node
+      ));
+    }
+    if (Array.isArray(next.blocks)) {
+      next.blocks = next.blocks.map((block: any) => Array.isArray(block?.articleIds)
+        ? { ...block, articleIds: block.articleIds.filter((id: unknown) => id !== targetId) }
+        : block);
+    }
+    return next;
+  }
+
+  function captureWikiReferenceSnapshot(site: any) {
+    return {
+      id: site.id,
+      relatedArticleIds: Array.isArray(site.relatedArticleIds) ? site.relatedArticleIds : [],
+      seeAlso: Array.isArray(site.seeAlso) ? site.seeAlso : [],
+      relationships: Array.isArray(site.relationships) ? site.relationships : [],
+      subcategories: Array.isArray(site.subcategories) ? site.subcategories : [],
+      blocks: (Array.isArray(site.blocks) ? site.blocks : []).map((block: any) => ({
+        id: block?.id,
+        articleIds: Array.isArray(block?.articleIds) ? block.articleIds : undefined,
+      })),
+    };
+  }
+
+  function restoreWikiSubcategoryReferences(currentNodes: any, archivedNodes: any, targetId: string): any[] {
+    const archivedById = new Map(
+      (Array.isArray(archivedNodes) ? archivedNodes : [])
+        .filter((node: any) => node?.id)
+        .map((node: any) => [node.id, node]),
+    );
+    return (Array.isArray(currentNodes) ? currentNodes : []).map((rawNode: any) => {
+      const node = { ...(rawNode ?? {}) };
+      const archived = archivedById.get(node.id) as any;
+      if (archived?.articleId === targetId && !node.articleId) node.articleId = targetId;
+      node.children = restoreWikiSubcategoryReferences(node.children, archived?.children, targetId);
+      return node;
+    });
+  }
+
+  function restoreWikiReferences(site: any, snapshot: any, targetId: string) {
+    const next = stripWikiServerMetadata(site);
+    if (snapshot?.relatedArticleIds?.includes(targetId)) {
+      next.relatedArticleIds = Array.from(new Set([...(next.relatedArticleIds || []), targetId]));
+    }
+    if (snapshot?.seeAlso?.includes(targetId)) {
+      next.seeAlso = Array.from(new Set([...(next.seeAlso || []), targetId]));
+    }
+    const archivedRelationships = (snapshot?.relationships || [])
+      .filter((relationship: any) => relationship?.targetArticleId === targetId);
+    const currentRelationships = Array.isArray(next.relationships) ? next.relationships : [];
+    next.relationships = [
+      ...currentRelationships,
+      ...archivedRelationships.filter((archived: any) => !currentRelationships.some((current: any) => (
+        current?.id === archived?.id || (
+          current?.targetArticleId === archived?.targetArticleId
+          && current?.type === archived?.type
+        )
+      ))),
+    ];
+    next.subcategories = restoreWikiSubcategoryReferences(
+      next.subcategories,
+      snapshot?.subcategories,
+      targetId,
+    );
+
+    const archivedBlocks = new Map(
+      (snapshot?.blocks || []).filter((block: any) => block?.id).map((block: any) => [block.id, block]),
+    );
+    next.blocks = (Array.isArray(next.blocks) ? next.blocks : []).map((block: any) => {
+      const archived = archivedBlocks.get(block?.id) as any;
+      if (!archived?.articleIds?.includes(targetId)) return block;
+      const currentIds = Array.isArray(block.articleIds) ? block.articleIds : [];
+      if (currentIds.includes(targetId)) return block;
+      const restoredIds = [...currentIds];
+      const archivedIndex = archived.articleIds.indexOf(targetId);
+      restoredIds.splice(Math.min(Math.max(archivedIndex, 0), restoredIds.length), 0, targetId);
+      return { ...block, articleIds: restoredIds };
+    });
+    return next;
+  }
+
+  async function upsertWikiSite(site: any) {
+    const normalized = stripWikiServerMetadata(site);
+    const now = new Date().toISOString();
+    const { error } = await admin()
+      .from("app_sites")
+      .upsert(
+        { id: normalized.id, data: { ...normalized, id: normalized.id }, updated_at: now },
+        { onConflict: "id" },
+      );
+    if (error) throw new Error(error.message);
+    return now;
+  }
+
+  async function deleteWikiSiteRow(id: string) {
+    const { error } = await admin().from("app_sites").delete().eq("id", id);
+    if (error) throw new Error(error.message);
+  }
+
   app.get(`${prefix}/wiki/bootstrap`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
@@ -1171,14 +1346,17 @@ function registerRoutes(prefix: string) {
       const requesterId = await resolveSessionPlayerId(c);
       requireDM(requesterId);
 
-      const [sites, players, wikiTags, customPanelStyles, imageStorage, wikiBlockPresets, wikiArticleRevisions] = await Promise.all([
-        listCollectionRows("app_sites"),
+      const [sites, players, wikiTags, customPanelStyles, imageStorage, wikiBlockPresets, wikiArticleRevisions, deletedSites, wikiTemplates, wikiBlockStylePresets] = await Promise.all([
+        listWikiSiteRows(),
         listEntityRows("app_players"),
         listTagRows("wiki"),
         listCollectionRows("app_custom_panel_styles"),
         kv.get(imageStorageKey),
         kv.get(wikiBlockPresetsKey),
         kv.get(wikiArticleRevisionsKey),
+        kv.get(wikiDeletedSitesKey),
+        kv.get(wikiTemplatesKey),
+        kv.get(wikiBlockStylePresetsKey),
       ]);
 
       return c.json({
@@ -1189,7 +1367,229 @@ function registerRoutes(prefix: string) {
         imageStorage: Array.isArray(imageStorage) ? imageStorage : [],
         wikiBlockPresets: Array.isArray(wikiBlockPresets) ? wikiBlockPresets : [],
         wikiArticleRevisions: Array.isArray(wikiArticleRevisions) ? wikiArticleRevisions : [],
+        deletedSites: Array.isArray(deletedSites) ? deletedSites : [],
+        wikiTemplates: Array.isArray(wikiTemplates) ? wikiTemplates : [],
+        wikiBlockStylePresets: Array.isArray(wikiBlockStylePresets) ? wikiBlockStylePresets : [],
       });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/wiki/player-bootstrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const [allSites, wikiTags, customPanelStyles] = await Promise.all([
+        listWikiSiteRows(),
+        listTagRows("wiki"),
+        listCollectionRows("app_custom_panel_styles"),
+      ]);
+      const sites = requesterId === "dm"
+        ? allSites
+        : allSites.filter((site: any) => getWikiVisibility(site, requesterId) !== "hidden");
+
+      return c.json({ sites, wikiTags, customPanelStyles });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/wiki/drafts`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+      const drafts = await getPlayerScopedData("player_wiki_editor_drafts", requesterId, {});
+      return c.json({ drafts: drafts && typeof drafts === "object" ? drafts : {} });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/drafts/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+      const body = await c.req.json();
+      const drafts = body?.drafts;
+      if (!drafts || typeof drafts !== "object" || Array.isArray(drafts)) {
+        return c.json({ error: "drafts must be an object" }, 400);
+      }
+      await upsertPlayerScopedData("player_wiki_editor_drafts", requesterId, drafts);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/site/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+
+      const body = await c.req.json();
+      const site = body?.site;
+      if (!site || typeof site !== "object" || typeof site.id !== "string" || !site.id.trim()) {
+        return c.json({ error: "site with a valid id is required" }, 400);
+      }
+
+      const sites = await listWikiSiteRows();
+      const current = sites.find((entry: any) => entry.id === site.id);
+      const expectedUpdatedAt = String(body?.expectedUpdatedAt || "");
+      if (current && expectedUpdatedAt && current.serverUpdatedAt !== expectedUpdatedAt) {
+        return c.json({
+          error: "This article changed in another tab or session. Reload before saving so those edits are not overwritten.",
+          code: "WIKI_EDIT_CONFLICT",
+          current,
+        }, 409);
+      }
+
+      const normalizedUrl = normalizeWikiUrl(site.url);
+      const duplicate = sites.find((entry: any) => (
+        entry.id !== site.id && normalizedUrl && normalizeWikiUrl(entry.url) === normalizedUrl
+      ));
+      if (duplicate) {
+        return c.json({ error: `Another article already uses this URL: ${duplicate.title || duplicate.id}` }, 409);
+      }
+
+      const cleanSite = stripWikiServerMetadata(site);
+      const relatedIds = new Set(Array.isArray(cleanSite.relatedArticleIds) ? cleanSite.relatedArticleIds : []);
+      await upsertWikiSite(cleanSite);
+
+      for (const other of sites) {
+        if (other.id === cleanSite.id) continue;
+        const latestOther = await loadWikiSiteRow(other.id);
+        if (!latestOther) continue;
+        const otherRelated = new Set(Array.isArray(latestOther.relatedArticleIds) ? latestOther.relatedArticleIds : []);
+        const shouldLink = relatedIds.has(other.id);
+        const currentlyLinked = otherRelated.has(cleanSite.id);
+        if (shouldLink === currentlyLinked) continue;
+        if (shouldLink) otherRelated.add(cleanSite.id);
+        else otherRelated.delete(cleanSite.id);
+        await upsertWikiSite({ ...latestOther, relatedArticleIds: Array.from(otherRelated) });
+      }
+
+      const deletedSites = await kv.get(wikiDeletedSitesKey);
+      if (Array.isArray(deletedSites) && deletedSites.some((entry: any) => entry?.id === cleanSite.id)) {
+        await kv.set(wikiDeletedSitesKey, deletedSites.filter((entry: any) => entry?.id !== cleanSite.id));
+      }
+
+      return c.json({ ok: true, sites: await listWikiSiteRows() });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/site/delete`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+      const body = await c.req.json();
+      const siteId = String(body?.siteId || "").trim();
+      if (!siteId) return c.json({ error: "siteId is required" }, 400);
+
+      const sites = await listWikiSiteRows();
+      const site = sites.find((entry: any) => entry.id === siteId);
+      if (!site) return c.json({ error: "Article not found" }, 404);
+      const expectedUpdatedAt = String(body?.expectedUpdatedAt || "");
+      if (expectedUpdatedAt && site.serverUpdatedAt !== expectedUpdatedAt) {
+        return c.json({ error: "This article changed before it could be deleted. Reload and review it first." }, 409);
+      }
+
+      const inboundReferenceSnapshots = sites
+        .filter((entry: any) => entry.id !== siteId)
+        .filter((entry: any) => (
+          JSON.stringify(stripWikiServerMetadata(entry)) !== JSON.stringify(cleanWikiReferences(entry, siteId))
+        ))
+        .map(captureWikiReferenceSnapshot);
+      const deletedSites = await kv.get(wikiDeletedSitesKey);
+      const trashEntry = {
+        id: siteId,
+        site: stripWikiServerMetadata(site),
+        inboundReferenceSnapshots,
+        deletedAt: new Date().toISOString(),
+        deletedBy: requesterId,
+      };
+      const nextTrash = [
+        trashEntry,
+        ...(Array.isArray(deletedSites) ? deletedSites : []).filter((entry: any) => entry?.id !== siteId),
+      ];
+      await kv.set(wikiDeletedSitesKey, nextTrash);
+
+      for (const other of sites) {
+        if (other.id === siteId) continue;
+        const latestOther = await loadWikiSiteRow(other.id);
+        if (!latestOther) continue;
+        const cleaned = cleanWikiReferences(latestOther, siteId);
+        if (JSON.stringify(stripWikiServerMetadata(latestOther)) !== JSON.stringify(cleaned)) {
+          await upsertWikiSite(cleaned);
+        }
+      }
+      await deleteWikiSiteRow(siteId);
+
+      return c.json({ ok: true, sites: await listWikiSiteRows(), deletedSites: nextTrash });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/site/restore`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+      const body = await c.req.json();
+      const siteId = String(body?.siteId || "").trim();
+      if (!siteId) return c.json({ error: "siteId is required" }, 400);
+
+      const deletedSites = await kv.get(wikiDeletedSitesKey);
+      const trash = Array.isArray(deletedSites) ? deletedSites : [];
+      const entry = trash.find((item: any) => item?.id === siteId);
+      if (!entry?.site) return c.json({ error: "Deleted article not found" }, 404);
+
+      const currentSites = await listWikiSiteRows();
+      if (currentSites.some((site: any) => site.id === siteId)) {
+        return c.json({ error: "An active article already uses this id" }, 409);
+      }
+      const duplicateUrl = currentSites.find((site: any) => (
+        normalizeWikiUrl(site.url) && normalizeWikiUrl(site.url) === normalizeWikiUrl(entry.site.url)
+      ));
+      if (duplicateUrl) {
+        return c.json({ error: `Cannot restore because ${duplicateUrl.title || duplicateUrl.id} now uses the same URL.` }, 409);
+      }
+
+      await upsertWikiSite(entry.site);
+      const snapshots = new Map(
+        (entry.inboundReferenceSnapshots || []).map((snapshot: any) => [snapshot.id, snapshot]),
+      );
+      for (const current of currentSites) {
+        const snapshot = snapshots.get(current.id);
+        if (!snapshot) continue;
+        const latestCurrent = await loadWikiSiteRow(current.id);
+        if (!latestCurrent) continue;
+        const restored = restoreWikiReferences(latestCurrent, snapshot, siteId);
+        if (JSON.stringify(stripWikiServerMetadata(latestCurrent)) !== JSON.stringify(restored)) {
+          await upsertWikiSite(restored);
+        }
+      }
+
+      const nextTrash = trash.filter((item: any) => item?.id !== siteId);
+      await kv.set(wikiDeletedSitesKey, nextTrash);
+      return c.json({ ok: true, sites: await listWikiSiteRows(), deletedSites: nextTrash });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
     }
@@ -1284,6 +1684,44 @@ function registerRoutes(prefix: string) {
       }
 
       await kv.set(wikiBlockPresetsKey, wikiBlockPresets);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/templates/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+      const body = await c.req.json();
+      const wikiTemplates = Array.isArray(body?.wikiTemplates) ? body.wikiTemplates : null;
+      if (!wikiTemplates) return c.json({ error: "wikiTemplates must be an array" }, 400);
+      await kv.set(wikiTemplatesKey, wikiTemplates);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/wiki/block-style-presets/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      requireDM(requesterId);
+      const body = await c.req.json();
+      const wikiBlockStylePresets = Array.isArray(body?.wikiBlockStylePresets)
+        ? body.wikiBlockStylePresets
+        : null;
+      if (!wikiBlockStylePresets) {
+        return c.json({ error: "wikiBlockStylePresets must be an array" }, 400);
+      }
+      await kv.set(wikiBlockStylePresetsKey, wikiBlockStylePresets);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

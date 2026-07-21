@@ -5,7 +5,8 @@ import {
   Users, MapPin, Scroll, Sword, Skull, Flag,
   FileText, Package, Sparkles, BookOpen,
 } from "lucide-react";
-import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { safeGetItem, safeSetJson } from "./safe-storage";
+import { saveWikiTemplates } from "@/lib/player-state-api";
 import { S_ACCENT, S_DIM, S_LINK, S_MUTED, S_RED, S_WARN } from "./shared-styles";
 import {
   WIKI_CANVAS_PRESETS,
@@ -323,22 +324,40 @@ const BUILTIN_TEMPLATES: WikiTemplate[] = [
 // ═══════════════════════════════════════════
 
 const TEMPLATES_KEY = "inet-wiki-templates";
+let sharedCustomTemplates: WikiTemplate[] | null = null;
 
-function loadTemplates(): WikiTemplate[] {
+function loadLocalCustomTemplates(): WikiTemplate[] {
   try {
     const raw = safeGetItem(TEMPLATES_KEY);
-    const custom: WikiTemplate[] = raw ? JSON.parse(raw) : [];
-    return [...BUILTIN_TEMPLATES, ...custom];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((template) => !template?.isBuiltIn) : [];
   } catch {
-    return [...BUILTIN_TEMPLATES];
+    return [];
   }
+}
+
+export function hydrateWikiTemplates(remoteTemplates: WikiTemplate[]) {
+  const remoteCustom = (Array.isArray(remoteTemplates) ? remoteTemplates : []).filter((template) => !template?.isBuiltIn);
+  const localCustom = loadLocalCustomTemplates();
+  const merged = Array.from(
+    new Map([...localCustom, ...remoteCustom].map((template) => [template.id, template])).values(),
+  );
+  sharedCustomTemplates = merged;
+  safeSetJson(TEMPLATES_KEY, merged);
+  if (merged.length !== remoteCustom.length) {
+    void saveWikiTemplates(merged as unknown as Record<string, unknown>[]).catch(() => {});
+  }
+}
+
+function loadTemplates(): WikiTemplate[] {
+  return [...BUILTIN_TEMPLATES, ...(sharedCustomTemplates || loadLocalCustomTemplates())];
 }
 
 function saveCustomTemplates(templates: WikiTemplate[]) {
   const custom = templates.filter((t) => !t.isBuiltIn);
-  try {
-    safeSetJson(TEMPLATES_KEY, custom);
-  } catch {}
+  sharedCustomTemplates = custom;
+  safeSetJson(TEMPLATES_KEY, custom);
+  void saveWikiTemplates(custom as unknown as Record<string, unknown>[]).catch(() => {});
 }
 
 // ═══════════════════════════════════════════
@@ -630,6 +649,8 @@ export function TemplateManagerModal({
   };
 
   const deleteTemplate = (id: string) => {
+    const target = templates.find((template) => template.id === id);
+    if (!target || !window.confirm(`Delete template "${target.name}"?`)) return;
     const next = templates.filter((t) => t.id !== id);
     setTemplates(next);
     saveCustomTemplates(next);

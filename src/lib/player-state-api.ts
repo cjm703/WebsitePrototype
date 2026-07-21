@@ -32,6 +32,20 @@ let hasLoggedImageStorageFallback = false;
 let inMemoryWikiBlockPresetsFallbackState: LocalCollectionFallbackState | null = null;
 let hasLoggedWikiBlockPresetsFallback = false;
 
+export class ApiRequestError extends Error {
+  status: number;
+  code?: string;
+  body: Record<string, unknown>;
+
+  constructor(message: string, status: number, body: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = typeof body.code === "string" ? body.code : undefined;
+    this.body = body;
+  }
+}
+
 function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
 
@@ -65,14 +79,14 @@ async function apiFetch(path: string, init: RequestInit = {}) {
     if (/session|expired|revoked|invalid session|missing session token/i.test(message)) {
       safeRemoveItem("inet-session-token");
     }
-    throw new Error(message);
+    throw new ApiRequestError(message, res.status, body);
   }
 
   if (!res.ok) {
-    throw new Error(
-      typeof body?.error === "string"
-        ? body.error
-        : `Request failed: ${res.status}`,
+    throw new ApiRequestError(
+      typeof body?.error === "string" ? body.error : `Request failed: ${res.status}`,
+      res.status,
+      body,
     );
   }
 
@@ -780,10 +794,64 @@ export async function loadWikiBootstrap() {
   return apiFetch("/wiki/bootstrap", { method: "GET" });
 }
 
+export async function loadPlayerWikiBootstrap() {
+  return apiFetch("/wiki/player-bootstrap", { method: "GET" });
+}
+
+export async function loadWikiDrafts<T>() {
+  const body = await apiFetch("/wiki/drafts", { method: "GET" });
+  return (body?.drafts ?? {}) as Record<string, T>;
+}
+
+export async function saveWikiDrafts<T>(drafts: Record<string, T>) {
+  await apiFetch("/wiki/drafts/save", {
+    method: "POST",
+    body: JSON.stringify({ drafts }),
+  });
+}
+
+export async function saveWikiSite(
+  site: Record<string, unknown>,
+  expectedUpdatedAt?: string,
+) {
+  return apiFetch("/wiki/site/save", {
+    method: "POST",
+    body: JSON.stringify({ site, expectedUpdatedAt }),
+  });
+}
+
+export async function deleteWikiSite(siteId: string, expectedUpdatedAt?: string) {
+  return apiFetch("/wiki/site/delete", {
+    method: "POST",
+    body: JSON.stringify({ siteId, expectedUpdatedAt }),
+  });
+}
+
+export async function restoreWikiSite(siteId: string) {
+  return apiFetch("/wiki/site/restore", {
+    method: "POST",
+    body: JSON.stringify({ siteId }),
+  });
+}
+
 export async function saveWikiSites(sites: Record<string, unknown>[]) {
   await apiFetch("/wiki/sites/save", {
     method: "POST",
     body: JSON.stringify({ sites }),
+  });
+}
+
+export async function saveWikiTemplates(wikiTemplates: Record<string, unknown>[]) {
+  await apiFetch("/wiki/templates/save", {
+    method: "POST",
+    body: JSON.stringify({ wikiTemplates }),
+  });
+}
+
+export async function saveWikiBlockStylePresets(wikiBlockStylePresets: Record<string, unknown>[]) {
+  await apiFetch("/wiki/block-style-presets/save", {
+    method: "POST",
+    body: JSON.stringify({ wikiBlockStylePresets }),
   });
 }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useNavigate, useParams } from "react-router";
+import { Navigate, useBlocker, useNavigate, useParams } from "react-router";
 import { Resizable } from "re-resizable";
 import { retro } from "./retro-styles";
 import { RenderFormattedText, refreshWikiArticleLookup } from "./render-text";
@@ -16,22 +16,27 @@ import {
   Link2, ImageIcon, BookOpen, Undo2, Redo2,
   Network, Hash, Download, Upload, History, Keyboard, Search,
 } from "lucide-react";
-import { TemplatePickerModal, TemplateManagerModal } from "./wiki-templates";
+import { TemplatePickerModal, TemplateManagerModal, hydrateWikiTemplates } from "./wiki-templates";
 import type { WikiTemplate } from "./wiki-templates";
 import { WikiLinkDialog } from "./wiki-link-dialog";
 import { renderTypedField, type TagFieldDef } from "./tag-field-renderer";
 import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
+  ApiRequestError,
   clearDMImageStorageFallbackState,
   getDMImageStorageFallbackState,
   getWikiBlockPresetsFallbackState,
   loadDMImageStorage,
   loadWikiBootstrap,
+  loadWikiDrafts,
   saveDMImageStorage,
   saveWikiArticleRevisions,
   saveWikiBlockPresets,
   saveWikiCustomPanelStyles,
+  saveWikiDrafts,
+  saveWikiBlockStylePresets,
+  saveWikiSite,
   saveWikiSites,
 } from "@/lib/player-state-api";
 import {
@@ -39,6 +44,7 @@ import {
   getWikiPanelPlacement,
   getWikiPanelWidth,
   groupBodyPanelsIntoRows,
+  migrateWikiSectionsToPanels,
   normalizeWikiPanel,
   normalizeWikiPanels,
   type WikiPanelMediaPosition,
@@ -80,6 +86,11 @@ import {
   type WikiBlockType,
   type WikiCanvasSettings,
 } from "@/lib/wiki-article-blocks";
+import {
+  getInverseWikiRelationshipType,
+  WIKI_HIERARCHY_RELATIONSHIP_TYPES,
+  WIKI_RELATIONSHIP_TYPES,
+} from "@/lib/wiki-article-relationships";
 import type { TagField, TagDefinition, PlayerData, StoredImageAsset } from "./types";
 import {
   IMAGE_STORAGE_LOCAL_KEY,
@@ -152,6 +163,9 @@ interface SitePage {
   category: string;
   subcategories: SubCategory[];
   dateAdded: string;
+  createdAt?: string;
+  updatedAt?: string;
+  serverUpdatedAt?: string;
   body: string;
   subtitle: string;
   marqueeText: string;
@@ -385,43 +399,13 @@ function lineBoxElement(
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 const toSlug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const normalizeComparableWikiUrl = (value: string) => value.trim().replace(/^https?:\/\//i, "").replace(/\/$/, "").toLowerCase();
+const legacyDateToIso = (value: string) => {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : new Date().toISOString();
+};
 const getArticleChromeFieldLabel = (field: WikiArticleChromeField) =>
   field === "title" ? "Title" : field === "subtitle" ? "Subtitle" : "Description";
-const WIKI_RELATIONSHIP_TYPES = [
-  "belongs to",
-  "contains",
-  "located in",
-  "member of",
-  "ally of",
-  "enemy of",
-  "teacher of",
-  "student of",
-  "created by",
-  "uses",
-  "related to",
-] as const;
-
-function migrateSectionsToPanels(pg: SitePage): WikiPanel[] {
-  const existingPanels = normalizeWikiPanels(pg.panels);
-  const legacySections = pg.sections || [];
-  if (legacySections.length === 0) return existingPanels;
-  const converted: WikiPanel[] = legacySections.map((sec) => ({
-    id: sec.id.startsWith("sec-") ? sec.id.replace("sec-", "panel-") : `panel-${sec.id}`,
-    title: sec.heading || "",
-    subtitle: "",
-    content: sec.body || "",
-    assignedTo: [],
-    style: "blank",
-    placement: "body",
-    width: "full",
-    mediaUrl: "",
-    mediaCaption: "",
-    mediaAlt: "",
-    mediaPosition: "top",
-  }));
-  return [...converted, ...existingPanels];
-}
-
 function reorder<T>(list: T[], fromIdx: number, toIdx: number): T[] {
   const next = [...list];
   const [item] = next.splice(fromIdx, 1);
@@ -738,6 +722,13 @@ function InlineEdit({
 }
 
 export function WikiEditor() {
+  if ((safeGetItem("inet-user-id") || "") !== "dm") {
+    return <Navigate to="/interface" replace />;
+  }
+  return <WikiEditorWorkspace />;
+}
+
+function WikiEditorWorkspace() {
   const navigate = useNavigate();
   const { id } = useParams();
   const isNew = !id || id === "new";
@@ -854,12 +845,14 @@ export function WikiEditor() {
   const [showDraftRestore, setShowDraftRestore] = useState(false);
   const [remoteDrafts, setRemoteDrafts] = useState<Record<string, SitePage>>({});
   const [draftsLoaded, setDraftsLoaded] = useState(false);
-  const draftKey = `inet-wiki-draft-${page.id}`;
+  const draftStorageId = isNew ? "new" : page.id;
+  const draftKey = `inet-wiki-draft-${draftStorageId}`;
 
   // --- Undo/Redo State ---
   const [undoStack, setUndoStack] = useState<SitePage[]>([]);
   const [redoStack, setRedoStack] = useState<SitePage[]>([]);
   const undoDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingUndoSnapshotRef = useRef<SitePage | null>(null);
 
   // --- Wiki Link Dialog State ---
   const [showLinkDialog, setShowLinkDialog] = useState(false);
@@ -885,6 +878,29 @@ export function WikiEditor() {
   const [newStyleAccent, setNewStyleAccent] = useState("#6ABAFF");
   const [newStyleBg, setNewStyleBg] = useState("#0A1A2A");
   const [newStyleBorder, setNewStyleBorder] = useState("#1A3A5B");
+
+  const navigationBlocker = useBlocker(({ currentLocation, nextLocation }) => (
+    hasUnsaved && currentLocation.pathname !== nextLocation.pathname
+  ));
+
+  useEffect(() => {
+    if (navigationBlocker.state !== "blocked") return;
+    if (window.confirm("You have unsaved wiki changes. Leave this page anyway?")) {
+      navigationBlocker.proceed();
+    } else {
+      navigationBlocker.reset();
+    }
+  }, [navigationBlocker]);
+
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [hasUnsaved]);
 
   const refreshSharedAssetFallbackState = useCallback((overrides?: {
     imageStorage?: boolean;
@@ -919,6 +935,8 @@ export function WikiEditor() {
             customPanelStyles: safeGetJson<CustomPanelStyle[]>("inet-custom-panel-styles", []),
             imageStorage: safeGetJson<StoredImageAsset[]>(IMAGE_STORAGE_LOCAL_KEY, []),
             wikiBlockPresets: safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []),
+            wikiBlockStylePresets: safeGetJson<WikiBlockStylePreset[]>(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, []),
+            wikiTemplates: safeGetJson<WikiTemplate[]>("inet-wiki-templates", []),
             wikiArticleRevisions: safeGetJson<SitePageRevision[]>(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, []),
           };
         });
@@ -936,11 +954,24 @@ export function WikiEditor() {
         const nextRevisions = Array.isArray(bootstrap?.wikiArticleRevisions)
           ? bootstrap.wikiArticleRevisions
           : safeGetJson<SitePageRevision[]>(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, []);
+        const remoteStylePresets = Array.isArray(bootstrap?.wikiBlockStylePresets)
+          ? bootstrap.wikiBlockStylePresets as WikiBlockStylePreset[]
+          : [];
+        const localStylePresets = safeGetJson<WikiBlockStylePreset[]>(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, []);
+        const nextStylePresets = Array.from(
+          new Map([...localStylePresets, ...remoteStylePresets].map((preset) => [preset.id, preset])).values(),
+        );
         setStoredImages(nextImages);
         setWikiBlockPresets(nextPresets.filter((preset) => !preset.builtIn));
+        setWikiBlockStylePresets(nextStylePresets);
         setWikiArticleRevisions(nextRevisions);
+        hydrateWikiTemplates(Array.isArray(bootstrap?.wikiTemplates) ? bootstrap.wikiTemplates as WikiTemplate[] : []);
         safeSetJson(IMAGE_STORAGE_LOCAL_KEY, nextImages);
         safeSetJson(WIKI_BLOCK_PRESETS_LOCAL_KEY, nextPresets.filter((preset) => !preset.builtIn));
+        safeSetJson(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, nextStylePresets);
+        if (!bootstrapFallback && nextStylePresets.length !== remoteStylePresets.length) {
+          void saveWikiBlockStylePresets(nextStylePresets as unknown as Record<string, unknown>[]).catch(() => {});
+        }
         safeSetJson(WIKI_ARTICLE_REVISIONS_LOCAL_KEY, nextRevisions);
         refreshSharedAssetFallbackState(
           bootstrapFallback
@@ -960,6 +991,8 @@ export function WikiEditor() {
           normalizeWikiBlockPresets(safeGetJson<WikiBlockPreset[]>(WIKI_BLOCK_PRESETS_LOCAL_KEY, []))
             .filter((preset) => !preset.builtIn),
         );
+        setWikiBlockStylePresets(safeGetJson<WikiBlockStylePreset[]>(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, []));
+        hydrateWikiTemplates(safeGetJson<WikiTemplate[]>("inet-wiki-templates", []));
         refreshSharedAssetFallbackState({ imageStorage: true, presets: true });
       } finally {
         if (!cancelled) setWikiLoading(false);
@@ -981,7 +1014,9 @@ export function WikiEditor() {
         return;
       }
       try {
-        const drafts = await appStore.loadPlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, {});
+        const drafts = await loadWikiDrafts<SitePage>().catch(() => (
+          appStore.loadPlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, {})
+        ));
         if (!cancelled) setRemoteDrafts(drafts && typeof drafts === "object" ? drafts : {});
       } catch (err) {
         console.warn("Failed to load wiki drafts", err);
@@ -1008,6 +1043,9 @@ export function WikiEditor() {
       setSelectedPreviewPanelId(null);
       setSelectedBlockIds(blank.blocks[0]?.id ? [blank.blocks[0].id] : []);
       setInlinePreviewEditorTarget(null);
+      setUndoStack([]);
+      setRedoStack([]);
+      pendingUndoSnapshotRef.current = null;
       urlManuallyEdited.current = false;
       hydratedPageRef.current = "new";
       return;
@@ -1016,7 +1054,7 @@ export function WikiEditor() {
     if (!existingPage) return;
     if (hydratedPageRef.current === existingPage.id) return;
 
-    const migrated = migrateSectionsToPanels(existingPage);
+    const migrated = migrateWikiSectionsToPanels(existingPage) as WikiPanel[];
     const migratedBlocks = migrateLegacyArticleToBlocks({ ...existingPage, panels: migrated, sections: [] });
     setPage({
       ...existingPage,
@@ -1032,6 +1070,9 @@ export function WikiEditor() {
     setSelectedPreviewPanelId(null);
     setSelectedBlockIds(migratedBlocks[0]?.id ? [migratedBlocks[0].id] : []);
     setInlinePreviewEditorTarget(null);
+    setUndoStack([]);
+    setRedoStack([]);
+    pendingUndoSnapshotRef.current = null;
     urlManuallyEdited.current = !!existingPage.url;
     hydratedPageRef.current = existingPage.id;
   }, [existingPage, isNew, wikiLoading]);
@@ -1106,8 +1147,8 @@ export function WikiEditor() {
 
   // --- Check for draft on mount ---
   useEffect(() => {
-    if (!draftsLoaded || !existingPage) return;
-    const remoteDraft = remoteDrafts[existingPage.id];
+    if (!draftsLoaded) return;
+    const remoteDraft = remoteDrafts[draftStorageId];
     if (remoteDraft && remoteDraft.title !== undefined) {
       setShowDraftRestore(true);
       return;
@@ -1119,28 +1160,29 @@ export function WikiEditor() {
         if (draft && draft.title !== undefined) setShowDraftRestore(true);
       }
     } catch {}
-  }, [draftKey, draftsLoaded, existingPage, remoteDrafts]);
+  }, [draftKey, draftStorageId, draftsLoaded, remoteDrafts]);
 
-  // --- Auto-save draft every 30 seconds (only for existing articles) ---
+  // Keep both a local recovery copy and a shared DM draft.
   useEffect(() => {
-    if (!hasUnsaved || isNew || !currentUserId || !draftsLoaded) return;
-    const interval = setInterval(() => {
+    if (!hasUnsaved || !currentUserId || !draftsLoaded) return;
+    const handle = setTimeout(() => {
+      safeSetJson(draftKey, page);
       setRemoteDrafts((prev) => {
-        const next = { ...prev, [page.id]: page };
-        void appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, next).catch((err) => {
-          console.warn("Failed to save wiki draft", err);
-        });
+        const next = { ...prev, [draftStorageId]: page };
+        void saveWikiDrafts(next)
+          .catch(() => appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, next))
+          .catch((err) => { console.warn("Failed to save wiki draft", err); });
         return next;
       });
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [hasUnsaved, isNew, currentUserId, draftsLoaded, page]);
+    }, 1500);
+    return () => clearTimeout(handle);
+  }, [currentUserId, draftKey, draftStorageId, draftsLoaded, hasUnsaved, page]);
 
   // --- Restore draft handler ---
   const restoreDraft = useCallback(() => {
-    const remoteDraft = existingPage ? remoteDrafts[existingPage.id] : undefined;
+    const remoteDraft = remoteDrafts[draftStorageId];
     if (remoteDraft) {
-      const migrated = migrateSectionsToPanels(remoteDraft);
+      const migrated = migrateWikiSectionsToPanels(remoteDraft) as WikiPanel[];
       const migratedBlocks = migrateLegacyArticleToBlocks({ ...remoteDraft, panels: migrated, sections: [] });
       setPage({
         ...remoteDraft,
@@ -1159,7 +1201,7 @@ export function WikiEditor() {
       const draftRaw = safeGetItem(draftKey);
       if (draftRaw) {
         const draft = JSON.parse(draftRaw);
-        const migrated = migrateSectionsToPanels(draft);
+        const migrated = migrateWikiSectionsToPanels(draft) as WikiPanel[];
         const migratedBlocks = migrateLegacyArticleToBlocks({ ...draft, panels: migrated, sections: [] });
         setPage({
           ...draft,
@@ -1174,32 +1216,34 @@ export function WikiEditor() {
       }
     } catch {}
     setShowDraftRestore(false);
-  }, [draftKey, existingPage, remoteDrafts]);
+  }, [draftKey, draftStorageId, remoteDrafts]);
 
   const discardDraft = useCallback(() => {
     safeRemoveItem(draftKey);
-    if (!currentUserId || !existingPage) {
+    if (!currentUserId) {
       setShowDraftRestore(false);
       return;
     }
     setRemoteDrafts((prev) => {
       const next = { ...prev };
-      delete next[existingPage.id];
-      void appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, next).catch((err) => {
-        console.warn("Failed to discard wiki draft", err);
-      });
+      delete next[draftStorageId];
+      void saveWikiDrafts(next)
+        .catch(() => appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, next))
+        .catch((err) => { console.warn("Failed to discard wiki draft", err); });
       return next;
     });
     setShowDraftRestore(false);
-  }, [currentUserId, draftKey, existingPage]);
+  }, [currentUserId, draftKey, draftStorageId]);
 
   // Track changes
   const update = useCallback(<K extends keyof SitePage>(key: K, val: SitePage[K]) => {
     setPage((prev) => {
-      // Push to undo stack (debounced)
+      if (!pendingUndoSnapshotRef.current) pendingUndoSnapshotRef.current = prev;
       if (undoDebounceRef.current) clearTimeout(undoDebounceRef.current);
       undoDebounceRef.current = setTimeout(() => {
-        setUndoStack((stack) => [...stack.slice(-49), prev]);
+        const snapshot = pendingUndoSnapshotRef.current;
+        pendingUndoSnapshotRef.current = null;
+        if (snapshot) setUndoStack((stack) => [...stack.slice(-49), snapshot]);
         setRedoStack([]);
       }, 500);
       return { ...prev, [key]: val };
@@ -1329,16 +1373,30 @@ export function WikiEditor() {
     if (!page.title.trim()) { setError("Title is required"); return; }
     if (!page.url.trim()) { setError("URL is required"); return; }
     if (!page.description.trim()) { setError("Description is required"); return; }
+    const normalizedUrl = normalizeComparableWikiUrl(page.url);
+    const duplicateUrlPage = allPages.find((entry) => (
+      entry.id !== page.id && normalizeComparableWikiUrl(entry.url || "") === normalizedUrl
+    ));
+    if (duplicateUrlPage) {
+      setError(`Another article already uses this URL: ${duplicateUrlPage.title || duplicateUrlPage.id}`);
+      return;
+    }
     setError("");
 
     const now = new Date();
     const autoDate = `${DATE_MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+    const nowIso = now.toISOString();
     const data: SitePage = normalizePageForStorage({
       ...page,
       lastEditSummary: editSummary.trim(),
-      dateAdded: autoDate,
+      dateAdded: page.dateAdded || autoDate,
+      createdAt: page.createdAt || (isNew ? nowIso : legacyDateToIso(page.dateAdded)),
+      updatedAt: nowIso,
     });
-    const stored: SitePage[] = [...allPages];
+    const stored: SitePage[] = allPages.map((entry) => ({
+      ...entry,
+      relatedArticleIds: [...(entry.relatedArticleIds || [])],
+    }));
     const idx = stored.findIndex((p) => p.id === data.id);
     if (idx >= 0) {
       stored[idx] = data;
@@ -1361,23 +1419,40 @@ export function WikiEditor() {
     }
 
     try {
-      await saveWikiSites(stored as unknown as Record<string, unknown>[]);
-      refreshWikiArticleLookup(stored.map(({ id, title }) => ({ id, title })));
+      let persistedPages = stored;
+      try {
+        const response = await saveWikiSite(
+          data as unknown as Record<string, unknown>,
+          page.serverUpdatedAt,
+        );
+        if (Array.isArray(response?.sites)) persistedPages = response.sites as SitePage[];
+      } catch (err) {
+        if (!(err instanceof ApiRequestError) || ![404, 405].includes(err.status)) throw err;
+        await saveWikiSites(stored as unknown as Record<string, unknown>[]);
+        setRecoveryStatus("The per-article wiki endpoint is not deployed yet; this save used the compatible collection fallback.");
+      }
+      refreshWikiArticleLookup(persistedPages.map(({ id, title }) => ({ id, title })));
       await createArticleRevision(data, "save", editSummary.trim() || "Published save").catch((err) => {
         console.warn("Failed to save wiki article revision", err);
         setRecoveryStatus("Article saved, but revision storage is using local fallback or could not update.");
       });
       if (currentUserId) {
         const nextDrafts = { ...remoteDrafts };
-        delete nextDrafts[data.id];
-        await appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, nextDrafts);
+        delete nextDrafts[draftStorageId];
+        await saveWikiDrafts(nextDrafts).catch(() => (
+          appStore.savePlayerWikiEditorDrafts<Record<string, SitePage>>(currentUserId, nextDrafts)
+        ));
         setRemoteDrafts(nextDrafts);
       }
-      setAllPages(stored);
+      const persistedPage = persistedPages.find((entry) => entry.id === data.id) || data;
+      setAllPages(persistedPages);
       safeRemoveItem(draftKey);
-      setPage(data);
+      setPage(persistedPage);
       setSaveFlash(true);
       setHasUnsaved(false);
+      pendingUndoSnapshotRef.current = null;
+      setUndoStack([]);
+      setRedoStack([]);
       setTimeout(() => setSaveFlash(false), 1500);
     } catch (err) {
       console.warn("Failed to save wiki article", err);
@@ -1490,6 +1565,15 @@ export function WikiEditor() {
 
   // --- Undo / Redo ---
   const handleUndo = useCallback(() => {
+    if (pendingUndoSnapshotRef.current) {
+      if (undoDebounceRef.current) clearTimeout(undoDebounceRef.current);
+      const pending = pendingUndoSnapshotRef.current;
+      pendingUndoSnapshotRef.current = null;
+      setRedoStack((stack) => [...stack, page]);
+      setPage(pending);
+      setHasUnsaved(true);
+      return;
+    }
     if (undoStack.length === 0) return;
     const prev = undoStack[undoStack.length - 1];
     setRedoStack((s) => [...s, page]);
@@ -1703,6 +1787,25 @@ export function WikiEditor() {
     update("relationships", normalizeArticleRelationships(page.relationships).filter((relationship) => relationship.id !== relationshipId));
   }, [normalizeArticleRelationships, page.relationships, update]);
 
+  const incomingArticleRelationships = useMemo(() => {
+    const outgoingKeys = new Set(normalizeArticleRelationships(page.relationships).map((relationship) => (
+      `${relationship.targetArticleId}:${relationship.type.trim().toLowerCase()}`
+    )));
+    const incoming: { source: SitePage; relationship: WikiArticleRelationship; inverseType: string }[] = [];
+
+    allPages.forEach((source) => {
+      if (source.id === page.id) return;
+      normalizeArticleRelationships(source.relationships).forEach((relationship) => {
+        if (relationship.targetArticleId !== page.id) return;
+        const inverseType = getInverseWikiRelationshipType(relationship.type);
+        if (!inverseType || outgoingKeys.has(`${source.id}:${inverseType}`)) return;
+        incoming.push({ source, relationship, inverseType });
+      });
+    });
+
+    return incoming;
+  }, [allPages, normalizeArticleRelationships, page.id, page.relationships]);
+
   // Resolve colors
   const bg = page.bgColor || DEFAULT_STYLE.bgColor;
   const hdr = page.headerColor || DEFAULT_STYLE.headerColor;
@@ -1845,7 +1948,7 @@ export function WikiEditor() {
   );
   const selectedArticleChromeLayout = selectedArticleChromeField ? articleChromeLayouts[selectedArticleChromeField] || DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS[selectedArticleChromeField] : null;
   const selectedArticleChromeLabel = selectedArticleChromeField ? getArticleChromeFieldLabel(selectedArticleChromeField) : "";
-  const contentCanvasRowOffset = articleChromeBottomRow;
+  const contentCanvasRowOffset = canvasSettings.compactHeaderLayout ? 0 : articleChromeBottomRow;
   const canvasBottomRow = useMemo(
     () => Math.max(contentCanvasRowOffset + 48, ...renderedPageBlocks.map((block) => contentCanvasRowOffset + block.layout.rowStart + block.layout.rowSpan + 2)),
     [contentCanvasRowOffset, renderedPageBlocks],
@@ -2135,6 +2238,9 @@ export function WikiEditor() {
       }));
     setWikiBlockStylePresets(normalized);
     safeSetJson(WIKI_BLOCK_STYLE_PRESETS_LOCAL_KEY, normalized);
+    void saveWikiBlockStylePresets(normalized as unknown as Record<string, unknown>[]).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to save shared style presets");
+    });
     if (successMessage) setPresetStatus(successMessage);
   }, []);
 
@@ -2554,10 +2660,10 @@ export function WikiEditor() {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         handleSaveRef.current();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      } else if (!targetIsEditable && (e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         handleUndo();
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+      } else if (!targetIsEditable && (e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
         e.preventDefault();
         handleRedo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -4409,18 +4515,13 @@ export function WikiEditor() {
     );
   }
 
-  const usingBlockWorkspace = true;
-  if (usingBlockWorkspace) {
-    return (
+  return (
       <div className="min-h-screen flex flex-col" style={{ background: "#07071F", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
         <div className={`${retro.toolbar} flex flex-col gap-3 px-4 py-3`} style={{ borderBottom: "2px solid #050520", background: "linear-gradient(180deg, #101943 0%, #081129 100%)" }}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0 flex flex-wrap items-center gap-3">
               <button
-                onClick={() => {
-                  if (hasUnsaved && !window.confirm("You have unsaved changes. Leave anyway?")) return;
-                  navigate("/interface/wiki-studio");
-                }}
+                onClick={() => navigate("/interface/wiki-studio")}
                 className="text-[11px] hover:opacity-80 flex items-center gap-1"
                 style={S_ACCENT}
               >
@@ -6964,6 +7065,7 @@ export function WikiEditor() {
                           const preset = event.target.value as keyof typeof WIKI_CANVAS_PRESETS;
                           update("canvasSettings", normalizeWikiCanvasSettings({
                             ...WIKI_CANVAS_PRESETS[preset],
+                            compactHeaderLayout: canvasSettings.compactHeaderLayout,
                             articleChromeLayouts: canvasSettings.articleChromeLayouts,
                           }));
                         }}
@@ -6975,6 +7077,25 @@ export function WikiEditor() {
                         <option value="referenceWide">Reference Wide</option>
                       </select>
                     </div>
+                    <button
+                      type="button"
+                      aria-pressed={canvasSettings.compactHeaderLayout}
+                      onClick={() => update("canvasSettings", normalizeWikiCanvasSettings({
+                        ...canvasSettings,
+                        compactHeaderLayout: !canvasSettings.compactHeaderLayout,
+                      }))}
+                      className={`${retro.button} flex w-full items-center justify-between gap-3 px-3 py-2 text-left`}
+                      style={canvasSettings.compactHeaderLayout ? S_ACCENT : S_SUBTLE}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Layers size={12} />
+                        <span>
+                          <span className="block text-[10px] font-bold">Compact Header Layout</span>
+                          <span className="block text-[9px] opacity-75">Allow article blocks to share the title, subtitle, and description rows.</span>
+                        </span>
+                      </span>
+                      <span className="text-[9px] font-bold">{canvasSettings.compactHeaderLayout ? "ON" : "OFF"}</span>
+                    </button>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label style={labelStyle}>Frame Width</label>
@@ -7047,7 +7168,7 @@ export function WikiEditor() {
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#A8D8FF", fontWeight: 700 }}>Relationship Builder</div>
                         <div className="mt-1 text-[10px]" style={{ color: "#8EA9D7" }}>
-                          Define structured article links such as located in, member of, enemy of, or teacher of.
+                          Define structured article links, including parent, child, and sibling article hierarchies.
                         </div>
                       </div>
                       <button onClick={addArticleRelationship} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_ACCENT}>
@@ -7055,7 +7176,7 @@ export function WikiEditor() {
                       </button>
                     </div>
                     <div className="space-y-2">
-                      {normalizeArticleRelationships(page.relationships).length === 0 && (
+                      {normalizeArticleRelationships(page.relationships).length === 0 && incomingArticleRelationships.length === 0 && (
                         <div className="rounded-md border border-dashed px-3 py-4 text-center text-[10px]" style={{ borderColor: "#28466F", color: "#7A9ABB" }}>
                           No structured relationships yet. Add one to make this page smarter in graph and published views.
                         </div>
@@ -7064,6 +7185,30 @@ export function WikiEditor() {
                         const target = allPages.find((article) => article.id === relationship.targetArticleId);
                         return (
                           <div key={relationship.id} className="rounded-md border p-2 space-y-2" style={{ borderColor: "#17315A", background: "#071126" }}>
+                            <div>
+                              <label style={labelStyle}>Hierarchy Shortcut</label>
+                              <div className="grid grid-cols-3 overflow-hidden rounded-md border" style={{ borderColor: "#28466F" }}>
+                                {WIKI_HIERARCHY_RELATIONSHIP_TYPES.map((type) => {
+                                  const selected = relationship.type === type;
+                                  return (
+                                    <button
+                                      key={type}
+                                      type="button"
+                                      aria-pressed={selected}
+                                      onClick={() => updateArticleRelationship(relationship.id, { type })}
+                                      className="px-2 py-1.5 text-[9px] transition-colors"
+                                      style={{
+                                        color: selected ? "#E4F2FF" : "#8EA9D7",
+                                        background: selected ? "#173866" : "#09172D",
+                                        borderRight: type !== WIKI_HIERARCHY_RELATIONSHIP_TYPES[2] ? "1px solid #28466F" : "none",
+                                      }}
+                                    >
+                                      {type.charAt(0).toUpperCase() + type.slice(1)}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
                             <div className="grid grid-cols-2 gap-2">
                               <div>
                                 <label style={labelStyle}>Relationship</label>
@@ -7107,6 +7252,27 @@ export function WikiEditor() {
                           </div>
                         );
                       })}
+                      {incomingArticleRelationships.length > 0 && (
+                        <div className="rounded-md border p-2 space-y-1.5" style={{ borderColor: "#25516A", background: "#081A28" }}>
+                          <div className="text-[9px] uppercase tracking-[0.16em]" style={{ color: "#72CFE0", fontWeight: 700 }}>
+                            Incoming Graph Relationships
+                          </div>
+                          {incomingArticleRelationships.map(({ source, relationship, inverseType }) => (
+                            <button
+                              key={`incoming-${source.id}-${relationship.id}`}
+                              type="button"
+                              onClick={() => navigate(`/interface/wiki-editor/${source.id}`)}
+                              className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-[#102A3B]"
+                              title={relationship.note || `This page ${inverseType} ${source.title || "another article"}`}
+                            >
+                              <span className="min-w-0 truncate text-[10px]" style={{ color: "#A8D8E8" }}>
+                                This page <span style={{ color: "#72CFE0", fontWeight: 700 }}>{inverseType}</span> {source.title || "Untitled Article"}.
+                              </span>
+                              <span className="shrink-0 text-[8px] uppercase" style={{ color: "#5C91A8" }}>Open source</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <datalist id="wiki-relationship-types">
                       {WIKI_RELATIONSHIP_TYPES.map((type) => <option key={type} value={type} />)}
@@ -7349,1864 +7515,5 @@ export function WikiEditor() {
           onClose={() => setShowTemplateManager(false)}
         />
       </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#080828", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
-      <div className={`${retro.toolbar} flex items-center justify-between`} style={{ borderBottom: "2px solid #050520" }}>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              if (hasUnsaved && !window.confirm("You have unsaved changes. Leave anyway?")) return;
-              navigate("/interface/wiki-studio");
-            }}
-            className="text-[11px] hover:opacity-80 flex items-center gap-1"
-            style={S_ACCENT}
-          >
-            <ArrowLeft size={12} /> Back to Wiki Studio
-          </button>
-          <span className="text-[11px]" style={S_DIM}>|</span>
-          <span className="text-[11px] flex items-center gap-1" style={S_LINK}>
-            <Globe size={11} /> Wiki Article Editor
-          </span>
-          {hasUnsaved && (
-            <span className="text-[9px] px-2 py-0.5 animate-pulse" style={{ color: "#FFAA4A", background: "#1A1A0A", border: "1px solid #3A3A1A" }}>
-              UNSAVED CHANGES
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {saveFlash && (
-            <span className="text-[11px] px-3 py-1" style={{ color: "#4AFF6A", background: "#0A1A0A", border: "1px solid #1A3A1A" }}>
-              Saved!
-            </span>
-          )}
-          {error && (
-            <span className="text-[11px] px-3 py-1 flex items-center gap-1" style={{ color: "#FF6A6A", background: "#1A0A0A", border: "1px solid #3A1A1A" }}>
-              <AlertTriangle size={10} />{error}
-            </span>
-          )}
-          <button onClick={handleUndo} disabled={undoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Undo (Ctrl+Z)" style={{ opacity: undoStack.length === 0 ? 0.3 : 1 }}>
-            <Undo2 size={11} style={S_LINK} />
-          </button>
-          <button onClick={handleRedo} disabled={redoStack.length === 0} className={`${retro.button} px-2 py-1`} title="Redo (Ctrl+Y)" style={{ opacity: redoStack.length === 0 ? 0.3 : 1 }}>
-            <Redo2 size={11} style={S_LINK} />
-          </button>
-          <span style={{ width: 1, height: 16, background: "#1A1A4B" }} />
-          <button onClick={() => setShowTemplatePicker(true)} className={`${retro.button} px-2 py-1`} title="Templates">
-            <BookOpen size={11} style={S_WARN} />
-          </button>
-          <button onClick={() => { setLinkInsertTarget("body"); setShowLinkDialog(true); }} className={`${retro.button} px-2 py-1`} title="Insert Wiki Link">
-            <Link2 size={11} style={{ color: "#FF6ABB" }} />
-          </button>
-          <button onClick={() => setShowImageEmbed(true)} className={`${retro.button} px-2 py-1`} title="Embed Image">
-            <ImageIcon size={11} style={{ color: "#4AFF6A" }} />
-          </button>
-          <button onClick={() => { setSpoilerInsertTarget("body"); setShowSpoilerInsert(true); }} className={`${retro.button} px-2 py-1`} title="Insert Spoiler Box">
-            <Shield size={11} style={S_RED} />
-          </button>
-          <button onClick={() => navigate("/interface/wiki-graph")} className={`${retro.button} px-2 py-1`} title="Article Graph">
-            <Network size={11} style={{ color: "#9A7ABB" }} />
-          </button>
-          <span style={{ width: 1, height: 16, background: "#1A1A4B" }} />
-          <button
-            onClick={handleSave}
-            className={`${retro.button} px-4 py-1 text-[11px] flex items-center gap-1`}
-            style={{ color: "#FFFFFF", background: "#2A5ABB", borderColor: "#4A7BFF" }}
-            title="Publish (Ctrl+S)"
-          >
-            <Save size={11} /> Publish
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-1 min-h-0">
-        {/* --- Left sidebar: editor controls --- */}
-        <div className="w-[380px] shrink-0 flex flex-col border-r-2" style={{ background: "#0A0A2E", borderRightColor: "#1A1A4B" }}>
-          {/* Sidebar tab bar */}
-          <div className="flex border-b" style={{ borderBottomColor: "#1A1A4B" }}>
-            {sidebarTabs.map((tab) => {
-              const active = activePanel === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActivePanel(tab.id)}
-                  className="flex-1 flex flex-col items-center gap-0.5 py-2 text-[9px] transition-colors"
-                  style={{
-                    color: active ? "#C0D0F0" : "#4A5A7A",
-                    background: active ? "#0C0C30" : "transparent",
-                    borderBottom: active ? `2px solid ${accent}` : "2px solid transparent",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  <tab.icon size={13} style={{ color: active ? accent : "#4A5A7A" }} />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Sidebar content */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* --- PREVIEW TAB --- */}
-            {activePanel === "preview" && (
-              <div className="space-y-4">
-                <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
-                  <Eye size={13} className="shrink-0 mt-0.5" style={S_LINK} />
-                  <span>Use the live preview like a canvas. Click article text to edit it in place, drag boxes between the body and sidebar, and open a selected box for layout and image controls.</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => addPanel("blank", "body")}
-                    className="text-[10px] px-3 py-2 flex items-center justify-center gap-1 hover:opacity-80"
-                    style={{ color: "#C0D0F0", border: "1px solid #1A2A4B", background: "#0A102E" }}
-                  >
-                    <Plus size={10} /> Add Body Section
-                  </button>
-                  <button
-                    onClick={() => addPanel("info", "sidebar")}
-                    className="text-[10px] px-3 py-2 flex items-center justify-center gap-1 hover:opacity-80"
-                    style={{ color: "#6A9AFF", border: "1px solid #1A3A6B", background: "#09162B" }}
-                  >
-                    <Plus size={10} /> Add Sidebar Box
-                  </button>
-                </div>
-                {selectedPreviewPanel && (
-                  <div className="p-3 space-y-2" style={{ background: "#081125", border: "1px solid #1A2A4B" }}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accent, fontWeight: 700 }}>
-                        Selected Box
-                      </span>
-                      <button
-                        onClick={() => setSelectedPreviewPanelId(null)}
-                        className="text-[9px] hover:opacity-80"
-                        style={S_DIM}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                    <div className="text-[12px]" style={{ color: "#C0D0F0", fontWeight: 600 }}>
-                      {selectedPreviewPanel.title || "Untitled section"}
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      <span className="text-[9px] px-2 py-0.5" style={{ color: "#6A9AFF", border: "1px solid #1A3A6B", background: "#09162B" }}>
-                        {getWikiPanelPlacement(selectedPreviewPanel) === "sidebar" ? "Sidebar" : "Body"}
-                      </span>
-                      <span className="text-[9px] px-2 py-0.5" style={{ color: "#4AFF6A", border: "1px solid #1A3A1A", background: "#081808" }}>
-                        {getWikiPanelPlacement(selectedPreviewPanel) === "sidebar" ? "Full Width" : getWikiPanelWidth(selectedPreviewPanel) === "half" ? "Half Width" : "Full Width"}
-                      </span>
-                      {selectedPreviewPanel.mediaUrl && (
-                        <span className="text-[9px] px-2 py-0.5" style={{ color: "#FFAA4A", border: "1px solid #3A2A1A", background: "#1A1208" }}>
-                          Image Attached
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          setInlinePreviewEditorTarget(selectedPreviewPanel.id);
-                          setActivePanel("preview");
-                        }}
-                        className="text-[10px] px-2 py-1 hover:opacity-80"
-                        style={{ color: "#C0D0F0", border: "1px solid #2A3A5B" }}
-                      >
-                        Edit In Preview
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingPanelId(selectedPreviewPanel.id);
-                          setActivePanel("content");
-                        }}
-                        className="text-[10px] px-2 py-1 hover:opacity-80"
-                        style={{ color: "#6A9AFF", border: "1px solid #1A3A6B" }}
-                      >
-                        Open Full Controls
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {/* Quick edit fields */}
-                <div>
-                  <label style={labelStyle}>Title *</label>
-                  <input type="text" value={page.title} onChange={(e) => { update("title", e.target.value); if (!urlManuallyEdited.current) update("url", toSlug(e.target.value)); setError(""); }} placeholder="Article title..." className={inputClass} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Subtitle</label>
-                  <input type="text" value={page.subtitle} onChange={(e) => update("subtitle", e.target.value)} placeholder="Tagline..." className={inputClass} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Description * <span className="text-[9px]" style={{ color: "#3A4A6A", fontWeight: 400 }}>(shown in search)</span></label>
-                  <textarea value={page.description} onChange={(e) => { update("description", e.target.value); setError(""); }} placeholder="Short description..." rows={2} className={`${inputClass} resize-none`} style={inputStyle} />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label style={labelStyle}>URL *</label>
-                    <input type="text" value={page.url} onChange={(e) => { urlManuallyEdited.current = true; update("url", e.target.value); setError(""); }} placeholder="auto-generated-slug" className={inputClass} style={inputStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Category</label>
-                    <div className="relative">
-                      <input type="text" value={page.category} onChange={(e) => update("category", e.target.value)} placeholder="Locations, Lore..." className={inputClass} style={inputStyle} list="category-suggestions" />
-                      <datalist id="category-suggestions">
-                        {allCategories.map((c) => <option key={c} value={c} />)}
-                      </datalist>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>Body Section Title</label>
-                  <input type="text" value={page.bodyTitle} onChange={(e) => update("bodyTitle", e.target.value)} placeholder="Overview, Introduction..." className={inputClass} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={labelStyle}>Main Body</label>
-                  <RichTextEditor value={page.body} onChange={(html) => update("body", html)} placeholder="Write the main article content..." minHeight={180} enableWikiLayouts wikiLinkOptions={wikiLinkOptions} />
-                  <div className="mt-1 text-[9px]" style={S_DIM}>
-                    The same content can also be edited directly in the preview canvas below.
-                  </div>
-                  <div className="flex gap-1 mt-1">
-                    <button onClick={() => { setLinkInsertTarget("body"); setShowLinkDialog(true); }} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}>
-                      <Link2 size={8} /> Insert Wiki Link
-                    </button>
-                    <button onClick={() => setShowImageEmbed(true)} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#4AFF6A", border: "1px solid #1A3A1A" }}>
-                      <ImageIcon size={8} /> Embed Image
-                    </button>
-                  </div>
-                </div>
-                {/* Tags quick-add */}
-                <div>
-                  <label style={labelStyle}>Tags</label>
-                  <div className="flex flex-wrap gap-1 mt-1 mb-1">
-                    {(page.tags || []).map((tag) => (
-                      <span key={tag} className="text-[9px] px-1.5 py-0.5 flex items-center gap-0.5" style={{ color: accent, background: "#0A0A28", border: `1px solid ${accent}33` }}>
-                        {tag}
-                        <button onClick={() => update("tags", (page.tags || []).filter((t) => t !== tag))} className="hover:opacity-80"><X size={7} /></button>
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      value={tagDraft}
-                      onChange={(e) => setTagDraft(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && tagDraft.trim()) { update("tags", [...new Set([...(page.tags || []), tagDraft.trim()])]); setTagDraft(""); } }}
-                      placeholder="Add tag..."
-                      className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[10px] flex-1 outline-none`}
-                      style={inputStyle}
-                      list="tag-suggestions"
-                    />
-                    <datalist id="tag-suggestions">
-                      {allTags.filter((t) => !(page.tags || []).includes(t)).map((t) => <option key={t} value={t} />)}
-                    </datalist>
-                    <button onClick={() => { if (tagDraft.trim()) { update("tags", [...new Set([...(page.tags || []), tagDraft.trim()])]); setTagDraft(""); } }} className="text-[9px] px-2 hover:opacity-80" style={{ color: accent }}>Add</button>
-                  </div>
-                </div>
-                {/* Edit summary */}
-                <div style={{ borderTop: "1px solid #1A2A4B", paddingTop: 12 }}>
-                  <label style={labelStyle}>Edit Summary</label>
-                  <input type="text" value={editSummary} onChange={(e) => setEditSummary(e.target.value)} placeholder="Describe your changes..." className={inputClass} style={inputStyle} />
-                </div>
-              </div>
-            )}
-
-            {/* Article settings tab */}
-            {activePanel === "settings" && (
-              <div className="space-y-4">
-                <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
-                  <Settings size={13} className="shrink-0 mt-0.5" style={S_LINK} />
-                  <span>Configure article identity, icon, marquee, date, and infobox.</span>
-                </div>
-                {/* Icon picker */}
-                <div>
-                  <label style={labelStyle}>Page Icon</label>
-                  <div className="flex items-center gap-2 mt-1">
-                    {iconMode === "none" ? (
-                      <span className="text-[11px]" style={S_DIM}>No icon</span>
-                    ) : iconMode === "custom" && page.pageIconUrl ? (
-                      <img src={page.pageIconUrl} alt="" className="object-contain" style={{ width: 18, height: 18 }} />
-                    ) : (() => { const Ico = getPageIcon(iconMode); return <Ico size={18} style={{ color: accent }} />; })()}
-                    <button onClick={() => setShowIconPicker(!showIconPicker)} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_TEXT}>
-                      Change Icon
-                    </button>
-                  </div>
-                  {showIconPicker && (
-                    <div className={`${retro.sunken} bg-[#0A0A28] p-3 mt-2`}>
-                      <div className="flex gap-2 mb-2">
-                        <button onClick={() => { update("pageIcon", "none"); setShowIconPicker(false); }} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_MUTED}>None</button>
-                        <button onClick={() => update("pageIcon", "custom")} className={`${retro.button} px-2 py-1 text-[10px]`} style={S_MUTED}>Custom URL</button>
-                      </div>
-                      {page.pageIcon === "custom" && (
-                        <input type="text" value={page.pageIconUrl} onChange={(e) => update("pageIconUrl", e.target.value)} placeholder="https://..." className={`${inputClass} mb-2`} style={inputStyle} />
-                      )}
-                      <div className="grid grid-cols-8 gap-1">
-                        {PAGE_ICONS.map((ico) => (
-                          <button key={ico.name} onClick={() => { update("pageIcon", ico.name); setShowIconPicker(false); }} className="p-1.5 hover:bg-[#1A1A5B] transition-colors" style={{ border: page.pageIcon === ico.name ? `2px solid ${accent}` : "2px solid transparent" }} title={ico.label}>
-                            <ico.Icon size={14} style={{ color: page.pageIcon === ico.name ? accent : "#5A6A8A" }} />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* Date */}
-                <div>
-                  <label style={labelStyle}>Date Added</label>
-                  <input type="text" value={page.dateAdded} onChange={(e) => update("dateAdded", e.target.value)} className={inputClass} style={inputStyle} />
-                </div>
-                {/* Marquee */}
-                <div>
-                  <label style={labelStyle}>Marquee Text</label>
-                  <input type="text" value={page.marqueeText} onChange={(e) => update("marqueeText", e.target.value)} placeholder="Scrolling banner text..." className={inputClass} style={inputStyle} />
-                </div>
-                {/* Footer */}
-                <div>
-                  <label style={labelStyle}>Footer Text</label>
-                  <input type="text" value={page.footerText} onChange={(e) => update("footerText", e.target.value)} placeholder="Custom footer..." className={inputClass} style={inputStyle} />
-                </div>
-                {/* Toggles */}
-                <div className="space-y-2">
-                  <label style={labelStyle}>Toggles</label>
-                  {([
-                    { key: "underConstruction" as const, label: "Under Construction / Stub Banner", val: page.underConstruction },
-                    { key: "showHitCounter" as const, label: "Show Hit Counter", val: page.showHitCounter },
-                    { key: "showDividers" as const, label: "Show Section Dividers", val: page.showDividers },
-                  ] as const).map((t) => (
-                    <button key={t.key} onClick={() => update(t.key, !t.val)} className="flex items-center gap-2 w-full text-left text-[11px] px-2 py-1.5 hover:bg-[#0A0A30] transition-colors" style={S_SUBTLE}>
-                      {t.val ? <Eye size={11} style={{ color: "#4AFF6A" }} /> : <EyeOff size={11} style={S_DIM} />}
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-                {page.showHitCounter && (
-                  <div>
-                    <label style={labelStyle}>Hit Count</label>
-                    <input type="number" value={page.hitCount} onChange={(e) => update("hitCount", parseInt(e.target.value) || 0)} className={inputClass} style={inputStyle} />
-                  </div>
-                )}
-                {/* Disambiguation */}
-                <div>
-                  <label style={labelStyle}>Disambiguation Note</label>
-                  <input type="text" value={page.disambiguationNote} onChange={(e) => update("disambiguationNote", e.target.value)} placeholder="For other uses, see..." className={inputClass} style={inputStyle} />
-                </div>
-                {/* Infobox */}
-                <div>
-                  <label style={labelStyle}>Infobox ({(page.infobox || []).length} rows)</label>
-                  <div className={`${retro.sunken} bg-[#080820] p-3 mt-1`}>
-                    {(page.infobox || []).map((row, idx) => (
-                      <div key={idx} className="flex items-center gap-1 mb-1.5">
-                        <input type="text" value={row.label} onChange={(e) => updateInfoboxRow(idx, "label", e.target.value)} placeholder="Label" className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[11px] w-[100px] outline-none`} style={inputStyle} />
-                        <input type="text" value={row.value} onChange={(e) => updateInfoboxRow(idx, "value", e.target.value)} placeholder="Value" className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[11px] flex-1 outline-none`} style={inputStyle} />
-                        <button onClick={() => removeInfoboxRow(idx)} className="shrink-0 hover:opacity-80"><X size={10} style={S_RED} /></button>
-                      </div>
-                    ))}
-                    <button onClick={addInfoboxRow} className="text-[10px] flex items-center gap-1 mt-1 hover:opacity-80" style={S_ACCENT}>
-                      <Plus size={9} /> Add Row
-                    </button>
-                  </div>
-                </div>
-                {/* Subcategories */}
-                <div>
-                  <label style={labelStyle}>Subcategories ({(page.subcategories || []).length})</label>
-                  <div className={`${retro.sunken} bg-[#080820] p-3 mt-1`}>
-                    {(page.subcategories || []).map((sc) => (
-                      <div key={sc.id} className="flex items-center gap-1 mb-1">
-                        <span className="text-[10px]">{sc.type === "folder" ? "Folder" : "Article"}</span>
-                        <input type="text" value={sc.name} onChange={(e) => updateSubcategory(sc.id, "name", e.target.value)} placeholder={sc.type === "folder" ? "Folder name..." : "Page name..."} className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[10px] flex-1 outline-none`} style={inputStyle} />
-                        <select value={sc.type} onChange={(e) => updateSubcategory(sc.id, "type", e.target.value)} className="text-[9px] bg-[#0A0A28] px-1 py-0.5 outline-none" style={{ color: sc.type === "folder" ? "#4A7BFF" : "#4A9A5A", border: "1px solid #1A2A4B" }}>
-                          <option value="folder">Folder</option>
-                          <option value="article">Article</option>
-                        </select>
-                        {sc.type === "article" && (
-                          <select value={sc.articleId || ""} onChange={(e) => updateSubcategory(sc.id, "articleId", e.target.value)} className="text-[9px] bg-[#0A0A28] px-1 py-0.5 outline-none max-w-[100px]" style={{ color: "#6A9AFF", border: "1px solid #1A2A4B" }}>
-                            <option value="">- Link -</option>
-                            {allPages.filter((p) => p.id !== page.id).map((p) => (
-                              <option key={p.id} value={p.id}>{p.title}</option>
-                            ))}
-                          </select>
-                        )}
-                        <button onClick={() => removeSubcategory(sc.id)} className="shrink-0 hover:opacity-80"><X size={10} style={S_RED} /></button>
-                      </div>
-                    ))}
-                    <div className="flex gap-2 mt-2">
-                      <button onClick={() => addSubcategory("folder")} className="text-[10px] flex items-center gap-1 hover:opacity-80" style={S_ACCENT}><Plus size={9} /> Folder</button>
-                      <button onClick={() => addSubcategory("article")} className="text-[10px] flex items-center gap-1 hover:opacity-80" style={S_GREEN_BTN}><Plus size={9} /> Article Link</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* --- CONTENT TAB (Unified Sections) --- */}
-            {activePanel === "content" && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px]" style={{ color: "#6A9AFF", fontWeight: 600 }}>Sections ({panels.length})</span>
-                  <span className="text-[9px]" style={S_DIM}>Drag or use arrows to reorder</span>
-                </div>
-                <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
-                  <Layers size={13} className="shrink-0 mt-0.5" style={S_LINK} />
-                  <span>Each section can have its own style, content, player visibility, and spoiler settings.</span>
-                </div>
-                {panels.map((panel, idx) => {
-                  const ps = allPanelStyles.find((s) => s.id === panel.style) || allPanelStyles[0];
-                  const isEditing = editingPanelId === panel.id;
-                  const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
-                  const vMode = panel.visibilityMode || "spoiler";
-                  return (
-                    <div
-                      key={panel.id}
-                      draggable
-                      onDragStart={handleDragStart(idx)}
-                      onDragOver={handleDragOver(idx)}
-                      onDrop={handleDrop(idx)}
-                      onDragEnd={handleDragEnd}
-                      className={`${retro.sunken} p-3 transition-all`}
-                      style={{
-                        background: ps.bg === "transparent" ? "#080820" : ps.bg,
-                        border: `1px solid ${isEditing ? ps.accent : dragOverIdx === idx && dragType === "panel" ? "#4AFF6A" : ps.border}`,
-                        opacity: dragIdx === idx && dragType === "panel" ? 0.4 : 1,
-                        transform: dragOverIdx === idx && dragType === "panel" && dragIdx !== idx ? "translateY(2px)" : "none",
-                      }}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <GripVertical size={12} style={{ color: "#3A4A6A", cursor: "grab" }} className="shrink-0" />
-                          <span className="text-[10px]" style={{ color: ps.accent, fontWeight: 600 }}>SECTION {idx + 1}</span>
-                          {hasRestriction ? (
-                            <span className="text-[9px] px-1.5 py-0.5 flex items-center gap-0.5" style={{ color: vMode === "hidden" ? "#FF6A6A" : "#FF6ABB", background: "#1A0A1A", border: "1px solid #3A1A3B" }}>
-                              {vMode === "hidden" ? <EyeOff size={8} /> : <Lock size={8} />}
-                              {vMode === "hidden" ? "Hidden" : "Spoiler"} ({panel.assignedTo.length})
-                            </span>
-                          ) : (
-                            <span className="text-[9px] px-1.5 py-0.5 flex items-center gap-0.5" style={{ color: "#4A9A5A", background: "#0A1A0A", border: "1px solid #1A3A1A" }}>
-                              <Unlock size={8} />All
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => movePanel(idx, idx - 1)} disabled={idx === 0} className="p-0.5 hover:opacity-80 disabled:opacity-20" title="Move up"><ChevronUp size={10} style={S_MUTED} /></button>
-                          <button onClick={() => movePanel(idx, idx + 1)} disabled={idx === panels.length - 1} className="p-0.5 hover:opacity-80 disabled:opacity-20" title="Move down"><ChevronDown size={10} style={S_MUTED} /></button>
-                          <button onClick={() => setEditingPanelId(isEditing ? null : panel.id)} className="text-[10px] hover:opacity-80 ml-1" style={{ color: ps.accent }}>
-                            {isEditing ? "Collapse" : "Edit"}
-                          </button>
-                          <button onClick={() => removePanel(panel.id)} className="text-[10px] hover:opacity-80" style={S_RED}>
-                            <Trash2 size={10} />
-                          </button>
-                        </div>
-                      </div>
-                      <input type="text" value={panel.title} onChange={(e) => updatePanel(panel.id, { title: e.target.value })} placeholder="Section title..." className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[11px] w-full outline-none mb-1`} style={inputStyle} />
-                      <input type="text" value={panel.subtitle || ""} onChange={(e) => updatePanel(panel.id, { subtitle: e.target.value })} placeholder="Subtitle (optional)..." className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[10px] w-full outline-none mb-2`} style={{ ...inputStyle, opacity: 0.7 }} />
-
-                      {isEditing && (
-                        <div className="space-y-3">
-                          {/* Style selector */}
-                          <div>
-                            <label className="text-[10px] block mb-1" style={S_MUTED}>Section Style</label>
-                            <div className="flex flex-wrap gap-1">
-                              {allPanelStyles.map((s) => (
-                                <button key={s.id} onClick={() => updatePanel(panel.id, { style: s.id })} className="text-[10px] px-2 py-1 transition-colors" style={{ color: s.accent, background: panel.style === s.id ? (s.bg === "transparent" ? "#0A0A2A" : s.bg) : "transparent", border: panel.style === s.id ? `1px solid ${s.accent}` : "1px solid #1A2A4B" }}>
-                                  {s.label}
-                                  {!BUILTIN_PANEL_STYLES.some((b) => b.id === s.id) && (
-                                    <X size={8} className="inline ml-1 opacity-50 hover:opacity-100" onClick={(ev) => { ev.stopPropagation(); removeCustomStyle(s.id); }} />
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                            {!showNewStyleForm ? (
-                              <button onClick={() => setShowNewStyleForm(true)} className="text-[9px] mt-1.5 hover:opacity-80" style={S_GREEN_BTN}>
-                                <Plus size={8} className="inline mr-0.5" />Custom style...
-                              </button>
-                            ) : (
-                              <div className="mt-2 p-2 space-y-2" style={{ background: "#060618", border: "1px solid #1A2A4B" }}>
-                                <input type="text" value={newStyleLabel} onChange={(e) => setNewStyleLabel(e.target.value)} placeholder="Style name..." className="text-[10px] bg-[#0A0A28] px-2 py-1 w-full outline-none" style={{ color: "#C0D0F0", border: "1px solid #1A2A4B" }} />
-                                <div className="flex items-center gap-2">
-                                  <label className="text-[9px] flex items-center gap-1" style={S_MUTED}>
-                                    Accent <input type="color" value={newStyleAccent} onChange={(e) => setNewStyleAccent(e.target.value)} className="w-5 h-4 bg-transparent border-none cursor-pointer" />
-                                  </label>
-                                  <label className="text-[9px] flex items-center gap-1" style={S_MUTED}>
-                                    BG <input type="color" value={newStyleBg} onChange={(e) => setNewStyleBg(e.target.value)} className="w-5 h-4 bg-transparent border-none cursor-pointer" />
-                                  </label>
-                                  <label className="text-[9px] flex items-center gap-1" style={S_MUTED}>
-                                    Border <input type="color" value={newStyleBorder} onChange={(e) => setNewStyleBorder(e.target.value)} className="w-5 h-4 bg-transparent border-none cursor-pointer" />
-                                  </label>
-                                </div>
-                                <div className="text-[9px] px-2 py-1.5" style={{ color: newStyleAccent, background: newStyleBg, border: `1px solid ${newStyleBorder}` }}>
-                                  {newStyleLabel || "Preview"}
-                                </div>
-                                <div className="flex gap-1">
-                                  <button onClick={addCustomStyle} className="text-[9px] px-2 py-0.5 hover:opacity-80" style={{ color: "#4AFF6A", border: "1px solid #1A3A1A" }}>Create</button>
-                                  <button onClick={resetNewStyleForm} className="text-[9px] px-2 py-0.5 hover:opacity-80" style={{ color: "#FF6A6A", border: "1px solid #3A1A1A" }}>Cancel</button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          {/* Content */}
-                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                            <div>
-                              <label className="text-[10px] block mb-1" style={S_MUTED}>Placement</label>
-                              <select
-                                value={getWikiPanelPlacement(panel)}
-                                onChange={(e) => updatePanel(panel.id, { placement: e.target.value as WikiPanelPlacement, width: e.target.value === "sidebar" ? "full" : panel.width })}
-                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
-                                style={inputStyle}
-                              >
-                                <option value="body">Main Article Body</option>
-                                <option value="sidebar">Sidebar Rail</option>
-                              </select>
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={S_MUTED}>Width</label>
-                              <select
-                                value={getWikiPanelPlacement(panel) === "sidebar" ? "full" : getWikiPanelWidth(panel)}
-                                onChange={(e) => updatePanel(panel.id, { width: e.target.value as WikiPanelWidth })}
-                                disabled={getWikiPanelPlacement(panel) === "sidebar"}
-                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
-                                style={{ ...inputStyle, opacity: getWikiPanelPlacement(panel) === "sidebar" ? 0.45 : 1 }}
-                              >
-                                <option value="full">Full Width</option>
-                                <option value="half">Half Width</option>
-                              </select>
-                            </div>
-                            <div className="md:col-span-2">
-                              <label className="text-[10px] block mb-1" style={S_MUTED}>Panel Image URL</label>
-                              <input
-                                type="text"
-                                value={panel.mediaUrl || ""}
-                                onChange={(e) => updatePanel(panel.id, { mediaUrl: e.target.value })}
-                                placeholder="https://... image for this panel"
-                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
-                                style={inputStyle}
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={S_MUTED}>Image Caption</label>
-                              <input
-                                type="text"
-                                value={panel.mediaCaption || ""}
-                                onChange={(e) => updatePanel(panel.id, { mediaCaption: e.target.value })}
-                                placeholder="Caption..."
-                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
-                                style={inputStyle}
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] block mb-1" style={S_MUTED}>Image Position</label>
-                              <select
-                                value={getWikiPanelMediaPosition(panel)}
-                                onChange={(e) => updatePanel(panel.id, { mediaPosition: e.target.value as WikiPanelMediaPosition })}
-                                className={`${retro.sunken} bg-[#0A0A28] px-2 py-1.5 text-[10px] w-full outline-none`}
-                                style={inputStyle}
-                              >
-                                <option value="top">Top</option>
-                                <option value="left">Left</option>
-                                <option value="right">Right</option>
-                              </select>
-                            </div>
-                          </div>
-                          {/* Content */}
-                          <div>
-                            <label className="text-[10px] block mb-1" style={S_MUTED}>Content</label>
-                            <RichTextEditor value={panel.content} onChange={(html) => updatePanel(panel.id, { content: html })} placeholder="Section content..." minHeight={100} enableWikiLayouts wikiLinkOptions={wikiLinkOptions} />
-                            <div className="mt-1 text-[9px]" style={S_DIM}>
-                              Lists work here too, and Wiki Layouts can seed spell groupings or reference tables inside a section.
-                            </div>
-                            <div className="flex gap-1 mt-1">
-                              <button onClick={() => { setSpoilerInsertTarget(panel.id); setShowSpoilerInsert(true); }} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#FF6A6A", border: "1px solid #3A1A1A" }}>
-                                <Shield size={8} /> Insert Spoiler Box
-                              </button>
-                              <button onClick={() => { setLinkInsertTarget(panel.id); setShowLinkDialog(true); }} className="text-[9px] px-2 py-1 flex items-center gap-1 hover:opacity-80" style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}>
-                                <Link2 size={8} /> Wiki Link
-                              </button>
-                            </div>
-                          </div>
-                          {/* Player visibility */}
-                          <div>
-                            <label className="text-[10px] block mb-1" style={{ color: "#FF6ABB", fontWeight: 600 }}>
-                              <Shield size={10} className="inline mr-1" />Player Visibility
-                            </label>
-                            <div className="text-[9px] mb-2" style={S_MUTED}>
-                              {panel.assignedTo.length === 0
-                                ? "Visible to all players. Select specific players below to restrict access."
-                                : `Restricted to ${panel.assignedTo.length} player${panel.assignedTo.length !== 1 ? "s" : ""}. Others ${vMode === "hidden" ? "cannot see this section" : "see a spoiler overlay"}.`}
-                            </div>
-                            {/* Visibility Mode selector */}
-                            {panel.assignedTo.length > 0 && (
-                              <div className="mb-2">
-                                <label className="text-[9px] block mb-1" style={S_MUTED}>Restriction Mode</label>
-                                <div className="flex gap-1">
-                                  <button
-                                    onClick={() => updatePanel(panel.id, { visibilityMode: "spoiler" })}
-                                    className="text-[10px] px-3 py-1.5 flex items-center gap-1.5 flex-1"
-                                    style={{
-                                      color: vMode === "spoiler" ? "#FF6ABB" : "#5A6A8A",
-                                      background: vMode === "spoiler" ? "#1A0A1A" : "transparent",
-                                      border: vMode === "spoiler" ? "1px solid #3A1A3B" : "1px solid #1A2A4B",
-                                    }}
-                                  >
-                                    <Lock size={9} /> Spoiler Box
-                                  </button>
-                                  <button
-                                    onClick={() => updatePanel(panel.id, { visibilityMode: "hidden" })}
-                                    className="text-[10px] px-3 py-1.5 flex items-center gap-1.5 flex-1"
-                                    style={{
-                                      color: vMode === "hidden" ? "#FF6A6A" : "#5A6A8A",
-                                      background: vMode === "hidden" ? "#1A0A0A" : "transparent",
-                                      border: vMode === "hidden" ? "1px solid #3A1A1A" : "1px solid #1A2A4B",
-                                    }}
-                                  >
-                                    <EyeOff size={9} /> Fully Hidden
-                                  </button>
-                                </div>
-                                <div className="text-[8px] mt-1 px-1" style={S_DIM}>
-                                  {vMode === "spoiler" ? "Players not in the list see a spoiler overlay they can click to reveal." : "Players not in the list cannot see this section at all."}
-                                </div>
-                              </div>
-                            )}
-                            <div className="space-y-1">
-                              {players.map((player) => {
-                                const selected = panel.assignedTo.includes(player.id);
-                                return (
-                                  <button
-                                    key={player.id}
-                                    onClick={() => togglePanelPlayer(panel.id, player.id)}
-                                    className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-[11px] transition-colors hover:bg-[#0A0A30]"
-                                    style={{
-                                      color: selected ? "#C0D0F0" : "#5A6A8A",
-                                      background: selected ? "#0A1A3A" : "transparent",
-                                      border: selected ? "1px solid #2A4A6B" : "1px solid transparent",
-                                    }}
-                                  >
-                                    {selected ? <Eye size={10} style={{ color: "#4AFF6A" }} /> : <EyeOff size={10} style={S_DIM} />}
-                                    <span style={{ fontWeight: selected ? 600 : 400 }}>{player.name}</span>
-                                    <span className="text-[9px] ml-auto" style={S_DIM}>{player.class} Lv{player.level}</span>
-                                  </button>
-                                );
-                              })}
-                              <div className="flex items-center gap-2 px-2 py-1.5 text-[11px]" style={{ ...S_RED, opacity: 0.5 }}>
-                                <Eye size={10} style={S_RED} />
-                                <span>DM</span>
-                                <span className="text-[9px] ml-auto" style={S_DIM}>Always visible</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => addPanel("blank", "body")} className={`${retro.button} px-4 py-2 text-[11px] w-full flex items-center justify-center gap-1`} style={S_LINK}>
-                    <Plus size={11} /> Add Body Section
-                  </button>
-                  <button onClick={() => addPanel("info", "sidebar")} className={`${retro.button} px-4 py-2 text-[11px] w-full flex items-center justify-center gap-1`} style={{ color: "#6A9AFF" }}>
-                    <Plus size={11} /> Add Sidebar Box
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* --- METADATA TAB --- */}
-            {activePanel === "metadata" && (
-              <div className="space-y-4">
-                <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
-                  <Tag size={13} className="shrink-0 mt-0.5" style={S_LINK} />
-                  <span>Category, tags, article quality, related articles, and references.</span>
-                </div>
-                {/* Category */}
-                <div>
-                  <label style={labelStyle}>Category</label>
-                  <input type="text" value={page.category} onChange={(e) => update("category", e.target.value)} placeholder="Select or type a category..." className={inputClass} style={inputStyle} list="meta-category-suggestions" />
-                  <datalist id="meta-category-suggestions">
-                    {allCategories.map((c) => <option key={c} value={c} />)}
-                  </datalist>
-                  {allCategories.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {allCategories.slice(0, 12).map((c) => (
-                        <button key={c} onClick={() => update("category", c)} className="text-[9px] px-2 py-0.5 transition-colors hover:opacity-80" style={{ color: page.category === c ? "#C0D0F0" : "#4A5A7A", background: page.category === c ? "#0A1A3A" : "transparent", border: page.category === c ? "1px solid #2A4A6B" : "1px solid #1A2A4B" }}>
-                          {c}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {/* Quality */}
-                <div>
-                  <label style={labelStyle}>Article Quality</label>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {(["featured", "good", "start", "stub", "draft"] as const).map((q) => {
-                      const colors: Record<string, string> = { featured: "#FFD700", good: "#4A9A5A", start: "#4A7BFF", stub: "#FFAA4A", draft: "#5A6A8A" };
-                      return (
-                        <button key={q} onClick={() => update("articleQuality", q)} className="text-[10px] px-2 py-1" style={{ color: colors[q], background: page.articleQuality === q ? "#0A0A28" : "transparent", border: page.articleQuality === q ? `1px solid ${colors[q]}` : "1px solid #1A2A4B" }}>
-                          {q === "featured" && <Star size={8} className="inline mr-0.5" />}{q.charAt(0).toUpperCase() + q.slice(1)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                {/* Tags */}
-                <div>
-                  <label style={labelStyle}>Tags ({(page.tags || []).length})</label>
-                  <div className="flex flex-wrap gap-1 mt-1 mb-2">
-                    {(page.tags || []).map((tag) => (
-                      <span key={tag} className="text-[10px] px-2 py-0.5 flex items-center gap-1" style={{ color: accent, background: "#0A0A28", border: `1px solid ${accent}33` }}>
-                        <Hash size={7} />{tag}
-                        <button onClick={() => update("tags", (page.tags || []).filter((t) => t !== tag))} className="hover:opacity-80"><X size={8} /></button>
-                      </span>
-                    ))}
-                  </div>
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      value={tagDraft}
-                      onChange={(e) => setTagDraft(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter" && tagDraft.trim()) { update("tags", [...new Set([...(page.tags || []), tagDraft.trim()])]); setTagDraft(""); } }}
-                      placeholder="Add tag (type or select)..."
-                      className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[11px] flex-1 outline-none`}
-                      style={inputStyle}
-                      list="meta-tag-suggestions"
-                    />
-                    <datalist id="meta-tag-suggestions">
-                      {allTags.filter((t) => !(page.tags || []).includes(t)).map((t) => <option key={t} value={t} />)}
-                    </datalist>
-                    <button onClick={() => { if (tagDraft.trim()) { update("tags", [...new Set([...(page.tags || []), tagDraft.trim()])]); setTagDraft(""); } }} className="text-[10px] px-2 hover:opacity-80" style={{ color: accent }}>Add</button>
-                  </div>
-                  {/* Existing tags from other articles */}
-                  {allTags.filter((t) => !(page.tags || []).includes(t)).length > 0 && (
-                    <div className="mt-2">
-                      <div className="text-[9px] mb-1" style={S_DIM}>Existing tags (click to add):</div>
-                      <div className="flex flex-wrap gap-1">
-                        {allTags.filter((t) => !(page.tags || []).includes(t)).slice(0, 20).map((tag) => (
-                          <button
-                            key={tag}
-                            onClick={() => update("tags", [...new Set([...(page.tags || []), tag])])}
-                            className="text-[8px] px-1.5 py-0.5 hover:opacity-80 transition-colors"
-                            style={{ color: "#4A5A7A", border: "1px solid #1A2A3B" }}
-                          >
-                            + {tag}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* Wiki Tags (from DM tag system) */}
-                <div>
-                  <label style={labelStyle}>Wiki Tags ({(page.wikiTags || []).length})</label>
-                  <div className="text-[9px] mb-1" style={S_DIM}>Structured tags from the DM tag system with custom fields</div>
-                  <div className="flex flex-wrap gap-1 mt-1 mb-2">
-                    {(page.wikiTags || []).map((tagName) => {
-                      const def = wikiTagDefs.find((d) => d.name === tagName);
-                      return (
-                        <span key={tagName} className="text-[10px] px-2 py-0.5 flex items-center gap-1" style={{ color: "#9A7ABB", background: "#1A0A2A", border: "1px solid #2A1A4B" }}>
-                          <BookOpen size={7} />{tagName}
-                          {def && def.fields.length > 0 && <span className="text-[8px]" style={{ color: "#6A4A8A" }}>({def.fields.length})</span>}
-                          <button onClick={() => {
-                            const next = (page.wikiTags || []).filter((t) => t !== tagName);
-                            update("wikiTags", next);
-                            const nextFields = { ...(page.wikiTagFields || {}) };
-                            Object.keys(nextFields).forEach((k) => { if (k.startsWith(tagName + "::")) delete nextFields[k]; });
-                            update("wikiTagFields", nextFields);
-                          }} className="hover:opacity-80"><X size={8} /></button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                  {wikiTagDefs.length > 0 ? (
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value && !(page.wikiTags || []).includes(e.target.value)) {
-                          update("wikiTags", [...(page.wikiTags || []), e.target.value]);
-                        }
-                        e.target.value = "";
-                      }}
-                      className="text-[10px] bg-[#0A0A28] px-2 py-1 w-full outline-none cursor-pointer"
-                      style={{ color: "#9A7ABB", border: "1px solid #2A1A4B" }}
-                    >
-                      <option value="">+ Add wiki tag...</option>
-                      {wikiTagDefs.filter((d) => !(page.wikiTags || []).includes(d.name)).map((d) => (
-                        <option key={d.id} value={d.name}>{d.name} - {d.description.slice(0, 50)}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="text-[9px]" style={S_DIM}>No wiki tags defined. Create them in DM Area &gt; Manage Tags &gt; Wiki Tags.</div>
-                  )}
-                  {/* Custom field values for applied wiki tags */}
-                  {(page.wikiTags || []).map((tagName) => {
-                    const def = wikiTagDefs.find((d) => d.name === tagName);
-                    if (!def || def.fields.length === 0) return null;
-                    return (
-                      <div key={tagName} className="mt-3 p-2" style={{ background: "#0A0A20", border: "1px solid #1A1A3B" }}>
-                        <div className="text-[10px] mb-2 flex items-center gap-1" style={{ color: "#9A7ABB", fontWeight: 600 }}>
-                          <BookOpen size={9} /> {tagName} Fields
-                        </div>
-                        {def.fields.map((f) => {
-                          const fieldKey = `${tagName}::${f.name}`;
-                          const val = (page.wikiTagFields || {})[fieldKey] || "";
-                          const fieldDef: TagFieldDef = {
-                            id: f.id,
-                            name: f.name,
-                            type: (f.type as TagFieldDef["type"]) || "text",
-                            options: f.options,
-                            placeholder: f.placeholder,
-                            required: f.required,
-                            min: f.min,
-                            max: f.max,
-                            defaultValue: f.defaultValue,
-                            allowCustom: f.allowCustom,
-                          };
-                          const labelEl = (
-                            <label className="text-[9px] block mb-0.5" style={S_MUTED}>{f.name}</label>
-                          );
-                          return (
-                            <div key={f.id} className="mb-1.5">
-                              {renderTypedField(
-                                fieldKey,
-                                fieldDef,
-                                val,
-                                (key, v) => update("wikiTagFields", { ...(page.wikiTagFields || {}), [key]: v }),
-                                labelEl,
-                                `${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[10px] w-full outline-none`,
-                                { color: "#C0D0F0" },
-                                `${retro.button} px-2 py-1 text-[9px]`,
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* --- Player Visibility --- */}
-                <div>
-                  <label style={labelStyle}>Article Visibility (per player)</label>
-                  <div className="text-[9px] mb-2" style={S_DIM}>
-                    Control which players can see this article. Visible = full access, Spoiler = metagame warning overlay, Hidden = completely invisible.
-                  </div>
-                  <div className="space-y-1.5">
-                    {players.map((p) => {
-                      const vis = (page.playerVisibility || {})[p.id] || "visible";
-                      const visColors: Record<string, { c: string; bg: string; bc: string }> = {
-                        visible: { c: "#4AFF6A", bg: "#0A1A0A", bc: "#1A3A1A" },
-                        spoiler: { c: "#FFAA4A", bg: "#1A1A0A", bc: "#3A3A1A" },
-                        hidden: { c: "#FF6A6A", bg: "#1A0A0A", bc: "#3A1A1A" },
-                      };
-                      return (
-                        <div key={p.id} className="flex items-center gap-2">
-                          <span className="text-[10px] flex-1 truncate" style={S_SUBTLE}>
-                            {p.name} <span className="text-[8px]" style={S_DIM}>({p.class})</span>
-                          </span>
-                          <div className="flex gap-0.5">
-                            {(["visible", "spoiler", "hidden"] as const).map((mode) => {
-                              const active = vis === mode;
-                              const vc = visColors[mode];
-                              const icons: Record<string, React.ReactNode> = {
-                                visible: <Eye size={8} />,
-                                spoiler: <Shield size={8} />,
-                                hidden: <EyeOff size={8} />,
-                              };
-                              return (
-                                <button
-                                  key={mode}
-                                  onClick={() => {
-                                    const next = { ...(page.playerVisibility || {}) };
-                                    if (mode === "visible") { delete next[p.id]; } else { next[p.id] = mode; }
-                                    update("playerVisibility", next);
-                                  }}
-                                  className="text-[8px] px-1.5 py-0.5 flex items-center gap-0.5 transition-colors"
-                                  style={{
-                                    color: active ? vc.c : "#3A4A6A",
-                                    background: active ? vc.bg : "transparent",
-                                    border: `1px solid ${active ? vc.bc : "#1A2A3B"}`,
-                                    fontWeight: active ? 600 : 400,
-                                  }}
-                                  title={mode.charAt(0).toUpperCase() + mode.slice(1)}
-                                >
-                                  {icons[mode]} {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {players.length === 0 && (
-                    <div className="text-[9px]" style={S_DIM}>No players found. Add players in DM Area first.</div>
-                  )}
-                  {/* Quick-set all buttons */}
-                  {players.length > 0 && (
-                    <div className="flex gap-1 mt-2">
-                      <button
-                        onClick={() => update("playerVisibility", {})}
-                        className="text-[8px] px-2 py-0.5 hover:opacity-80"
-                        style={{ color: "#4AFF6A", border: "1px solid #1A3A1A" }}
-                      >All Visible</button>
-                      <button
-                        onClick={() => {
-                          const next: Record<string, "visible" | "spoiler" | "hidden"> = {};
-                          players.forEach((p) => { next[p.id] = "spoiler"; });
-                          update("playerVisibility", next);
-                        }}
-                        className="text-[8px] px-2 py-0.5 hover:opacity-80"
-                        style={{ color: "#FFAA4A", border: "1px solid #3A3A1A" }}
-                      >All Spoiler</button>
-                      <button
-                        onClick={() => {
-                          const next: Record<string, "visible" | "spoiler" | "hidden"> = {};
-                          players.forEach((p) => { next[p.id] = "hidden"; });
-                          update("playerVisibility", next);
-                        }}
-                        className="text-[8px] px-2 py-0.5 hover:opacity-80"
-                        style={{ color: "#FF6A6A", border: "1px solid #3A1A1A" }}
-                      >All Hidden</button>
-                    </div>
-                  )}
-                </div>
-                {/* See Also */}
-                <div>
-                  <label style={labelStyle}>See Also</label>
-                  <div className="space-y-1 mt-1">
-                    {(page.seeAlso || []).map((saId) => {
-                      const linked = allPages.find((p) => p.id === saId);
-                      return (
-                        <div key={saId} className="flex items-center gap-2 text-[11px]" style={S_LINK}>
-                          <FileText size={9} /> {linked?.title || saId}
-                          <button onClick={() => update("seeAlso", (page.seeAlso || []).filter((s) => s !== saId))} className="ml-auto hover:opacity-80"><X size={9} style={S_RED} /></button>
-                        </div>
-                      );
-                    })}
-                    <select onChange={(e) => { if (e.target.value) { update("seeAlso", [...(page.seeAlso || []), e.target.value]); e.target.value = ""; } }} className="text-[10px] bg-[#0A0A28] px-2 py-1 w-full outline-none mt-1" style={{ color: "#6A9AFF", border: "1px solid #1A2A4B" }}>
-                      <option value="">+ Add related article...</option>
-                      {allPages.filter((p) => p.id !== page.id && !(page.seeAlso || []).includes(p.id)).map((p) => (
-                        <option key={p.id} value={p.id}>{p.title}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                {/* Related Articles */}
-                <div>
-                  <label style={labelStyle}>Related Articles</label>
-                  <div className="text-[9px] mb-1" style={{ color: mutedText }}>Bidirectional links shown on the Interlink Graph (orange edges)</div>
-                  <div className="space-y-1 mt-1">
-                    {(page.relatedArticleIds || []).map((raId) => {
-                      const linked = allPages.find((p) => p.id === raId);
-                      return (
-                        <div key={raId} className="flex items-center gap-2 text-[11px]" style={S_WARN}>
-                          <Network size={9} /> {linked?.title || raId}
-                          <button onClick={() => update("relatedArticleIds", (page.relatedArticleIds || []).filter((s) => s !== raId))} className="ml-auto hover:opacity-80"><X size={9} style={S_RED} /></button>
-                        </div>
-                      );
-                    })}
-                    <select onChange={(e) => { if (e.target.value) { update("relatedArticleIds", [...(page.relatedArticleIds || []), e.target.value]); e.target.value = ""; } }} className="text-[10px] bg-[#0A0A28] px-2 py-1 w-full outline-none mt-1" style={{ color: "#FFAA4A", border: "1px solid #1A2A4B" }}>
-                      <option value="">+ Add related article...</option>
-                      {allPages.filter((p) => p.id !== page.id && !(page.relatedArticleIds || []).includes(p.id)).map((p) => (
-                        <option key={p.id} value={p.id}>{p.title}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                {/* References */}
-                <div>
-                  <label style={labelStyle}>References</label>
-                  <div className="space-y-1 mt-1">
-                    {(page.references || []).map((ref, idx) => (
-                      <div key={idx} className="flex items-center gap-2 text-[11px]" style={{ color: txt }}>
-                        <span className="text-[9px]" style={{ color: mutedText }}>[{idx + 1}]</span>
-                        <input type="text" value={ref} onChange={(e) => { const next = [...(page.references || [])]; next[idx] = e.target.value; update("references", next); }} className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[10px] flex-1 outline-none`} style={inputStyle} />
-                        <button onClick={() => update("references", (page.references || []).filter((_, i) => i !== idx))} className="hover:opacity-80"><X size={9} style={S_RED} /></button>
-                      </div>
-                    ))}
-                    <button onClick={() => update("references", [...(page.references || []), ""])} className="text-[10px] flex items-center gap-1 mt-1 hover:opacity-80" style={S_ACCENT}>
-                      <Plus size={9} /> Add Reference
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* --- APPEARANCE TAB --- */}
-            {activePanel === "appearance" && (
-              <div className="space-y-4">
-                <div className="flex items-start gap-2 px-3 py-2 text-[11px]" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
-                  <Palette size={13} className="shrink-0 mt-0.5" style={S_GREEN_BTN} />
-                  <span>Customize colors, fonts, and visual style of this article.</span>
-                </div>
-                {/* Colors */}
-                {([
-                  { key: "bgColor" as const, label: "Background", val: page.bgColor },
-                  { key: "headerColor" as const, label: "Header / Sidebar", val: page.headerColor },
-                  { key: "accentColor" as const, label: "Accent / Links", val: page.accentColor },
-                  { key: "textColor" as const, label: "Text", val: page.textColor },
-                ]).map((c) => (
-                  <div key={c.key} className="flex items-center gap-3">
-                    <input type="color" value={c.val || DEFAULT_STYLE[c.key as keyof typeof DEFAULT_STYLE] || "#000000"} onChange={(e) => update(c.key, e.target.value)} className={`${retro.sunken} bg-[#0A0A28] w-10 h-8 cursor-pointer border-0 p-0`} />
-                    <div>
-                      <div className="text-[11px]" style={S_SUBTLE}>{c.label}</div>
-                      <div className="text-[9px]" style={S_DIM}>{c.val}</div>
-                    </div>
-                  </div>
-                ))}
-                {/* Font */}
-                <div>
-                  <label style={labelStyle}>Font Family</label>
-                  <select value={page.fontFamily} onChange={(e) => update("fontFamily", e.target.value)} className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[12px] w-full outline-none cursor-pointer`} style={inputStyle}>
-                    {PAGE_FONTS.map((f) => (
-                      <option key={f.value} value={f.value}>{f.label}</option>
-                    ))}
-                  </select>
-                </div>
-                {/* Header align */}
-                <div>
-                  <label style={labelStyle}>Header Alignment</label>
-                  <div className="flex gap-2 mt-1">
-                    {(["left", "center", "right"] as const).map((a) => (
-                      <button key={a} onClick={() => update("headerAlign", a)} className="text-[10px] px-3 py-1" style={{ color: page.headerAlign === a ? "#C0D0F0" : "#5A6A8A", background: page.headerAlign === a ? "#1A1A5B" : "transparent", border: page.headerAlign === a ? `1px solid ${accent}` : "1px solid #1A2A4B" }}>
-                        {a.charAt(0).toUpperCase() + a.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {/* Reset button */}
-                <button onClick={() => { update("bgColor", DEFAULT_STYLE.bgColor); update("headerColor", DEFAULT_STYLE.headerColor); update("accentColor", DEFAULT_STYLE.accentColor); update("textColor", DEFAULT_STYLE.textColor); update("fontFamily", DEFAULT_STYLE.fontFamily); }} className="text-[10px] px-3 py-1.5 hover:opacity-80" style={{ color: "#FF8A6A", border: "1px solid #3A1A1A" }}>
-                  Reset to Defaults
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* --- Right side: Live wiki preview --- */}
-        <div className="flex-1 min-w-0 overflow-y-auto" style={{ background: darken(bg, 15) }}>
-          {/* Preview toolbar */}
-          <div className="flex items-center justify-between px-4 py-1.5 border-b" style={{ background: "#0A0A30", borderBottomColor: "#1A1A4B" }}>
-            <div className="flex items-center gap-2">
-              <Eye size={11} style={S_MUTED} />
-              <span className="text-[10px]" style={S_MUTED}>LIVE PREVIEW</span>
-              {previewAsPlayerId && previewPlayer && (
-                <span className="text-[9px] px-2 py-0.5" style={{ color: "#FF6ABB", background: "#1A0A1A", border: "1px solid #3A1A3B" }}>
-                  Viewing as: {previewPlayer.name}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Users size={10} style={S_MUTED} />
-              <select
-                value={previewAsPlayerId || ""}
-                onChange={(e) => {
-                  setPreviewAsPlayerId(e.target.value || null);
-                  setRevealedPanels(new Set());
-                }}
-                className="text-[10px] bg-[#0A0A28] px-2 py-1 outline-none cursor-pointer"
-                style={{ color: previewAsPlayerId ? "#FF6ABB" : "#5A6A8A", border: "1px solid #1A2A4B", minWidth: 130 }}
-              >
-                <option value="">DM View (see all)</option>
-                {players.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.class} Lv{p.level})</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Breadcrumb */}
-          <div className="px-4 py-1.5 flex items-center gap-1.5 border-b text-[11px]" style={{ background: "#0A0A30", borderBottomColor: "#1A1A4B" }}>
-            <span style={{ color: accent }}>Wiki</span>
-            <ChevronRight size={9} style={S_DIM} />
-            <span style={{ color: accent }}>{page.category || "Uncategorized"}</span>
-            <ChevronRight size={9} style={S_DIM} />
-            <span style={S_SUBTLE}>{page.title || "Untitled"}</span>
-          </div>
-
-          {/* Article-level visibility check (preview mode) */}
-          {(() => {
-            if (!previewAsPlayerId) return null;
-            const vis = (page.playerVisibility || {})[previewAsPlayerId] || "visible";
-            if (vis === "hidden") {
-              return (
-                <div className="flex-1 flex flex-col items-center justify-center px-8 py-20" style={{ background: bg }}>
-                  <EyeOff size={40} style={{ color: "#2A3A5B", marginBottom: 16 }} />
-                  <div className="text-[16px] mb-2" style={{ color: "#FF6A6A", fontWeight: 600 }}>Article Not Available</div>
-                  <div className="text-[12px] text-center max-w-[400px]" style={S_MUTED}>
-                    This article is hidden from {previewPlayer?.name || "this player"}. They cannot see or access it.
-                  </div>
-                  <div className="text-[9px] mt-4 px-3 py-1" style={{ color: "#3A4A6A", border: "1px solid #1A2A3B" }}>
-                    Switch to DM View to see full content
-                  </div>
-                </div>
-              );
-            }
-            if (vis === "spoiler" && !revealedPanels.has("article-spoiler-gate")) {
-              return (
-                <div className="flex-1 flex flex-col items-center justify-center px-8 py-20" style={{ background: bg }}>
-                  <Shield size={40} style={{ color: "#FF6A6A", marginBottom: 16 }} />
-                  <div className="text-[16px] mb-2" style={{ color: "#FF6A6A", fontWeight: 700 }}>Spoiler / Metagame Warning</div>
-                  <div className="text-[12px] text-center max-w-[400px] mb-4" style={{ color: "#8A5A5A" }}>
-                    This article contains information that may not be intended for {previewPlayer?.name || "this player"}'s character.
-                  </div>
-                  <button
-                    onClick={() => setRevealedPanels((prev) => new Set([...prev, "article-spoiler-gate"]))}
-                    className="px-6 py-2 text-[12px] flex items-center gap-2 hover:opacity-90"
-                    style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600 }}
-                  >
-                    <Eye size={12} /> Proceed Anyway
-                  </button>
-                </div>
-              );
-            }
-            return null;
-          })()}
-
-          {(() => {
-            const articleBlocked = previewAsPlayerId && (() => {
-              const vis = (page.playerVisibility || {})[previewAsPlayerId] || "visible";
-              return vis === "hidden" || (vis === "spoiler" && !revealedPanels.has("article-spoiler-gate"));
-            })();
-            if (articleBlocked) return null;
-            return (<div style={DISPLAY_CONTENTS}>
-          {page.disambiguationNote && (
-            <div className="px-4 py-2 flex items-start gap-2" style={{ background: darken(hdr, 5), borderBottom: `1px solid ${borderColor}` }}>
-              <Info size={14} className="shrink-0 mt-0.5" style={{ color: accent }} />
-              <span className="text-[12px] italic" style={{ color: mutedText, fontFamily: font }}>{page.disambiguationNote}</span>
-            </div>
-          )}
-
-          {/* Spoiler reveal banner (when a spoiler-gated article is revealed) */}
-          {previewAsPlayerId && (page.playerVisibility || {})[previewAsPlayerId] === "spoiler" && revealedPanels.has("article-spoiler-gate") && (
-            <div className="px-4 py-2 flex items-center gap-2" style={{ background: "#1A0A0A", borderBottom: "1px solid #3A1A1A" }}>
-              <AlertTriangle size={12} style={{ color: "#FF8A6A" }} />
-              <span className="text-[11px]" style={{ color: "#FF8A6A" }}>You chose to view this article. Its contents may not be intended for your character.</span>
-            </div>
-          )}
-
-          {/* Quality banner */}
-          {(page.articleQuality === "featured" || page.articleQuality === "good") && (
-            <div className="px-4 py-1.5 flex items-center justify-center gap-2" style={{ background: page.articleQuality === "featured" ? "#1A1A0A" : "#0A1A0A", borderBottom: `1px solid ${page.articleQuality === "featured" ? "#3A3A1A" : "#1A3A1A"}` }}>
-              <Star size={12} style={{ color: page.articleQuality === "featured" ? "#FFD700" : "#4A9A5A" }} />
-              <span className="text-[11px] tracking-wide" style={{ color: page.articleQuality === "featured" ? "#FFD700" : "#4A9A5A", fontWeight: 600 }}>
-                {page.articleQuality === "featured" ? "FEATURED ARTICLE" : "GOOD ARTICLE"}
-              </span>
-              <Star size={12} style={{ color: page.articleQuality === "featured" ? "#FFD700" : "#4A9A5A" }} />
-            </div>
-          )}
-
-          {/* Under construction */}
-          {page.underConstruction && (
-            <div className="px-4 py-2 flex items-center justify-center gap-2" style={{ background: "#2A1A00", borderBottom: "2px solid #5A3A00" }}>
-              <AlertTriangle size={14} style={S_WARN} />
-              <span className="text-[12px] tracking-wider" style={{ color: "#FFCC44", fontWeight: 600, fontFamily: font }}>THIS ARTICLE IS A STUB</span>
-              <AlertTriangle size={14} style={S_WARN} />
-            </div>
-          )}
-
-          {/* Marquee */}
-          {page.marqueeText && (
-            <div className="overflow-hidden py-1" style={{ background: darken(hdr, 10), borderBottom: `1px solid ${borderColor}` }}>
-              <div className="animate-marquee-editor whitespace-nowrap text-[12px] tracking-wide" style={{ color: accent, fontWeight: 600, fontFamily: font }}>
-                <span className="inline-block px-8">{page.marqueeText}</span>
-                <span className="inline-block px-8">{page.marqueeText}</span>
-                <span className="inline-block px-8">{page.marqueeText}</span>
-              </div>
-              <style>{`@keyframes marqueeE { 0% { transform: translateX(0); } 100% { transform: translateX(-33.33%); } } .animate-marquee-editor { animation: marqueeE 12s linear infinite; }`}</style>
-            </div>
-          )}
-
-          <div className="px-4 py-6" style={{ background: bg }}>
-            <div className="max-w-[900px] mx-auto">
-              <div className="flex flex-col md:flex-row gap-4">
-                {/* Sidebar */}
-                <div className="w-full md:w-[220px] shrink-0 order-2 md:order-1">
-                  {/* Article info box */}
-                  <div className={`${retro.raised} mb-4`} style={{ background: hdr }}>
-                    <div className="px-3 py-2 border-b text-center" style={{ borderBottomColor: borderColor, background: darken(hdr, 8) }}>
-                      <span className="text-[12px]" style={{ color: accent, fontWeight: 600 }}>Article Info</span>
-                    </div>
-                    <div className="p-3 space-y-2">
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Category</span>
-                        <div className="text-[11px] mt-0.5" style={{ color: accent }}>{page.category || "Uncategorized"}</div>
-                      </div>
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Last Updated</span>
-                        <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: txt }}><Clock size={9} style={{ color: mutedText }} />{page.dateAdded}</div>
-                      </div>
-                      {page.articleQuality && (
-                        <div>
-                          <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Quality</span>
-                          <div className="text-[11px] mt-0.5" style={{ color: page.articleQuality === "featured" ? "#FFD700" : page.articleQuality === "good" ? "#4A9A5A" : txt }}>
-                            {page.articleQuality.charAt(0).toUpperCase() + page.articleQuality.slice(1)}
-                          </div>
-                        </div>
-                      )}
-                      {(page.tags || []).length > 0 && (
-                        <div>
-                          <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Tags</span>
-                          <div className="flex flex-wrap gap-1 mt-0.5">
-                            {(page.tags || []).map((tag) => (
-                              <span key={tag} className="text-[9px] px-1.5" style={{ color: accent, background: darken(hdr, 5), border: `1px solid ${borderColor}` }}>{tag}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {page.showHitCounter && (
-                        <div>
-                          <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Page Views</span>
-                          <div className="text-[11px] mt-0.5" style={{ color: txt, fontFamily: "'Courier New', monospace" }}>
-                            {(page.hitCount || 0).toLocaleString()}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Infobox */}
-                  {(page.infobox || []).length > 0 && (
-                    <div className={`${retro.raised} mb-4`} style={{ background: hdr }}>
-                      <div className="px-3 py-2 border-b text-center" style={{ borderBottomColor: borderColor, background: darken(hdr, 8) }}>
-                        <span className="text-[12px]" style={{ color: accent, fontWeight: 600 }}>{page.title || "Infobox"}</span>
-                      </div>
-                      <div className="p-2">
-                        {(page.infobox || []).map((row, idx) => (
-                          <div key={idx} className="flex py-1.5 px-1" style={{ borderBottom: idx < (page.infobox || []).length - 1 ? `1px solid ${darken(borderColor, 10)}` : "none" }}>
-                            <span className="text-[10px] shrink-0" style={{ color: accent, fontWeight: 600, width: 80 }}>{row.label}</span>
-                            <span className="text-[10px] flex-1" style={{ color: txt }}>{row.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TOC */}
-                  {tocItems.length > 1 && (
-                    <div className={`${retro.raised} mb-4`} style={{ background: hdr }}>
-                      <div className="px-3 py-2 border-b" style={{ borderBottomColor: borderColor, background: darken(hdr, 8) }}>
-                        <span className="text-[12px]" style={{ color: accent, fontWeight: 600 }}>Contents</span>
-                      </div>
-                      <div className="p-2">
-                        {tocItems.map((item, idx) => (
-                          <div key={item.id} className="flex items-start gap-1.5 px-2 py-1 text-[11px]" style={{ color: accent }}>
-                            <span style={{ color: mutedText, fontFamily: "'Courier New', monospace", fontSize: 9 }}>{idx + 1}.</span>
-                            <span>{item.label}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Subcategories */}
-                  {(page.subcategories || []).length > 0 && (
-                    <div className={`${retro.raised} mb-4`} style={{ background: hdr }}>
-                      <div className="px-3 py-2 border-b" style={{ borderBottomColor: borderColor, background: darken(hdr, 8) }}>
-                        <span className="text-[12px] flex items-center gap-1.5" style={{ color: accent, fontWeight: 600 }}><FolderOpen size={11} /> Subcategories</span>
-                      </div>
-                      <div className="py-2">
-                        {(page.subcategories || []).map((sc) => (
-                          <div key={sc.id} className="flex items-center gap-1.5 px-3 py-1 text-[11px]" style={{ color: sc.type === "folder" ? mutedText : accent }}>
-                            <span style={{ fontSize: 10 }}>{sc.type === "folder" ? "[Folder]" : "[Article]"}</span>
-                            <span>{sc.name || (sc.type === "folder" ? "Unnamed" : "Unlinked")}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div
-                    className="mb-4 rounded-[6px] px-3 py-3"
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={handlePreviewRegionDrop("sidebar")}
-                    style={{ background: "#081125", border: "1px dashed #1A3A5B" }}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: "#6A9AFF", fontWeight: 700 }}>
-                        Sidebar Layout Rail
-                      </span>
-                      <button
-                        onClick={() => addPanel("info", "sidebar")}
-                        className="text-[9px] px-2 py-1 hover:opacity-80"
-                        style={{ color: "#6A9AFF", border: "1px solid #1A3A6B" }}
-                      >
-                        <Plus size={8} className="inline mr-1" /> Add Box
-                      </button>
-                    </div>
-                    <div className="text-[10px] leading-relaxed" style={S_DIM}>
-                      Drag any section into this rail to turn it into a sidebar box. Sidebar boxes keep the same text, image, and spoiler settings.
-                    </div>
-                  </div>
-
-                  {sidebarPanels.map((panel) => (
-                    <div key={`sidebar-preview-${panel.id}`} className="mb-4">
-                      {renderPreviewPanelCard(panel, "sidebar")}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Main article body */}
-                <div className="flex-1 min-w-0 order-1 md:order-2">
-                  {/* Article header */}
-                  <div className="mb-4 border-b-2 pb-4" style={{ borderBottomColor: borderColor }}>
-                    <div className="flex items-start gap-3">
-                      {iconMode === "custom" && page.pageIconUrl ? (
-                        <img src={page.pageIconUrl} alt="" className="shrink-0 mt-1 object-contain" style={{ width: 28, height: 28 }} />
-                      ) : iconMode !== "none" ? (
-                        <PageIcon size={28} style={{ color: accent }} className="shrink-0 mt-1" />
-                      ) : null}
-                      <div className="flex-1">
-                        <InlineEdit
-                          value={page.title}
-                          onChange={(v) => { update("title", v); if (!urlManuallyEdited.current) update("url", toSlug(v)); setError(""); }}
-                          placeholder="Article Title"
-                          tag="h1"
-                          style={{ color: txt, fontWeight: 700, fontFamily: font, fontSize: 24 }}
-                        />
-                        {(page.subtitle || activePanel === "preview") && (
-                          <InlineEdit
-                            value={page.subtitle}
-                            onChange={(v) => update("subtitle", v)}
-                            placeholder="Add a subtitle..."
-                            tag="p"
-                            style={{ color: mutedText, fontFamily: font, fontSize: 14, fontStyle: "italic", marginTop: 4 }}
-                          />
-                        )}
-                      </div>
-                    </div>
-                    <InlineEdit
-                      value={page.description}
-                      onChange={(v) => { update("description", v); setError(""); }}
-                      placeholder="Add a lead paragraph / description..."
-                      tag="p"
-                      style={{ color: txt, fontFamily: font, fontSize: 13, lineHeight: 1.6, marginTop: 12 }}
-                      multiline
-                    />
-                  </div>
-
-                  <div className="mb-5 px-3 py-3 rounded-[6px]" style={{ background: "#081125", border: "1px solid #1A2A4B" }}>
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accent, fontWeight: 700 }}>
-                        Live Article Canvas
-                      </span>
-                      <button
-                        onClick={() => addPanel("blank", "body")}
-                        className="text-[9px] px-2 py-1 hover:opacity-80"
-                        style={{ color: "#C0D0F0", border: "1px solid #2A3A5B" }}
-                      >
-                        <Plus size={8} className="inline mr-1" /> Add Body Section
-                      </button>
-                    </div>
-                    <div className="text-[10px] leading-relaxed" style={S_DIM}>
-                      Click into the main text to edit it directly, drag article boxes to rearrange them, and drop sections into the sidebar rail when they should behave like infobox-style modules.
-                    </div>
-                  </div>
-
-                  <div
-                    id="article-body"
-                    className="mb-6 rounded-[6px] overflow-hidden"
-                    onClick={() => setInlinePreviewEditorTarget("body")}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={handlePreviewRegionDrop("body")}
-                    style={{ border: `1px solid ${inlinePreviewEditorTarget === "body" ? accent : borderColor}`, background: "rgba(8, 10, 34, 0.55)" }}
-                  >
-                    <div className="px-4 py-2 flex items-center justify-between gap-2 border-b" style={{ borderBottomColor: borderColor, background: darken(hdr, 10) }}>
-                      <div>
-                        <span className="text-[10px] uppercase tracking-[0.18em]" style={{ color: accent, fontWeight: 700 }}>
-                          Main Text Flow
-                        </span>
-                        <div className="text-[10px] mt-1" style={S_DIM}>
-                          Use this for the article narrative, reference copy, inline links, and longer formatted sections.
-                        </div>
-                      </div>
-                      <button
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setInlinePreviewEditorTarget(inlinePreviewEditorTarget === "body" ? null : "body");
-                        }}
-                        className="text-[9px] px-2 py-1 hover:opacity-80"
-                        style={{ color: "#C0D0F0", border: "1px solid #2A3A5B" }}
-                      >
-                        {inlinePreviewEditorTarget === "body" ? "Hide Editor" : "Edit Body"}
-                      </button>
-                    </div>
-                    <div className="px-4 py-4">
-                      {(page.bodyTitle || page.bodySubtitle || inlinePreviewEditorTarget === "body") && (
-                        <div className="mb-3 pb-2" style={{ borderBottom: page.showDividers ? `1px solid ${borderColor}` : "none" }}>
-                          <InlineEdit
-                            value={page.bodyTitle}
-                            onChange={(value) => update("bodyTitle", value)}
-                            placeholder="Overview, Introduction..."
-                            tag="h2"
-                            style={{ color: accent, fontWeight: 600, fontFamily: font, fontSize: 18 }}
-                          />
-                          <InlineEdit
-                            value={page.bodySubtitle}
-                            onChange={(value) => update("bodySubtitle", value)}
-                            placeholder="Optional subheading..."
-                            tag="p"
-                            style={{ color: mutedText, fontFamily: font, fontSize: 12, fontStyle: "italic", marginTop: 4 }}
-                          />
-                        </div>
-                      )}
-                      {inlinePreviewEditorTarget === "body" ? (
-                        <div className="space-y-2">
-                          <RichTextEditor
-                            value={page.body}
-                            onChange={(html) => update("body", html)}
-                            placeholder="Write the main article content..."
-                            minHeight={220}
-                            enableWikiLayouts
-                            wikiLinkOptions={wikiLinkOptions}
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setInlinePreviewEditorTarget(null);
-                              }}
-                              className="text-[10px] px-2 py-1 hover:opacity-80"
-                              style={{ color: "#4AFF6A", border: "1px solid #1A3A1A" }}
-                            >
-                              Done Editing
-                            </button>
-                            <button
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setLinkInsertTarget("body");
-                                setShowLinkDialog(true);
-                              }}
-                              className="text-[10px] px-2 py-1 hover:opacity-80"
-                              style={{ color: "#FF6ABB", border: "1px solid #3A1A3B" }}
-                            >
-                              Insert Wiki Link
-                            </button>
-                          </div>
-                        </div>
-                      ) : hasBody ? (
-                        <RenderFormattedText text={bodyParagraphs} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
-                      ) : (
-                        <button
-                          onClick={() => setInlinePreviewEditorTarget("body")}
-                          className="w-full text-left px-3 py-4 text-[11px] hover:opacity-90"
-                          style={{ color: mutedText, border: `1px dashed ${borderColor}`, background: "rgba(10, 10, 40, 0.35)" }}
-                        >
-                          Add the article's main text here...
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {bodyPanelRows.map((row, rowIdx) => (
-                    <div key={`body-row-${rowIdx}`} className={`mb-6 grid gap-4 ${row.length === 2 ? "md:grid-cols-2" : "grid-cols-1"}`}>
-                      {row.map((panel) => (
-                        <div key={panel.id} id={`panel-${panel.id}`}>
-                          {renderPreviewPanelCard(panel, "body")}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-
-                  {/* Main body */}
-                  {false && hasBody && (
-                    <div id="article-body" className="mb-6">
-                      {(page.bodyTitle || page.bodySubtitle) && (
-                        <div className="mb-3 pb-2" style={{ borderBottom: page.showDividers ? `1px solid ${borderColor}` : "none" }}>
-                          {page.bodyTitle && (
-                            <h2 className="text-[18px]" style={{ color: accent, fontWeight: 600, fontFamily: font }}>{page.bodyTitle}</h2>
-                          )}
-                          {page.bodySubtitle && (
-                            <p className="text-[12px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>{page.bodySubtitle}</p>
-                          )}
-                        </div>
-                      )}
-                      <RenderFormattedText text={bodyParagraphs} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} />
-                    </div>
-                  )}
-
-                  {false && panels.length > 0 && panels.map((panel, idx) => {
-                    if (!panel.title && !panel.content) return null;
-                    const ps = allPanelStyles.find((s) => s.id === panel.style) || allPanelStyles[0];
-                    const hasRestriction = panel.assignedTo && panel.assignedTo.length > 0;
-                    const vMode = panel.visibilityMode || "spoiler";
-                    const isPlayerAllowed = !hasRestriction || !previewAsPlayerId || panel.assignedTo.includes(previewAsPlayerId);
-                    const isRevealed = revealedPanels.has(panel.id);
-                    const isBlank = panel.style === "blank";
-
-                    // Hidden mode: completely invisible to restricted players
-                    if (hasRestriction && vMode === "hidden" && previewAsPlayerId && !isPlayerAllowed) {
-                      return null;
-                    }
-
-                    const showContent = !previewAsPlayerId || isPlayerAllowed || isRevealed;
-                    const showDivider = page.showDividers && (hasBody || idx > 0);
-
-                    return (
-                      <div key={panel.id} id={`panel-${panel.id}`} className="mb-6">
-                        {isBlank ? (
-                          <div style={DISPLAY_CONTENTS}>
-                            {showDivider && (
-                              <div className="mb-4" style={{ height: 1, background: `linear-gradient(90deg, ${borderColor}, ${accent}44, ${borderColor})` }} />
-                            )}
-                            {showContent ? (
-                              <div style={DISPLAY_CONTENTS}>
-                                {panel.title && (
-                                  <div className="mb-3 pb-1" style={{ borderBottom: page.showDividers ? `1px solid ${borderColor}` : "none" }}>
-                                    <h2 className="text-[18px]" style={{ color: accent, fontWeight: 600, fontFamily: font }}>{panel.title}</h2>
-                                    {panel.subtitle && (
-                                      <p className="text-[11px] italic mt-0.5" style={{ color: mutedText, fontFamily: font }}>{panel.subtitle}</p>
-                                    )}
-                                  </div>
-                                )}
-                                {hasRestriction && !previewAsPlayerId && (
-                                  <div className="flex items-center gap-1 mb-2 text-[9px]" style={{ color: "#FF6ABB" }}>
-                                    <Lock size={8} /> Restricted: {panel.assignedTo.map((pid) => players.find((p) => p.id === pid)?.name || "?").join(", ")}
-                                  </div>
-                                )}
-                                {!isPlayerAllowed && isRevealed && (
-                                  <div className="flex items-center gap-2 px-3 py-1.5 mb-3 text-[10px]" style={{ background: "#1A0A0A", border: "1px solid #3A1A1A", color: "#FF8A6A" }}>
-                                    <AlertTriangle size={10} />
-                                    <span>You chose to reveal this section. This content may not be intended for your character.</span>
-                                  </div>
-                                )}
-                                {panel.content && (
-                                  <RenderFormattedText text={panel.content} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} sectionRevealed={showContent} />
-                                )}
-                                {!panel.content && !panel.title && (
-                                  <span className="text-[12px] italic" style={{ color: mutedText }}>Empty section. Edit in the Content tab.</span>
-                                )}
-                              </div>
-                            ) : (
-                              <div style={DISPLAY_CONTENTS}>
-                                {panel.title && (
-                                  <h2 className="text-[18px] mb-2" style={{ color: accent, fontWeight: 600, fontFamily: font }}>{panel.title}</h2>
-                                )}
-                                <div className="relative overflow-hidden" style={{ minHeight: 80 }}>
-                                  <div style={{ filter: "blur(8px)", opacity: 0.15, padding: "12px 16px", pointerEvents: "none", userSelect: "none" }}>
-                                    <div style={{ color: txt, fontFamily: font, fontSize: 13 }}>This content is hidden behind a spoiler warning...</div>
-                                  </div>
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2" style={{ background: "linear-gradient(180deg, #0C0C2EEE, #0C0C2EFF)", backdropFilter: "blur(4px)" }}>
-                                    <div className="flex items-center gap-2">
-                                      <Shield size={16} style={S_RED} />
-                                      <div>
-                                        <div className="text-[12px]" style={{ color: "#FF6A6A", fontWeight: 700, fontFamily: font }}>Spoiler / Metagame Warning</div>
-                                        <div className="text-[10px] mt-0.5" style={{ color: "#8A5A5A", fontFamily: font }}>Not intended for {previewPlayer?.name || "this player"}'s character.</div>
-                                      </div>
-                                    </div>
-                                    <button onClick={() => setRevealedPanels((prev) => new Set([...prev, panel.id]))} className="px-4 py-1.5 text-[11px] flex items-center gap-2 hover:opacity-90" style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600, fontFamily: font }}>
-                                      <Eye size={11} /> Show Anyway
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div style={{ border: `1px solid ${ps.border}`, background: ps.bg }}>
-                            <div className="px-4 py-2 flex flex-col gap-0.5 border-b" style={{ borderBottomColor: ps.border, background: ps.bg === "transparent" ? "transparent" : darken(ps.bg, 5) }}>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[13px] flex-1" style={{ color: ps.accent, fontWeight: 600, fontFamily: font }}>{panel.title || "Untitled Section"}</span>
-                                {hasRestriction && (
-                                  <span className="text-[9px] px-2 py-0.5 flex items-center gap-1" style={{ color: vMode === "hidden" ? "#FF6A6A" : "#FF6ABB", background: "#1A0A1A", border: "1px solid #3A1A3B" }}>
-                                    {vMode === "hidden" ? <EyeOff size={8} /> : <Lock size={8} />}
-                                    {!previewAsPlayerId
-                                      ? panel.assignedTo.map((pid) => players.find((p) => p.id === pid)?.name || "?").join(", ")
-                                      : vMode === "hidden" ? "Hidden" : "Restricted"
-                                    }
-                                  </span>
-                                )}
-                              </div>
-                              {panel.subtitle && (
-                                <span className="text-[10px]" style={{ color: ps.accent, opacity: 0.6, fontFamily: font }}>{panel.subtitle}</span>
-                              )}
-                            </div>
-                            {showContent ? (
-                              <div className="px-4 py-3">
-                                {!isPlayerAllowed && isRevealed && (
-                                  <div className="flex items-center gap-2 px-3 py-1.5 mb-3 text-[10px]" style={{ background: "#1A0A0A", border: "1px solid #3A1A1A", color: "#FF8A6A" }}>
-                                    <AlertTriangle size={10} />
-                                    <span>You chose to reveal this section. This content may not be intended for your character.</span>
-                                  </div>
-                                )}
-                                {panel.content ? (
-                                  <RenderFormattedText text={panel.content} color={txt} font={font} currentPlayerId={previewAsPlayerId || undefined} isDM={!previewAsPlayerId} sectionRevealed={showContent} />
-                                ) : (
-                                  <span className="text-[12px] italic" style={{ color: mutedText }}>No content yet. Edit in the Content tab.</span>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="relative overflow-hidden" style={{ minHeight: 120 }}>
-                                <div style={{ filter: "blur(8px)", opacity: 0.15, padding: "16px 20px", pointerEvents: "none", userSelect: "none" }}>
-                                  <div style={{ color: txt, fontFamily: font, fontSize: 13 }}>This content is hidden behind a spoiler/metagame warning...</div>
-                                </div>
-                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3" style={{ background: ps.bg === "transparent" ? "linear-gradient(180deg, #0C0C2EEE 0%, #0C0C2EFF 100%)" : `linear-gradient(180deg, ${darken(ps.bg, 5)}EE 0%, ${ps.bg}FF 100%)`, backdropFilter: "blur(4px)" }}>
-                                  <div className="flex items-center gap-2">
-                                    <Shield size={20} style={S_RED} />
-                                    <div>
-                                      <div className="text-[13px]" style={{ ...S_RED, fontWeight: 700, fontFamily: font }}>Spoiler / Metagame Warning</div>
-                                      <div className="text-[11px] mt-0.5" style={{ color: "#8A5A5A", fontFamily: font }}>This section contains information not intended for {previewPlayer?.name || "this player"}'s character.</div>
-                                    </div>
-                                  </div>
-                                  <button onClick={() => setRevealedPanels((prev) => new Set([...prev, panel.id]))} className="px-5 py-2 text-[12px] flex items-center gap-2 hover:opacity-90" style={{ color: "#FF8A6A", background: "#1A0A0A", border: "1px solid #5A2A2A", fontWeight: 600, fontFamily: font }}>
-                                    <Eye size={12} /> Show Anyway
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {/* No content */}
-                  {!hasContent && panels.length === 0 && (
-                    <div className="p-8 text-center border-2" style={{ background: bg, borderColor }}>
-                      <span className="text-[13px]" style={{ color: mutedText, fontFamily: font }}>
-                        This article has no content yet. Use the sidebar to add content.
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Wiki Tag Custom Fields */}
-                  {(() => {
-                    const appliedTags = (page.wikiTags || []).map((name) => ({
-                      name,
-                      def: wikiTagDefs.find((d) => d.name === name),
-                    })).filter((t) => t.def && t.def.fields.length > 0);
-                    const fields = page.wikiTagFields || {};
-                    const hasAnyValue = appliedTags.some((t) => t.def!.fields.some((f) => fields[`${t.name}::${f.name}`]));
-                    if (appliedTags.length === 0 || !hasAnyValue) return null;
-                    return (
-                      <div className="mb-6">
-                        {page.showDividers && (
-                          <div className="mb-4" style={{ height: 1, background: `linear-gradient(90deg, ${borderColor}, ${accent}44, ${borderColor})` }} />
-                        )}
-                        <h2 className="text-[16px] mb-3 pb-1" style={{ color: accent, fontWeight: 600, fontFamily: font, borderBottom: page.showDividers ? `1px solid ${borderColor}` : "none" }}>
-                          Article Properties
-                        </h2>
-                        <div className="space-y-2">
-                          {appliedTags.map((t) => {
-                            const filledFields = t.def!.fields.filter((f) => fields[`${t.name}::${f.name}`]);
-                            if (filledFields.length === 0) return null;
-                            return (
-                              <div key={t.name} className="flex flex-wrap gap-x-6 gap-y-1">
-                                <span className="text-[11px] w-full mb-0.5" style={{ color: "#9A7ABB", fontWeight: 600, fontFamily: font }}>{t.name}</span>
-                                {filledFields.map((f) => (
-                                  <div key={f.id} className="flex items-baseline gap-1.5">
-                                    <span className="text-[10px]" style={{ color: mutedText }}>{f.name}:</span>
-                                    <span className="text-[11px]" style={{ color: txt }}>{fields[`${t.name}::${f.name}`]}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Footer */}
-                  <div className="text-center mt-8 pb-4">
-                    {page.showDividers && (
-                      <div className="mb-4 mx-auto max-w-[300px]" style={{ height: 1, background: `linear-gradient(90deg, transparent, ${borderColor}, transparent)` }} />
-                    )}
-                    {page.footerText ? (
-                      <span className="text-[10px]" style={{ color: mutedText, fontFamily: font }}>{page.footerText}</span>
-                    ) : (
-                      <span className="text-[10px]" style={{ color: mutedText }}>
-                        I-Net Wiki | Category: {page.category || "Uncategorized"} | Last updated: {page.dateAdded}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          </div>);
-          })()}
-        </div>
-      </div>
-
-
-      {/* Draft restore prompt */}
-      {showDraftRestore && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(3px)" }}>
-          <div className="w-[400px] p-6" style={{ background: "#0C0C2E", border: "2px solid #2A2A5B" }}>
-            <div className="flex items-center gap-2 mb-3">
-              <AlertTriangle size={16} style={S_WARN} />
-              <span className="text-[14px]" style={{ ...S_TEXT, fontWeight: 600 }}>Restore Draft?</span>
-            </div>
-            <p className="text-[12px] mb-4" style={S_SUBTLE}>
-              A previously auto-saved draft was found for this article. Would you like to restore it?
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={discardDraft} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_RED}>Discard Draft</button>
-              <button onClick={restoreDraft} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={{ color: "#FFFFFF", background: "#2A5ABB", borderColor: "#4A7BFF" }}>Restore Draft</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Template Picker */}
-      <TemplatePickerModal
-        open={showTemplatePicker}
-        onClose={() => setShowTemplatePicker(false)}
-        onSelect={applyTemplate}
-        onManage={() => { setShowTemplatePicker(false); setShowTemplateManager(true); }}
-      />
-
-      {/* Template Manager */}
-      <TemplateManagerModal
-        open={showTemplateManager}
-        onClose={() => setShowTemplateManager(false)}
-      />
-
-      {/* Wiki Link Dialog */}
-      <WikiLinkDialog
-        open={showLinkDialog}
-        onClose={() => setShowLinkDialog(false)}
-        onInsert={handleInsertWikiLink}
-        allPages={allPages}
-        currentPageId={page.id}
-      />
-
-      {/* Spoiler Box Insert Dialog */}
-      {showSpoilerInsert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(3px)" }} onClick={(e) => { if (e.target === e.currentTarget) setShowSpoilerInsert(false); }}>
-          <div className="w-[450px]" style={{ background: "#0C0C2E", border: "2px solid #2A2A5B" }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b-2" style={{ borderBottomColor: "#1A1A4B", background: "#0E0E35" }}>
-              <div className="flex items-center gap-2">
-                <Shield size={14} style={S_RED} />
-                <span className="text-[13px]" style={{ ...S_TEXT, fontWeight: 600 }}>Insert Spoiler Box</span>
-              </div>
-              <button onClick={() => setShowSpoilerInsert(false)} className="hover:opacity-80"><X size={14} style={S_MUTED} /></button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div className="text-[10px] px-3 py-2" style={{ background: "#0A1A2A", border: "1px solid #1A3A5B", color: "#7A9ABB" }}>
-                Insert an inline spoiler box into the content. Players not in the allowed list will see blurred text they can click to reveal.
-              </div>
-              <div>
-                <label style={labelStyle}>Insert Into</label>
-                <select value={spoilerInsertTarget} onChange={(e) => setSpoilerInsertTarget(e.target.value)} className={`${inputClass} cursor-pointer`} style={inputStyle}>
-                  <option value="body">Main Body</option>
-                  {panels.map((p, i) => (
-                    <option key={p.id} value={p.id}>{p.title || `Section ${i + 1}`}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Spoiler Label</label>
-                <input type="text" value={spoilerLabel} onChange={(e) => setSpoilerLabel(e.target.value)} placeholder="Spoiler" className={inputClass} style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>Spoiler Content *</label>
-                <textarea value={spoilerContent} onChange={(e) => setSpoilerContent(e.target.value)} placeholder="The hidden text..." rows={3} className={`${inputClass} resize-none`} style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>
-                  <Shield size={9} className="inline mr-1" />Visible To (leave empty = everyone must reveal)
-                </label>
-                <div className="space-y-1 mt-1">
-                  {players.map((player) => {
-                    const selected = spoilerPlayerIds.includes(player.id);
-                    return (
-                      <button
-                        key={player.id}
-                        onClick={() => setSpoilerPlayerIds(selected ? spoilerPlayerIds.filter((pid) => pid !== player.id) : [...spoilerPlayerIds, player.id])}
-                        className="flex items-center gap-2 w-full text-left px-2 py-1.5 text-[11px] transition-colors hover:bg-[#0A0A30]"
-                        style={{
-                          color: selected ? "#C0D0F0" : "#5A6A8A",
-                          background: selected ? "#0A1A3A" : "transparent",
-                          border: selected ? "1px solid #2A4A6B" : "1px solid transparent",
-                        }}
-                      >
-                        {selected ? <Eye size={10} style={{ color: "#4AFF6A" }} /> : <EyeOff size={10} style={S_DIM} />}
-                        <span style={{ fontWeight: selected ? 600 : 400 }}>{player.name}</span>
-                        <span className="text-[9px] ml-auto" style={S_DIM}>{player.class} Lv{player.level}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 px-4 py-3 border-t" style={{ borderTopColor: "#1A1A4B" }}>
-              <button onClick={() => setShowSpoilerInsert(false)} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_SUBTLE}>Cancel</button>
-              <button onClick={handleInsertSpoiler} disabled={!spoilerContent.trim()} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={{ color: spoilerContent.trim() ? "#FFFFFF" : "#3A4A6A", background: spoilerContent.trim() ? "#5A0A0A" : "#0A0A28", borderColor: spoilerContent.trim() ? "#FF6A6A" : "#1A2A4B" }}>
-                <Shield size={10} className="inline mr-1" /> Insert Spoiler
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ImageStoragePickerModal
-        open={!!imagePickerTarget}
-        images={storedImages}
-        title="Wiki Image Storage"
-        fallbackMode={sharedImageStorageFallback}
-        onClose={() => setImagePickerTarget(null)}
-        onSelect={handleStoredImageSelect}
-        onUploadFiles={handleStoredImageUpload}
-      />
-
-      {/* Image Embed Dialog */}
-      {showImageEmbed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(3px)" }} onClick={(e) => { if (e.target === e.currentTarget) setShowImageEmbed(false); }}>
-          <div className="w-[450px]" style={{ background: "#0C0C2E", border: "2px solid #2A2A5B" }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b-2" style={{ borderBottomColor: "#1A1A4B", background: "#0E0E35" }}>
-              <div className="flex items-center gap-2">
-                <ImageIcon size={14} style={{ color: "#4AFF6A" }} />
-                <span className="text-[13px]" style={{ color: "#C0D0F0", fontWeight: 600 }}>Embed Image</span>
-              </div>
-              <button onClick={() => setShowImageEmbed(false)} className="hover:opacity-80"><X size={14} style={S_MUTED} /></button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label style={labelStyle}>Image URL *</label>
-                <input type="text" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://..." className={inputClass} style={inputStyle} />
-              </div>
-              <button
-                onClick={() => openImageStoragePicker({ mode: "embed" })}
-                className={`${retro.button} px-3 py-1.5 text-[10px]`}
-                style={S_ACCENT}
-              >
-                Choose From Image Storage / Upload
-              </button>
-              <div>
-                <label style={labelStyle}>Caption</label>
-                <input type="text" value={imageCaption} onChange={(e) => setImageCaption(e.target.value)} placeholder="Optional caption text..." className={inputClass} style={inputStyle} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label style={labelStyle}>Alignment</label>
-                  <div className="flex gap-1 mt-1">
-                    {(["left", "center", "right"] as const).map((a) => (
-                      <button key={a} onClick={() => setImageAlign(a)} className="text-[10px] px-3 py-1 flex-1" style={{ color: imageAlign === a ? "#C0D0F0" : "#5A6A8A", background: imageAlign === a ? "#1A1A5B" : "transparent", border: imageAlign === a ? "1px solid #4A7BFF" : "1px solid #1A2A4B" }}>
-                        {a.charAt(0).toUpperCase() + a.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>Width (%)</label>
-                  <input type="number" min="10" max="100" value={imageWidth} onChange={(e) => setImageWidth(e.target.value)} className={inputClass} style={inputStyle} />
-                </div>
-              </div>
-              {imageUrl && (
-                <div className="p-2" style={{ background: "#080820", border: "1px solid #1A2A4B" }}>
-                  <img src={imageUrl} alt="Preview" style={{ maxWidth: "100%", maxHeight: 150, margin: "0 auto", display: "block", borderRadius: 3 }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end gap-2 px-4 py-3 border-t" style={{ borderTopColor: "#1A1A4B" }}>
-              <button onClick={() => setShowImageEmbed(false)} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={S_SUBTLE}>Cancel</button>
-              <button onClick={handleInsertImage} disabled={!imageUrl.trim()} className={`${retro.button} px-4 py-1.5 text-[11px]`} style={{ color: imageUrl.trim() ? "#FFFFFF" : "#3A4A6A", background: imageUrl.trim() ? "#0A5A0A" : "#0A0A28", borderColor: imageUrl.trim() ? "#4AFF6A" : "#1A2A4B" }}>
-                <ImageIcon size={10} className="inline mr-1" /> Insert Image
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
   );
 }

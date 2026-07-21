@@ -16,13 +16,14 @@ export interface WikiCanvasSettings {
   canvasHeight: number;
   minCanvasHeight: number;
   preset: WikiCanvasPreset;
+  compactHeaderLayout: boolean;
   articleChromeLayouts?: WikiArticleChromeLayouts;
 }
 
 export const WIKI_CANVAS_PRESETS: Record<WikiCanvasPreset, WikiCanvasSettings> = {
-  standard: { frameWidth: 1480, canvasHeight: 1480, minCanvasHeight: 1320, preset: "standard" },
-  large: { frameWidth: 1540, canvasHeight: 1720, minCanvasHeight: 1480, preset: "large" },
-  referenceWide: { frameWidth: 1600, canvasHeight: 1840, minCanvasHeight: 1560, preset: "referenceWide" },
+  standard: { frameWidth: 1480, canvasHeight: 1480, minCanvasHeight: 1320, preset: "standard", compactHeaderLayout: false },
+  large: { frameWidth: 1540, canvasHeight: 1720, minCanvasHeight: 1480, preset: "large", compactHeaderLayout: false },
+  referenceWide: { frameWidth: 1600, canvasHeight: 1840, minCanvasHeight: 1560, preset: "referenceWide", compactHeaderLayout: false },
 };
 
 export const DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS: WikiArticleChromeLayouts = {
@@ -1258,6 +1259,7 @@ export function normalizeWikiCanvasSettings(settings?: Partial<WikiCanvasSetting
     frameWidth: settings?.frameWidth ? frameWidth : base.frameWidth,
     minCanvasHeight: settings?.minCanvasHeight ? minCanvasHeight : base.minCanvasHeight,
     canvasHeight: settings?.canvasHeight ? canvasHeight : base.canvasHeight,
+    compactHeaderLayout: settings?.compactHeaderLayout === true,
     articleChromeLayouts,
   };
 }

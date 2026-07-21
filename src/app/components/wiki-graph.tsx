@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router";
+import { Navigate, useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import {
   ArrowLeft, ZoomIn, ZoomOut, Maximize2, Filter,
   Eye, FileText, Link2, Tag, FolderOpen, BookOpen,
 } from "lucide-react";
-import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_LINK, S_MUTED, S_SUBTLE } from "./shared-styles";
 import { collectWikiBlockHtmlStrings, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
+import { getInverseWikiRelationshipType } from "@/lib/wiki-article-relationships";
+import { migrateWikiSectionsToPanels } from "@/lib/wiki-panel-layout";
+import { loadWikiBootstrap } from "@/lib/player-state-api";
+import { safeGetItem, safeGetJson } from "./safe-storage";
 
 // Types
 interface SitePage {
@@ -44,6 +47,8 @@ interface GraphEdge {
   source: string;
   target: string;
   type: "seeAlso" | "subcategory" | "wikiLink" | "related" | "relationship" | "sharedWikiTag";
+  relationshipType?: string;
+  note?: string;
 }
 
 // Category colors
@@ -86,21 +91,9 @@ function extractBracketWikiLinks(html: string, titleToId: Map<string, string>): 
   return ids;
 }
 
-function migrateSectionsToPanels(pg: SitePage): { id: string; title: string; content: string }[] {
-  const existingPanels = (pg.panels || []).map((p) => ({ id: p.id, title: p.title, content: p.content }));
-  const legacySections = (pg.sections || []);
-  if (legacySections.length === 0) return existingPanels;
-  const converted = legacySections.map((sec) => ({
-    id: sec.id.startsWith("sec-") ? sec.id.replace("sec-", "panel-") : `panel-${sec.id}`,
-    title: sec.heading || "",
-    content: sec.body || "",
-  }));
-  return [...converted, ...existingPanels];
-}
-
 function extractAllWikiLinks(page: SitePage, titleToId: Map<string, string>): string[] {
   const ids = new Set<string>();
-  const allPanels = migrateSectionsToPanels(page);
+  const allPanels = migrateWikiSectionsToPanels(page);
   const texts = [
     page.body || "",
     ...allPanels.map((p) => p.content || ""),
@@ -177,6 +170,13 @@ function applyForces(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 
 // Main Component
 export function WikiGraph() {
+  if ((safeGetItem("inet-user-id") || "") !== "dm") {
+    return <Navigate to="/interface" replace />;
+  }
+  return <WikiGraphWorkspace />;
+}
+
+function WikiGraphWorkspace() {
   const navigate = useNavigate();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -194,16 +194,31 @@ export function WikiGraph() {
   const [isSimulating, setIsSimulating] = useState(true);
   const [graphReady, setGraphReady] = useState(false);
   const [pages, setPages] = useState<SitePage[]>([]);
+  const [pagesLoaded, setPagesLoaded] = useState(false);
+  const [graphLoadError, setGraphLoadError] = useState("");
   const tickCountRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    void appStore.listSites<SitePage>().then((rows) => { if (!cancelled) setPages(rows); }).catch(() => { if (!cancelled) setPages([]); });
+    void loadWikiBootstrap()
+      .then((bootstrap) => {
+        if (cancelled) return;
+        setPages(Array.isArray(bootstrap?.sites) ? bootstrap.sites as SitePage[] : []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPages(safeGetJson<SitePage[]>("inet-dm-sites", []));
+        setGraphLoadError(err instanceof Error ? err.message : "Failed to load wiki articles");
+      })
+      .finally(() => {
+        if (!cancelled) setPagesLoaded(true);
+      });
     return () => { cancelled = true; };
   }, []);
 
   // Build graph from remote wiki data
   useEffect(() => {
+    if (!pagesLoaded) return;
     const pageIds = new Set(pages.map((p) => p.id));
 
     const nodes: GraphNode[] = pages.map((p, i) => {
@@ -225,12 +240,15 @@ export function WikiGraph() {
 
     const edges: GraphEdge[] = [];
     const edgeSet = new Set<string>();
-    const addEdge = (src: string, tgt: string, type: GraphEdge["type"]) => {
+    const addEdge = (src: string, tgt: string, type: GraphEdge["type"], details?: Pick<GraphEdge, "relationshipType" | "note">) => {
       if (!pageIds.has(src) || !pageIds.has(tgt) || src === tgt) return;
-      const key = [src, tgt].sort().join("__") + type;
+      const relationshipType = details?.relationshipType?.trim().toLowerCase() || "";
+      const key = type === "relationship"
+        ? `${src}__${tgt}__${type}__${relationshipType}`
+        : `${[src, tgt].sort().join("__")}__${type}`;
       if (edgeSet.has(key)) return;
       edgeSet.add(key);
-      edges.push({ source: src, target: tgt, type });
+      edges.push({ source: src, target: tgt, type, ...details });
     };
 
     const titleToId = new Map<string, string>();
@@ -245,7 +263,12 @@ export function WikiGraph() {
       (page.relatedArticleIds || []).forEach((targetId) => addEdge(page.id, targetId, "related"));
       // Structured article relationships
       (page.relationships || []).forEach((relationship) => {
-        if (relationship.targetArticleId) addEdge(page.id, relationship.targetArticleId, "relationship");
+        if (relationship.targetArticleId) {
+          addEdge(page.id, relationship.targetArticleId, "relationship", {
+            relationshipType: relationship.type || "related to",
+            note: relationship.note,
+          });
+        }
       });
       // Subcategory article links
       const walkSub = (subs: SitePage["subcategories"]) => {
@@ -283,7 +306,7 @@ export function WikiGraph() {
     setIsSimulating(true);
     tickCountRef.current = 0;
     setGraphReady(true);
-  }, [dimensions.h, dimensions.w, pages]);
+  }, [dimensions.h, dimensions.w, pages, pagesLoaded]);
 
   // Resize observer
   useEffect(() => {
@@ -394,6 +417,40 @@ export function WikiGraph() {
         ctx.lineTo(t.x, t.y);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        if (edge.type === "relationship") {
+          const angle = Math.atan2(t.y - s.y, t.x - s.x);
+          const targetRadius = Math.max(8, Math.min(20, 8 + t.connectionCount * 2));
+          const tipX = t.x - Math.cos(angle) * (targetRadius + 3);
+          const tipY = t.y - Math.sin(angle) * (targetRadius + 3);
+          const arrowSize = 5;
+          ctx.beginPath();
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(
+            tipX - Math.cos(angle - Math.PI / 6) * arrowSize,
+            tipY - Math.sin(angle - Math.PI / 6) * arrowSize,
+          );
+          ctx.lineTo(
+            tipX - Math.cos(angle + Math.PI / 6) * arrowSize,
+            tipY - Math.sin(angle + Math.PI / 6) * arrowSize,
+          );
+          ctx.closePath();
+          ctx.fillStyle = EDGE_COLORS.relationship.replace("55", hoveredNode && (hoveredNode.id === edge.source || hoveredNode.id === edge.target) ? "DD" : "99");
+          ctx.fill();
+
+          const relationshipLabel = edge.relationshipType || "related to";
+          const labelX = (s.x + t.x) / 2;
+          const labelY = (s.y + t.y) / 2 - 7;
+          ctx.font = `${Math.max(9, 9 / zoom)}px Tahoma, Verdana, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          const labelWidth = ctx.measureText(relationshipLabel).width;
+          ctx.fillStyle = "#060620E6";
+          ctx.fillRect(labelX - labelWidth / 2 - 4, labelY - 7, labelWidth + 8, 14);
+          ctx.fillStyle = hoveredNode && (hoveredNode.id === edge.source || hoveredNode.id === edge.target) ? "#BDEFFF" : "#72CFE0";
+          ctx.fillText(relationshipLabel, labelX, labelY);
+          ctx.textBaseline = "alphabetic";
+        }
       }
 
       // Draw nodes
@@ -442,7 +499,9 @@ export function WikiGraph() {
 
       ctx.restore();
 
-      animFrameRef.current = requestAnimationFrame(render);
+      if ((isSimulating && tickCountRef.current < 200) || isDragging) {
+        animFrameRef.current = requestAnimationFrame(render);
+      }
     };
 
     animFrameRef.current = requestAnimationFrame(render);
@@ -450,7 +509,7 @@ export function WikiGraph() {
       running = false;
       cancelAnimationFrame(animFrameRef.current);
     };
-  }, [dimensions, zoom, panOffset, hoveredNode, selectedNode, filterCategory, filterWikiTag, isSimulating]);
+  }, [dimensions, zoom, panOffset, hoveredNode, selectedNode, filterCategory, filterWikiTag, isSimulating, isDragging]);
 
   // Mouse handling
   const getNodeAt = useCallback((clientX: number, clientY: number): GraphNode | null => {
@@ -528,6 +587,22 @@ export function WikiGraph() {
     { type: "relationship", label: "Relationship", color: "#6AEAFF" },
     { type: "sharedWikiTag", label: "Shared Wiki Tag", color: "#9A7ABB" },
   ];
+  const selectedRelationshipConnections = selectedNode
+    ? edgesRef.current.flatMap((edge, index) => {
+        if (edge.type !== "relationship" || (edge.source !== selectedNode.id && edge.target !== selectedNode.id)) return [];
+        const outgoing = edge.source === selectedNode.id;
+        const otherId = outgoing ? edge.target : edge.source;
+        const other = nodesRef.current.find((node) => node.id === otherId);
+        if (!other) return [];
+        const sourceType = edge.relationshipType || "related to";
+        return [{
+          id: `${edge.source}-${edge.target}-${sourceType}-${index}`,
+          type: outgoing ? sourceType : getInverseWikiRelationshipType(sourceType) || "linked from",
+          target: other,
+          note: edge.note || "",
+        }];
+      })
+    : [];
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#060620", fontFamily: "'Tahoma', 'Verdana', sans-serif" }}>
@@ -597,6 +672,9 @@ export function WikiGraph() {
         <canvas
           ref={canvasRef}
           className="absolute inset-0"
+          role="img"
+          aria-label="Interactive article relationship graph. Select an article from the adjacent details list for keyboard access."
+          tabIndex={0}
           onMouseMove={handleMouseMove}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
@@ -667,6 +745,23 @@ export function WikiGraph() {
                 <Link2 size={9} style={S_MUTED} />
                 <span style={S_SUBTLE}>{selectedNode.connectionCount} connections</span>
               </div>
+              {selectedRelationshipConnections.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  {selectedRelationshipConnections.map((connection) => (
+                    <button
+                      key={connection.id}
+                      type="button"
+                      onClick={() => setSelectedNode(connection.target)}
+                      className="block w-full truncate text-left text-[9px] hover:opacity-80"
+                      style={{ color: "#72CFE0" }}
+                      title={connection.note || `This article ${connection.type} ${connection.target.title}`}
+                    >
+                      <span style={S_DIM}>This article {connection.type} </span>
+                      <span className="underline">{connection.target.title}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               {selectedNode.tags.length > 0 && (
                 <div className="flex items-start gap-2">
                   <Tag size={9} className="shrink-0 mt-0.5" style={S_MUTED} />
@@ -712,8 +807,10 @@ export function WikiGraph() {
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center p-8" style={{ background: "#0C0C2ECC", border: "1px solid #1A1A4B" }}>
               <Link2 size={40} style={{ color: "#2A3A5A" }} className="mx-auto mb-4" />
-              <div className="text-[14px] mb-2" style={S_MUTED}>No Articles Yet</div>
-              <div className="text-[11px] mb-4" style={S_DIM}>Create some wiki articles in Wiki Studio to see their connections here.</div>
+              <div className="text-[14px] mb-2" style={S_MUTED}>{graphLoadError ? "Articles Could Not Be Loaded" : "No Articles Yet"}</div>
+              <div className="text-[11px] mb-4" style={S_DIM}>
+                {graphLoadError ? graphLoadError : "Create some wiki articles in Wiki Studio to see their connections here."}
+              </div>
               <button
                 onClick={() => navigate("/interface/wiki-studio")}
                 className={`${retro.button} px-4 py-2 text-[11px]`}

@@ -18,6 +18,17 @@ type PanelLike = {
   style?: string;
 } & WikiPanelLayoutFields;
 
+type ContentPanelLike = PanelLike & {
+  title?: string;
+  content?: string;
+};
+
+interface LegacyWikiSection {
+  id: string;
+  heading?: string;
+  body?: string;
+}
+
 export function getWikiPanelPlacement(panel: WikiPanelLayoutFields | null | undefined): WikiPanelPlacement {
   return panel?.placement === "sidebar" ? "sidebar" : "body";
 }
@@ -61,6 +72,28 @@ export function normalizeWikiPanels<T extends PanelLike>(panels: T[] | null | un
   style: string;
 }> {
   return (panels || []).map((panel) => normalizeWikiPanel(panel));
+}
+
+export function migrateWikiSectionsToPanels<T extends ContentPanelLike>(page: {
+  panels?: T[];
+  sections?: LegacyWikiSection[];
+}) {
+  const existingPanels = normalizeWikiPanels(page.panels);
+  const converted = (page.sections || []).map((section) => normalizeWikiPanel({
+    id: section.id.startsWith("sec-") ? section.id.replace("sec-", "panel-") : `panel-${section.id}`,
+    title: section.heading || "",
+    subtitle: "",
+    content: section.body || "",
+    assignedTo: [],
+    style: "blank",
+    placement: "body" as const,
+    width: "full" as const,
+    mediaUrl: "",
+    mediaCaption: "",
+    mediaAlt: "",
+    mediaPosition: "top" as const,
+  }));
+  return [...converted, ...existingPanels];
 }
 
 export function groupBodyPanelsIntoRows<T extends WikiPanelLayoutFields>(panels: T[]): T[][] {

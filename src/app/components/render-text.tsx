@@ -1,7 +1,8 @@
 ﻿import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { safeGetItem } from "./safe-storage";
-import { appStore } from "@/lib/app-store";
+import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";
+import { sanitizeRichHtml } from "@/lib/sanitize-rich-html";
 
 interface ArticleLookupEntry {
   id: string;
@@ -20,7 +21,7 @@ function containsHtml(text: string): boolean {
 }
 
 /**
- * Builds a lookup map from article title (lowercased) â†’ { id, title }
+ * Builds a lookup map from article title (lowercased) to { id, title }.
  * Uses shared wiki data with local storage fallback.
  */
 function buildArticleLookup(pages: ArticleLookupEntry[]): Map<string, ArticleLookupEntry> {
@@ -45,15 +46,17 @@ function loadLocalArticleLookup(): Map<string, ArticleLookupEntry> {
 function loadSharedArticleLookup(): Promise<Map<string, ArticleLookupEntry>> {
   if (sharedArticleLookupCache) return Promise.resolve(sharedArticleLookupCache);
   if (!sharedArticleLookupPromise) {
-    sharedArticleLookupPromise = appStore.listSites<ArticleLookupEntry>()
-      .then((pages) => {
+    sharedArticleLookupPromise = loadPlayerWikiBootstrap()
+      .then((bootstrap) => {
+        const pages = Array.isArray(bootstrap?.sites) ? bootstrap.sites as ArticleLookupEntry[] : [];
         const lookup = buildArticleLookup(Array.isArray(pages) ? pages : []);
         sharedArticleLookupCache = lookup;
         return lookup;
       })
-      .catch((error) => {
-        sharedArticleLookupPromise = null;
-        throw error;
+      .catch(() => {
+        const lookup = loadLocalArticleLookup();
+        sharedArticleLookupCache = lookup;
+        return lookup;
       });
   }
   return sharedArticleLookupPromise;
@@ -70,6 +73,27 @@ export function refreshWikiArticleLookup(pages: ArticleLookupEntry[]): void {
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function resolveStoredWikiAnchors(html: string, lookup: Map<string, ArticleLookupEntry>) {
+  if (typeof DOMParser === "undefined") return html;
+  const documentNode = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const root = documentNode.body.firstElementChild;
+  if (!root) return "";
+  const availableArticleIds = new Set(Array.from(lookup.values(), (article) => article.id));
+  root.querySelectorAll<HTMLAnchorElement>("a[data-article-id], a[href*='/interface/inet-page/']").forEach((anchor) => {
+    const hrefMatch = anchor.getAttribute("href")?.match(/\/interface\/inet-page\/([^/?#]+)/);
+    let hrefArticleId = hrefMatch?.[1] || "";
+    try { hrefArticleId = decodeURIComponent(hrefArticleId); } catch {}
+    const articleId = anchor.dataset.articleId || hrefArticleId;
+    if (!articleId || availableArticleIds.has(articleId)) return;
+    const replacement = documentNode.createElement("span");
+    replacement.className = "wiki-link-broken";
+    replacement.textContent = "Unavailable article";
+    replacement.title = "This article is unavailable or restricted.";
+    anchor.replaceWith(replacement);
+  });
+  return root.innerHTML;
 }
 
 /**
@@ -133,9 +157,9 @@ function parseWikiLinks(
  * dangerouslySetInnerHTML with appropriate wrapper styling.
  *
  * Otherwise, falls back to the original simple heading markup:
- *   # line   â†’ big text, bold
- *   ## line  â†’ medium text, bold
- *   ### line â†’ italicized text
+ *   # line   -> big text, bold
+ *   ## line  -> medium text, bold
+ *   ### line -> italicized text
  *
  * All other lines render as normal body text.
  * Each newline in the source becomes its own line.
@@ -236,7 +260,7 @@ export function RenderFormattedText({
       existingOverlays.forEach((o) => o.remove());
 
       if (canSee) {
-        // User can see â€” show with subtle indicator
+        // User can see the content, so show a subtle indicator.
         span.style.filter = "none";
         span.style.cursor = "auto";
         if (allowedPlayers.length > 0) {
@@ -253,7 +277,7 @@ export function RenderFormattedText({
         badge.textContent = "(revealed)";
         span.appendChild(badge);
       } else {
-        // Hidden â€” apply blur and cover
+        // Hidden content receives a blur and cover.
         const children = Array.from(span.childNodes);
         let contentWrapper = span.querySelector(".spoiler-inner-content") as HTMLElement | null;
         if (!contentWrapper) {
@@ -283,7 +307,7 @@ export function RenderFormattedText({
     });
   }, [currentPlayerId, isDM, sectionRevealed, revealedSpoilers, text]);
 
-  // â”€â”€ HTML content from rich text editor â”€â”€
+  // HTML content from the rich text editor.
   if (containsHtml(text)) {
     // Process wiki links in HTML: [[Article Name]] or [[Article Name|Display Text]]
     const processedHtml = text.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (_match, articleName, displayText) => {
@@ -299,7 +323,7 @@ export function RenderFormattedText({
         <div
           ref={contentRef}
           className="rich-text-rendered"
-          dangerouslySetInnerHTML={{ __html: processedHtml }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(resolveStoredWikiAnchors(processedHtml, articleLookup)) }}
           onClick={(e) => { handleLinkClick(e); handleSpoilerClick(e); }}
           style={{
             color,
@@ -383,13 +407,13 @@ export function RenderFormattedText({
     );
   }
 
-  // â”€â”€ Legacy plain-text with heading markup â”€â”€
+  // Legacy plain-text with heading markup.
   const lines = text.split("\n");
 
   return (
     <div>
       {lines.map((raw, i) => {
-        // ### heading â†’ italic
+        // ### heading -> italic
         if (/^###\s+/.test(raw)) {
           const content = raw.replace(/^###\s+/, "");
           return (
@@ -408,7 +432,7 @@ export function RenderFormattedText({
           );
         }
 
-        // ## heading â†’ medium bold
+        // ## heading -> medium bold
         if (/^##\s+/.test(raw)) {
           const content = raw.replace(/^##\s+/, "");
           return (
@@ -429,7 +453,7 @@ export function RenderFormattedText({
           );
         }
 
-        // # heading â†’ big bold
+        // # heading -> big bold
         if (/^#\s+/.test(raw)) {
           const content = raw.replace(/^#\s+/, "");
           return (

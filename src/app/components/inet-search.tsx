@@ -13,7 +13,12 @@ import gnarpyImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { SUNKEN_INPUT, S_MUTED, S_DIM, S_ACCENT, S_TEXT, S_SUBTLE, S_LINK, S_ACCENT_HDR, S_TEXT_BOLD, S_WARN_HDR, S_WARN, S_LABEL, S_GREEN_BTN } from "./shared-styles";
 import { getWikiBlockSearchText, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
-import { appStore } from "@/lib/app-store";
+import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";
+import {
+  canExposeWikiArticle,
+  canListWikiArticle,
+  filterBrowsableWikiArticles,
+} from "@/lib/wiki-visibility";
 
 // ========================
 // Types
@@ -28,6 +33,7 @@ interface SearchResult {
   meta: string;
   pageId: string;
   dateAdded: string;
+  restricted?: boolean;
   articleQuality?: string;
 }
 
@@ -38,6 +44,8 @@ interface SitePage {
   description: string;
   category: string;
   dateAdded: string;
+  createdAt?: string;
+  updatedAt?: string;
   body?: string;
   sections?: { id: string; heading: string; body: string }[];
   articleQuality?: "featured" | "good" | "start" | "stub" | "draft";
@@ -68,6 +76,13 @@ function stripHtml(html: string): string {
   const div = document.createElement("div");
   div.innerHTML = html;
   return div.textContent || div.innerText || "";
+}
+
+function formatWikiDate(value: string | undefined, fallback = "Unknown date") {
+  const parsed = value ? new Date(value) : null;
+  return parsed && Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+    : fallback;
 }
 
 // Quality badge component
@@ -170,13 +185,10 @@ export function InetSearch() {
     let cancelled = false;
     const hydrateWikiData = async () => {
       try {
-        const [sites, tags] = await Promise.all([
-          appStore.listSites<SitePage>(),
-          appStore.listTags<{ id: string; name: string; description: string }>("wiki"),
-        ]);
+        const bootstrap = await loadPlayerWikiBootstrap();
         if (cancelled) return;
-        setSitePages(Array.isArray(sites) ? sites : []);
-        setWikiTagDefs(Array.isArray(tags) ? tags : []);
+        setSitePages(Array.isArray(bootstrap?.sites) ? bootstrap.sites as SitePage[] : []);
+        setWikiTagDefs(Array.isArray(bootstrap?.wikiTags) ? bootstrap.wikiTags : []);
       } catch {
         if (cancelled) return;
         setSitePages(safeGetJson("inet-dm-sites", []));
@@ -195,115 +207,120 @@ export function InetSearch() {
 
   const allPages = useMemo((): SitePage[] => {
     const raw: SitePage[] = sitePages;
-    if (isDM) return raw;
-    return raw.filter((p) => {
-      const vis = p.playerVisibility?.[currentUserId];
-      return vis !== "hidden";
-    });
+    return isDM ? raw : raw.filter((page) => canListWikiArticle(page, currentUserId));
   }, [currentUserId, isDM, sitePages]);
 
+  const contentPages = useMemo(
+    () => filterBrowsableWikiArticles(allPages, currentUserId),
+    [allPages, currentUserId],
+  );
+
   const loadAllResults = useCallback((): SearchResult[] => {
-    return allPages.map((page) => ({
-      id: page.id,
-      title: page.title,
-      category: page.category,
-      type: "article" as const,
-      description: page.description,
-      tags: [page.category, ...(page.tags || []), ...(page.wikiTags || [])],
-      meta: `Last updated: ${page.dateAdded}`,
-      pageId: page.id,
-      dateAdded: page.dateAdded,
-      articleQuality: page.articleQuality,
-    }));
-  }, [allPages]);
+    return allPages.map((page) => {
+      const restricted = !canExposeWikiArticle(page, currentUserId);
+      return {
+        id: page.id,
+        title: restricted ? "Spoiler-protected article" : page.title,
+        category: restricted ? "Restricted" : page.category,
+        type: "article" as const,
+        description: restricted ? "Open this article to review its spoiler warning." : page.description,
+        tags: restricted ? [] : [page.category, ...(page.tags || []), ...(page.wikiTags || [])],
+        meta: restricted ? "Content hidden until revealed" : `Last updated: ${formatWikiDate(page.updatedAt, page.dateAdded)}`,
+        pageId: page.id,
+        dateAdded: page.dateAdded,
+        restricted,
+        articleQuality: restricted ? undefined : page.articleQuality,
+      };
+    });
+  }, [allPages, currentUserId]);
 
   const allWikiTags = useMemo(() => {
     const tagSet = new Set<string>();
-    allPages.forEach((p) => (p.wikiTags || []).forEach((t) => tagSet.add(t)));
+    contentPages.forEach((p) => (p.wikiTags || []).forEach((t) => tagSet.add(t)));
     return Array.from(tagSet).sort();
-  }, [allPages]);
+  }, [contentPages]);
 
   const wikiTagCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    allPages.forEach((p) => (p.wikiTags || []).forEach((t) => {
+    contentPages.forEach((p) => (p.wikiTags || []).forEach((t) => {
       counts[t] = (counts[t] || 0) + 1;
     }));
     return counts;
-  }, [allPages]);
+  }, [contentPages]);
 
   const allResults = useMemo(() => loadAllResults(), [loadAllResults]);
 
   // Categories
   const categories = useMemo(() => {
     const catMap: Record<string, number> = {};
-    allPages.forEach((p) => {
+    contentPages.forEach((p) => {
       const cat = p.category || "Uncategorized";
       catMap[cat] = (catMap[cat] || 0) + 1;
     });
     return Object.entries(catMap).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [allPages]);
+  }, [contentPages]);
 
-  // Recently added (last 5)
+  // Recently created (last 5)
   const recentArticles = useMemo(() => {
-    return [...allPages]
+    return [...contentPages]
       .sort((a, b) => {
-        const da = new Date(a.dateAdded).getTime() || 0;
-        const db = new Date(b.dateAdded).getTime() || 0;
+        const da = new Date(a.createdAt || a.dateAdded).getTime() || 0;
+        const db = new Date(b.createdAt || b.dateAdded).getTime() || 0;
         return db - da;
       })
       .slice(0, 5);
-  }, [allPages]);
+  }, [contentPages]);
 
   // Featured article
   const featuredArticle = useMemo(() => {
-    const featured = allPages.filter((p) => p.articleQuality === "featured");
+    const featured = contentPages.filter((p) => p.articleQuality === "featured");
     if (featured.length > 0) return featured[Math.floor(Math.random() * featured.length)];
-    const good = allPages.filter((p) => p.articleQuality === "good");
+    const good = contentPages.filter((p) => p.articleQuality === "good");
     if (good.length > 0) return good[Math.floor(Math.random() * good.length)];
-    if (allPages.length > 0) return allPages[Math.floor(Math.random() * allPages.length)];
+    if (contentPages.length > 0) return contentPages[Math.floor(Math.random() * contentPages.length)];
     return null;
-  }, [allPages]);
+  }, [contentPages]);
 
   // "Did you know" random facts
   const didYouKnow = useMemo(() => {
-    const shuffled = [...allPages].sort(() => Math.random() - 0.5);
+    const shuffled = [...contentPages].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, 3).map((p) => {
       const blockText = (p.blocks || []).map((block) => getWikiBlockSearchText(block)).join(" ");
       const plainBody = stripHtml([p.body || "", blockText].filter(Boolean).join(" "));
       const excerpt = plainBody.length > 100 ? plainBody.slice(0, 100) + "..." : plainBody;
       return { page: p, excerpt };
     });
-  }, [allPages]);
+  }, [contentPages]);
 
   // Article stats
   const stats = useMemo(() => {
-    const total = allPages.length;
-    const featured = allPages.filter(p => p.articleQuality === "featured").length;
-    const good = allPages.filter(p => p.articleQuality === "good").length;
-    const stubs = allPages.filter(p => p.articleQuality === "stub" || p.underConstruction).length;
-    const withContent = allPages.filter(p => p.body || (p.sections && p.sections.length > 0) || (p.blocks && p.blocks.length > 0)).length;
+    const total = contentPages.length;
+    const featured = contentPages.filter(p => p.articleQuality === "featured").length;
+    const good = contentPages.filter(p => p.articleQuality === "good").length;
+    const stubs = contentPages.filter(p => p.articleQuality === "stub" || p.underConstruction).length;
+    const withContent = contentPages.filter(p => p.body || (p.sections && p.sections.length > 0) || (p.blocks && p.blocks.length > 0)).length;
     return { total, featured, good, stubs, withContent };
-  }, [allPages]);
+  }, [contentPages]);
 
   // All unique tags
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
-    allPages.forEach(p => {
+    contentPages.forEach(p => {
       (p.tags || []).forEach(t => tagSet.add(t));
     });
     return Array.from(tagSet).sort();
-  }, [allPages]);
+  }, [contentPages]);
 
   // Articles by specific categories for menus
   const worldInfoArticles = useMemo(() => {
-    return allPages.filter(p => (p.category || "").toLowerCase() === "world info")
+    return contentPages.filter(p => (p.category || "").toLowerCase() === "world info")
       .sort((a, b) => a.title.localeCompare(b.title));
-  }, [allPages]);
+  }, [contentPages]);
 
   const featuresAndTermsArticles = useMemo(() => {
-    return allPages.filter(p => (p.category || "").toLowerCase() === "features and terms")
+    return contentPages.filter(p => (p.category || "").toLowerCase() === "features and terms")
       .sort((a, b) => a.title.localeCompare(b.title));
-  }, [allPages]);
+  }, [contentPages]);
 
   // Filter & sort for search results
   const filteredResults = useMemo(() => {
@@ -315,7 +332,9 @@ export function InetSearch() {
     } else {
       results = allResults.filter((r) => {
         const page = allPages.find((entry) => entry.id === r.pageId);
-        const blockText = page ? (page.blocks || []).map((block) => getWikiBlockSearchText(block)).join(" ").toLowerCase() : "";
+        const blockText = page && canExposeWikiArticle(page, currentUserId)
+          ? (page.blocks || []).map((block) => getWikiBlockSearchText(block)).join(" ").toLowerCase()
+          : "";
         return (
           r.title.toLowerCase().includes(q) ||
           r.description.toLowerCase().includes(q) ||
@@ -328,13 +347,13 @@ export function InetSearch() {
     }
 
     if (filterWikiTag) {
-      const matchIds = new Set(allPages.filter((p) => (p.wikiTags || []).includes(filterWikiTag)).map((p) => p.id));
+      const matchIds = new Set(contentPages.filter((p) => (p.wikiTags || []).includes(filterWikiTag)).map((p) => p.id));
       results = results.filter((r) => matchIds.has(r.pageId));
     }
 
     results.sort((a, b) => a.title.localeCompare(b.title));
     return results;
-  }, [initialQuery, allResults, filterWikiTag, allPages]);
+  }, [initialQuery, allResults, filterWikiTag, allPages, contentPages, currentUserId]);
 
   // ========================
   // Handlers
@@ -345,8 +364,8 @@ export function InetSearch() {
   };
 
   const handleRandom = () => {
-    if (allPages.length === 0) return;
-    const pick = allPages[Math.floor(Math.random() * allPages.length)];
+    if (contentPages.length === 0) return;
+    const pick = contentPages[Math.floor(Math.random() * contentPages.length)];
     navigate(`/interface/inet-page/${pick.id}`);
   };
 
@@ -603,7 +622,7 @@ export function InetSearch() {
                   <span style={S_TEXT_BOLD}>"{initialQuery}"</span>
                 </span>
               ) : (
-                <span> â€” showing all articles</span>
+                <span> - showing all articles</span>
               )}
               {" "}({searchTime}s)
             </span>
@@ -745,7 +764,7 @@ export function InetSearch() {
           {/* Footer */}
           <div className="text-center pb-4 mt-8">
             <span className="text-[10px]" style={{ color: "#2A3A5A" }}>
-              I-Netâ„¢ Wiki Â· An Intelli Corporation Product Â© 2026 Â· {allResults.length} articles indexed
+              I-Net&trade; Wiki &middot; An Intelli Corporation Product &copy; 2026 &middot; {allResults.length} articles indexed
             </span>
           </div>
         </div>
@@ -1018,7 +1037,7 @@ export function InetSearch() {
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
                 <div className="flex-1">
                   <h1 className="text-[22px] mb-2" style={{ color: "#C0D0F0", fontWeight: 700 }}>
-                    Welcome to I-Netâ„¢ Wiki
+                    Welcome to I-Net&trade; Wiki
                   </h1>
                   <p className="text-[13px] leading-relaxed" style={S_SUBTLE}>
                     The comprehensive encyclopedia of the realm, maintained by the scholars of the Intelli Corporation.
@@ -1148,7 +1167,7 @@ export function InetSearch() {
             </div>
           )}
 
-          {/* â”€â”€ Welcome â”€â”€ */}
+          {/* Welcome */}
           <WikiSection
             title="Welcome to the I-Net Wiki"
             icon={<Globe size={14} style={S_ACCENT} />}
@@ -1156,7 +1175,7 @@ export function InetSearch() {
           >
             <div className="text-[13px] leading-relaxed" style={{ color: "#8A9ABB" }}>
               <p className="mb-2">
-                The <span style={{ color: "#5A9AFF", fontWeight: 600 }}>I-Net Wiki Encyclopedia</span> is your comprehensive guide to everything within our campaign world. This community-curated archive serves as the collective memory of our adventure â€” chronicling the lands we explore, the heroes and villains we encounter, and the lore that binds it all together.
+                The <span style={{ color: "#5A9AFF", fontWeight: 600 }}>I-Net Wiki Encyclopedia</span> is your comprehensive guide to everything within our campaign world. This community-curated archive serves as the collective memory of our adventure - chronicling the lands we explore, the heroes and villains we encounter, and the lore that binds it all together.
               </p>
               <p style={{ color: "#6A7A9A" }}>
                 Browse by category, search for specific topics, or explore a random article. All entries are maintained by the Dungeon Master and may evolve as the story unfolds.
@@ -1164,7 +1183,7 @@ export function InetSearch() {
             </div>
           </WikiSection>
 
-          {/* â”€â”€ Introduction â”€â”€ */}
+          {/* Introduction */}
           <WikiSection
             title="Introduction"
             icon={<BookOpen size={14} style={S_ACCENT} />}
@@ -1177,7 +1196,7 @@ export function InetSearch() {
                   <span className="text-[12px] font-semibold" style={{ color: "#5A9AFF" }}>Browse</span>
                 </div>
                 <p className="text-[11px] leading-relaxed" style={{ color: "#6A7A9A" }}>
-                  Explore articles organized by category â€” from <span style={S_SUBTLE}>Characters</span> and <span style={S_SUBTLE}>Locations</span> to <span style={S_SUBTLE}>Lore</span> and <span style={S_SUBTLE}>Items</span>. Use the category portals below to find what you need.
+                  Explore articles organized by category - from <span style={S_SUBTLE}>Characters</span> and <span style={S_SUBTLE}>Locations</span> to <span style={S_SUBTLE}>Lore</span> and <span style={S_SUBTLE}>Items</span>. Use the category portals below to find what you need.
                 </p>
               </div>
               <div className="space-y-2">
@@ -1279,7 +1298,7 @@ export function InetSearch() {
                         >
                           {page.title}
                         </button>
-                        {excerpt ? ` â€” ${excerpt}` : "?"}
+                        {excerpt ? ` - ${excerpt}` : "?"}
                       </div>
                     ))}
                   </div>
@@ -1442,10 +1461,10 @@ export function InetSearch() {
           <div className="text-center pb-4 flex flex-col items-center gap-1">
             <WikiDivider />
             <span className="text-[10px]" style={S_DIM}>
-              I-Netâ„¢ Wiki is a project of the Intelli Corporation. Content is available under the Intelli Free Documentation License.
+              I-Net&trade; Wiki is a project of the Intelli Corporation. Content is available under the Intelli Free Documentation License.
             </span>
             <span className="text-[9px]" style={{ color: "#2A3A5A" }}>
-              Best viewed at 800x600 Â· I-Netâ„¢ Wiki Â© 2026
+              Best viewed at 800x600 &middot; I-Net&trade; Wiki &copy; 2026
             </span>
             <span
               ref={motdRef}
