@@ -10,6 +10,7 @@ interface ArticleLookupEntry {
 
 let sharedArticleLookupPromise: Promise<Map<string, ArticleLookupEntry>> | null = null;
 let sharedArticleLookupCache: Map<string, ArticleLookupEntry> | null = null;
+const WIKI_ARTICLE_LOOKUP_UPDATED_EVENT = "inet-wiki-article-lookup-updated";
 
 /**
  * Detects whether a string contains HTML tags (from the rich text editor).
@@ -56,6 +57,15 @@ function loadSharedArticleLookup(): Promise<Map<string, ArticleLookupEntry>> {
       });
   }
   return sharedArticleLookupPromise;
+}
+
+export function refreshWikiArticleLookup(pages: ArticleLookupEntry[]): void {
+  const lookup = buildArticleLookup(Array.isArray(pages) ? pages : []);
+  sharedArticleLookupCache = lookup;
+  sharedArticleLookupPromise = Promise.resolve(lookup);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(WIKI_ARTICLE_LOOKUP_UPDATED_EVENT, { detail: lookup }));
+  }
 }
 
 function escapeHtml(str: string): string {
@@ -157,6 +167,11 @@ export function RenderFormattedText({
 
   useEffect(() => {
     let cancelled = false;
+    const handleLookupUpdated = (event: Event) => {
+      const nextLookup = (event as CustomEvent<Map<string, ArticleLookupEntry>>).detail;
+      if (!cancelled && nextLookup instanceof Map) setArticleLookup(nextLookup);
+    };
+    window.addEventListener(WIKI_ARTICLE_LOOKUP_UPDATED_EVENT, handleLookupUpdated);
     loadSharedArticleLookup()
       .then((lookup) => {
         if (!cancelled) setArticleLookup(lookup);
@@ -166,6 +181,7 @@ export function RenderFormattedText({
       });
     return () => {
       cancelled = true;
+      window.removeEventListener(WIKI_ARTICLE_LOOKUP_UPDATED_EVENT, handleLookupUpdated);
     };
   }, []);
 

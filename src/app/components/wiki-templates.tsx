@@ -7,6 +7,13 @@ import {
 } from "lucide-react";
 import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
 import { S_ACCENT, S_DIM, S_LINK, S_MUTED, S_RED, S_WARN } from "./shared-styles";
+import {
+  WIKI_CANVAS_PRESETS,
+  createMagicSpellArticleBlocks,
+  createMagicSpellListBlocks,
+  type WikiArticleBlock,
+  type WikiCanvasSettings,
+} from "@/lib/wiki-article-blocks";
 
 // ═══════════════════════════════════════════
 // Types
@@ -32,8 +39,12 @@ interface WikiPanel {
 export interface WikiTemplateData {
   category?: string;
   tags?: string[];
+  subtitle?: string;
+  description?: string;
   sections?: PageSection[];
   panels?: WikiPanel[];
+  blocks?: WikiArticleBlock[];
+  canvasSettings?: WikiCanvasSettings;
   infobox?: { label: string; value: string }[];
   body?: string;
   bodyTitle?: string;
@@ -261,6 +272,50 @@ const BUILTIN_TEMPLATES: WikiTemplate[] = [
       ],
     },
   },
+  {
+    id: "tpl-magic-spell-list",
+    name: "Magic Spell List",
+    icon: "book",
+    description: "A complete magic index with linked spell tables from Cantrip through Level 8.",
+    isBuiltIn: true,
+    data: {
+      category: "Magic",
+      tags: ["magic", "spell-list", "reference"],
+      subtitle: "Spell list and quick reference",
+      description: "Describe this magic, its origin, who can use it, and the rules that make it distinct.",
+      pageIcon: "book",
+      showDividers: false,
+      articleQuality: "start",
+      blocks: createMagicSpellListBlocks(),
+      canvasSettings: {
+        ...WIKI_CANVAS_PRESETS.referenceWide,
+        canvasHeight: 1560,
+        minCanvasHeight: 1320,
+      },
+    },
+  },
+  {
+    id: "tpl-magic-spell",
+    name: "Magic Spell",
+    icon: "sparkles",
+    description: "A focused spell article with casting details, description, scaling, and spell lists.",
+    isBuiltIn: true,
+    data: {
+      category: "Spells",
+      tags: ["magic", "spell"],
+      subtitle: "Spell level and school",
+      description: "Add a short summary of the spell's purpose or most important effect.",
+      pageIcon: "sparkles",
+      showDividers: false,
+      articleQuality: "start",
+      blocks: createMagicSpellArticleBlocks(),
+      canvasSettings: {
+        ...WIKI_CANVAS_PRESETS.standard,
+        canvasHeight: 1480,
+        minCanvasHeight: 1200,
+      },
+    },
+  },
 ];
 
 // ══════════════════════════════════════════
@@ -376,12 +431,16 @@ export function TemplatePickerModal({
 
           {/* Built-in templates */}
           <div>
-            <div className="text-[10px] uppercase tracking-wider mb-2" style={{ color: "#5A6A8A", fontWeight: 600 }}>D&D Templates</div>
+            <div className="text-[10px] uppercase tracking-wider mb-2" style={{ color: "#5A6A8A", fontWeight: 600 }}>Wiki Templates</div>
             <div className="grid grid-cols-2 gap-2">
               {builtIn.map((tpl) => {
                 const Icon = getTemplateIcon(tpl.icon);
                 const isHovered = hoveredId === tpl.id;
                 const blankPanels = (tpl.data.panels || []).filter(p => p.style === "blank");
+                const templateSections = [
+                  ...blankPanels.map((panel) => panel.title),
+                  ...(tpl.data.blocks || []).map((block) => block.title).filter(Boolean),
+                ];
                 return (
                   <button
                     key={tpl.id}
@@ -400,14 +459,14 @@ export function TemplatePickerModal({
                         <div className="text-[12px]" style={{ color: "#C0D0F0", fontWeight: 600 }}>{tpl.name}</div>
                         <div className="text-[10px] mt-0.5" style={S_MUTED}>{tpl.description}</div>
                         <div className="flex flex-wrap gap-1 mt-1.5">
-                          {blankPanels.slice(0, 3).map((p, i) => (
+                          {templateSections.slice(0, 3).map((title, i) => (
                             <span key={i} className="text-[8px] px-1.5 py-0.5" style={{ color: "#4A7BFF", background: "#0A0A30", border: "1px solid #1A2A5B" }}>
-                              {p.title}
+                              {title}
                             </span>
                           ))}
-                          {blankPanels.length > 3 && (
+                          {templateSections.length > 3 && (
                             <span className="text-[8px] px-1.5 py-0.5" style={S_DIM}>
-                              +{blankPanels.length - 3} more
+                              +{templateSections.length - 3} more
                             </span>
                           )}
                         </div>

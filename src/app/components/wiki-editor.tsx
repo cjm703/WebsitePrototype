@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useNavigate, useParams } from "react-router";
 import { Resizable } from "re-resizable";
 import { retro } from "./retro-styles";
-import { RenderFormattedText } from "./render-text";
+import { RenderFormattedText, refreshWikiArticleLookup } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
 import { ImageStoragePickerModal } from "./image-storage-picker";
 import { PAGE_ICONS, getPageIcon } from "./page-icons";
@@ -56,6 +56,8 @@ import {
   compactWikiArticleBlocks,
   compareWikiBlocksForLayout,
   createDefaultBlock,
+  createMagicSpellArticleBlocks,
+  createMagicSpellListBlocks,
   getNextWikiBlockRow,
   getWikiBlockLayoutBounds,
   getWikiBlockHtml,
@@ -1360,6 +1362,7 @@ export function WikiEditor() {
 
     try {
       await saveWikiSites(stored as unknown as Record<string, unknown>[]);
+      refreshWikiArticleLookup(stored.map(({ id, title }) => ({ id, title })));
       await createArticleRevision(data, "save", editSummary.trim() || "Published save").catch((err) => {
         console.warn("Failed to save wiki article revision", err);
         setRecoveryStatus("Article saved, but revision storage is using local fallback or could not update.");
@@ -1511,6 +1514,18 @@ export function WikiEditor() {
   // --- Template Application ---
   const applyTemplate = useCallback((template: WikiTemplate) => {
     const data = template.data;
+    const templateBlocks = normalizeWikiArticleBlocks((data.blocks || []).map((block) => ({
+      ...block,
+      id: `wiki-block-${uid()}`,
+      rows: block.rows?.map((row) => ({ ...row, id: `row-${uid()}` })),
+      tabs: block.tabs?.map((tab) => ({
+        ...tab,
+        id: `tab-${uid()}`,
+        rows: tab.rows.map((row) => ({ ...row, id: `row-${uid()}` })),
+      })),
+      items: block.items?.map((item) => ({ ...item, id: `item-${uid()}` })),
+    })));
+    const usesStructuredBlocks = templateBlocks.length > 0;
     // Convert template sections to panels (migration)
     const templateSectionPanels: WikiPanel[] = (data.sections || []).map((s) => ({
       id: `panel-${uid()}`,
@@ -1530,20 +1545,25 @@ export function WikiEditor() {
     setPage((prev) => {
       const nextPage: SitePage = {
         ...prev,
-      category: data.category || prev.category,
-      tags: data.tags || prev.tags,
-      sections: [],
-      panels: normalizeWikiPanels([...templateSectionPanels, ...templatePanels]),
-      infobox: data.infobox || prev.infobox,
-      body: data.body || prev.body,
-      bodyTitle: data.bodyTitle || prev.bodyTitle,
-      pageIcon: data.pageIcon || prev.pageIcon,
-      underConstruction: data.underConstruction ?? prev.underConstruction,
-      showDividers: data.showDividers ?? prev.showDividers,
-      articleQuality: data.articleQuality || prev.articleQuality,
+        category: data.category || prev.category,
+        tags: data.tags || prev.tags,
+        subtitle: data.subtitle ?? prev.subtitle,
+        description: data.description ?? prev.description,
+        sections: [],
+        panels: usesStructuredBlocks ? [] : normalizeWikiPanels([...templateSectionPanels, ...templatePanels]),
+        infobox: data.infobox || (usesStructuredBlocks ? [] : prev.infobox),
+        body: data.body || (usesStructuredBlocks ? "" : prev.body),
+        bodyTitle: data.bodyTitle || (usesStructuredBlocks ? "" : prev.bodyTitle),
+        pageIcon: data.pageIcon || prev.pageIcon,
+        underConstruction: data.underConstruction ?? prev.underConstruction,
+        showDividers: data.showDividers ?? prev.showDividers,
+        articleQuality: data.articleQuality || prev.articleQuality,
+        canvasSettings: data.canvasSettings
+          ? normalizeWikiCanvasSettings(data.canvasSettings)
+          : prev.canvasSettings,
       };
       nextPage.layoutVersion = WIKI_BLOCK_LAYOUT_VERSION;
-      nextPage.blocks = migrateLegacyArticleToBlocks(nextPage);
+      nextPage.blocks = usesStructuredBlocks ? templateBlocks : migrateLegacyArticleToBlocks(nextPage);
       return nextPage;
     });
     setHasUnsaved(true);
@@ -2591,26 +2611,14 @@ export function WikiEditor() {
     showTemplatePicker,
   ]);
 
-  const addArticleTemplate = useCallback((templateId: "spell-directory" | "creature-reference" | "location-page" | "rules-reference") => {
+  const addArticleTemplate = useCallback((templateId: "spell-directory" | "magic-spell" | "creature-reference" | "location-page" | "rules-reference") => {
     const startRow = getNextWikiBlockRow(pageBlocks);
     const blockSeed: WikiArticleBlock[] = [];
 
     if (templateId === "spell-directory") {
-      blockSeed.push(
-        normalizeWikiArticleBlock({ ...createDefaultBlock("heading", startRow), title: "Spell Directory", subtitle: "A quick-reference spell index", headingLevel: 2 }),
-        normalizeWikiArticleBlock({
-          ...createDefaultBlock("referenceTable", startRow + 2),
-          title: "Cantrips",
-          columns: ["Spell", "School", "Casting Time", "Range", "Duration", "Components"],
-          rows: [{ id: `row-${uid()}`, cells: ["Sample Spell", "Evocation", "1 Action", "Self", "Instant", "V, S"] }],
-        }),
-        normalizeWikiArticleBlock({
-          ...createDefaultBlock("referenceTable", startRow + 9),
-          title: "Level 1",
-          columns: ["Spell", "School", "Casting Time", "Range", "Duration", "Components"],
-          rows: [{ id: `row-${uid()}`, cells: ["Sample Spell", "Abjuration", "1 Action", "60 ft", "1 minute", "V, S, M"] }],
-        }),
-      );
+      blockSeed.push(...createMagicSpellListBlocks(startRow));
+    } else if (templateId === "magic-spell") {
+      blockSeed.push(...createMagicSpellArticleBlocks(startRow));
     } else if (templateId === "creature-reference") {
       blockSeed.push(
         normalizeWikiArticleBlock({ ...createDefaultBlock("keyValueBox", startRow), title: "Creature Profile", items: [
@@ -4052,7 +4060,8 @@ export function WikiEditor() {
     { label: "Add Tabbed Reference", description: "Insert a button-cycle reference box for spell levels or grouped lists.", keywords: "tabbed reference spell tier level buttons cycle", action: () => addBlock("tabbedReference") },
     { label: "Add Key-Value Box", description: "Insert an infobox-style data block.", keywords: "infobox key value stats", action: () => addBlock("keyValueBox") },
     { label: "Add Line Box", description: "Insert a resizeable horizontal or vertical decorative line.", keywords: "line box horizontal vertical divider rule", action: () => addBlock("lineBox") },
-    { label: "Insert Spell Directory Template", description: "Add a grouped spell/reference page starter.", keywords: "spell directory template", action: () => addArticleTemplate("spell-directory") },
+    { label: "Insert Magic Spell List Template", description: "Add linked spell tables from Cantrip through Level 8.", keywords: "magic spell list directory template", action: () => addArticleTemplate("spell-directory") },
+    { label: "Insert Magic Spell Template", description: "Add casting details and a focused spell description layout.", keywords: "magic spell detail template", action: () => addArticleTemplate("magic-spell") },
     { label: "Save Selection as Preset", description: "Create a reusable block preset from selected blocks.", keywords: "preset save reusable", action: () => void saveSelectionAsPreset(), disabled: selectedBlocks.length === 0 },
     { label: "Duplicate Selection", description: "Copy the selected block or block group.", keywords: "copy duplicate clone", action: duplicateSelectedBlocks, disabled: selectedBlocks.length === 0 },
     { label: "Make Selection a Stack", description: "Convert selected blocks into a clean vertical section.", keywords: "smart layout stack section", action: () => applySmartLayoutGroup("stack"), disabled: selectedBlocks.length < 2 },
@@ -4862,7 +4871,8 @@ export function WikiEditor() {
                     <div className="text-[10px] uppercase tracking-[0.18em] mb-2" style={{ color: "#7A9ABB", fontWeight: 700 }}>Reference Templates</div>
                     <div className="space-y-2">
                       {([
-                        ["spell-directory", "Spell Directory", "Cantrips, levels, and quick-reference tables"],
+                        ["spell-directory", "Magic Spell List", "Linked tables from Cantrip through Level 8"],
+                        ["magic-spell", "Magic Spell", "Casting details, description, scaling, and spell lists"],
                         ["creature-reference", "Creature / NPC", "Profile box, overview, and traits"],
                         ["location-page", "Location", "Feature image, overview, and keyed details"],
                         ["rules-reference", "Rules Reference", "Structured rulings and examples"],

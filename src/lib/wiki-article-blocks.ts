@@ -327,6 +327,42 @@ function createDefaultTabbedReferenceTabs(): WikiTabbedReferenceTab[] {
   ];
 }
 
+export const MAGIC_SPELL_TABLE_COLUMNS = [
+  "Spell Name",
+  "School",
+  "Casting Time",
+  "Range",
+  "Duration",
+  "Components",
+];
+
+export const MAGIC_SPELL_TIERS = [
+  { id: "cantrip", label: "Cantrip", title: "Cantrips" },
+  { id: "level-1", label: "Level 1", title: "1st-Level Spells" },
+  { id: "level-2", label: "Level 2", title: "2nd-Level Spells" },
+  { id: "level-3", label: "Level 3", title: "3rd-Level Spells" },
+  { id: "level-4", label: "Level 4", title: "4th-Level Spells" },
+  { id: "level-5", label: "Level 5", title: "5th-Level Spells" },
+  { id: "level-6", label: "Level 6", title: "6th-Level Spells" },
+  { id: "level-7", label: "Level 7", title: "7th-Level Spells" },
+  { id: "level-8", label: "Level 8", title: "8th-Level Spells" },
+] as const;
+
+export function createMagicSpellTierTabs(): WikiTabbedReferenceTab[] {
+  return MAGIC_SPELL_TIERS.map((tier) => ({
+    id: `magic-${tier.id}-${uid()}`,
+    label: tier.label,
+    title: tier.title,
+    columns: [...MAGIC_SPELL_TABLE_COLUMNS],
+    rows: [
+      {
+        id: `magic-${tier.id}-row-${uid()}`,
+        cells: ["[[Spell Article Name]]", "", "", "", "", ""],
+      },
+    ],
+  }));
+}
+
 function normalizeReferenceRows(rows: Partial<WikiReferenceTableRow>[] | null | undefined, columnCount: number): WikiReferenceTableRow[] {
   return (rows || []).map((row) => {
     const cells = Array.isArray(row.cells) ? row.cells : [];
@@ -367,6 +403,99 @@ function createPresetBlock(
       ...(partial?.layout || {}),
     },
   });
+}
+
+export function createMagicSpellListBlocks(rowStart = 1): WikiArticleBlock[] {
+  return [
+    createPresetBlock("tabbedReference", rowStart, {
+      title: "Spell Index",
+      subtitle: "Browse this magic by spell level",
+      tabs: createMagicSpellTierTabs(),
+      tableDensity: "compact",
+      tableStripedRows: true,
+      tableStickyHeader: true,
+      tableLinkedCells: true,
+      activeTabId: "",
+      layout: { colStart: 1, colSpan: 48, rowStart, rowSpan: 28 },
+      appearance: {
+        surfaceStyle: "raised",
+        backgroundTreatment: "solid",
+        backgroundColor: "#0A1520",
+        accentColor: "#E8B86A",
+        borderColor: "#416276",
+        borderRadius: 8,
+        shadowDepth: 2,
+      },
+      fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
+    }),
+  ];
+}
+
+export function createMagicSpellArticleBlocks(rowStart = 1): WikiArticleBlock[] {
+  return [
+    createPresetBlock("keyValueBox", rowStart, {
+      title: "Spell Details",
+      items: [
+        { id: `spell-level-${uid()}`, label: "Level", value: "Cantrip / 1-8" },
+        { id: `spell-school-${uid()}`, label: "School", value: "" },
+        { id: `spell-casting-${uid()}`, label: "Casting Time", value: "" },
+        { id: `spell-range-${uid()}`, label: "Range", value: "" },
+        { id: `spell-components-${uid()}`, label: "Components", value: "" },
+        { id: `spell-duration-${uid()}`, label: "Duration", value: "" },
+      ],
+      keyValueDensity: "compact",
+      keyValueRowDividers: true,
+      layout: { colStart: 1, colSpan: 16, rowStart, rowSpan: 18 },
+      appearance: {
+        surfaceStyle: "inset",
+        backgroundTreatment: "solid",
+        backgroundColor: "#0A1520",
+        accentColor: "#E8B86A",
+        borderColor: "#416276",
+        borderRadius: 8,
+      },
+      fluid: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "compact" },
+    }),
+    createPresetBlock("richText", rowStart, {
+      title: "Spell Description",
+      html: "<p>Describe what the spell does, who or what it affects, and any rolls, saves, damage, or conditions it uses.</p>",
+      layout: { colStart: 18, colSpan: 31, rowStart, rowSpan: 18 },
+      appearance: {
+        surfaceStyle: "flat",
+        backgroundColor: "#0B1326",
+        accentColor: "#8EDBCF",
+        borderColor: "#315D66",
+        borderRadius: 8,
+      },
+      fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+    }),
+    createPresetBlock("richText", rowStart + 20, {
+      title: "At Higher Levels",
+      html: "<p>Describe how this spell changes when it is cast at a higher level, or remove this section when it does not scale.</p>",
+      layout: { colStart: 1, colSpan: 31, rowStart: rowStart + 20, rowSpan: 12 },
+      appearance: {
+        surfaceStyle: "flat",
+        backgroundColor: "#0B1326",
+        accentColor: "#8EDBCF",
+        borderColor: "#315D66",
+        borderRadius: 8,
+      },
+      fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+    }),
+    createPresetBlock("calloutPanel", rowStart + 20, {
+      title: "Spell Lists",
+      html: "<p>List the classes, traditions, characters, or other magic lists that can use this spell.</p>",
+      layout: { colStart: 33, colSpan: 16, rowStart: rowStart + 20, rowSpan: 12 },
+      appearance: {
+        surfaceStyle: "raised",
+        backgroundColor: "#171426",
+        accentColor: "#D7A6E8",
+        borderColor: "#66507A",
+        borderRadius: 8,
+      },
+      fluid: { widthMode: "fixed", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "stack" },
+    }),
+  ];
 }
 
 export const BUILTIN_WIKI_BLOCK_PRESETS: WikiBlockPreset[] = [
@@ -978,35 +1107,7 @@ export const BUILTIN_WIKI_BLOCK_PRESETS: WikiBlockPreset[] = [
     category: "Components",
     builtIn: true,
     previewLabel: "Tabbed spell showcase",
-    blocks: [
-      createPresetBlock("tabbedReference", 1, {
-        title: "Spell Showcase",
-        subtitle: "Cycle through spell groups",
-        tabs: [
-          {
-            id: "spell-showcase-cantrips",
-            label: "Cantrips",
-            title: "Cantrips",
-            columns: ["Spell", "Level", "Type", "Summary"],
-            rows: [{ id: "spell-showcase-cantrips-1", cells: ["[[Example Cantrip]]", "Cantrip", "Attack", "Short effect summary."] }],
-          },
-          {
-            id: "spell-showcase-level-1",
-            label: "Level 1",
-            title: "Level 1",
-            columns: ["Spell", "Level", "Type", "Summary"],
-            rows: [{ id: "spell-showcase-level-1-1", cells: ["[[Example Spell]]", "1", "Utility", "Short effect summary."] }],
-          },
-        ],
-        tableDensity: "compact",
-        tableStripedRows: true,
-        tableStickyHeader: true,
-        tableLinkedCells: true,
-        layout: { colStart: 1, colSpan: 48, rowStart: 1, rowSpan: 22 },
-        appearance: { surfaceStyle: "glass", backgroundTreatment: "gradient", backgroundColor: "#08283A", accentColor: "#5CE8FF", borderColor: "#2CAFD2", borderRadius: 16, glowIntensity: 18 },
-        fluid: { widthMode: "fill", heightMode: "hug", keepAspectRatio: false, mobileBehavior: "scrollX" },
-      }),
-    ],
+    blocks: createMagicSpellListBlocks(1),
   },
   {
     id: "quick-data-stat-block",
