@@ -31,6 +31,10 @@ let inMemoryImageStorageFallbackState: LocalCollectionFallbackState | null = nul
 let hasLoggedImageStorageFallback = false;
 let inMemoryWikiBlockPresetsFallbackState: LocalCollectionFallbackState | null = null;
 let hasLoggedWikiBlockPresetsFallback = false;
+let wikiDraftEndpointsUnavailable = false;
+let wikiPlayerBootstrapEndpointUnavailable = false;
+let wikiSiteSaveEndpointUnavailable = false;
+let publicWikiBootstrapEndpointUnavailable = false;
 
 export class ApiRequestError extends Error {
   status: number;
@@ -91,6 +95,33 @@ async function apiFetch(path: string, init: RequestInit = {}) {
   }
 
   return body;
+}
+
+async function publicApiFetch(path: string, init: RequestInit = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...buildSupabasePublicHeaders(init.body != null),
+      ...(init.headers ?? {}),
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiRequestError(
+      typeof body?.error === "string" ? body.error : `Request failed: ${res.status}`,
+      res.status,
+      body,
+    );
+  }
+  return body;
+}
+
+function isMissingWikiEndpoint(err: unknown) {
+  return err instanceof ApiRequestError && (err.status === 404 || err.status === 405);
+}
+
+function unavailableWikiEndpointError(path: string) {
+  return new ApiRequestError(`Wiki endpoint is not deployed: ${path}`, 404);
 }
 
 function loadDMCollection<T>(path: string, responseKey: string): Promise<T[]> {
@@ -795,29 +826,68 @@ export async function loadWikiBootstrap() {
 }
 
 export async function loadPlayerWikiBootstrap() {
-  return apiFetch("/wiki/player-bootstrap", { method: "GET" });
+  const path = "/wiki/player-bootstrap";
+  if (wikiPlayerBootstrapEndpointUnavailable) throw unavailableWikiEndpointError(path);
+  try {
+    return await apiFetch(path, { method: "GET" });
+  } catch (err) {
+    if (isMissingWikiEndpoint(err)) wikiPlayerBootstrapEndpointUnavailable = true;
+    throw err;
+  }
+}
+
+export async function loadPublicWikiBootstrap() {
+  const path = "/wiki/public-bootstrap";
+  if (publicWikiBootstrapEndpointUnavailable) throw unavailableWikiEndpointError(path);
+  try {
+    return await publicApiFetch(path, { method: "GET" });
+  } catch (err) {
+    if (isMissingWikiEndpoint(err)) publicWikiBootstrapEndpointUnavailable = true;
+    throw err;
+  }
 }
 
 export async function loadWikiDrafts<T>() {
-  const body = await apiFetch("/wiki/drafts", { method: "GET" });
-  return (body?.drafts ?? {}) as Record<string, T>;
+  const path = "/wiki/drafts";
+  if (wikiDraftEndpointsUnavailable) throw unavailableWikiEndpointError(path);
+  try {
+    const body = await apiFetch(path, { method: "GET" });
+    return (body?.drafts ?? {}) as Record<string, T>;
+  } catch (err) {
+    if (isMissingWikiEndpoint(err)) wikiDraftEndpointsUnavailable = true;
+    throw err;
+  }
 }
 
 export async function saveWikiDrafts<T>(drafts: Record<string, T>) {
-  await apiFetch("/wiki/drafts/save", {
-    method: "POST",
-    body: JSON.stringify({ drafts }),
-  });
+  const path = "/wiki/drafts/save";
+  if (wikiDraftEndpointsUnavailable) throw unavailableWikiEndpointError(path);
+  try {
+    await apiFetch(path, {
+      method: "POST",
+      body: JSON.stringify({ drafts }),
+    });
+  } catch (err) {
+    if (isMissingWikiEndpoint(err)) wikiDraftEndpointsUnavailable = true;
+    throw err;
+  }
 }
 
 export async function saveWikiSite(
   site: Record<string, unknown>,
   expectedUpdatedAt?: string,
 ) {
-  return apiFetch("/wiki/site/save", {
-    method: "POST",
-    body: JSON.stringify({ site, expectedUpdatedAt }),
-  });
+  const path = "/wiki/site/save";
+  if (wikiSiteSaveEndpointUnavailable) throw unavailableWikiEndpointError(path);
+  try {
+    return await apiFetch(path, {
+      method: "POST",
+      body: JSON.stringify({ site, expectedUpdatedAt }),
+    });
+  } catch (err) {
+    if (isMissingWikiEndpoint(err)) wikiSiteSaveEndpointUnavailable = true;
+    throw err;
+  }
 }
 
 export async function deleteWikiSite(siteId: string, expectedUpdatedAt?: string) {

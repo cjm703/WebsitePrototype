@@ -1,8 +1,9 @@
 ﻿import React, { useState, useRef, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { safeGetItem } from "./safe-storage";
 import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";
 import { sanitizeRichHtml } from "@/lib/sanitize-rich-html";
+import { getWikiArticlePath } from "@/lib/wiki-routes";
 
 interface ArticleLookupEntry {
   id: string;
@@ -75,18 +76,26 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function resolveStoredWikiAnchors(html: string, lookup: Map<string, ArticleLookupEntry>) {
+function resolveStoredWikiAnchors(
+  html: string,
+  lookup: Map<string, ArticleLookupEntry>,
+  publicMode: boolean,
+) {
   if (typeof DOMParser === "undefined") return html;
   const documentNode = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
   const root = documentNode.body.firstElementChild;
   if (!root) return "";
   const availableArticleIds = new Set(Array.from(lookup.values(), (article) => article.id));
-  root.querySelectorAll<HTMLAnchorElement>("a[data-article-id], a[href*='/interface/inet-page/']").forEach((anchor) => {
-    const hrefMatch = anchor.getAttribute("href")?.match(/\/interface\/inet-page\/([^/?#]+)/);
+  root.querySelectorAll<HTMLAnchorElement>("a[data-article-id], a[href*='/interface/inet-page/'], a[href*='/wiki/page/']").forEach((anchor) => {
+    const hrefMatch = anchor.getAttribute("href")?.match(/\/(?:interface\/inet-page|wiki\/page)\/([^/?#]+)/);
     let hrefArticleId = hrefMatch?.[1] || "";
     try { hrefArticleId = decodeURIComponent(hrefArticleId); } catch {}
     const articleId = anchor.dataset.articleId || hrefArticleId;
-    if (!articleId || availableArticleIds.has(articleId)) return;
+    if (articleId && availableArticleIds.has(articleId)) {
+      anchor.setAttribute("href", getWikiArticlePath(publicMode, articleId));
+      return;
+    }
+    if (!articleId) return;
     const replacement = documentNode.createElement("span");
     replacement.className = "wiki-link-broken";
     replacement.textContent = "Unavailable article";
@@ -104,6 +113,7 @@ function parseWikiLinks(
   line: string,
   lookup: Map<string, ArticleLookupEntry>,
   navigate: (path: string) => void,
+  publicMode: boolean,
 ): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   const regex = /\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g;
@@ -122,8 +132,8 @@ function parseWikiLinks(
       parts.push(
         <a
           key={`wl-${key++}`}
-          href={`/interface/inet-page/${found.id}`}
-          onClick={(e) => { e.preventDefault(); navigate(`/interface/inet-page/${found.id}`); }}
+          href={getWikiArticlePath(publicMode, found.id)}
+          onClick={(e) => { e.preventDefault(); navigate(getWikiArticlePath(publicMode, found.id)); }}
           style={{ color: "#6A9AFF", textDecoration: "underline", cursor: "pointer" }}
           title={found.title}
         >
@@ -185,6 +195,8 @@ export function RenderFormattedText({
   sectionRevealed?: boolean;
 }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const publicMode = pathname === "/wiki" || pathname.startsWith("/wiki/");
   const [articleLookup, setArticleLookup] = useState<Map<string, ArticleLookupEntry>>(() => loadLocalArticleLookup());
   const contentRef = useRef<HTMLDivElement>(null);
   const [revealedSpoilers, setRevealedSpoilers] = useState<Set<string>>(new Set());
@@ -314,7 +326,7 @@ export function RenderFormattedText({
       const display = displayText || articleName;
       const found = articleLookup.get((articleName as string).trim().toLowerCase());
       if (found) {
-        return `<a class="wiki-link" href="/interface/inet-page/${found.id}" style="color:#6A9AFF;text-decoration:underline;cursor:pointer;" title="${escapeHtml(found.title)}">${escapeHtml(display)}</a>`;
+        return `<a class="wiki-link" href="${getWikiArticlePath(publicMode, found.id)}" style="color:#6A9AFF;text-decoration:underline;cursor:pointer;" title="${escapeHtml(found.title)}">${escapeHtml(display)}</a>`;
       }
       return `<span class="wiki-link-broken" style="color:#FF6A6A;text-decoration:underline dotted;cursor:help;" title="Article not found: ${escapeHtml(articleName)}">${escapeHtml(display)}</span>`;
     });
@@ -323,7 +335,7 @@ export function RenderFormattedText({
         <div
           ref={contentRef}
           className="rich-text-rendered"
-          dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(resolveStoredWikiAnchors(processedHtml, articleLookup)) }}
+          dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(resolveStoredWikiAnchors(processedHtml, articleLookup, publicMode)) }}
           onClick={(e) => { handleLinkClick(e); handleSpoilerClick(e); }}
           style={{
             color,
@@ -427,7 +439,7 @@ export function RenderFormattedText({
                 fontSize: baseSize,
               }}
             >
-              {parseWikiLinks(content, articleLookup, navigate)}
+              {parseWikiLinks(content, articleLookup, navigate, publicMode)}
             </p>
           );
         }
@@ -448,7 +460,7 @@ export function RenderFormattedText({
                 marginBottom: 2,
               }}
             >
-              {parseWikiLinks(content, articleLookup, navigate)}
+              {parseWikiLinks(content, articleLookup, navigate, publicMode)}
             </p>
           );
         }
@@ -469,7 +481,7 @@ export function RenderFormattedText({
                 marginBottom: 2,
               }}
             >
-              {parseWikiLinks(content, articleLookup, navigate)}
+              {parseWikiLinks(content, articleLookup, navigate, publicMode)}
             </p>
           );
         }
@@ -480,7 +492,7 @@ export function RenderFormattedText({
             key={i}
             style={{ color, lineHeight: "1.7", fontFamily: font, fontSize: baseSize }}
           >
-            {raw ? parseWikiLinks(raw, articleLookup, navigate) : "\u00A0"}
+            {raw ? parseWikiLinks(raw, articleLookup, navigate, publicMode) : "\u00A0"}
           </p>
         );
       })}

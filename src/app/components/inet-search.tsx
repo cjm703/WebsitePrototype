@@ -13,7 +13,13 @@ import gnarpyImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { SUNKEN_INPUT, S_MUTED, S_DIM, S_ACCENT, S_TEXT, S_SUBTLE, S_LINK, S_ACCENT_HDR, S_TEXT_BOLD, S_WARN_HDR, S_WARN, S_LABEL, S_GREEN_BTN } from "./shared-styles";
 import { getWikiBlockSearchText, type WikiArticleBlock } from "@/lib/wiki-article-blocks";
-import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";
+import { loadPlayerWikiBootstrap, loadPublicWikiBootstrap } from "@/lib/player-state-api";
+import {
+  getAuthenticatedPath,
+  getWikiArticlePath,
+  getWikiRootPath,
+  getWikiSearchPath,
+} from "@/lib/wiki-routes";
 import {
   canExposeWikiArticle,
   canListWikiArticle,
@@ -102,7 +108,11 @@ function QualityBadge({ quality }: { quality: string }) {
   );
 }
 
-export function InetSearch() {
+export function PublicInetSearch() {
+  return <InetSearch publicMode />;
+}
+
+export function InetSearch({ publicMode = false }: { publicMode?: boolean }) {
   const isPageVisible = usePageVisibility();
   const [searchParams] = useSearchParams();
   const hasSearched = searchParams.has("q");
@@ -176,8 +186,12 @@ export function InetSearch() {
   // ========================
   // Load all articles
   // ========================
-  const currentUserId = safeGetItem("inet-user-id") || "";
+  const currentUserId = publicMode ? "public" : (safeGetItem("inet-user-id") || "");
   const isDM = currentUserId === "dm";
+  const wikiRootPath = getWikiRootPath(publicMode);
+  const wikiSearchPath = (search = "") => getWikiSearchPath(publicMode, search);
+  const wikiArticlePath = (articleId: string) => getWikiArticlePath(publicMode, articleId);
+  const authenticatedPath = (path: string) => getAuthenticatedPath(publicMode, path);
   const [sitePages, setSitePages] = useState<SitePage[]>(() => safeGetJson("inet-dm-sites", []));
   const [wikiTagDefs, setWikiTagDefs] = useState<{ id: string; name: string; description: string }[]>(() => safeGetJson("inet-dm-wikiTags", []));
 
@@ -185,7 +199,7 @@ export function InetSearch() {
     let cancelled = false;
     const hydrateWikiData = async () => {
       try {
-        const bootstrap = await loadPlayerWikiBootstrap();
+        const bootstrap = await (publicMode ? loadPublicWikiBootstrap() : loadPlayerWikiBootstrap());
         if (cancelled) return;
         setSitePages(Array.isArray(bootstrap?.sites) ? bootstrap.sites as SitePage[] : []);
         setWikiTagDefs(Array.isArray(bootstrap?.wikiTags) ? bootstrap.wikiTags : []);
@@ -203,7 +217,7 @@ export function InetSearch() {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
-  }, []);
+  }, [publicMode]);
 
   const allPages = useMemo((): SitePage[] => {
     const raw: SitePage[] = sitePages;
@@ -360,22 +374,22 @@ export function InetSearch() {
   // ========================
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    navigate(`/interface/inet-search?q=${encodeURIComponent(query)}`);
+    navigate(wikiSearchPath(`q=${encodeURIComponent(query)}`));
   };
 
   const handleRandom = () => {
     if (contentPages.length === 0) return;
     const pick = contentPages[Math.floor(Math.random() * contentPages.length)];
-    navigate(`/interface/inet-page/${pick.id}`);
+    navigate(wikiArticlePath(pick.id));
   };
 
   const suggestions = [
-    { label: "Intelli Interface", path: "/interface" },
-    { label: "I-Net Wiki", path: "/interface/inet-search" },
-    { label: "I-Net News", path: "/interface/inet-news" },
-    { label: "Personal Files", path: "/interface/personal-files" },
-    { label: "Nexus Nomad's Office", path: "/interface/nexus-nomad" },
-    { label: "Intelli Maps", path: "/interface/intelli-maps" },
+    { label: "Intelli Interface", path: authenticatedPath("/interface") },
+    { label: "I-Net Wiki", path: wikiRootPath },
+    { label: "I-Net News", path: authenticatedPath("/interface/inet-news") },
+    { label: "Personal Files", path: authenticatedPath("/interface/personal-files") },
+    { label: "Nexus Nomad's Office", path: authenticatedPath("/interface/nexus-nomad") },
+    { label: "Intelli Maps", path: authenticatedPath("/interface/intelli-maps") },
   ];
 
   // Gnarpy popup
@@ -562,7 +576,7 @@ export function InetSearch() {
         >
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 max-w-[960px]">
             <button
-              onClick={() => navigate("/interface/inet-search")}
+              onClick={() => navigate(wikiRootPath)}
               className="flex items-center gap-1 cursor-pointer shrink-0 hover:opacity-80"
             >
               <SearchLogo size="small" />
@@ -680,7 +694,7 @@ export function InetSearch() {
                 Try different keywords or browse the full article index.
               </span>
               <button
-                onClick={() => navigate("/interface/inet-search?q=")}
+                onClick={() => navigate(wikiSearchPath("q="))}
                 className={`${retro.button} text-[12px] px-4 py-2`}
                 style={S_ACCENT}
               >
@@ -698,7 +712,7 @@ export function InetSearch() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline gap-2 flex-wrap">
                           <button
-                            onClick={() => navigate(`/interface/inet-page/${result.pageId}`)}
+                            onClick={() => navigate(wikiArticlePath(result.pageId))}
                             className="text-[14px] underline hover:no-underline cursor-pointer text-left"
                             style={{ color: "#5A9AFF", fontWeight: 600 }}
                           >
@@ -707,7 +721,7 @@ export function InetSearch() {
                           {result.articleQuality && <QualityBadge quality={result.articleQuality} />}
                           {result.category && (
                             <button
-                              onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(result.category)}`)}
+                              onClick={() => navigate(wikiSearchPath(`q=${encodeURIComponent(result.category)}`))}
                               className="text-[9px] px-1.5 py-0 shrink-0 hover:opacity-70 cursor-pointer"
                               style={{
                                 color: "#7A9ABB",
@@ -729,7 +743,7 @@ export function InetSearch() {
                               return (
                                 <button
                                   key={tag}
-                                  onClick={(e) => { e.stopPropagation(); if (isWikiTag) setFilterWikiTag(filterWikiTag === tag ? "" : tag); else navigate(`/interface/inet-search?q=${encodeURIComponent(tag)}`); }}
+                                  onClick={(e) => { e.stopPropagation(); if (isWikiTag) setFilterWikiTag(filterWikiTag === tag ? "" : tag); else navigate(wikiSearchPath(`q=${encodeURIComponent(tag)}`)); }}
                                   className="text-[9px] px-1.5 py-0 flex items-center gap-0.5 hover:opacity-70 cursor-pointer"
                                   style={{
                                     color: isWikiTag ? "#9A7ABB" : "#5A6A8A",
@@ -787,7 +801,7 @@ export function InetSearch() {
       <div className={`${retro.toolbar} flex items-center justify-between`}>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate("/interface")}
+            onClick={() => navigate(authenticatedPath("/interface"))}
             className="text-[11px] hover:opacity-80 flex items-center gap-1"
             style={S_ACCENT}
           >
@@ -840,7 +854,7 @@ export function InetSearch() {
                       }}
                     >
                       <button
-                        onClick={() => { navigate("/interface/inet-search"); setOpenMenu(null); }}
+                        onClick={() => { navigate(wikiRootPath); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_TEXT}
                       >
@@ -849,7 +863,7 @@ export function InetSearch() {
                       </button>
                       <div className="h-[1px]" style={{ background: "#1A1A4B" }} />
                       <button
-                        onClick={() => { navigate("/interface/inet-search?q="); setOpenMenu(null); }}
+                        onClick={() => { navigate(wikiSearchPath("q=")); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_TEXT}
                       >
@@ -897,7 +911,7 @@ export function InetSearch() {
                       }}
                     >
                       <button
-                        onClick={() => { navigate(`/interface/inet-search?q=${encodeURIComponent("World Info")}`); setOpenMenu(null); }}
+                        onClick={() => { navigate(wikiSearchPath(`q=${encodeURIComponent("World Info")}`)); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_WARN_HDR}
                       >
@@ -910,7 +924,7 @@ export function InetSearch() {
                       {worldInfoArticles.map((page) => (
                         <button
                           key={page.id}
-                          onClick={() => { navigate(`/interface/inet-page/${page.id}`); setOpenMenu(null); }}
+                          onClick={() => { navigate(wikiArticlePath(page.id)); setOpenMenu(null); }}
                           className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                           style={S_TEXT}
                         >
@@ -951,7 +965,7 @@ export function InetSearch() {
                       }}
                     >
                       <button
-                        onClick={() => { navigate(`/interface/inet-search?q=${encodeURIComponent("Features and Terms")}`); setOpenMenu(null); }}
+                        onClick={() => { navigate(wikiSearchPath(`q=${encodeURIComponent("Features and Terms")}`)); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_WARN_HDR}
                       >
@@ -964,7 +978,7 @@ export function InetSearch() {
                       {featuresAndTermsArticles.map((page) => (
                         <button
                           key={page.id}
-                          onClick={() => { navigate(`/interface/inet-page/${page.id}`); setOpenMenu(null); }}
+                          onClick={() => { navigate(wikiArticlePath(page.id)); setOpenMenu(null); }}
                           className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                           style={S_TEXT}
                         >
@@ -1003,7 +1017,7 @@ export function InetSearch() {
                       }}
                     >
                       <button
-                        onClick={() => { navigate("/interface/inet-news"); setOpenMenu(null); }}
+                        onClick={() => { navigate(authenticatedPath("/interface/inet-news")); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_TEXT}
                       >
@@ -1012,7 +1026,7 @@ export function InetSearch() {
                       </button>
                       <div className="h-[1px]" style={{ background: "#1A1A4B" }} />
                       <button
-                        onClick={() => { navigate("/interface/session-log"); setOpenMenu(null); }}
+                        onClick={() => { navigate(authenticatedPath("/interface/session-log")); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_TEXT}
                       >
@@ -1021,7 +1035,7 @@ export function InetSearch() {
                       </button>
                       <div className="h-[1px]" style={{ background: "#1A1A4B" }} />
                       <button
-                        onClick={() => { navigate("/interface/campaign-timeline"); setOpenMenu(null); }}
+                        onClick={() => { navigate(authenticatedPath("/interface/campaign-timeline")); setOpenMenu(null); }}
                         className="w-full text-left px-3 py-2 text-[11px] hover:bg-[#1A1A4B] flex items-center gap-2 transition-colors"
                         style={S_TEXT}
                       >
@@ -1041,9 +1055,9 @@ export function InetSearch() {
                   </h1>
                   <p className="text-[13px] leading-relaxed" style={S_SUBTLE}>
                     The comprehensive encyclopedia of the realm, maintained by the scholars of the Intelli Corporation.
-                    Currently serving <span style={S_ACCENT_HDR}>{stats.total.toLocaleString()}</span> articles
+                    Currently serving <span style={S_ACCENT_HDR}>{stats.total.toLocaleString()}</span> article{stats.total !== 1 ? "s" : ""}
                     {stats.featured > 0 && <span>, including <span style={{ color: "#FFD700", fontWeight: 600 }}>{stats.featured}</span> featured</span>}
-                    {stats.good > 0 && <span> and <span style={{ ...S_GREEN_BTN, fontWeight: 600 }}>{stats.good}</span> good</span>} article{stats.total !== 1 ? "s" : ""}.
+                    {stats.good > 0 && <span>{stats.featured > 0 ? " and " : ", including "}<span style={{ ...S_GREEN_BTN, fontWeight: 600 }}>{stats.good}</span> good</span>}.
                   </p>
                 </div>
                 <div className="shrink-0">
@@ -1105,7 +1119,7 @@ export function InetSearch() {
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <button
-                      onClick={() => navigate(`/interface/inet-page/${featuredArticle.id}`)}
+                      onClick={() => navigate(wikiArticlePath(featuredArticle.id))}
                       className="text-[18px] underline hover:no-underline cursor-pointer text-left mb-1 block"
                       style={{ color: "#5A9AFF", fontWeight: 700 }}
                     >
@@ -1129,7 +1143,7 @@ export function InetSearch() {
                     )}
                     <div className="flex items-center gap-3 mt-3">
                       <button
-                        onClick={() => navigate(`/interface/inet-page/${featuredArticle.id}`)}
+                        onClick={() => navigate(wikiArticlePath(featuredArticle.id))}
                         className="text-[11px] flex items-center gap-1 hover:underline"
                         style={S_ACCENT}
                       >
@@ -1256,7 +1270,7 @@ export function InetSearch() {
                     {categories.map(([cat, count]) => (
                       <button
                         key={cat}
-                        onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(cat)}`)}
+                        onClick={() => navigate(wikiSearchPath(`q=${encodeURIComponent(cat)}`))}
                         className="w-full text-left flex items-center justify-between px-2 py-2 text-[12px] hover:bg-[#1A1A4B] transition-colors"
                         style={{ color: "#B0C0E0", borderRadius: 3 }}
                       >
@@ -1292,7 +1306,7 @@ export function InetSearch() {
                       <div key={page.id} className="text-[11px]" style={S_SUBTLE}>
                         <span style={S_LABEL}>...</span> that{" "}
                         <button
-                          onClick={() => navigate(`/interface/inet-page/${page.id}`)}
+                          onClick={() => navigate(wikiArticlePath(page.id))}
                           className="underline hover:no-underline"
                           style={{ color: "#5A9AFF" }}
                         >
@@ -1315,7 +1329,7 @@ export function InetSearch() {
                     {allTags.map((tag) => (
                       <button
                         key={tag}
-                        onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(tag)}`)}
+                        onClick={() => navigate(wikiSearchPath(`q=${encodeURIComponent(tag)}`))}
                         className="text-[10px] px-2 py-0.5 hover:bg-[#1A1A5B] transition-colors"
                         style={{ ...SUNKEN_INPUT, color: "#7A9ABB", borderRadius: 2 }}
                       >
@@ -1379,7 +1393,7 @@ export function InetSearch() {
                                 {groups[letter].map((page) => (
                                   <button
                                     key={page.id}
-                                    onClick={() => navigate(`/interface/inet-page/${page.id}`)}
+                                    onClick={() => navigate(wikiArticlePath(page.id))}
                                     className="w-full text-left flex items-center gap-2 px-2 py-1.5 text-[12px] hover:bg-[#1A1A4B] transition-colors"
                                     style={{ color: "#B0C0E0", borderRadius: 3 }}
                                   >
@@ -1414,7 +1428,7 @@ export function InetSearch() {
                 icon={<Clock size={14} style={S_ACCENT} />}
                 headerRight={
                   <button
-                    onClick={() => navigate("/interface/inet-search?q=")}
+                    onClick={() => navigate(wikiSearchPath("q="))}
                     className="text-[9px] hover:underline"
                     style={S_ACCENT}
                   >
@@ -1434,7 +1448,7 @@ export function InetSearch() {
                           <FileText size={10} className="mt-0.5 shrink-0" style={{ color: "#5A9AFF" }} />
                           <div className="flex-1 min-w-0">
                             <button
-                              onClick={() => navigate(`/interface/inet-page/${page.id}`)}
+                              onClick={() => navigate(wikiArticlePath(page.id))}
                               className="text-[11px] underline hover:no-underline cursor-pointer text-left block truncate w-full"
                               style={{ color: "#5A9AFF", fontWeight: 600 }}
                             >

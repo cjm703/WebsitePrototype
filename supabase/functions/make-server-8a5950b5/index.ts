@@ -1397,6 +1397,27 @@ function registerRoutes(prefix: string) {
     }
   });
 
+  app.get(`${prefix}/wiki/public-bootstrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const [sites, wikiTags, customPanelStyles] = await Promise.all([
+        listWikiSiteRows(),
+        listTagRows("wiki"),
+        listCollectionRows("app_custom_panel_styles"),
+      ]);
+
+      return c.json({
+        sites: sites.map(stripWikiServerMetadata),
+        wikiTags,
+        customPanelStyles,
+      });
+    } catch (err) {
+      return c.json({ error: String(err) }, 500);
+    }
+  });
+
   app.get(`${prefix}/wiki/drafts`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);

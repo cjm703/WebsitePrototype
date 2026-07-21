@@ -34,6 +34,18 @@ export const router = createBrowserRouter([
     HydrateFallback: LoginPage,
   },
   {
+    path: "/wiki",
+    lazy: () => import("./components/inet-search").then(m => ({ Component: m.PublicInetSearch })),
+  },
+  {
+    path: "/wiki/search",
+    lazy: () => import("./components/inet-search").then(m => ({ Component: m.PublicInetSearch })),
+  },
+  {
+    path: "/wiki/page/:id",
+    lazy: () => import("./components/inet-page").then(m => ({ Component: m.PublicInetPage })),
+  },
+  {
     path: "/interface",
     Component: RootLayout,
     HydrateFallback: RootLayout,

@@ -10,7 +10,13 @@ import {
 import { safeGetItem, safeGetJson } from "./safe-storage";
 import { getPageIcon } from "./page-icons";
 import { RenderFormattedText, refreshWikiArticleLookup } from "./render-text";
-import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";
+import { loadPlayerWikiBootstrap, loadPublicWikiBootstrap } from "@/lib/player-state-api";
+import {
+  getAuthenticatedPath,
+  getWikiArticlePath,
+  getWikiRootPath,
+  getWikiSearchPath,
+} from "@/lib/wiki-routes";
 import {
   DEFAULT_WIKI_ARTICLE_CHROME_LAYOUTS,
   WIKI_BLOCK_COLUMNS,
@@ -389,7 +395,11 @@ function lineBoxElement(
   );
 }
 
-export function InetPage() {
+export function PublicInetPage() {
+  return <InetPage publicMode />;
+}
+
+export function InetPage({ publicMode = false }: { publicMode?: boolean }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [revealedPanels, setRevealedPanels] = useState<Set<string>>(new Set());
@@ -403,7 +413,7 @@ export function InetPage() {
     let cancelled = false;
     const hydrateWikiData = async () => {
       try {
-        const bootstrap = await loadPlayerWikiBootstrap();
+        const bootstrap = await (publicMode ? loadPublicWikiBootstrap() : loadPlayerWikiBootstrap());
         if (cancelled) return;
         const sites = Array.isArray(bootstrap?.sites) ? bootstrap.sites as SitePage[] : [];
         setPages(sites);
@@ -427,11 +437,15 @@ export function InetPage() {
       cancelled = true;
       window.removeEventListener("focus", onFocus);
     };
-  }, []);
+  }, [publicMode]);
 
   const page = pages.find((p) => p.id === id);
-  const currentUserId = safeGetItem("inet-user-id") || "";
+  const currentUserId = publicMode ? "public" : (safeGetItem("inet-user-id") || "");
   const isDM = currentUserId === "dm";
+  const wikiRootPath = getWikiRootPath(publicMode);
+  const wikiSearchPath = (search = "") => getWikiSearchPath(publicMode, search);
+  const wikiArticlePath = (articleId: string) => getWikiArticlePath(publicMode, articleId);
+  const authenticatedPath = (path: string) => getAuthenticatedPath(publicMode, path);
   const browsablePages = useMemo(
     () => filterBrowsableWikiArticles(pages, currentUserId),
     [currentUserId, pages],
@@ -450,7 +464,7 @@ export function InetPage() {
     const others = browsablePages.filter((p) => p.id !== id);
     if (others.length === 0) return;
     const pick = others[Math.floor(Math.random() * others.length)];
-    navigate(`/interface/inet-page/${pick.id}`);
+    navigate(wikiArticlePath(pick.id));
   };
 
   // Related articles (same category + explicit relatedArticleIds, deduplicated)
@@ -529,7 +543,7 @@ export function InetPage() {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: "#080830", fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif" }}>
         <div className={`${retro.toolbar} flex items-center gap-3`}>
-          <button onClick={() => navigate("/interface/inet-search")} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
+          <button onClick={() => navigate(wikiRootPath)} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
             <ArrowLeft size={12} /> Back to Wiki
           </button>
         </div>
@@ -540,7 +554,7 @@ export function InetPage() {
             <p className="text-[13px] mb-4" style={S_MUTED}>
               This article is not available for your character. It may contain information restricted by the DM.
             </p>
-            <button onClick={() => navigate("/interface/inet-search")} className={`${retro.button} px-5 py-2 text-[13px]`} style={S_ACCENT}>
+            <button onClick={() => navigate(wikiRootPath)} className={`${retro.button} px-5 py-2 text-[13px]`} style={S_ACCENT}>
               <Search size={12} className="inline mr-1" /> Return to Wiki
             </button>
           </div>
@@ -553,7 +567,7 @@ export function InetPage() {
     return (
       <div className="min-h-screen flex flex-col" style={{ background: "#080830", fontFamily: "'Tahoma', 'Verdana', 'Arial', sans-serif" }}>
         <div className={`${retro.toolbar} flex items-center gap-3`}>
-          <button onClick={() => navigate("/interface/inet-search")} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
+          <button onClick={() => navigate(wikiRootPath)} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
             <ArrowLeft size={12} /> Back to Wiki
           </button>
         </div>
@@ -564,7 +578,7 @@ export function InetPage() {
             <p className="text-[13px] mb-4" style={S_MUTED}>
               The requested wiki article could not be located. It may have been removed or the link is broken.
             </p>
-            <button onClick={() => navigate("/interface/inet-search")} className={`${retro.button} px-5 py-2 text-[13px]`} style={S_ACCENT}>
+            <button onClick={() => navigate(wikiRootPath)} className={`${retro.button} px-5 py-2 text-[13px]`} style={S_ACCENT}>
               <Search size={12} className="inline mr-1" /> Return to Wiki
             </button>
           </div>
@@ -1033,7 +1047,7 @@ export function InetPage() {
               {(block.articleIds || []).filter((articleId) => pageTitleLookup.has(articleId)).map((articleId) => (
                 <button
                   key={articleId}
-                  onClick={() => navigate(`/interface/inet-page/${articleId}`)}
+                  onClick={() => navigate(wikiArticlePath(articleId))}
                   className="block text-left px-2 py-1 rounded-md hover:opacity-85"
                   style={{ width: linkDisplayMode === "chips" ? "auto" : "100%", color: accent, background: linkDisplayMode === "cards" ? "rgba(255,255,255,0.055)" : "rgba(255,255,255,0.03)", border: `1px solid ${borderTone}77` }}
                 >
@@ -1108,11 +1122,11 @@ export function InetPage() {
             <ArrowLeft size={12} /> Back
           </button>
           <span className="text-[11px]" style={S_DIM}>|</span>
-          <button onClick={() => navigate("/interface/inet-search")} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
+          <button onClick={() => navigate(wikiRootPath)} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
             <BookOpen size={11} /> Wiki Home
           </button>
           <span className="text-[11px]" style={S_DIM}>|</span>
-          <button onClick={() => navigate("/interface/inet-search?q=")} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
+          <button onClick={() => navigate(wikiSearchPath("q="))} className="text-[11px] hover:opacity-80 flex items-center gap-1" style={S_ACCENT}>
             <List size={10} /> All Articles
           </button>
           <span className="text-[11px]" style={S_DIM}>|</span>
@@ -1120,7 +1134,7 @@ export function InetPage() {
             <Shuffle size={10} /> Random
           </button>
         </div>
-        <button onClick={() => navigate("/interface")} className="text-[11px] hover:opacity-80" style={S_ACCENT}>Interface</button>
+        <button onClick={() => navigate(authenticatedPath("/interface"))} className="text-[11px] hover:opacity-80" style={S_ACCENT}>Interface</button>
       </div>
 
       {/* Breadcrumb bar */}
@@ -1140,7 +1154,7 @@ export function InetPage() {
                 <span style={S_SUBTLE}>{part}</span>
               ) : (
                 <button
-                  onClick={() => navigate(isWikiRoot ? "/interface/inet-search" : `/interface/inet-search?q=${encodeURIComponent(part)}`)}
+                  onClick={() => navigate(isWikiRoot ? wikiRootPath : wikiSearchPath(`q=${encodeURIComponent(part)}`))}
                   className="hover:underline"
                   style={S_ACCENT}
                 >
@@ -1256,7 +1270,7 @@ export function InetPage() {
                     <span className="text-[9px] uppercase tracking-wider" style={{ color: mutedText }}>Category</span>
                     <div className="text-[11px] mt-0.5" style={{ color: txt }}>
                       <button
-                        onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(page.category)}`)}
+                        onClick={() => navigate(wikiSearchPath(`q=${encodeURIComponent(page.category)}`))}
                         className="underline hover:no-underline"
                         style={{ color: accent }}
                       >
@@ -1305,7 +1319,7 @@ export function InetPage() {
                         {(page.tags || []).map((tag) => (
                           <button
                             key={tag}
-                            onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(tag)}`)}
+                            onClick={() => navigate(wikiSearchPath(`q=${encodeURIComponent(tag)}`))}
                             className="text-[9px] px-1.5 py-0 hover:opacity-70"
                             style={{ color: accent, background: darken(hdr, 5), border: `1px solid ${borderColor}` }}
                           >
@@ -1335,7 +1349,7 @@ export function InetPage() {
                           <span style={{ fontWeight: 500 }}>{node.name || "Unnamed"}</span>
                         ) : linkedArticle ? (
                           <button
-                            onClick={() => navigate(`/interface/inet-page/${linkedArticle.id}`)}
+                            onClick={() => navigate(wikiArticlePath(linkedArticle.id))}
                             className="underline hover:no-underline text-left"
                             style={{ color: accent }}
                           >
@@ -1451,7 +1465,7 @@ export function InetPage() {
                       return (
                         <button
                           key={art.id}
-                          onClick={() => navigate(`/interface/inet-page/${art.id}`)}
+                          onClick={() => navigate(wikiArticlePath(art.id))}
                           className="w-full text-left flex items-center gap-1.5 px-2 py-1 text-[11px] hover:bg-[#1A1A4B] transition-colors"
                           style={{ color: isExplicit ? "#FFAA4A" : "#5A9AFF", borderRadius: 3 }}
                           title={isExplicit ? "Linked article" : "Same category"}
@@ -1487,7 +1501,7 @@ export function InetPage() {
                     {relationshipArticles.map(({ relationship, target }) => (
                       <button
                         key={relationship.id}
-                        onClick={() => navigate(`/interface/inet-page/${target.id}`)}
+                        onClick={() => navigate(wikiArticlePath(target.id))}
                         className="w-full text-left rounded px-2 py-1.5 hover:bg-[#1A1A4B] transition-colors"
                         style={{ color: "#8AB4FF" }}
                         title={relationship.note || `This page ${relationship.type} ${target.title}`}
@@ -1910,7 +1924,7 @@ export function InetPage() {
                       {seeAlsoPages.map((sa) => (
                         <li key={sa.id} className="text-[13px] list-disc" style={{ color: mutedText }}>
                           <button
-                            onClick={() => navigate(`/interface/inet-page/${sa.id}`)}
+                            onClick={() => navigate(wikiArticlePath(sa.id))}
                             className="underline hover:no-underline"
                             style={{ color: accent }}
                           >
@@ -1957,7 +1971,7 @@ export function InetPage() {
 
             <div className="flex items-center justify-center gap-3 flex-wrap mb-2">
               <button
-                onClick={() => navigate(`/interface/inet-search?q=${encodeURIComponent(page.category)}`)}
+                onClick={() => navigate(wikiSearchPath(`q=${encodeURIComponent(page.category)}`))}
                 className="text-[10px] px-2 py-0.5 flex items-center gap-1 hover:opacity-70"
                 style={{ color: accent, background: darken(bg, 10), border: `1px solid ${borderColor}` }}
               >
@@ -1967,7 +1981,7 @@ export function InetPage() {
               {(page.wikiTags || []).map((wt) => (
                 <button
                   key={wt}
-                  onClick={() => navigate(`/interface/inet-search?q=&wikiTag=${encodeURIComponent(wt)}`)}
+                  onClick={() => navigate(wikiSearchPath(`q=&wikiTag=${encodeURIComponent(wt)}`))}
                   className="text-[10px] px-2 py-0.5 flex items-center gap-1 hover:opacity-70"
                   style={{ color: "#9A7ABB", background: darken(bg, 10), border: `1px solid #2A1A4B` }}
                 >

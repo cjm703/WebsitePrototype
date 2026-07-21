@@ -845,8 +845,9 @@ function WikiEditorWorkspace() {
   const [showDraftRestore, setShowDraftRestore] = useState(false);
   const [remoteDrafts, setRemoteDrafts] = useState<Record<string, SitePage>>({});
   const [draftsLoaded, setDraftsLoaded] = useState(false);
-  const draftStorageId = isNew ? "new" : page.id;
+  const draftStorageId = isNew ? "new" : (id || page.id);
   const draftKey = `inet-wiki-draft-${draftStorageId}`;
+  const draftRestoreCheckedIdRef = useRef("");
 
   // --- Undo/Redo State ---
   const [undoStack, setUndoStack] = useState<SitePage[]>([]);
@@ -1147,7 +1148,10 @@ function WikiEditorWorkspace() {
 
   // --- Check for draft on mount ---
   useEffect(() => {
-    if (!draftsLoaded) return;
+    if (!draftsLoaded || wikiLoading || (!isNew && !existingPage)) return;
+    if (draftRestoreCheckedIdRef.current === draftStorageId) return;
+    draftRestoreCheckedIdRef.current = draftStorageId;
+    setShowDraftRestore(false);
     const remoteDraft = remoteDrafts[draftStorageId];
     if (remoteDraft && remoteDraft.title !== undefined) {
       setShowDraftRestore(true);
@@ -1160,7 +1164,7 @@ function WikiEditorWorkspace() {
         if (draft && draft.title !== undefined) setShowDraftRestore(true);
       }
     } catch {}
-  }, [draftKey, draftStorageId, draftsLoaded, remoteDrafts]);
+  }, [draftKey, draftStorageId, draftsLoaded, existingPage, isNew, remoteDrafts, wikiLoading]);
 
   // Keep both a local recovery copy and a shared DM draft.
   useEffect(() => {
@@ -1459,6 +1463,20 @@ function WikiEditorWorkspace() {
       setError(err instanceof Error ? `Failed to save article: ${err.message}` : "Failed to save article");
     }
   };
+
+  const copyPublicWikiLink = useCallback(async () => {
+    if (isNew) {
+      setError("Publish this article before copying its public link.");
+      return;
+    }
+    const publicUrl = new URL(`/wiki/page/${encodeURIComponent(page.id)}`, window.location.origin).toString();
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setRecoveryStatus("Public wiki link copied.");
+    } catch {
+      window.prompt("Copy public wiki link:", publicUrl);
+    }
+  }, [isNew, page.id]);
 
   // --- Panel/Section helpers (unified) ---
   const panels = normalizeWikiPanels(page.panels);
@@ -4560,6 +4578,15 @@ function WikiEditorWorkspace() {
                   {presetStatus || recoveryStatus}
                 </span>
               )}
+              <button
+                onClick={() => void copyPublicWikiLink()}
+                disabled={isNew}
+                className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1 disabled:opacity-40`}
+                style={S_ACCENT}
+                title={isNew ? "Publish this article before sharing it" : "Copy a public link that does not require login"}
+              >
+                <Link2 size={12} /> Public Link
+              </button>
               <button
                 onClick={handleSave}
                 className={`${retro.button} px-4 py-1.5 text-[11px] flex items-center gap-1`}
