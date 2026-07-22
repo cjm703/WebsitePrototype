@@ -10,10 +10,12 @@ import {
   ChevronRight, Navigation, CornerUpLeft, Layers, AlertTriangle,
   Skull, Shield, Home, Landmark, Trees, Anchor, Flame,
   Link2, Unlink, Cloud, CloudOff, Crosshair, Lock, Ban, DoorOpen,
-  ZoomIn, ZoomOut, Maximize2, Image, Square, Grid3x3,
+  ZoomIn, ZoomOut, Maximize2, Image, Square, Grid3x3, Pentagon,
+  Check, BookOpen, ExternalLink, MapPinned, ImagePlus, Minus,
+  Building2, Boxes, RotateCcw,
 } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-import { safeGetItem, safeGetJson } from "./safe-storage";
+import { safeGetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 
 /* ==============================================================
@@ -613,14 +615,86 @@ const FOG_COLORS: Record<FogMode, string> = { visible: "#4AFF4A", locked: "#FFAA
    PIN / ZONE DATA TYPES
    ============================================================== */
 
-interface MapPin_t { id: string; name: string; x: number; y: number; icon: string; color: string; description: string; notes: string; }
+type MapPoint = [number, number];
+
+interface MapPin_t {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  icon: string;
+  color: string;
+  description: string;
+  notes: string;
+  images: string[];
+  width: number;
+  height: number;
+  wikiPageId?: string;
+  childMapId?: string;
+}
+
+interface MapLine {
+  id: string;
+  start: MapPoint;
+  end: MapPoint;
+  color: string;
+  width: number;
+  opacity: number;
+  dashed: boolean;
+}
+
+interface MapArea {
+  id: string;
+  name: string;
+  points: MapPoint[];
+  color: string;
+  opacity: number;
+}
+
+type MapEditorVariant = "places" | "building";
+type BuildingSlotKind = "industrial" | "commercial" | "residential" | "civic" | "storage" | "utility" | "security" | "medical" | "research" | "other";
+
+interface BuildingShell {
+  points: MapPoint[];
+  color: string;
+  opacity: number;
+  wallWidth: number;
+}
+
+interface BuildingSlot {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  kind: BuildingSlotKind;
+  filled: boolean;
+  contents: string;
+  description: string;
+}
 
 interface MapZone {
   id: string; name: string; subtitle: string; color: string; image: string;
   pins: MapPin_t[]; fogMode: FogMode; connections: [string, string][]; sectorNumber: number;
   walls: [number, number, number, number][]; // [x1,y1,x2,y2] in % coordinates
+  lines: MapLine[];
+  areas: MapArea[];
+  editorVariant: MapEditorVariant;
+  buildingShell: BuildingShell;
+  buildingSlots: BuildingSlot[];
+  mapType: "sector" | "place";
+  parentZoneId?: string;
+  parentPlaceId?: string;
+  schemaVersion: 5;
   useMapBg?: boolean; // true = use procedural map-style background instead of image
   revealed?: boolean;
+}
+
+interface WikiMapPage {
+  id: string;
+  title?: string;
+  name?: string;
 }
 
 const ICON_MAP: Record<string, React.ComponentType<any>> = {
@@ -632,49 +706,128 @@ const ICON_MAP: Record<string, React.ComponentType<any>> = {
 const ICON_OPTIONS = Object.keys(ICON_MAP);
 const PIN_COLORS = ["#4A7BFF","#FF6A6A","#4AFF4A","#FFAA4A","#FF4AFF","#4AFFFF","#FFD700","#FF69B4","#7B68EE","#20B2AA"];
 
+const BUILDING_SLOT_KINDS: Record<BuildingSlotKind, { label: string; color: string }> = {
+  industrial: { label: "Industrial", color: "#FF8A4A" },
+  commercial: { label: "Commercial", color: "#FFD34A" },
+  residential: { label: "Residential", color: "#4A9BFF" },
+  civic: { label: "Civic", color: "#B58AFF" },
+  storage: { label: "Storage", color: "#A88A6A" },
+  utility: { label: "Utility", color: "#4AD6C8" },
+  security: { label: "Security", color: "#FF5A6A" },
+  medical: { label: "Medical", color: "#64D98B" },
+  research: { label: "Research", color: "#6CCBFF" },
+  other: { label: "Other", color: "#A0A8C0" },
+};
+
+function createDefaultBuildingShell(color = "#6A7B9B"): BuildingShell {
+  return {
+    points: [[10, 10], [90, 10], [90, 90], [10, 90]],
+    color,
+    opacity: 0.16,
+    wallWidth: 6,
+  };
+}
+
 const DEFAULT_OUTER_IMG = "https://images.unsplash.com/photo-1636418557948-83835508836b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxkYXJrJTIwdW5kZXJncm91bmQlMjBjYXZlcm4lMjBydWlucyUyMGFlcmlhbHxlbnwxfHx8fDE3NzM4NzI0ODN8MA&ixlib=rb-4.1.0&q=80&w=1080";
 const DEFAULT_OUTER_IMG2 = "https://images.unsplash.com/photo-1711211788461-34d6d7175068?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxkYXJrJTIwc3RvbmUlMjBmb3J0cmVzcyUyMHdhc3RlbGFuZCUyMGFlcmlhbHxlbnwxfHx8fDE3NzM4NzI0ODN8MA&ixlib=rb-4.1.0&q=80&w=1080";
 
 function buildDefaultZones(): MapZone[] {
   const innerZones: MapZone[] = SECTORS.map(s => ({
-    id: s.id, name: s.name, subtitle: s.subtitle, color: s.color, image: s.image,
+    id: s.id, name: `Sector ${s.number}`, subtitle: "", color: s.color, image: "",
     sectorNumber: s.number, fogMode: "visible" as FogMode, connections: [], walls: [],
-    pins: s.number === 0
-      ? [
-          { id: "council", name: "Council Chamber", x: 45, y: 40, icon: "landmark", color: "#FFD700", description: "Where the Deep Council convenes", notes: "All 15 sector representatives attend." },
-          { id: "nexus-well", name: "The Nexus Well", x: 55, y: 60, icon: "eye", color: "#4A7BFF", description: "Ancient scrying pool at the city's heart", notes: "Rumored to show visions of the surface." },
-        ]
-      : s.number === 1 ? [{ id: "obsidian-manor", name: "House Velathorn", x: 40, y: 35, icon: "home", color: "#7B68EE", description: "Most powerful noble house", notes: "Controls the obsidian trade." }]
-      : s.number === 2 ? [{ id: "great-forge", name: "The Great Forge", x: 55, y: 45, icon: "flame", color: "#FF6A4A", description: "City's primary weapons forge", notes: "Burns day and night." }]
-      : s.number === 3 ? [{ id: "spore-fields", name: "Spore Fields", x: 35, y: 55, icon: "trees", color: "#4AFF4A", description: "Vast bioluminescent mushroom farms", notes: "Primary food source for the city." }]
-      : s.number === 5 ? [{ id: "north-gate", name: "The Spire Gate", x: 50, y: 30, icon: "shield", color: "#4AFFFF", description: "Main northern entrance", notes: "Most heavily fortified gate." }]
-      : s.number === 9 ? [{ id: "pit-fights", name: "The Bone Pit", x: 50, y: 50, icon: "skull", color: "#CD853F", description: "Underground fighting arena", notes: "Bets placed in teeth and bone chips." }]
-      : s.number === 12 ? [{ id: "warden", name: "Warden's Office", x: 40, y: 30, icon: "shield", color: "#708090", description: "Head jailer's quarters", notes: "Holds the master key ring." }]
-      : s.number === 13 ? [{ id: "pale-ward", name: "Warding Glyphs", x: 50, y: 45, icon: "alert", color: "#8B5CF6", description: "Ancient protective runes line the ring", notes: "None may pass without the Council's mark." }]
-      : [],
+    lines: [], areas: [], editorVariant: "places", buildingShell: createDefaultBuildingShell(s.color), buildingSlots: [], mapType: "sector", schemaVersion: 5, useMapBg: true, pins: [],
   }));
 
   // Build outer subsector zones from pre-computed data
   const outerZones: MapZone[] = [];
   OUTER_SECTORS_V2.forEach((sector, si) => {
     const subData = OUTER_SECTOR_SUBS[si];
-    subData.labels.forEach((sub, idx) => {
+    subData.labels.forEach((sub) => {
       outerZones.push({
         id: `os-${sub.label}`,
         name: `Sector ${sub.label}`,
-        subtitle: sector.name,
+        subtitle: "",
         color: sector.color,
-        image: idx % 2 === 0 ? DEFAULT_OUTER_IMG : DEFAULT_OUTER_IMG2,
+        image: "",
         sectorNumber: sector.id,
         fogMode: "visible" as FogMode,
         connections: [],
         walls: [],
+        lines: [],
+        areas: [],
+        editorVariant: "places",
+        buildingShell: createDefaultBuildingShell(sector.color),
+        buildingSlots: [],
+        mapType: "sector",
+        schemaVersion: 5,
+        useMapBg: true,
         pins: [],
       });
     });
   });
 
   return [...innerZones, ...outerZones];
+}
+
+const LEGACY_PLACEHOLDER_PIN_IDS = new Set([
+  "council", "nexus-well", "obsidian-manor", "great-forge", "spore-fields",
+  "north-gate", "pit-fights", "warden", "pale-ward",
+]);
+const LEGACY_PLACEHOLDER_IMAGES = new Set([
+  ...SECTORS.map((sector) => sector.image),
+  DEFAULT_OUTER_IMG,
+  DEFAULT_OUTER_IMG2,
+]);
+
+function migratePin(pin: any): MapPin_t {
+  const legacyImage = typeof pin?.image === "string" && pin.image.trim() ? [pin.image.trim()] : [];
+  return {
+    id: String(pin?.id || `place-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    name: String(pin?.name || "Untitled Place"),
+    x: Number.isFinite(pin?.x) ? pin.x : 50,
+    y: Number.isFinite(pin?.y) ? pin.y : 50,
+    icon: String(pin?.icon || "pin"),
+    color: String(pin?.color || "#4A7BFF"),
+    description: String(pin?.description || ""),
+    notes: String(pin?.notes || ""),
+    images: Array.isArray(pin?.images) ? pin.images.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0) : legacyImage,
+    width: Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 148,
+    height: Number.isFinite(pin?.height) ? Math.max(56, Math.min(220, pin.height)) : 82,
+    wikiPageId: typeof pin?.wikiPageId === "string" ? pin.wikiPageId : undefined,
+    childMapId: typeof pin?.childMapId === "string" ? pin.childMapId : undefined,
+  };
+}
+
+function migrateBuildingSlot(slot: any): BuildingSlot {
+  const rawKind = String(slot?.kind || "other") as BuildingSlotKind;
+  const kind = BUILDING_SLOT_KINDS[rawKind] ? rawKind : "other";
+  return {
+    id: String(slot?.id || `slot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    name: String(slot?.name || `${BUILDING_SLOT_KINDS[kind].label} Slot`),
+    x: Number.isFinite(slot?.x) ? Math.max(0, Math.min(100, slot.x)) : 50,
+    y: Number.isFinite(slot?.y) ? Math.max(0, Math.min(100, slot.y)) : 50,
+    width: Number.isFinite(slot?.width) ? Math.max(72, Math.min(320, slot.width)) : 132,
+    height: Number.isFinite(slot?.height) ? Math.max(48, Math.min(240, slot.height)) : 76,
+    kind,
+    filled: Boolean(slot?.filled),
+    contents: String(slot?.contents || ""),
+    description: String(slot?.description || ""),
+  };
+}
+
+function migrateBuildingShell(shell: any, fallbackColor: string): BuildingShell {
+  const points = Array.isArray(shell?.points)
+    ? shell.points
+        .filter((point: any) => Array.isArray(point) && point.length >= 2)
+        .map((point: any) => [Math.max(0, Math.min(100, Number(point[0]) || 0)), Math.max(0, Math.min(100, Number(point[1]) || 0))] as MapPoint)
+    : [];
+  const fallback = createDefaultBuildingShell(fallbackColor);
+  return {
+    points: points.length >= 3 ? points : fallback.points,
+    color: String(shell?.color || fallback.color),
+    opacity: Number.isFinite(shell?.opacity) ? Math.max(0.03, Math.min(0.75, shell.opacity)) : fallback.opacity,
+    wallWidth: Number.isFinite(shell?.wallWidth) ? Math.max(1, Math.min(18, shell.wallWidth)) : fallback.wallWidth,
+  };
 }
 
 function migrateZone(z: any): MapZone {
@@ -684,13 +837,75 @@ function migrateZone(z: any): MapZone {
   } else if (typeof z.revealed === "boolean") {
     fogMode = z.revealed ? "visible" : "invisible";
   }
-  return { ...z, fogMode, connections: z.connections ?? [], walls: z.walls ?? [], sectorNumber: z.sectorNumber ?? 0, useMapBg: z.useMapBg ?? false };
+  const legacySector = SECTORS.find((sector) => sector.id === z?.id);
+  const outerLabel = typeof z?.id === "string" && z.id.startsWith(OUTER_ZONE_ID_PREFIX)
+    ? z.id.slice(OUTER_ZONE_ID_PREFIX.length)
+    : "";
+  const previousSchemaVersion = Number(z?.schemaVersion) || 0;
+  const wasPlaceholderEra = previousSchemaVersion < 4;
+  const isPlaceMap = z?.mapType === "place" || Boolean(z?.parentZoneId);
+  const legacyName = legacySector?.name;
+  const legacySubtitle = legacySector?.subtitle;
+  const name = wasPlaceholderEra && !isPlaceMap && (z?.name === legacyName || /^Sector \d+(?:\.[A-Z]+)?$/.test(String(z?.name || "")))
+    ? (outerLabel ? `Sector ${outerLabel}` : `Sector ${z?.sectorNumber ?? legacySector?.number ?? 0}`)
+    : String(z?.name || (outerLabel ? `Sector ${outerLabel}` : "Untitled Place"));
+  const subtitle = wasPlaceholderEra && (z?.subtitle === legacySubtitle || OUTER_SECTORS_V2.some((sector) => sector.name === z?.subtitle))
+    ? ""
+    : String(z?.subtitle || "");
+  const image = wasPlaceholderEra && LEGACY_PLACEHOLDER_IMAGES.has(z?.image) ? "" : String(z?.image || "");
+  const pins = Array.isArray(z?.pins)
+    ? z.pins.filter((pin: any) => !(wasPlaceholderEra && LEGACY_PLACEHOLDER_PIN_IDS.has(String(pin?.id)))).map(migratePin)
+    : [];
+  const lines: MapLine[] = Array.isArray(z?.lines)
+    ? z.lines.filter((line: any) => line && Array.isArray(line.start) && Array.isArray(line.end)).map((line: any) => ({
+        id: String(line.id || `line-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        start: [Number(line.start[0]) || 0, Number(line.start[1]) || 0],
+        end: [Number(line.end[0]) || 0, Number(line.end[1]) || 0],
+        color: String(line.color || "#4AFFFF"),
+        width: Number.isFinite(line.width) ? Math.max(1, Math.min(12, line.width)) : 3,
+        opacity: Number.isFinite(line.opacity) ? Math.max(0.1, Math.min(1, line.opacity)) : 0.85,
+        dashed: Boolean(line.dashed),
+      }))
+    : [];
+  const areas: MapArea[] = Array.isArray(z?.areas)
+    ? z.areas.filter((area: any) => area && Array.isArray(area.points) && area.points.length >= 3).map((area: any) => ({
+        id: String(area.id || `area-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        name: String(area.name || "Area"),
+        points: area.points.map((point: any) => [Number(point?.[0]) || 0, Number(point?.[1]) || 0] as MapPoint),
+        color: String(area.color || "#4A7BFF"),
+        opacity: Number.isFinite(area.opacity) ? Math.max(0.05, Math.min(0.9, area.opacity)) : 0.25,
+      }))
+    : [];
+  const editorVariant: MapEditorVariant = z?.editorVariant === "building" ? "building" : "places";
+  const buildingShell = migrateBuildingShell(z?.buildingShell, String(z?.color || "#6A7B9B"));
+  const buildingSlots = Array.isArray(z?.buildingSlots) ? z.buildingSlots.map(migrateBuildingSlot) : [];
+  return {
+    ...z,
+    name,
+    subtitle,
+    image,
+    pins,
+    fogMode,
+    connections: Array.isArray(z?.connections) ? z.connections : [],
+    walls: Array.isArray(z?.walls) ? z.walls : [],
+    lines,
+    areas,
+    editorVariant,
+    buildingShell,
+    buildingSlots,
+    mapType: isPlaceMap ? "place" : "sector",
+    parentZoneId: typeof z?.parentZoneId === "string" ? z.parentZoneId : undefined,
+    parentPlaceId: typeof z?.parentPlaceId === "string" ? z.parentPlaceId : undefined,
+    schemaVersion: 5,
+    sectorNumber: z?.sectorNumber ?? 0,
+    useMapBg: image ? (z?.useMapBg ?? false) : true,
+  };
 }
 
 const INTELLI_MAPS_STORAGE_KEY = "inet-map-hexcity-v3";
 function loadLocalZones(): MapZone[] {
   const saved = safeGetJson<any[]>(INTELLI_MAPS_STORAGE_KEY, []);
-  if (saved.length === 0 || saved.length < 15) return buildDefaultZones();
+  if (saved.length === 0) return buildDefaultZones();
   const defaults = buildDefaultZones();
   const migrated = saved.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
@@ -735,6 +950,15 @@ function compareOuterZones(a: MapZone, b: MapZone): number {
   return aParsed.subLetter.localeCompare(bParsed.subLetter);
 }
 
+function getSectorLabel(zone: MapZone): string {
+  const outerLabel = getOuterSubLabelFromZone(zone);
+  return outerLabel ? `Sector ${outerLabel}` : `Sector ${zone.sectorNumber}`;
+}
+
+function getMapTitle(zone: MapZone): string {
+  return zone.mapType === "place" ? `${zone.name || "Untitled Place"} Map` : `${getSectorLabel(zone)} Map`;
+}
+
 /* ==============================================================
    COMPONENT
    ============================================================== */
@@ -753,6 +977,18 @@ export function IntelliMaps() {
   const [hoveredOuterSub, setHoveredOuterSub] = useState<string | null>(null);
   const [wallMode, setWallMode] = useState(false);
   const [wallStart, setWallStart] = useState<[number, number] | null>(null);
+  const [areaMode, setAreaMode] = useState(false);
+  const [shellMode, setShellMode] = useState(false);
+  const [areaPoints, setAreaPoints] = useState<MapPoint[]>([]);
+  const [drawColor, setDrawColor] = useState("#4A7BFF");
+  const [drawOpacity, setDrawOpacity] = useState(0.3);
+  const [lineWidth, setLineWidth] = useState(3);
+  const [lineDashed, setLineDashed] = useState(false);
+  const [placeImageDraft, setPlaceImageDraft] = useState("");
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [editingSlot, setEditingSlot] = useState<BuildingSlot | null>(null);
+  const [isNewSlot, setIsNewSlot] = useState(false);
+  const [wikiPages, setWikiPages] = useState<WikiMapPage[]>([]);
   const [activeGateId, setActiveGateId] = useState<string | null>(null);
   const [hoveredGate, setHoveredGate] = useState<string | null>(null);
   const [showFog, setShowFog] = useState(true);
@@ -766,12 +1002,16 @@ export function IntelliMaps() {
   const activeZone = zones.find(z => z.id === activeZoneId) || null;
   const activeGate = GATES.find(g => g.id === activeGateId) || null;
   const selectedPin = activeZone?.pins.find(p => p.id === selectedPinId) || null;
+  const selectedSlot = activeZone?.buildingSlots.find((slot) => slot.id === selectedSlotId) || null;
+  const parentZone = activeZone?.parentZoneId ? zones.find((zone) => zone.id === activeZone.parentZoneId) || null : null;
 
   const [mapZoom, setMapZoom] = useState(2);
   const [mapPan, setMapPan] = useState<[number, number]>([0, 0]);
   const [hasInitializedPan, setHasInitializedPan] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
+  const [draggingSlotId, setDraggingSlotId] = useState<string | null>(null);
   const panStart = useRef<[number, number]>([0, 0]);
   const panOrigin = useRef<[number, number]>([0, 0]);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -802,14 +1042,30 @@ export function IntelliMaps() {
 
   const handlePanStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
-    if (activeZone && isEditMode && isDM && !linkMode && !wallMode) return;
+    if (activeZone && isEditMode && isDM) return;
     setIsPanning(true);
     setIsDragging(false);
     panStart.current = [e.clientX, e.clientY];
     panOrigin.current = mapPan;
-  }, [mapPan, activeZone, isEditMode, isDM, linkMode, wallMode]);
+  }, [mapPan, activeZone, isEditMode, isDM]);
 
   const handlePanMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if ((draggingPinId || draggingSlotId) && activeZoneId) {
+      const el = mapContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const x = Math.max(0, Math.min(100, ((e.clientX - rect.left - mapPan[0]) / mapZoom / rect.width) * 100));
+      const y = Math.max(0, Math.min(100, ((e.clientY - rect.top - mapPan[1]) / mapZoom / rect.height) * 100));
+      setIsDragging(true);
+      setZones((prev) => prev.map((zone) => {
+        if (zone.id !== activeZoneId) return zone;
+        if (draggingSlotId) {
+          return { ...zone, buildingSlots: zone.buildingSlots.map((slot) => slot.id === draggingSlotId ? { ...slot, x, y } : slot) };
+        }
+        return { ...zone, pins: zone.pins.map((pin) => pin.id === draggingPinId ? { ...pin, x, y } : pin) };
+      }));
+      return;
+    }
     if (!isPanning) return;
     const dx = e.clientX - panStart.current[0];
     const dy = e.clientY - panStart.current[1];
@@ -824,13 +1080,15 @@ export function IntelliMaps() {
     const nx = Math.min(panOvershoot, Math.max(cw - mapW - panOvershoot, panOrigin.current[0] + dx));
     const ny = Math.min(panOvershoot, Math.max(ch - mapH - panOvershoot, panOrigin.current[1] + dy));
     setMapPan([nx, ny]);
-  }, [isPanning, isDragging, mapZoom]);
+  }, [activeZoneId, draggingPinId, draggingSlotId, isPanning, isDragging, mapPan, mapZoom]);
 
   const handlePanEnd = useCallback(() => {
     if (isDragging) {
       wasDraggingRef.current = true;
       requestAnimationFrame(() => { wasDraggingRef.current = false; });
     }
+    setDraggingPinId(null);
+    setDraggingSlotId(null);
     setIsPanning(false);
     setIsDragging(false);
   }, [isDragging]);
@@ -902,15 +1160,28 @@ export function IntelliMaps() {
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedMapsRef.current) return;
+    let cancelled = false;
+    appStore.listSites<WikiMapPage>()
+      .then((pages) => {
+        if (!cancelled) {
+          setWikiPages([...pages].sort((a, b) => String(a.title || a.name || "").localeCompare(String(b.title || b.name || ""))));
+        }
+      })
+      .catch((err) => console.warn("Failed to load wiki pages for Intelli Maps", err));
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedMapsRef.current || !isDM) return;
     const timeout = window.setTimeout(() => {
+      safeSetJson(INTELLI_MAPS_STORAGE_KEY, zones);
       appStore.saveIntelliMapsState<MapZone[]>(zones).catch((err) => {
         console.warn("Failed to save Intelli Maps state", err);
         setMapsError(err instanceof Error ? err.message : "Failed to save Intelli Maps state");
       });
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [zones]);
+  }, [isDM, zones]);
 
   const OUTER_BOUNDS = [270, 306, 342, 378, 414, 450, 486, 522, 558, 594];
   const OUTER_COUNT = OUTER_BOUNDS.length;
@@ -946,8 +1217,9 @@ export function IntelliMaps() {
     setTimeout(() => {
       setActiveZoneId(sectorId);
       setActiveGateId(null);
-      setSelectedPinId(null); setEditingPin(null); setIsNewPin(false);
+      setSelectedPinId(null); setEditingPin(null); setIsNewPin(false); setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
       setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 300);
@@ -958,8 +1230,9 @@ export function IntelliMaps() {
     setTimeout(() => {
       setActiveGateId(gateId);
       setActiveZoneId(null);
-      setSelectedPinId(null); setEditingPin(null); setIsNewPin(false);
-      setLinkMode(false); setLinkSource(null);
+      setSelectedPinId(null); setEditingPin(null); setIsNewPin(false); setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
+      setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 300);
@@ -968,11 +1241,25 @@ export function IntelliMaps() {
   const handleBackToWorld = useCallback(() => {
     setZoomTransition(true);
     setTimeout(() => {
-      setActiveZoneId(null); setActiveGateId(null); setSelectedPinId(null); setEditingPin(null);
-      setIsNewPin(false); setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
+      setActiveZoneId(activeZone?.parentZoneId || null); setActiveGateId(null); setSelectedPinId(null); setEditingPin(null); setSelectedSlotId(null); setEditingSlot(null);
+      setIsNewPin(false); setIsNewSlot(false); setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 300);
+  }, [activeZone?.parentZoneId]);
+
+  const openNestedMap = useCallback((zoneId: string) => {
+    setZoomTransition(true);
+    setTimeout(() => {
+      setActiveZoneId(zoneId);
+      setActiveGateId(null);
+      setSelectedPinId(null); setEditingPin(null); setIsNewPin(false); setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
+      setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
+      setMapZoom(1); setMapPan([0, 0]);
+      setTimeout(() => setZoomTransition(false), 50);
+    }, 220);
   }, []);
 
   const handlePinClickForLink = useCallback((pinId: string) => {
@@ -991,13 +1278,86 @@ export function IntelliMaps() {
   const savePin = useCallback(() => {
     if (!editingPin || !activeZoneId) return;
     setZones(prev => prev.map(z => {
+      if (editingPin.childMapId && z.id === editingPin.childMapId) {
+        return { ...z, name: editingPin.name || "Untitled Place" };
+      }
       if (z.id !== activeZoneId) return z;
       const existing = z.pins.find(p => p.id === editingPin.id);
       if (existing) return { ...z, pins: z.pins.map(p => p.id === editingPin.id ? editingPin : p) };
       return { ...z, pins: [...z.pins, editingPin] };
     }));
-    setEditingPin(null); setIsNewPin(false); setSelectedPinId(editingPin.id);
+    setEditingPin(null); setIsNewPin(false); setSelectedPinId(editingPin.id); setPlaceImageDraft("");
   }, [editingPin, activeZoneId]);
+
+  const createOrOpenPlaceMap = useCallback((pin: MapPin_t, editorVariant: MapEditorVariant = "places") => {
+    if (!activeZone) return;
+    if (pin.childMapId && zones.some((zone) => zone.id === pin.childMapId)) {
+      openNestedMap(pin.childMapId);
+      return;
+    }
+    const childMapId = `place-map-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const childMap: MapZone = {
+      id: childMapId,
+      name: pin.name || "Untitled Place",
+      subtitle: "",
+      color: pin.color,
+      image: "",
+      pins: [],
+      fogMode: "visible",
+      connections: [],
+      sectorNumber: activeZone.sectorNumber,
+      walls: [],
+      lines: [],
+      areas: [],
+      editorVariant,
+      buildingShell: createDefaultBuildingShell(pin.color),
+      buildingSlots: [],
+      mapType: "place",
+      parentZoneId: activeZone.id,
+      parentPlaceId: pin.id,
+      schemaVersion: 5,
+      useMapBg: true,
+    };
+    setZones((prev) => [
+      ...prev.map((zone) => zone.id === activeZone.id
+        ? { ...zone, pins: zone.pins.map((place) => place.id === pin.id ? { ...place, childMapId } : place) }
+        : zone),
+      childMap,
+    ]);
+    setSelectedPinId(null);
+    setTimeout(() => openNestedMap(childMapId), 0);
+  }, [activeZone, openNestedMap, zones]);
+
+  const setActiveEditorVariant = useCallback((editorVariant: MapEditorVariant) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, editorVariant } : zone));
+    setSelectedPinId(null); setEditingPin(null); setIsNewPin(false);
+    setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
+    setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
+    setAreaMode(false); setShellMode(false); setAreaPoints([]);
+  }, [activeZoneId]);
+
+  const saveBuildingSlot = useCallback(() => {
+    if (!editingSlot || !activeZoneId) return;
+    setZones((prev) => prev.map((zone) => {
+      if (zone.id !== activeZoneId) return zone;
+      const exists = zone.buildingSlots.some((slot) => slot.id === editingSlot.id);
+      return {
+        ...zone,
+        buildingSlots: exists
+          ? zone.buildingSlots.map((slot) => slot.id === editingSlot.id ? editingSlot : slot)
+          : [...zone.buildingSlots, editingSlot],
+      };
+    }));
+    setEditingSlot(null); setIsNewSlot(false); setSelectedSlotId(editingSlot.id);
+  }, [activeZoneId, editingSlot]);
+
+  const deleteBuildingSlot = useCallback((slotId: string) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, buildingSlots: zone.buildingSlots.filter((slot) => slot.id !== slotId) } : zone));
+    if (selectedSlotId === slotId) setSelectedSlotId(null);
+    if (editingSlot?.id === slotId) { setEditingSlot(null); setIsNewSlot(false); }
+  }, [activeZoneId, editingSlot?.id, selectedSlotId]);
 
   const deletePin = useCallback((pinId: string) => {
     if (!activeZoneId) return;
@@ -1044,6 +1404,65 @@ export function IntelliMaps() {
     );
   };
 
+  const renderBuildingShell = (zone: MapZone) => {
+    if (zone.editorVariant !== "building" || zone.buildingShell.points.length < 3) return null;
+    const shell = zone.buildingShell;
+    const points = shell.points.map(([x, y]) => `${x},${y}`).join(" ");
+    return (
+      <svg className="absolute inset-0 w-full h-full pointer-events-none z-[2]" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <defs>
+          <pattern id={`building-floor-${zone.id}`} width="4" height="4" patternUnits="userSpaceOnUse">
+            <path d="M 0 4 L 4 0" stroke={shell.color} strokeWidth="0.18" strokeOpacity="0.22" />
+          </pattern>
+        </defs>
+        <polygon points={points} fill={shell.color} fillOpacity={shell.opacity} stroke={shell.color} strokeWidth={shell.wallWidth} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <polygon points={points} fill={`url(#building-floor-${zone.id})`} stroke="rgba(255,255,255,0.35)" strokeWidth="1" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+    );
+  };
+
+  const renderAreas = (zone: MapZone) => {
+    if (zone.areas.length === 0) return null;
+    return (
+      <svg className="absolute inset-0 w-full h-full pointer-events-none z-[3]" viewBox="0 0 100 100" preserveAspectRatio="none">
+        {zone.areas.map((area) => {
+          const points = area.points.map(([x, y]) => `${x},${y}`).join(" ");
+          const centerX = area.points.reduce((sum, [x]) => sum + x, 0) / area.points.length;
+          const centerY = area.points.reduce((sum, [, y]) => sum + y, 0) / area.points.length;
+          return (
+            <g key={area.id}>
+              <polygon points={points} fill={area.color} fillOpacity={area.opacity} stroke={area.color} strokeOpacity={Math.min(1, area.opacity + 0.45)} strokeWidth="0.35" vectorEffect="non-scaling-stroke" />
+              {area.name && <text x={centerX} y={centerY} textAnchor="middle" dominantBaseline="middle" fill="#FFFFFF" fillOpacity="0.78" fontSize="2.2" fontFamily="'Tahoma', sans-serif" style={{ paintOrder: "stroke", stroke: "#060618", strokeWidth: 0.8 }}>{area.name}</text>}
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
+  const renderMapLines = (zone: MapZone) => {
+    if (zone.lines.length === 0) return null;
+    return (
+      <svg className="absolute inset-0 w-full h-full pointer-events-none z-[7]" viewBox="0 0 100 100" preserveAspectRatio="none">
+        {zone.lines.map((line) => (
+          <line
+            key={line.id}
+            x1={line.start[0]}
+            y1={line.start[1]}
+            x2={line.end[0]}
+            y2={line.end[1]}
+            stroke={line.color}
+            strokeWidth={line.width}
+            strokeOpacity={line.opacity}
+            strokeDasharray={line.dashed ? "8 5" : undefined}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+    );
+  };
+
   const renderWalls = (zone: MapZone) => {
     if (!zone.walls || zone.walls.length === 0) return null;
     return (
@@ -1072,29 +1491,116 @@ export function IntelliMaps() {
     if (!isDM || !isEditMode || !activeZone) return;
     if (isPanning) return;
 
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+    if (shellMode) {
+      setAreaPoints((points) => [...points, [x, y]]);
+      return;
+    }
+
+    if (areaMode) {
+      setAreaPoints((points) => [...points, [x, y]]);
+      return;
+    }
+
     if (wallMode) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 100;
-      const y = ((e.clientY - rect.top) / rect.height) * 100;
       if (!wallStart) {
         setWallStart([x, y]);
       } else {
-        const newWall: [number, number, number, number] = [wallStart[0], wallStart[1], x, y];
-        setZones(prev => prev.map(z => z.id !== activeZone.id ? z : { ...z, walls: [...z.walls, newWall] }));
-        setWallStart(null);
+        const newLine: MapLine = {
+          id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          start: wallStart,
+          end: [x, y],
+          color: drawColor,
+          width: lineWidth,
+          opacity: Math.max(0.1, drawOpacity),
+          dashed: lineDashed,
+        };
+        setZones(prev => prev.map(z => z.id !== activeZone.id ? z : { ...z, lines: [...z.lines, newLine] }));
+        setWallStart([x, y]);
       }
       return;
     }
 
     if (linkMode) return;
 
-    // Default: place pin
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setEditingPin({ id: `pin-${Date.now()}`, name: "New Location", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "" });
+    if (activeZone.editorVariant === "building") {
+      const kind: BuildingSlotKind = "industrial";
+      setEditingSlot({
+        id: `slot-${Date.now()}`,
+        name: `${BUILDING_SLOT_KINDS[kind].label} Slot`,
+        x,
+        y,
+        width: 132,
+        height: 76,
+        kind,
+        filled: false,
+        contents: "",
+        description: "",
+      });
+      setIsNewSlot(true);
+      setSelectedSlotId(null);
+      return;
+    }
+
+    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 148, height: 82 });
+    setPlaceImageDraft("");
     setIsNewPin(true);
-  }, [isDM, isEditMode, activeZone, linkMode, isPanning, wallMode, wallStart]);
+  }, [isDM, isEditMode, activeZone, linkMode, isPanning, shellMode, areaMode, wallMode, wallStart, drawColor, lineWidth, drawOpacity, lineDashed]);
+
+  const finishArea = useCallback(() => {
+    if (!activeZoneId || areaPoints.length < 3) return;
+    const newArea: MapArea = {
+      id: `area-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: `Area ${activeZone?.areas.length ? activeZone.areas.length + 1 : 1}`,
+      points: areaPoints,
+      color: drawColor,
+      opacity: drawOpacity,
+    };
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, areas: [...zone.areas, newArea] } : zone));
+    setAreaPoints([]);
+  }, [activeZone?.areas.length, activeZoneId, areaPoints, drawColor, drawOpacity]);
+
+  const finishBuildingShell = useCallback(() => {
+    if (!activeZoneId || areaPoints.length < 3) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? {
+      ...zone,
+      buildingShell: { points: areaPoints, color: drawColor, opacity: drawOpacity, wallWidth: lineWidth },
+    } : zone));
+    setAreaPoints([]);
+    setShellMode(false);
+  }, [activeZoneId, areaPoints, drawColor, drawOpacity, lineWidth]);
+
+  const resetBuildingShell = useCallback(() => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, buildingShell: createDefaultBuildingShell(drawColor) } : zone));
+    setAreaPoints([]);
+    setShellMode(false);
+  }, [activeZoneId, drawColor]);
+
+  const deleteMapLine = useCallback((lineId: string) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, lines: zone.lines.filter((line) => line.id !== lineId) } : zone));
+  }, [activeZoneId]);
+
+  const deleteArea = useCallback((areaId: string) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, areas: zone.areas.filter((area) => area.id !== areaId) } : zone));
+  }, [activeZoneId]);
+
+  const updateAreaName = useCallback((areaId: string, name: string) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, areas: zone.areas.map((area) => area.id === areaId ? { ...area, name } : area) } : zone));
+  }, [activeZoneId]);
+
+  const addEditingPinImage = useCallback(() => {
+    const imageUrl = placeImageDraft.trim();
+    if (!editingPin || !imageUrl || editingPin.images.includes(imageUrl)) return;
+    setEditingPin({ ...editingPin, images: [...editingPin.images, imageUrl] });
+    setPlaceImageDraft("");
+  }, [editingPin, placeImageDraft]);
 
   const deleteWall = useCallback((wallIdx: number) => {
     if (!activeZoneId) return;
@@ -1778,8 +2284,9 @@ export function IntelliMaps() {
      ============================================================== */
 
   const fogCounts = useMemo(() => {
-    const locked = zones.filter(z => z.fogMode === "locked").length;
-    const invisible = zones.filter(z => z.fogMode === "invisible").length;
+    const sectorMaps = zones.filter((zone) => zone.mapType === "sector");
+    const locked = sectorMaps.filter(z => z.fogMode === "locked").length;
+    const invisible = sectorMaps.filter(z => z.fogMode === "invisible").length;
     return { locked, invisible, fogged: locked + invisible };
   }, [zones]);
 
@@ -1794,7 +2301,7 @@ export function IntelliMaps() {
           {activeZone && (
             <div style={{ display: "contents" }}>
               <ChevronRight size={10} style={S_DIM} />
-              <span className="text-[11px]" style={{ color: activeZone.color }}>{activeZone.id.startsWith("os-") ? activeZone.name : `Sector ${activeZone.sectorNumber}`}</span>
+              <span className="text-[11px]" style={{ color: activeZone.color }}>{getMapTitle(activeZone)}</span>
             </div>
           )}
           {activeGate && !activeZone && (
@@ -1809,7 +2316,21 @@ export function IntelliMaps() {
           {isDM && (
             <div style={{ display: "contents" }}>
               <span className="text-[11px]" style={S_DIM}>|</span>
-              <button onClick={() => { setIsEditMode(!isEditMode); if (isEditMode) { setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null); } }} className="text-[10px] px-2 py-0.5 hover:opacity-80" style={{ color: isEditMode ? "#FF6A6A" : "#4A7BFF", border: "1px solid #2A2A5B", background: "#0E0E35" }}>
+              <button onClick={() => {
+                setIsEditMode(!isEditMode);
+                if (isEditMode) {
+                  setLinkMode(false);
+                  setLinkSource(null);
+                  setWallMode(false);
+                  setWallStart(null);
+                  setAreaMode(false);
+                  setShellMode(false);
+                  setAreaPoints([]);
+                  setSelectedSlotId(null);
+                  setEditingSlot(null);
+                  setIsNewSlot(false);
+                }
+              }} className="text-[10px] px-2 py-0.5 hover:opacity-80" style={{ color: isEditMode ? "#FF6A6A" : "#4A7BFF", border: "1px solid #2A2A5B", background: "#0E0E35" }}>
                 {isEditMode ? "✦ EDITING" : "Edit Mode"}
               </button>
             </div>
@@ -1838,13 +2359,13 @@ export function IntelliMaps() {
           <div className="flex items-center justify-between mb-2 flex-wrap gap-2 relative z-10">
             <div className="flex items-center gap-3">
               {(activeZone || activeGate) && (
-                <button onClick={handleBackToWorld} className={`${retro.button} px-3 py-1 text-[11px] flex items-center gap-1.5`} style={S_TEXT}><CornerUpLeft size={12} /> City Map</button>
+                <button onClick={handleBackToWorld} className={`${retro.button} px-3 py-1 text-[11px] flex items-center gap-1.5`} style={S_TEXT}><CornerUpLeft size={12} /> {parentZone ? getMapTitle(parentZone) : "City Map"}</button>
               )}
               <div>
                 <h1 className="text-[18px] tracking-tight" style={{ color: activeGate ? "#FFFFFF" : (activeZone ? activeZone.color : "#4A7BFF"), fontWeight: 700, fontFamily: "'Trebuchet MS', 'Tahoma', sans-serif", textShadow: "1px 1px 0px #0A0A3B" }}>
-                  {activeGate ? activeGate.name : (activeZone ? activeZone.name : "The Deep City")}
+                  {activeGate ? activeGate.name : (activeZone ? getMapTitle(activeZone) : "The Deep City")}
                 </h1>
-                <p className="text-[10px]" style={S_LABEL}>{activeGate ? activeGate.description : (activeZone ? (activeZone.id.startsWith("os-") ? activeZone.subtitle : `Sector ${activeZone.sectorNumber}`) : "The Great City · Inner City · 8 Outer Sectors")}</p>
+                <p className="text-[10px]" style={S_LABEL}>{activeGate ? activeGate.description : (activeZone ? (activeZone.mapType === "place" ? `Nested inside ${parentZone ? getMapTitle(parentZone) : "Intelli Maps"}` : (activeZone.subtitle || "Custom sector workspace")) : "The Great City · Inner City · 8 Outer Sectors")}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1855,15 +2376,28 @@ export function IntelliMaps() {
                   {isDM && <button onClick={() => setShowFog(!showFog)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: showFog ? "#FFAA4A" : "#5A6A8A" }} title="Toggle Fog of War">{showFog ? <Cloud size={10} /> : <CloudOff size={10} />} Fog</button>}
                 </div>
               )}
-              {activeZone && <button onClick={() => setShowPaths(!showPaths)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: showPaths ? "#C0D0F0" : "#5A6A8A" }}><Link2 size={10} /> Paths</button>}
+              {activeZone && activeZone.editorVariant !== "building" && <button onClick={() => setShowPaths(!showPaths)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: showPaths ? "#C0D0F0" : "#5A6A8A" }}><Link2 size={10} /> Paths</button>}
               {activeZone && <button onClick={() => setShowGrid(!showGrid)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: showGrid ? "#C0D0F0" : "#5A6A8A" }}><Grid3x3 size={10} /> Grid</button>}
               {activeZone && isEditMode && isDM && (
                 <div style={{ display: "contents" }}>
-                  <button onClick={() => { setLinkMode(!linkMode); setLinkSource(null); setWallMode(false); setWallStart(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: linkMode ? "#4AFFFF" : "#5A6A8A" }}>{linkMode ? <Unlink size={10} /> : <Link2 size={10} />} {linkMode ? "Stop" : "Link"}</button>
-                  <button onClick={() => { setWallMode(!wallMode); setWallStart(null); setLinkMode(false); setLinkSource(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: wallMode ? "#8A8A9B" : "#5A6A8A" }}><Square size={10} /> {wallMode ? "Stop" : "Wall"}</button>
-                  {!linkMode && !wallMode && <span className="text-[10px] px-2 py-1" style={{ color: "#FF6A6A", background: "#1A0A0A", border: "1px solid #3A1A1A" }}>Click map to place</span>}
+                  {activeZone.editorVariant === "building" ? (
+                    <div style={{ display: "contents" }}>
+                      <button onClick={() => { setLinkMode(false); setWallMode(false); setWallStart(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !wallMode && !areaMode && !shellMode ? "#4AFF4A" : "#5A6A8A" }} title="Place building slots"><Boxes size={10} /> Slot</button>
+                      <button onClick={() => { setShellMode(!shellMode); setAreaPoints([]); setLinkMode(false); setWallMode(false); setWallStart(null); setAreaMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: shellMode ? drawColor : "#5A6A8A" }} title="Redraw the building shell"><Building2 size={10} /> Shell</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "contents" }}>
+                      <button onClick={() => { setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !linkMode && !wallMode && !areaMode ? "#4AFF4A" : "#5A6A8A" }} title="Place boxes on the map"><MapPin size={10} /> Place</button>
+                      <button onClick={() => { setLinkMode(!linkMode); setLinkSource(null); setWallMode(false); setWallStart(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: linkMode ? "#4AFFFF" : "#5A6A8A" }} title="Connect two places">{linkMode ? <Unlink size={10} /> : <Link2 size={10} />} Connect</button>
+                    </div>
+                  )}
+                  <button onClick={() => { setWallMode(!wallMode); setWallStart(null); setLinkMode(false); setLinkSource(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: wallMode ? drawColor : "#5A6A8A" }} title="Draw connected line segments"><Minus size={10} /> Line</button>
+                  <button onClick={() => { setAreaMode(!areaMode); setAreaPoints([]); setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null); setShellMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: areaMode ? drawColor : "#5A6A8A" }} title="Draw a filled polygon"><Pentagon size={10} /> Area</button>
+                  {!linkMode && !wallMode && !areaMode && !shellMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFF4A", background: "#0A1A12", border: "1px solid #1A3A2A" }}>Click to add {activeZone.editorVariant === "building" ? "slot" : "place"}</span>}
                   {linkMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFFFF", background: "#0A1A2A", border: "1px solid #1A3A4A" }}>{linkSource ? "Click 2nd pin" : "Click 1st pin"}</span>}
-                  {wallMode && <span className="text-[10px] px-2 py-1" style={{ color: "#8A8A9B", background: "#1A1A1E", border: "1px solid #3A3A42" }}>{wallStart ? "Click wall end" : "Click wall start"}</span>}
+                  {wallMode && <button onClick={() => setWallStart(null)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: drawColor }}><Check size={10} /> {wallStart ? "Finish line" : "Click start"}</button>}
+                  {areaMode && <button onClick={finishArea} disabled={areaPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish ({areaPoints.length})</button>}
+                  {shellMode && <button onClick={finishBuildingShell} disabled={areaPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish shell ({areaPoints.length})</button>}
                 </div>
               )}
             </div>
@@ -1909,7 +2443,7 @@ export function IntelliMaps() {
               <div className="absolute inset-0 flex items-center justify-center" style={{ padding: "8px", transform: `translate(${mapPan[0]}px, ${mapPan[1]}px) scale(${mapZoom})`, transformOrigin: "0 0", transition: isPanning ? "none" : "transform 0.1s ease-out" }}>{renderHexMap()}</div>
             ) : (
               <div className="absolute inset-0" onClick={handleMapClick} style={{ cursor: isEditMode && isDM ? (wallMode ? "crosshair" : linkMode ? "pointer" : "crosshair") : (isDragging ? "grabbing" : (mapZoom > 1 ? "grab" : "default")), transform: `translate(${mapPan[0]}px, ${mapPan[1]}px) scale(${mapZoom})`, transformOrigin: "0 0", transition: isPanning ? "none" : "transform 0.1s ease-out" }}>
-                {activeZone.useMapBg ? (
+                {(activeZone.useMapBg || !activeZone.image) ? (
                   <div className="absolute inset-0 pointer-events-none" style={{
                     background: `radial-gradient(ellipse at 30% 40%, ${activeZone.color}15 0%, transparent 50%), radial-gradient(ellipse at 70% 60%, ${activeZone.color}10 0%, transparent 50%), linear-gradient(180deg, #080828 0%, #0A0A3B 30%, #0E0E35 60%, #080828 100%)`,
                   }}>
@@ -1955,34 +2489,167 @@ export function IntelliMaps() {
                     })()}
                   </div>
                 )}
+                {renderBuildingShell(activeZone)}
+                {renderAreas(activeZone)}
+                {(areaMode || shellMode) && areaPoints.length > 0 && (
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none z-[6]" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <polyline points={areaPoints.map(([x, y]) => `${x},${y}`).join(" ")} fill={areaPoints.length >= 3 ? drawColor : "none"} fillOpacity={areaPoints.length >= 3 ? drawOpacity * 0.55 : 0} stroke={drawColor} strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
+                    {areaPoints.map(([x, y], index) => <circle key={`${x}-${y}-${index}`} cx={x} cy={y} r="0.8" fill={drawColor} vectorEffect="non-scaling-stroke" />)}
+                  </svg>
+                )}
                 {renderConnectionLines(activeZone)}
                 {renderWalls(activeZone)}
+                {renderMapLines(activeZone)}
                 {wallStart && wallMode && (
                   <div className="absolute z-20 pointer-events-none" style={{ left: `${wallStart[0]}%`, top: `${wallStart[1]}%`, transform: "translate(-50%, -50%)" }}>
                     <div className="w-3 h-3 animate-pulse" style={{ background: "#7A7A8B44", border: "2px solid #8A8A9B", borderRadius: "50%" }} />
                   </div>
                 )}
-                {activeZone.pins.map(pin => {
-                  const isSelected = selectedPinId === pin.id;
-                  const isLinkSrc = linkSource === pin.id;
+                {activeZone.editorVariant === "building" && activeZone.buildingSlots.map((slot) => {
+                  const meta = BUILDING_SLOT_KINDS[slot.kind];
+                  const isSelected = selectedSlotId === slot.id;
+                  const selectSlot = () => {
+                    if (wasDraggingRef.current) return;
+                    setSelectedSlotId(isSelected ? null : slot.id);
+                    setEditingSlot(null);
+                    setIsNewSlot(false);
+                  };
                   return (
-                    <button key={pin.id} onClick={(e) => { e.stopPropagation(); if (linkMode && isDM && isEditMode) handlePinClickForLink(pin.id); else { setSelectedPinId(pin.id); setEditingPin(null); setIsNewPin(false); } }} className="absolute group z-10" style={{ left: `${pin.x}%`, top: `${pin.y}%`, transform: "translate(-50%, -50%)" }}>
-                      {isSelected && !linkMode && <div className="absolute rounded-full animate-ping" style={{ width: 32, height: 32, top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: `${pin.color}44` }} />}
-                      {isLinkSrc && <div className="absolute rounded-full animate-pulse" style={{ width: 36, height: 36, top: "50%", left: "50%", transform: "translate(-50%, -50%)", border: "2px solid #4AFFFF", background: "#4AFFFF11" }} />}
-                      <div className="relative z-10 p-1.5 transition-all duration-150" style={{ background: isSelected ? `${pin.color}33` : (isLinkSrc ? "#4AFFFF22" : "rgba(14,14,53,0.85)"), border: `1.5px solid ${isLinkSrc ? "#4AFFFF" : (isSelected ? pin.color : `${pin.color}77`)}`, boxShadow: isSelected ? `0 0 12px ${pin.color}55` : (isLinkSrc ? "0 0 12px #4AFFFF44" : `0 0 6px ${pin.color}22`) }}>
-                        {renderIcon(pin.icon, 16, isLinkSrc ? "#4AFFFF" : pin.color)}
+                    <div
+                      key={slot.id}
+                      role="button"
+                      tabIndex={0}
+                      onMouseDown={(event) => {
+                        if (event.button === 0 && isDM && isEditMode && !wallMode && !areaMode && !shellMode) {
+                          event.stopPropagation();
+                          setDraggingSlotId(slot.id);
+                        }
+                      }}
+                      onClick={(event) => { event.stopPropagation(); selectSlot(); }}
+                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSlot(); } }}
+                      className="absolute z-10 overflow-hidden text-left transition-[width,height,box-shadow] duration-200"
+                      style={{
+                        left: `${slot.x}%`,
+                        top: `${slot.y}%`,
+                        transform: "translate(-50%, -50%)",
+                        width: isSelected ? Math.max(slot.width, 210) : slot.width,
+                        height: isSelected ? "auto" : slot.height,
+                        minHeight: slot.height,
+                        color: "#E6ECFF",
+                        backgroundColor: slot.filled ? `${meta.color}38` : "rgba(8,8,32,0.9)",
+                        backgroundImage: slot.filled ? undefined : `repeating-linear-gradient(135deg, transparent 0, transparent 7px, ${meta.color}16 7px, ${meta.color}16 10px)`,
+                        border: `2px ${slot.filled ? "solid" : "dashed"} ${meta.color}`,
+                        boxShadow: isSelected ? `0 0 22px ${meta.color}66` : "0 5px 14px rgba(0,0,0,0.4)",
+                        cursor: isDM && isEditMode && !wallMode && !areaMode && !shellMode ? "move" : "pointer",
+                      }}
+                    >
+                      <div className="px-2 py-1.5 flex items-center gap-1.5" style={{ background: `${meta.color}${slot.filled ? "22" : "0D"}`, borderBottom: `1px solid ${meta.color}44` }}>
+                        {slot.filled ? <Building2 size={12} style={{ color: meta.color }} /> : <Boxes size={12} style={{ color: meta.color }} />}
+                        <span className="text-[10px] font-semibold truncate">{slot.name}</span>
+                        <span className="ml-auto text-[7px] px-1 py-0.5 shrink-0" style={{ color: slot.filled ? "#DFFFF0" : "#AAB3CC", border: `1px solid ${meta.color}55`, background: slot.filled ? `${meta.color}25` : "rgba(0,0,0,0.25)" }}>{slot.filled ? "FILLED" : "EMPTY"}</span>
                       </div>
-                      <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-20" style={{ background: "rgba(6,6,37,0.92)", border: `1px solid ${pin.color}55`, padding: "2px 8px", fontSize: 10, color: pin.color, textShadow: `0 0 6px ${pin.color}44` }}>{pin.name}</div>
-                    </button>
+                      <div className="px-2 py-1 text-[8px] uppercase tracking-wide" style={{ color: meta.color }}>{meta.label}</div>
+                      {slot.filled && slot.contents && <div className="px-2 pb-1.5 text-[9px] font-semibold truncate" style={{ color: "#FFFFFF" }}>{slot.contents}</div>}
+                      {isSelected && (
+                        <div className="px-2 pb-2" style={{ borderTop: `1px solid ${meta.color}33` }}>
+                          <div className="mt-2 text-[9px]" style={{ color: slot.filled ? "#CFFFE0" : "#8993AD" }}>{slot.filled ? (slot.contents || "Filled, contents not named") : "Available building slot"}</div>
+                          {slot.description && <p className="text-[9px] leading-relaxed mt-1.5" style={S_TEXT}>{slot.description}</p>}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
-                {editingPin && isNewPin && (
+                {activeZone.editorVariant === "building" && editingSlot && isNewSlot && (
+                  <div className="absolute z-20 pointer-events-none" style={{ left: `${editingSlot.x}%`, top: `${editingSlot.y}%`, transform: "translate(-50%, -50%)" }}>
+                    <div className="flex items-center justify-center gap-1.5 animate-pulse" style={{ width: editingSlot.width, height: editingSlot.height, color: BUILDING_SLOT_KINDS[editingSlot.kind].color, background: "rgba(14,14,53,0.92)", border: `2px dashed ${BUILDING_SLOT_KINDS[editingSlot.kind].color}`, boxShadow: `0 0 15px ${BUILDING_SLOT_KINDS[editingSlot.kind].color}44` }}><Plus size={15} /><span className="text-[9px]">New slot</span></div>
+                  </div>
+                )}
+                {activeZone.editorVariant !== "building" && activeZone.pins.map(pin => {
+                  const isSelected = selectedPinId === pin.id;
+                  const isLinkSrc = linkSource === pin.id;
+                  const wikiPage = wikiPages.find((page) => page.id === pin.wikiPageId);
+                  const selectPlace = () => {
+                    if (wasDraggingRef.current) return;
+                    if (linkMode && isDM && isEditMode) handlePinClickForLink(pin.id);
+                    else {
+                      setSelectedPinId(isSelected ? null : pin.id);
+                      setEditingPin(null);
+                      setIsNewPin(false);
+                      setPlaceImageDraft("");
+                    }
+                  };
+                  return (
+                    <div
+                      key={pin.id}
+                      role="button"
+                      tabIndex={0}
+                      onMouseDown={(event) => {
+                        if (event.button === 0 && isDM && isEditMode && !linkMode && !wallMode && !areaMode) {
+                          event.stopPropagation();
+                          setDraggingPinId(pin.id);
+                        }
+                      }}
+                      onClick={(event) => { event.stopPropagation(); selectPlace(); }}
+                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectPlace(); } }}
+                      className="absolute z-10 overflow-hidden text-left transition-[width,height,box-shadow] duration-200"
+                      style={{
+                        left: `${pin.x}%`,
+                        top: `${pin.y}%`,
+                        transform: "translate(-50%, -50%)",
+                        width: isSelected ? Math.max(pin.width, 220) : pin.width,
+                        height: isSelected ? "auto" : pin.height,
+                        minHeight: pin.height,
+                        background: isLinkSrc ? "rgba(10,38,52,0.96)" : "rgba(10,10,42,0.95)",
+                        border: `2px solid ${isLinkSrc ? "#4AFFFF" : pin.color}`,
+                        boxShadow: isSelected ? `0 0 22px ${pin.color}66` : "0 5px 16px rgba(0,0,0,0.42)",
+                        cursor: isDM && isEditMode && !linkMode && !wallMode && !areaMode ? "move" : "pointer",
+                      }}
+                    >
+                      {pin.images[0] && (
+                        <ImageWithFallback src={pin.images[0]} alt={pin.name} draggable={false} className="w-full object-cover pointer-events-none" style={{ height: isSelected ? 88 : Math.max(32, pin.height - 34), filter: "brightness(0.78) saturate(0.9)" }} />
+                      )}
+                      <div className="px-2 py-1.5 flex items-center gap-1.5" style={{ background: `${pin.color}12` }}>
+                        {renderIcon(pin.icon, 13, isLinkSrc ? "#4AFFFF" : pin.color)}
+                        <span className="text-[10px] font-semibold truncate" style={{ color: isLinkSrc ? "#4AFFFF" : "#E0E8FF" }}>{pin.name}</span>
+                        {pin.childMapId && <MapPinned size={10} className="ml-auto shrink-0" style={{ color: pin.color }} />}
+                      </div>
+                      {isSelected && !linkMode && (
+                        <div className="px-2 pb-2" style={{ borderTop: `1px solid ${pin.color}33` }}>
+                          {pin.description && <p className="text-[10px] leading-relaxed mt-2" style={S_TEXT}>{pin.description}</p>}
+                          {pin.images.length > 1 && (
+                            <div className="grid grid-cols-3 gap-1 mt-2">
+                              {pin.images.slice(1, 4).map((imageUrl, index) => <ImageWithFallback key={`${imageUrl}-${index}`} src={imageUrl} alt={`${pin.name} ${index + 2}`} className="w-full h-10 object-cover" />)}
+                            </div>
+                          )}
+                          <div className="flex gap-1 mt-2 flex-wrap">
+                            {pin.childMapId ? (
+                              <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: pin.color }}>
+                                <MapPinned size={10} /> Open Map
+                              </button>
+                            ) : isDM && isEditMode ? (
+                              <div className="flex gap-1">
+                                <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "places"); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: pin.color }} title="Create a standard place map"><MapPinned size={10} /> Place Map</button>
+                                <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "building"); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: "#FFB35A" }} title="Create a building layout"><Building2 size={10} /> Building</button>
+                              </div>
+                            ) : null}
+                            {pin.wikiPageId && (
+                              <button onClick={(event) => { event.stopPropagation(); navigate(`/interface/inet-page/${pin.wikiPageId}`); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={S_ACCENT} title={wikiPage?.title || wikiPage?.name || "Open linked wiki article"}>
+                                <BookOpen size={10} /> Wiki <ExternalLink size={8} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {activeZone.editorVariant !== "building" && editingPin && isNewPin && (
                   <div className="absolute z-20 pointer-events-none" style={{ left: `${editingPin.x}%`, top: `${editingPin.y}%`, transform: "translate(-50%, -50%)" }}>
-                    <div className="p-1.5 animate-pulse" style={{ background: "rgba(14,14,53,0.85)", border: `2px solid ${editingPin.color}`, boxShadow: `0 0 15px ${editingPin.color}44` }}><Plus size={16} style={{ color: editingPin.color }} /></div>
+                    <div className="flex items-center justify-center gap-1.5 animate-pulse" style={{ width: editingPin.width, height: editingPin.height, background: "rgba(14,14,53,0.9)", border: `2px solid ${editingPin.color}`, boxShadow: `0 0 15px ${editingPin.color}44`, color: editingPin.color }}><Plus size={16} /><span className="text-[10px]">New place</span></div>
                   </div>
                 )}
                 <div className="absolute bottom-3 left-3 pointer-events-none">
-                  <div className="text-[9px] px-2 py-1" style={{ color: activeZone.color, background: "rgba(6,6,24,0.85)", border: `1px solid ${activeZone.color}33`, fontFamily: "'Courier New', monospace" }}>{activeZone.id.startsWith("os-") ? activeZone.name.toUpperCase() : `SECTOR ${activeZone.sectorNumber}`} · {activeZone.pins.length} PLACES</div>
+                  <div className="text-[9px] px-2 py-1" style={{ color: activeZone.color, background: "rgba(6,6,24,0.85)", border: `1px solid ${activeZone.color}33`, fontFamily: "'Courier New', monospace" }}>{getMapTitle(activeZone).toUpperCase()} · {activeZone.editorVariant === "building" ? `${activeZone.buildingSlots.length} SLOTS` : `${activeZone.pins.length} PLACES`}</div>
                 </div>
               </div>
             )}
@@ -2045,13 +2712,13 @@ export function IntelliMaps() {
             <div style={{ display: "contents" }}>
               <div className="px-3 py-2 flex items-center justify-between" style={{ borderBottom: "1px solid #1A1A4B" }}>
                 <div className="flex items-center gap-2"><Layers size={13} style={S_ACCENT} /><span className="text-[12px]" style={S_ACCENT_HDR}>Sectors</span></div>
-                <span className="text-[9px]" style={S_DIM}>{zones.filter(z => z.fogMode === "visible").length}/{zones.length} visible</span>
+                <span className="text-[9px]" style={S_DIM}>{zones.filter(z => z.mapType === "sector" && z.fogMode === "visible").length}/{zones.filter(z => z.mapType === "sector").length} visible</span>
               </div>
               <div className="flex-1 overflow-y-auto">
                 {(() => {
-                  const innerZones = zones.filter(zone => !zone.id.startsWith(OUTER_ZONE_ID_PREFIX));
+                  const innerZones = zones.filter(zone => zone.mapType === "sector" && !zone.id.startsWith(OUTER_ZONE_ID_PREFIX));
                   const outerZones = zones
-                    .filter(zone => zone.id.startsWith(OUTER_ZONE_ID_PREFIX))
+                    .filter(zone => zone.mapType === "sector" && zone.id.startsWith(OUTER_ZONE_ID_PREFIX))
                     .sort(compareOuterZones);
 
                   const renderZoneRow = (zone: MapZone) => {
@@ -2154,7 +2821,10 @@ export function IntelliMaps() {
             <div style={{ display: "contents" }}>
               <div className="px-3 py-2" style={{ borderBottom: `1px solid ${activeZone.color}22`, background: `${activeZone.color}08` }}>
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2"><MapPin size={13} style={{ color: activeZone.color }} /><span className="text-[12px] font-semibold" style={{ color: activeZone.color }}>{activeZone.id.startsWith("os-") ? activeZone.name : `Sector ${activeZone.sectorNumber}`} — Places</span></div>
+                  <div className="flex items-center gap-2">
+                    {activeZone.editorVariant === "building" ? <Building2 size={13} style={{ color: activeZone.color }} /> : <MapPin size={13} style={{ color: activeZone.color }} />}
+                    <span className="text-[12px] font-semibold" style={{ color: activeZone.color }}>{getMapTitle(activeZone)} - {activeZone.editorVariant === "building" ? "Building" : "Places"}</span>
+                  </div>
                   <div className="flex items-center gap-1">
                     {activeZone.fogMode !== "visible" && isDM && (
                       <span className="text-[9px] px-1.5 py-0.5" style={{ color: FOG_COLORS[activeZone.fogMode], background: "#1A1A0A", border: "1px solid #3A3A1A" }}>
@@ -2170,8 +2840,14 @@ export function IntelliMaps() {
                     )}
                   </div>
                 </div>
+                {isDM && isEditMode && (
+                  <div className="grid grid-cols-2 gap-1 mt-2 p-0.5" style={{ background: "#070724", border: "1px solid #1A1A4B" }}>
+                    <button onClick={() => setActiveEditorVariant("places")} className="px-2 py-1 text-[9px] flex items-center justify-center gap-1" style={{ color: activeZone.editorVariant === "places" ? "#E0E8FF" : "#687394", background: activeZone.editorVariant === "places" ? "#19194B" : "transparent", border: activeZone.editorVariant === "places" ? `1px solid ${activeZone.color}77` : "1px solid transparent" }}><MapPinned size={10} /> Place Map</button>
+                    <button onClick={() => setActiveEditorVariant("building")} className="px-2 py-1 text-[9px] flex items-center justify-center gap-1" style={{ color: activeZone.editorVariant === "building" ? "#FFF0D8" : "#687394", background: activeZone.editorVariant === "building" ? "#332014" : "transparent", border: activeZone.editorVariant === "building" ? "1px solid #FFB35A88" : "1px solid transparent" }}><Building2 size={10} /> Building</button>
+                  </div>
+                )}
               </div>
-              {activeZone.connections.length > 0 && (
+              {activeZone.editorVariant !== "building" && activeZone.connections.length > 0 && (
                 <div className="px-3 py-2" style={{ borderBottom: "1px solid #0E0E35" }}>
                   <div className="text-[9px] mb-1" style={S_SECTION_HDR}>PATHS ({activeZone.connections.length})</div>
                   <div className="space-y-1">
@@ -2180,6 +2856,38 @@ export function IntelliMaps() {
                       if (!pinA || !pinB) return null;
                       return <div key={idx} className="flex items-center gap-1.5 text-[9px]" style={S_SUBTLE}><Link2 size={8} style={{ color: activeZone.color, opacity: 0.5 }} /><span style={{ color: pinA.color }}>{pinA.name}</span><span style={S_DIM}>→</span><span style={{ color: pinB.color }}>{pinB.name}</span></div>;
                     })}
+                  </div>
+                </div>
+              )}
+              {activeZone.lines.length > 0 && (
+                <div className="px-3 py-2" style={{ borderBottom: "1px solid #0E0E35" }}>
+                  <div className="text-[9px] mb-1" style={S_SECTION_HDR}>LINES ({activeZone.lines.length})</div>
+                  <div className="space-y-1">
+                    {activeZone.lines.map((line, index) => (
+                      <div key={line.id} className="flex items-center gap-1.5 text-[9px]" style={S_SUBTLE}>
+                        <span className="w-8 h-[3px]" style={{ background: line.color, opacity: line.opacity, borderTop: line.dashed ? "1px dashed #060618" : undefined }} />
+                        <span>Segment {index + 1}</span>
+                        <span className="ml-auto" style={S_DIM}>{line.width}px</span>
+                        {isDM && isEditMode && <button onClick={() => deleteMapLine(line.id)} className="p-0.5 hover:bg-[#2A1A1A]" style={S_RED} title="Delete line"><Trash2 size={8} /></button>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {activeZone.areas.length > 0 && (
+                <div className="px-3 py-2" style={{ borderBottom: "1px solid #0E0E35" }}>
+                  <div className="text-[9px] mb-1" style={S_SECTION_HDR}>AREAS ({activeZone.areas.length})</div>
+                  <div className="space-y-1">
+                    {activeZone.areas.map((area) => (
+                      <div key={area.id} className="flex items-center gap-1.5 text-[9px]" style={S_SUBTLE}>
+                        <span className="w-3 h-3 shrink-0" style={{ background: area.color, opacity: area.opacity + 0.2, border: `1px solid ${area.color}` }} />
+                        {isDM && isEditMode ? (
+                          <input value={area.name} onChange={(event) => updateAreaName(area.id, event.target.value)} className="min-w-0 flex-1 px-1 py-0.5 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} aria-label="Area name" />
+                        ) : <span className="truncate flex-1">{area.name}</span>}
+                        <span style={S_DIM}>{Math.round(area.opacity * 100)}%</span>
+                        {isDM && isEditMode && <button onClick={() => deleteArea(area.id)} className="p-0.5 hover:bg-[#2A1A1A]" style={S_RED} title="Delete area"><Trash2 size={8} /></button>}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -2199,6 +2907,50 @@ export function IntelliMaps() {
               )}
               {isDM && isEditMode && (
                 <div className="px-3 py-2" style={{ borderBottom: "1px solid #0E0E35" }}>
+                  {activeZone.editorVariant === "building" && (
+                    <div className="mb-3 pb-3" style={{ borderBottom: "1px solid #1A1A4B" }}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="text-[9px]" style={S_SECTION_HDR}>BUILDING SHELL</div>
+                        <span className="text-[8px]" style={S_DIM}>{activeZone.buildingShell.points.length} corners</span>
+                      </div>
+                      <div className="flex gap-1 flex-wrap mb-2">
+                        {PIN_COLORS.map((color) => (
+                          <button key={color} onClick={() => setZones((previous) => previous.map((zone) => zone.id === activeZone.id ? { ...zone, buildingShell: { ...zone.buildingShell, color } } : zone))} className="w-4 h-4" style={{ background: color, border: activeZone.buildingShell.color === color ? "2px solid #FFF" : "1px solid #2A2A5B" }} title={`Shell color ${color}`} />
+                        ))}
+                      </div>
+                      <label className="text-[8px] flex items-center gap-2 mb-1" style={S_MUTED}>Fill
+                        <input type="range" min="0.05" max="0.6" step="0.05" value={activeZone.buildingShell.opacity} onChange={(event) => setZones((previous) => previous.map((zone) => zone.id === activeZone.id ? { ...zone, buildingShell: { ...zone.buildingShell, opacity: Number(event.target.value) } } : zone))} className="flex-1" />
+                        <span className="w-7 text-right" style={S_DIM}>{Math.round(activeZone.buildingShell.opacity * 100)}%</span>
+                      </label>
+                      <label className="text-[8px] flex items-center gap-2 mb-2" style={S_MUTED}>Walls
+                        <input type="range" min="1" max="14" step="1" value={activeZone.buildingShell.wallWidth} onChange={(event) => setZones((previous) => previous.map((zone) => zone.id === activeZone.id ? { ...zone, buildingShell: { ...zone.buildingShell, wallWidth: Number(event.target.value) } } : zone))} className="flex-1" />
+                        <span className="w-7 text-right" style={S_DIM}>{activeZone.buildingShell.wallWidth}px</span>
+                      </label>
+                      <div className="flex gap-1">
+                        <button onClick={() => { setShellMode(true); setAreaPoints([]); setLinkMode(false); setWallMode(false); setWallStart(null); setAreaMode(false); }} className={`${retro.button} flex-1 px-2 py-1 text-[9px] flex items-center justify-center gap-1`} style={{ color: shellMode ? activeZone.buildingShell.color : "#FFB35A" }}><Building2 size={10} /> Redraw</button>
+                        <button onClick={resetBuildingShell} className={`${retro.button} p-1.5`} style={S_MUTED} title="Reset to rectangular shell"><RotateCcw size={10} /></button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="text-[9px] mb-1.5" style={S_SECTION_HDR}>DRAW STYLE</div>
+                  <div className="flex gap-1 flex-wrap mb-2">
+                    {PIN_COLORS.map((color) => (
+                      <button key={color} onClick={() => setDrawColor(color)} className="w-4 h-4" style={{ background: color, border: drawColor === color ? "2px solid #FFF" : "1px solid #2A2A5B" }} title={`Draw with ${color}`} />
+                    ))}
+                  </div>
+                  <label className="text-[8px] flex items-center gap-2 mb-1" style={S_MUTED}>
+                    Opacity
+                    <input type="range" min="0.05" max="0.9" step="0.05" value={drawOpacity} onChange={(event) => setDrawOpacity(Number(event.target.value))} className="flex-1" />
+                    <span className="w-7 text-right" style={S_DIM}>{Math.round(drawOpacity * 100)}%</span>
+                  </label>
+                  <label className="text-[8px] flex items-center gap-2 mb-2" style={S_MUTED}>
+                    Line width
+                    <input type="range" min="1" max="12" step="1" value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))} className="flex-1" />
+                    <span className="w-7 text-right" style={S_DIM}>{lineWidth}px</span>
+                  </label>
+                  <button onClick={() => setLineDashed((value) => !value)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1 mb-3`} style={{ color: lineDashed ? "#4AFFFF" : "#5A6A8A" }}>
+                    <Minus size={9} /> {lineDashed ? "Dashed line" : "Solid line"}
+                  </button>
                   <div className="text-[9px] mb-1.5" style={S_SECTION_HDR}>BACKGROUND</div>
                   <div className="flex items-center gap-2 mb-1.5">
                     <button
@@ -2225,14 +2977,14 @@ export function IntelliMaps() {
                   )}
                 </div>
               )}
-              <div className="flex-1 overflow-y-auto">
+              {activeZone.editorVariant !== "building" && <div className="flex-1 overflow-y-auto">
                 {activeZone.pins.length === 0 && <div className="px-3 py-6 text-center"><MapPin size={20} style={{ color: "#1A1A4B", margin: "0 auto 8px" }} /><div className="text-[11px]" style={S_MUTED}>No places yet</div>{isDM && <div className="text-[9px] mt-1" style={S_DIM}>Enable Edit Mode to add places</div>}</div>}
                 {activeZone.pins.map(pin => {
                   const isSel = selectedPinId === pin.id;
                   const connCount = activeZone.connections.filter(([a, b]) => a === pin.id || b === pin.id).length;
                   return (
                     <div key={pin.id} className="flex items-center gap-2 px-3 py-2 transition-colors" style={{ background: isSel ? `${pin.color}11` : "transparent", borderBottom: "1px solid #0E0E35", borderLeft: isSel ? `2px solid ${pin.color}` : "2px solid transparent" }}>
-                      <button onClick={() => { setSelectedPinId(pin.id); setEditingPin(null); setIsNewPin(false); }} className="flex items-center gap-2 flex-1 text-left min-w-0">
+                      <button onClick={() => { setSelectedPinId(pin.id); setEditingPin(null); setIsNewPin(false); setPlaceImageDraft(""); }} className="flex items-center gap-2 flex-1 text-left min-w-0">
                         {renderIcon(pin.icon, 13, pin.color)}
                         <div className="min-w-0">
                           <div className="text-[11px] font-semibold truncate" style={{ color: isSel ? pin.color : "#C0D0F0" }}>{pin.name}</div>
@@ -2241,37 +2993,159 @@ export function IntelliMaps() {
                       </button>
                       {isDM && isEditMode && (
                         <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={() => { setEditingPin(pin); setIsNewPin(false); }} className="p-1 hover:bg-[#1A1A4B]" style={S_ACCENT}><Edit2 size={10} /></button>
+                          <button onClick={() => { setEditingPin(pin); setIsNewPin(false); setPlaceImageDraft(""); }} className="p-1 hover:bg-[#1A1A4B]" style={S_ACCENT} title="Edit place"><Edit2 size={10} /></button>
                           <button onClick={() => deletePin(pin.id)} className="p-1 hover:bg-[#2A1A1A]" style={S_RED}><Trash2 size={10} /></button>
                         </div>
                       )}
                     </div>
                   );
                 })}
-              </div>
-              {editingPin && (
+              </div>}
+              {activeZone.editorVariant === "building" && (
+                <div className="flex-1 overflow-y-auto">
+                  {activeZone.buildingSlots.length === 0 && (
+                    <div className="px-3 py-6 text-center">
+                      <Boxes size={20} style={{ color: "#2A2A4B", margin: "0 auto 8px" }} />
+                      <div className="text-[11px]" style={S_MUTED}>No building slots yet</div>
+                      {isDM && <div className="text-[9px] mt-1" style={S_DIM}>Enable Edit Mode to add slots</div>}
+                    </div>
+                  )}
+                  {activeZone.buildingSlots.map((slot) => {
+                    const meta = BUILDING_SLOT_KINDS[slot.kind];
+                    const isSelected = selectedSlotId === slot.id;
+                    return (
+                      <div key={slot.id} className="flex items-center gap-2 px-3 py-2" style={{ background: isSelected ? `${meta.color}12` : "transparent", borderBottom: "1px solid #0E0E35", borderLeft: isSelected ? `2px solid ${meta.color}` : "2px solid transparent" }}>
+                        <button onClick={() => { setSelectedSlotId(slot.id); setEditingSlot(null); setIsNewSlot(false); }} className="flex items-center gap-2 flex-1 text-left min-w-0">
+                          <span className="w-6 h-6 shrink-0 flex items-center justify-center" style={{ color: meta.color, background: `${meta.color}16`, border: `1px ${slot.filled ? "solid" : "dashed"} ${meta.color}77` }}>{slot.filled ? <Building2 size={12} /> : <Boxes size={12} />}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[11px] font-semibold truncate" style={{ color: isSelected ? meta.color : "#C0D0F0" }}>{slot.name}</span>
+                            <span className="block text-[8px] truncate uppercase" style={S_MUTED}>{meta.label} · {slot.filled ? (slot.contents || "Filled") : "Empty"}</span>
+                          </span>
+                        </button>
+                        {isDM && isEditMode && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => { setEditingSlot(slot); setIsNewSlot(false); setSelectedSlotId(slot.id); }} className="p-1 hover:bg-[#1A1A4B]" style={S_ACCENT} title="Edit slot"><Edit2 size={10} /></button>
+                            <button onClick={() => deleteBuildingSlot(slot.id)} className="p-1 hover:bg-[#2A1A1A]" style={S_RED} title="Delete slot"><Trash2 size={10} /></button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {activeZone.editorVariant === "building" && editingSlot && (
+                <div className="px-3 py-3 max-h-[56vh] overflow-y-auto" style={{ borderTop: "1px solid #1A1A4B", background: "#0A0A2A" }}>
+                  <div className="text-[11px] mb-2" style={{ color: BUILDING_SLOT_KINDS[editingSlot.kind].color }}>{isNewSlot ? "New Building Slot" : "Edit Building Slot"}</div>
+                  <div className="space-y-2">
+                    <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Name</label><input type="text" value={editingSlot.name} onChange={(event) => setEditingSlot({ ...editingSlot, name: event.target.value })} className="w-full px-2 py-1 text-[11px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
+                    <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Slot type</label><select value={editingSlot.kind} onChange={(event) => {
+                      const nextKind = event.target.value as BuildingSlotKind;
+                      const currentDefaultName = `${BUILDING_SLOT_KINDS[editingSlot.kind].label} Slot`;
+                      setEditingSlot({ ...editingSlot, kind: nextKind, name: editingSlot.name === currentDefaultName ? `${BUILDING_SLOT_KINDS[nextKind].label} Slot` : editingSlot.name });
+                    }} className="w-full px-2 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}>{(Object.keys(BUILDING_SLOT_KINDS) as BuildingSlotKind[]).map((kind) => <option key={kind} value={kind}>{BUILDING_SLOT_KINDS[kind].label}</option>)}</select></div>
+                    <button onClick={() => setEditingSlot({ ...editingSlot, filled: !editingSlot.filled, contents: editingSlot.filled ? "" : editingSlot.contents })} className={`${retro.button} w-full px-2 py-1.5 text-[10px] flex items-center justify-center gap-1.5`} style={{ color: editingSlot.filled ? "#64D98B" : "#A0A8C0" }}>
+                      {editingSlot.filled ? <Building2 size={11} /> : <Boxes size={11} />} {editingSlot.filled ? "Filled" : "Empty"}
+                    </button>
+                    {editingSlot.filled && <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Filled with</label><input type="text" value={editingSlot.contents} onChange={(event) => setEditingSlot({ ...editingSlot, contents: event.target.value })} className="w-full px-2 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#E0E8FF" }} placeholder="Workshop, refinery, apartments..." /></div>}
+                    <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Description</label><textarea value={editingSlot.description} rows={2} onChange={(event) => setEditingSlot({ ...editingSlot, description: event.target.value })} className="w-full px-2 py-1 text-[10px] outline-none resize-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[9px]" style={S_MUTED}>Width<input type="range" min="72" max="300" step="4" value={editingSlot.width} onChange={(event) => setEditingSlot({ ...editingSlot, width: Number(event.target.value) })} className="w-full mt-1" /><span className="block text-right" style={S_DIM}>{editingSlot.width}px</span></label>
+                      <label className="text-[9px]" style={S_MUTED}>Height<input type="range" min="48" max="220" step="4" value={editingSlot.height} onChange={(event) => setEditingSlot({ ...editingSlot, height: Number(event.target.value) })} className="w-full mt-1" /><span className="block text-right" style={S_DIM}>{editingSlot.height}px</span></label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[9px]" style={S_MUTED}>Horizontal<input type="number" min="0" max="100" step="0.5" value={Number(editingSlot.x.toFixed(1))} onChange={(event) => setEditingSlot({ ...editingSlot, x: Math.max(0, Math.min(100, Number(event.target.value))) })} className="w-full px-2 py-1 mt-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></label>
+                      <label className="text-[9px]" style={S_MUTED}>Vertical<input type="number" min="0" max="100" step="0.5" value={Number(editingSlot.y.toFixed(1))} onChange={(event) => setEditingSlot({ ...editingSlot, y: Math.max(0, Math.min(100, Number(event.target.value))) })} className="w-full px-2 py-1 mt-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></label>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={saveBuildingSlot} disabled={!editingSlot.name.trim()} className={`${retro.button} flex-1 px-3 py-1.5 text-[10px] flex items-center justify-center gap-1 disabled:opacity-40`} style={S_GREEN_BTN}><Save size={10} /> Save</button>
+                      <button onClick={() => { setEditingSlot(null); setIsNewSlot(false); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED} title="Cancel"><X size={10} /></button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {activeZone.editorVariant === "building" && selectedSlot && !editingSlot && (() => {
+                const meta = BUILDING_SLOT_KINDS[selectedSlot.kind];
+                return (
+                  <div className="px-3 py-3" style={{ borderTop: `1px solid ${meta.color}44`, background: `${meta.color}08` }}>
+                    <div className="flex items-center gap-2 mb-2">{selectedSlot.filled ? <Building2 size={14} style={{ color: meta.color }} /> : <Boxes size={14} style={{ color: meta.color }} />}<span className="text-[12px] font-semibold" style={{ color: meta.color }}>{selectedSlot.name}</span><span className="ml-auto text-[8px]" style={S_MUTED}>{selectedSlot.filled ? "FILLED" : "EMPTY"}</span></div>
+                    <div className="text-[9px] uppercase mb-1.5" style={{ color: meta.color }}>{meta.label}</div>
+                    {selectedSlot.filled && <div className="mb-1.5"><div className="text-[9px]" style={S_MUTED}>Filled with</div><div className="text-[11px]" style={S_TEXT}>{selectedSlot.contents || "Not specified"}</div></div>}
+                    {selectedSlot.description && <div className="mb-2"><div className="text-[9px]" style={S_MUTED}>Description</div><div className="text-[10px]" style={S_TEXT}>{selectedSlot.description}</div></div>}
+                    <div className="flex gap-4"><div><div className="text-[9px]" style={S_MUTED}>Position</div><div className="text-[9px]" style={S_DIM}>{selectedSlot.x.toFixed(1)}, {selectedSlot.y.toFixed(1)}</div></div><div><div className="text-[9px]" style={S_MUTED}>Size</div><div className="text-[9px]" style={S_DIM}>{selectedSlot.width} x {selectedSlot.height}</div></div></div>
+                  </div>
+                );
+              })()}
+              {activeZone.editorVariant !== "building" && editingPin && (
                 <div className="px-3 py-3" style={{ borderTop: "1px solid #1A1A4B", background: "#0A0A2A" }}>
-                  <div className="text-[11px] mb-2" style={S_ACCENT_HDR}>{isNewPin ? "New Pin" : "Edit Pin"}</div>
+                  <div className="text-[11px] mb-2" style={S_ACCENT_HDR}>{isNewPin ? "New Place" : "Edit Place"}</div>
                   <div className="space-y-2">
                     <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Name</label><input type="text" value={editingPin.name} onChange={e => setEditingPin({ ...editingPin, name: e.target.value })} className="w-full px-2 py-1 text-[11px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
                     <div className="flex gap-2">
                       <div className="flex-1"><label className="text-[9px] block mb-0.5" style={S_MUTED}>Icon</label><select value={editingPin.icon} onChange={e => setEditingPin({ ...editingPin, icon: e.target.value })} className="w-full px-1 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}>{ICON_OPTIONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}</select></div>
                       <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Color</label><div className="flex gap-1 flex-wrap">{PIN_COLORS.map(c => <button key={c} onClick={() => setEditingPin({ ...editingPin, color: c })} className="w-4 h-4 transition-transform" style={{ background: c, border: editingPin.color === c ? "2px solid #FFF" : "1px solid #2A2A5B", transform: editingPin.color === c ? "scale(1.2)" : "scale(1)" }} />)}</div></div>
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[9px]" style={S_MUTED}>Box width
+                        <input type="range" min="96" max="280" step="4" value={editingPin.width} onChange={(event) => setEditingPin({ ...editingPin, width: Number(event.target.value) })} className="w-full mt-1" />
+                        <span className="block text-right" style={S_DIM}>{editingPin.width}px</span>
+                      </label>
+                      <label className="text-[9px]" style={S_MUTED}>Box height
+                        <input type="range" min="56" max="220" step="4" value={editingPin.height} onChange={(event) => setEditingPin({ ...editingPin, height: Number(event.target.value) })} className="w-full mt-1" />
+                        <span className="block text-right" style={S_DIM}>{editingPin.height}px</span>
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="text-[9px]" style={S_MUTED}>Horizontal position
+                        <input type="number" min="0" max="100" step="0.5" value={Number(editingPin.x.toFixed(1))} onChange={(event) => setEditingPin({ ...editingPin, x: Math.max(0, Math.min(100, Number(event.target.value))) })} className="w-full px-2 py-1 mt-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} />
+                      </label>
+                      <label className="text-[9px]" style={S_MUTED}>Vertical position
+                        <input type="number" min="0" max="100" step="0.5" value={Number(editingPin.y.toFixed(1))} onChange={(event) => setEditingPin({ ...editingPin, y: Math.max(0, Math.min(100, Number(event.target.value))) })} className="w-full px-2 py-1 mt-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} />
+                      </label>
+                    </div>
                     <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Description</label><textarea value={editingPin.description} rows={2} onChange={e => setEditingPin({ ...editingPin, description: e.target.value })} className="w-full px-2 py-1 text-[10px] outline-none resize-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
+                    <div>
+                      <label className="text-[9px] block mb-1" style={S_MUTED}>Images</label>
+                      {editingPin.images.length > 0 && (
+                        <div className="grid grid-cols-3 gap-1 mb-1.5">
+                          {editingPin.images.map((imageUrl, index) => (
+                            <div key={`${imageUrl}-${index}`} className="relative h-12" style={{ border: "1px solid #2A2A5B" }}>
+                              <ImageWithFallback src={imageUrl} alt={`${editingPin.name} ${index + 1}`} className="w-full h-full object-cover" />
+                              <button onClick={() => setEditingPin({ ...editingPin, images: editingPin.images.filter((_, imageIndex) => imageIndex !== index) })} className="absolute top-0 right-0 p-0.5" style={{ background: "rgba(20,5,10,0.9)", color: "#FF6A6A" }} title="Remove image"><X size={9} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-1">
+                        <input type="url" value={placeImageDraft} onChange={(event) => setPlaceImageDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addEditingPinImage(); } }} className="flex-1 min-w-0 px-2 py-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} placeholder="Image URL" />
+                        <button onClick={addEditingPinImage} disabled={!placeImageDraft.trim()} className={`${retro.button} p-1.5 disabled:opacity-40`} style={S_ACCENT} title="Add image"><ImagePlus size={11} /></button>
+                      </div>
+                    </div>
+                    <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Wiki article</label><select value={editingPin.wikiPageId || ""} onChange={(event) => setEditingPin({ ...editingPin, wikiPageId: event.target.value || undefined })} className="w-full px-2 py-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}><option value="">No wiki link</option>{wikiPages.map((page) => <option key={page.id} value={page.id}>{page.title || page.name || page.id}</option>)}</select></div>
                     <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Notes</label><textarea value={editingPin.notes} rows={2} onChange={e => setEditingPin({ ...editingPin, notes: e.target.value })} className="w-full px-2 py-1 text-[10px] outline-none resize-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
                     <div className="flex gap-2">
                       <button onClick={savePin} className={`${retro.button} flex-1 px-3 py-1.5 text-[10px] flex items-center justify-center gap-1`} style={S_GREEN_BTN}><Save size={10} /> Save</button>
-                      <button onClick={() => { setEditingPin(null); setIsNewPin(false); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}><X size={10} /></button>
+                      <button onClick={() => { setEditingPin(null); setIsNewPin(false); setPlaceImageDraft(""); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}><X size={10} /></button>
                     </div>
                   </div>
                 </div>
               )}
-              {selectedPin && !editingPin && (
+              {activeZone.editorVariant !== "building" && selectedPin && !editingPin && (
                 <div className="px-3 py-3" style={{ borderTop: `1px solid ${selectedPin.color}22`, background: `${selectedPin.color}06` }}>
                   <div className="flex items-center gap-2 mb-2">{renderIcon(selectedPin.icon, 14, selectedPin.color)}<span className="text-[12px] font-semibold" style={{ color: selectedPin.color }}>{selectedPin.name}</span></div>
+                  {selectedPin.images.length > 0 && <div className="grid grid-cols-3 gap-1 mb-2">{selectedPin.images.slice(0, 6).map((imageUrl, index) => <ImageWithFallback key={`${imageUrl}-${index}`} src={imageUrl} alt={`${selectedPin.name} ${index + 1}`} className="w-full h-14 object-cover" />)}</div>}
                   {selectedPin.description && <div className="mb-1.5"><div className="text-[9px]" style={S_MUTED}>Description</div><div className="text-[11px]" style={S_TEXT}>{selectedPin.description}</div></div>}
                   {selectedPin.notes && <div className="mb-1.5"><div className="text-[9px]" style={S_MUTED}>Notes</div><div className="text-[10px] italic" style={S_SUBTLE}>{selectedPin.notes}</div></div>}
+                  <div className="flex gap-1.5 flex-wrap mb-2">
+                    {selectedPin.childMapId ? (
+                      <button onClick={() => createOrOpenPlaceMap(selectedPin)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: selectedPin.color }}><MapPinned size={10} /> Open Map</button>
+                    ) : isDM && isEditMode ? (
+                      <div className="flex gap-1">
+                        <button onClick={() => createOrOpenPlaceMap(selectedPin, "places")} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: selectedPin.color }}><MapPinned size={10} /> Place Map</button>
+                        <button onClick={() => createOrOpenPlaceMap(selectedPin, "building")} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: "#FFB35A" }}><Building2 size={10} /> Building</button>
+                      </div>
+                    ) : null}
+                    {selectedPin.wikiPageId && <button onClick={() => navigate(`/interface/inet-page/${selectedPin.wikiPageId}`)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={S_ACCENT}><BookOpen size={10} /> Open Wiki</button>}
+                  </div>
                   <div className="flex gap-4">
                     <div><div className="text-[9px]" style={S_MUTED}>Coordinates</div><div className="text-[10px]" style={{ color: "#5A7ABB", fontFamily: "'Courier New', monospace" }}>{selectedPin.x.toFixed(1)}, {selectedPin.y.toFixed(1)}</div></div>
                     <div><div className="text-[9px]" style={S_MUTED}>Connections</div><div className="text-[10px]" style={{ color: activeZone.color }}>{activeZone.connections.filter(([a, b]) => a === selectedPin.id || b === selectedPin.id).length} path(s)</div></div>
