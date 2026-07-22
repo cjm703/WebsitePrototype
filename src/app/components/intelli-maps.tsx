@@ -11,7 +11,7 @@ import {
   Skull, Shield, Home, Landmark, Trees, Anchor, Flame,
   Link2, Unlink, Cloud, CloudOff, Crosshair, Lock, Ban, DoorOpen,
   ZoomIn, ZoomOut, Maximize2, Image, Square, Grid3x3, Pentagon,
-  Check, BookOpen, ExternalLink, MapPinned, ImagePlus, Minus,
+  Check, BookOpen, MapPinned, ImagePlus, Minus,
   Building2, Boxes, RotateCcw, Undo2, Redo2, Combine, Spline,
 } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
@@ -625,6 +625,7 @@ interface DraftPointTarget {
 interface MapPin_t {
   id: string;
   name: string;
+  subtitle: string;
   x: number;
   y: number;
   icon: string;
@@ -635,6 +636,8 @@ interface MapPin_t {
   width: number;
   height: number;
   wikiPageId?: string;
+  placeMapId?: string;
+  buildingMapId?: string;
   childMapId?: string;
 }
 
@@ -801,6 +804,7 @@ function migratePin(pin: any): MapPin_t {
   return {
     id: String(pin?.id || `place-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
     name: String(pin?.name || "Untitled Place"),
+    subtitle: String(pin?.subtitle || ""),
     x: Number.isFinite(pin?.x) ? pin.x : 50,
     y: Number.isFinite(pin?.y) ? pin.y : 50,
     icon: String(pin?.icon || "pin"),
@@ -811,6 +815,8 @@ function migratePin(pin: any): MapPin_t {
     width: Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 124,
     height: Number.isFinite(pin?.height) ? Math.max(96, Math.min(280, pin.height)) : (Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 124),
     wikiPageId: typeof pin?.wikiPageId === "string" ? pin.wikiPageId : undefined,
+    placeMapId: typeof pin?.placeMapId === "string" ? pin.placeMapId : undefined,
+    buildingMapId: typeof pin?.buildingMapId === "string" ? pin.buildingMapId : undefined,
     childMapId: typeof pin?.childMapId === "string" ? pin.childMapId : undefined,
   };
 }
@@ -921,6 +927,38 @@ function migrateZone(z: any): MapZone {
 }
 
 const INTELLI_MAPS_STORAGE_KEY = "inet-map-hexcity-v3";
+
+function normalizeChildMapLinks(zones: MapZone[]): MapZone[] {
+  const zonesById = new Map(zones.map((zone) => [zone.id, zone]));
+  const childrenByParent = new Map<string, MapZone[]>();
+  zones.forEach((zone) => {
+    if (!zone.parentZoneId || !zone.parentPlaceId) return;
+    const key = `${zone.parentZoneId}:${zone.parentPlaceId}`;
+    childrenByParent.set(key, [...(childrenByParent.get(key) || []), zone]);
+  });
+
+  return zones.map((zone) => ({
+    ...zone,
+    pins: zone.pins.map((pin) => {
+      let placeMapId = pin.placeMapId && !zonesById.has(pin.placeMapId) ? pin.placeMapId : undefined;
+      let buildingMapId = pin.buildingMapId && !zonesById.has(pin.buildingMapId) ? pin.buildingMapId : undefined;
+      const candidates = [...(childrenByParent.get(`${zone.id}:${pin.id}`) || [])];
+      [pin.placeMapId, pin.buildingMapId, pin.childMapId].forEach((mapId) => {
+        if (!mapId) return;
+        const child = zonesById.get(mapId);
+        if (child && !candidates.some((candidate) => candidate.id === child.id)) candidates.push(child);
+        else if (!child && mapId === pin.childMapId && !placeMapId) placeMapId = mapId;
+      });
+      candidates.forEach((child) => {
+        if (child.editorVariant === "building") buildingMapId ||= child.id;
+        else placeMapId ||= child.id;
+      });
+      const { childMapId: _legacyChildMapId, ...currentPin } = pin;
+      return { ...currentPin, placeMapId, buildingMapId };
+    }),
+  }));
+}
+
 function loadLocalZones(): MapZone[] {
   const saved = safeGetJson<any[]>(INTELLI_MAPS_STORAGE_KEY, []);
   if (saved.length === 0) return buildDefaultZones();
@@ -928,8 +966,7 @@ function loadLocalZones(): MapZone[] {
   const migrated = saved.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
   const missing = defaults.filter((zone) => !existingIds.has(zone.id));
-  if (missing.length > 0) return [...migrated, ...missing];
-  return migrated;
+  return normalizeChildMapLinks(missing.length > 0 ? [...migrated, ...missing] : migrated);
 }
 
 function normalizeZones(raw: unknown): MapZone[] {
@@ -938,8 +975,7 @@ function normalizeZones(raw: unknown): MapZone[] {
   const migrated = raw.map(migrateZone);
   const existingIds = new Set(migrated.map((zone) => zone.id));
   const missing = defaults.filter((zone) => !existingIds.has(zone.id));
-  if (missing.length > 0) return [...migrated, ...missing];
-  return migrated;
+  return normalizeChildMapLinks(missing.length > 0 ? [...migrated, ...missing] : migrated);
 }
 
 const OUTER_ZONE_ID_PREFIX = "os-";
@@ -1033,6 +1069,8 @@ export function IntelliMaps() {
   const activeZone = zones.find(z => z.id === activeZoneId) || null;
   const activeGate = GATES.find(g => g.id === activeGateId) || null;
   const selectedPin = activeZone?.pins.find(p => p.id === selectedPinId) || null;
+  const selectedPlaceMapExists = Boolean(selectedPin?.placeMapId && zones.some((zone) => zone.id === selectedPin.placeMapId));
+  const selectedBuildingMapExists = Boolean(selectedPin?.buildingMapId && zones.some((zone) => zone.id === selectedPin.buildingMapId));
   const selectedSlot = activeZone?.buildingSlots.find((slot) => slot.id === selectedSlotId) || null;
   const parentZone = activeZone?.parentZoneId ? zones.find((zone) => zone.id === activeZone.parentZoneId) || null : null;
 
@@ -1424,8 +1462,9 @@ export function IntelliMaps() {
 
   const savePin = useCallback(() => {
     if (!editingPin || !activeZoneId) return;
+    const linkedMapIds = new Set([editingPin.placeMapId, editingPin.buildingMapId, editingPin.childMapId].filter((value): value is string => Boolean(value)));
     setZones(prev => prev.map(z => {
-      if (editingPin.childMapId && z.id === editingPin.childMapId) {
+      if (linkedMapIds.has(z.id)) {
         return { ...z, name: editingPin.name || "Untitled Place" };
       }
       if (z.id !== activeZoneId) return z;
@@ -1438,8 +1477,9 @@ export function IntelliMaps() {
 
   const createOrOpenPlaceMap = useCallback((pin: MapPin_t, editorVariant: MapEditorVariant = "places") => {
     if (!activeZone) return;
-    if (pin.childMapId && zones.some((zone) => zone.id === pin.childMapId)) {
-      openNestedMap(pin.childMapId);
+    const existingMapId = editorVariant === "building" ? pin.buildingMapId : pin.placeMapId;
+    if (existingMapId && zones.some((zone) => zone.id === existingMapId)) {
+      openNestedMap(existingMapId);
       return;
     }
     const childMapId = `place-map-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1467,7 +1507,7 @@ export function IntelliMaps() {
     };
     setZones((prev) => [
       ...prev.map((zone) => zone.id === activeZone.id
-        ? { ...zone, pins: zone.pins.map((place) => place.id === pin.id ? { ...place, childMapId } : place) }
+        ? { ...zone, pins: zone.pins.map((place) => place.id === pin.id ? { ...place, [editorVariant === "building" ? "buildingMapId" : "placeMapId"]: childMapId } : place) }
         : zone),
       childMap,
     ]);
@@ -1477,12 +1517,21 @@ export function IntelliMaps() {
 
   const setActiveEditorVariant = useCallback((editorVariant: MapEditorVariant) => {
     if (!activeZoneId) return;
-    setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, editorVariant } : zone));
+    setZones((prev) => prev.map((zone) => {
+      if (zone.id === activeZoneId) return { ...zone, editorVariant };
+      if (zone.id !== activeZone?.parentZoneId || !activeZone.parentPlaceId) return zone;
+      return {
+        ...zone,
+        pins: zone.pins.map((pin) => pin.id !== activeZone.parentPlaceId ? pin : editorVariant === "building"
+          ? { ...pin, buildingMapId: activeZoneId, placeMapId: pin.placeMapId === activeZoneId ? undefined : pin.placeMapId }
+          : { ...pin, placeMapId: activeZoneId, buildingMapId: pin.buildingMapId === activeZoneId ? undefined : pin.buildingMapId }),
+      };
+    }));
     setSelectedPinId(null); setEditingPin(null); setIsNewPin(false);
     setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
     setLinkMode(false); setLinkSource(null); setWallMode(false); setLinePoints([]);
     setAreaMode(false); setShellMode(false); setAreaPoints([]); setShellPoints([]); setPointConnectMode(false); setPointConnectSource(null);
-  }, [activeZoneId]);
+  }, [activeZone?.parentPlaceId, activeZone?.parentZoneId, activeZoneId]);
 
   const saveBuildingSlot = useCallback(() => {
     if (!editingSlot || !activeZoneId) return;
@@ -1676,7 +1725,7 @@ export function IntelliMaps() {
       return;
     }
 
-    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 124, height: 124 });
+    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", subtitle: "", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 124, height: 124 });
     setPlaceImageDraft("");
     setIsNewPin(true);
   }, [isDM, isEditMode, activeZone, linkMode, pointConnectMode, isPanning, shellMode, areaMode, wallMode]);
@@ -2807,6 +2856,8 @@ export function IntelliMaps() {
                   const isSelected = selectedPinId === pin.id;
                   const isLinkSrc = linkSource === pin.id;
                   const wikiPage = wikiPages.find((page) => page.id === pin.wikiPageId);
+                  const hasPlaceMap = Boolean(pin.placeMapId && zones.some((zone) => zone.id === pin.placeMapId));
+                  const hasBuildingMap = Boolean(pin.buildingMapId && zones.some((zone) => zone.id === pin.buildingMapId));
                   const placeSize = Math.max(96, Math.min(280, pin.width));
                   const expandedWidth = Math.max(280, placeSize);
                   const expandedHeight = Math.max(310, Math.min(360, placeSize + 100));
@@ -2846,40 +2897,19 @@ export function IntelliMaps() {
                         cursor: isDM && isEditMode && !linkMode && !wallMode && !areaMode && !pointConnectMode ? "move" : "pointer",
                       }}
                     >
-                      {pin.images[0] && (
-                        <ImageWithFallback src={pin.images[0]} alt={pin.name} draggable={false} className="w-full object-cover pointer-events-none shrink-0" style={{ height: isSelected ? 92 : Math.max(56, placeSize - 34), filter: "brightness(0.78) saturate(0.9)" }} />
-                      )}
-                      <div className="px-2 py-1.5 flex items-center gap-1.5 shrink-0" style={{ background: `${pin.color}12` }}>
+                      <div className="h-8 px-2 flex items-center gap-1.5 shrink-0" style={{ background: `${pin.color}16`, borderBottom: `1px solid ${pin.color}44` }}>
                         {renderIcon(pin.icon, 13, isLinkSrc ? "#4AFFFF" : pin.color)}
-                        <span className="text-[10px] font-semibold truncate" style={{ color: isLinkSrc ? "#4AFFFF" : "#E0E8FF" }}>{pin.name}</span>
-                        {pin.childMapId && <MapPinned size={10} className="ml-auto shrink-0" style={{ color: pin.color }} />}
+                        <span className="text-[11px] font-semibold truncate flex-1" style={{ color: isLinkSrc ? "#4AFFFF" : "#E0E8FF" }}>{pin.name}</span>
+                        {pin.wikiPageId && <button onClick={(event) => { event.stopPropagation(); navigate(`/interface/inet-page/${pin.wikiPageId}`); }} className="p-0.5 shrink-0 hover:bg-[#1A1A4B]" style={S_ACCENT} title={wikiPage?.title || wikiPage?.name || "Open linked wiki article"}><BookOpen size={10} /></button>}
                       </div>
-                      {isSelected && !linkMode && (
-                        <div className="px-2 pb-2 flex-1 min-h-0 overflow-y-auto" style={{ borderTop: `1px solid ${pin.color}33` }}>
-                          {pin.description && <div className="mt-2"><div className="text-[8px] mb-0.5" style={S_MUTED}>DESCRIPTION</div><p className="text-[10px] leading-relaxed pr-1 overflow-y-auto" style={{ ...S_TEXT, maxHeight: 96 }}>{pin.description}</p></div>}
-                          {pin.notes && <div className="mt-2"><div className="text-[8px] mb-0.5" style={S_MUTED}>NOTES</div><p className="text-[9px] italic leading-relaxed pr-1 overflow-y-auto" style={{ ...S_SUBTLE, maxHeight: 62 }}>{pin.notes}</p></div>}
-                          {pin.images.length > 1 && (
-                            <div className="grid grid-cols-3 gap-1 mt-2">
-                              {pin.images.slice(1).map((imageUrl, index) => <ImageWithFallback key={`${imageUrl}-${index}`} src={imageUrl} alt={`${pin.name} ${index + 2}`} className="w-full h-10 object-cover" />)}
-                            </div>
-                          )}
-                          <div className="flex gap-1 mt-2 flex-wrap">
-                            {pin.childMapId ? (
-                              <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: pin.color }}>
-                                <MapPinned size={10} /> Open Map
-                              </button>
-                            ) : isDM && isEditMode ? (
-                              <div className="flex gap-1">
-                                <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "places"); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: pin.color }} title="Create a standard place map"><MapPinned size={10} /> Place Map</button>
-                                <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "building"); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: "#FFB35A" }} title="Create a building layout"><Building2 size={10} /> Building</button>
-                              </div>
-                            ) : null}
-                            {pin.wikiPageId && (
-                              <button onClick={(event) => { event.stopPropagation(); navigate(`/interface/inet-page/${pin.wikiPageId}`); }} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={S_ACCENT} title={wikiPage?.title || wikiPage?.name || "Open linked wiki article"}>
-                                <BookOpen size={10} /> Wiki <ExternalLink size={8} />
-                              </button>
-                            )}
-                          </div>
+                      <div className="h-5 px-2 flex items-center shrink-0 text-[8px] truncate" style={{ color: pin.subtitle ? "#9AA8C8" : "#536080", background: "rgba(5,5,24,0.28)", borderBottom: `1px solid ${pin.color}22` }}>{pin.subtitle || " "}</div>
+                      <div className="flex-1 min-h-0 px-2 py-2" style={{ background: "rgba(4,4,22,0.18)" }}>
+                        <p className="h-full text-[9px] leading-relaxed whitespace-pre-wrap pr-1" style={{ ...S_TEXT, overflowY: isSelected ? "auto" : "hidden", overflowWrap: "anywhere" }}>{pin.description || <span style={S_DIM}>No description</span>}</p>
+                      </div>
+                      {(hasPlaceMap || hasBuildingMap) && (
+                        <div className={`grid ${hasPlaceMap && hasBuildingMap ? "grid-cols-2" : "grid-cols-1"} h-7 shrink-0`} style={{ borderTop: `1px solid ${pin.color}44` }}>
+                          {hasPlaceMap && <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "places"); }} className="text-[8px] flex items-center justify-center gap-1 hover:bg-[#1A1A4B]" style={{ color: pin.color, borderRight: hasBuildingMap ? "1px solid #2A2A5B" : undefined }}><MapPinned size={9} /> Place Map</button>}
+                          {hasBuildingMap && <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "building"); }} className="text-[8px] flex items-center justify-center gap-1 hover:bg-[#2A1E14]" style={{ color: "#FFB35A" }}><Building2 size={9} /> Building</button>}
                         </div>
                       )}
                     </div>
@@ -3332,6 +3362,7 @@ export function IntelliMaps() {
                   <div className="text-[11px] mb-2" style={S_ACCENT_HDR}>{isNewPin ? "New Place" : "Edit Place"}</div>
                   <div className="space-y-2">
                     <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Name</label><input type="text" value={editingPin.name} onChange={e => setEditingPin({ ...editingPin, name: e.target.value })} className="w-full px-2 py-1 text-[11px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
+                    <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Subtitle</label><input type="text" value={editingPin.subtitle} onChange={e => setEditingPin({ ...editingPin, subtitle: e.target.value })} className="w-full px-2 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#AAB8D8" }} /></div>
                     <div className="flex gap-2">
                       <div className="flex-1"><label className="text-[9px] block mb-0.5" style={S_MUTED}>Icon</label><select value={editingPin.icon} onChange={e => setEditingPin({ ...editingPin, icon: e.target.value })} className="w-full px-1 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}>{ICON_OPTIONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}</select></div>
                       <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Color</label><div className="flex gap-1 flex-wrap">{PIN_COLORS.map(c => <button key={c} onClick={() => setEditingPin({ ...editingPin, color: c })} className="w-4 h-4 transition-transform" style={{ background: c, border: editingPin.color === c ? "2px solid #FFF" : "1px solid #2A2A5B", transform: editingPin.color === c ? "scale(1.2)" : "scale(1)" }} />)}</div></div>
@@ -3378,20 +3409,15 @@ export function IntelliMaps() {
               {activeZone.editorVariant !== "building" && selectedPin && !editingPin && (
                 <div className="px-3 py-3" style={{ borderTop: `1px solid ${selectedPin.color}22`, background: `${selectedPin.color}06` }}>
                   <div className="flex items-center gap-2 mb-2">{renderIcon(selectedPin.icon, 14, selectedPin.color)}<span className="text-[12px] font-semibold" style={{ color: selectedPin.color }}>{selectedPin.name}</span></div>
+                  {selectedPin.subtitle && <div className="text-[9px] mb-2" style={S_MUTED}>{selectedPin.subtitle}</div>}
                   {selectedPin.images.length > 0 && <div className="grid grid-cols-3 gap-1 mb-2">{selectedPin.images.slice(0, 6).map((imageUrl, index) => <ImageWithFallback key={`${imageUrl}-${index}`} src={imageUrl} alt={`${selectedPin.name} ${index + 1}`} className="w-full h-14 object-cover" />)}</div>}
                   {selectedPin.description && <div className="mb-1.5"><div className="text-[9px]" style={S_MUTED}>Description</div><div className="text-[11px]" style={S_TEXT}>{selectedPin.description}</div></div>}
                   {selectedPin.notes && <div className="mb-1.5"><div className="text-[9px]" style={S_MUTED}>Notes</div><div className="text-[10px] italic" style={S_SUBTLE}>{selectedPin.notes}</div></div>}
-                  <div className="flex gap-1.5 flex-wrap mb-2">
-                    {selectedPin.childMapId ? (
-                      <button onClick={() => createOrOpenPlaceMap(selectedPin)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: selectedPin.color }}><MapPinned size={10} /> Open Map</button>
-                    ) : isDM && isEditMode ? (
-                      <div className="flex gap-1">
-                        <button onClick={() => createOrOpenPlaceMap(selectedPin, "places")} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: selectedPin.color }}><MapPinned size={10} /> Place Map</button>
-                        <button onClick={() => createOrOpenPlaceMap(selectedPin, "building")} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={{ color: "#FFB35A" }}><Building2 size={10} /> Building</button>
-                      </div>
-                    ) : null}
-                    {selectedPin.wikiPageId && <button onClick={() => navigate(`/interface/inet-page/${selectedPin.wikiPageId}`)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`} style={S_ACCENT}><BookOpen size={10} /> Open Wiki</button>}
-                  </div>
+                  {(selectedPlaceMapExists || selectedBuildingMapExists || (isDM && isEditMode)) && <div className="grid grid-cols-2 gap-1 mb-2">
+                    {(selectedPlaceMapExists || (isDM && isEditMode)) && <button onClick={() => createOrOpenPlaceMap(selectedPin, "places")} className={`${retro.button} px-2 py-1 text-[9px] flex items-center justify-center gap-1`} style={{ color: selectedPin.color }}><MapPinned size={10} /> {selectedPlaceMapExists ? "Open Place Map" : "Create Place Map"}</button>}
+                    {(selectedBuildingMapExists || (isDM && isEditMode)) && <button onClick={() => createOrOpenPlaceMap(selectedPin, "building")} className={`${retro.button} px-2 py-1 text-[9px] flex items-center justify-center gap-1`} style={{ color: "#FFB35A" }}><Building2 size={10} /> {selectedBuildingMapExists ? "Open Building" : "Create Building"}</button>}
+                  </div>}
+                  {selectedPin.wikiPageId && <button onClick={() => navigate(`/interface/inet-page/${selectedPin.wikiPageId}`)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1 mb-2`} style={S_ACCENT}><BookOpen size={10} /> Open Wiki</button>}
                   <div className="flex gap-4">
                     <div><div className="text-[9px]" style={S_MUTED}>Coordinates</div><div className="text-[10px]" style={{ color: "#5A7ABB", fontFamily: "'Courier New', monospace" }}>{selectedPin.x.toFixed(1)}, {selectedPin.y.toFixed(1)}</div></div>
                     <div><div className="text-[9px]" style={S_MUTED}>Connections</div><div className="text-[10px]" style={{ color: activeZone.color }}>{activeZone.connections.filter(([a, b]) => a === selectedPin.id || b === selectedPin.id).length} path(s)</div></div>
