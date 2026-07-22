@@ -12,7 +12,7 @@ import {
   Link2, Unlink, Cloud, CloudOff, Crosshair, Lock, Ban, DoorOpen,
   ZoomIn, ZoomOut, Maximize2, Image, Square, Grid3x3, Pentagon,
   Check, BookOpen, ExternalLink, MapPinned, ImagePlus, Minus,
-  Building2, Boxes, RotateCcw,
+  Building2, Boxes, RotateCcw, Undo2, Redo2, Combine, Spline,
 } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { safeGetItem, safeGetJson, safeSetJson } from "./safe-storage";
@@ -616,6 +616,11 @@ const FOG_COLORS: Record<FogMode, string> = { visible: "#4AFF4A", locked: "#FFAA
    ============================================================== */
 
 type MapPoint = [number, number];
+type DraftGeometryKind = "line" | "area" | "shell";
+interface DraftPointTarget {
+  kind: DraftGeometryKind;
+  index: number;
+}
 
 interface MapPin_t {
   id: string;
@@ -641,6 +646,18 @@ interface MapLine {
   width: number;
   opacity: number;
   dashed: boolean;
+  curve: number;
+}
+
+function getLinePath(start: MapPoint, end: MapPoint, curve = 0): string {
+  if (Math.abs(curve) < 0.01) return `M ${start[0]} ${start[1]} L ${end[0]} ${end[1]}`;
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const length = Math.max(0.001, Math.hypot(dx, dy));
+  const offset = length * Math.max(-0.5, Math.min(0.5, curve / 100));
+  const controlX = (start[0] + end[0]) / 2 + (-dy / length) * offset;
+  const controlY = (start[1] + end[1]) / 2 + (dx / length) * offset;
+  return `M ${start[0]} ${start[1]} Q ${controlX} ${controlY} ${end[0]} ${end[1]}`;
 }
 
 interface MapArea {
@@ -791,8 +808,8 @@ function migratePin(pin: any): MapPin_t {
     description: String(pin?.description || ""),
     notes: String(pin?.notes || ""),
     images: Array.isArray(pin?.images) ? pin.images.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0) : legacyImage,
-    width: Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 148,
-    height: Number.isFinite(pin?.height) ? Math.max(56, Math.min(220, pin.height)) : 82,
+    width: Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 124,
+    height: Number.isFinite(pin?.height) ? Math.max(96, Math.min(280, pin.height)) : (Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 124),
     wikiPageId: typeof pin?.wikiPageId === "string" ? pin.wikiPageId : undefined,
     childMapId: typeof pin?.childMapId === "string" ? pin.childMapId : undefined,
   };
@@ -865,6 +882,7 @@ function migrateZone(z: any): MapZone {
         width: Number.isFinite(line.width) ? Math.max(1, Math.min(12, line.width)) : 3,
         opacity: Number.isFinite(line.opacity) ? Math.max(0.1, Math.min(1, line.opacity)) : 0.85,
         dashed: Boolean(line.dashed),
+        curve: Number.isFinite(line.curve) ? Math.max(-50, Math.min(50, line.curve)) : 0,
       }))
     : [];
   const areas: MapArea[] = Array.isArray(z?.areas)
@@ -967,6 +985,14 @@ export function IntelliMaps() {
   const navigate = useNavigate();
   const [currentUser] = useState<string>(() => safeGetItem("inet-user") || "Agent Phoenix");
   const [zones, setZones] = useState<MapZone[]>(loadLocalZones);
+  const historyUndoRef = useRef<MapZone[][]>([]);
+  const historyRedoRef = useRef<MapZone[][]>([]);
+  const historyPresentRef = useRef<MapZone[]>(zones);
+  const pendingHistoryRef = useRef<MapZone[] | null>(null);
+  const historyTimerRef = useRef<number | null>(null);
+  const historyApplyingRef = useRef(false);
+  const historyResetPendingRef = useRef(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [activeZoneId, setActiveZoneId] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -976,14 +1002,19 @@ export function IntelliMaps() {
   const [hoveredSector, setHoveredSector] = useState<string | null>(null);
   const [hoveredOuterSub, setHoveredOuterSub] = useState<string | null>(null);
   const [wallMode, setWallMode] = useState(false);
-  const [wallStart, setWallStart] = useState<[number, number] | null>(null);
+  const [linePoints, setLinePoints] = useState<MapPoint[]>([]);
   const [areaMode, setAreaMode] = useState(false);
   const [shellMode, setShellMode] = useState(false);
   const [areaPoints, setAreaPoints] = useState<MapPoint[]>([]);
+  const [shellPoints, setShellPoints] = useState<MapPoint[]>([]);
+  const [pointConnectMode, setPointConnectMode] = useState(false);
+  const [pointConnectSource, setPointConnectSource] = useState<DraftPointTarget | null>(null);
+  const [pointConnectError, setPointConnectError] = useState<string | null>(null);
   const [drawColor, setDrawColor] = useState("#4A7BFF");
   const [drawOpacity, setDrawOpacity] = useState(0.3);
   const [lineWidth, setLineWidth] = useState(3);
   const [lineDashed, setLineDashed] = useState(false);
+  const [lineCurve, setLineCurve] = useState(0);
   const [placeImageDraft, setPlaceImageDraft] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [editingSlot, setEditingSlot] = useState<BuildingSlot | null>(null);
@@ -1012,6 +1043,7 @@ export function IntelliMaps() {
   const [isDragging, setIsDragging] = useState(false);
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
   const [draggingSlotId, setDraggingSlotId] = useState<string | null>(null);
+  const [draggingDraftPoint, setDraggingDraftPoint] = useState<DraftPointTarget | null>(null);
   const panStart = useRef<[number, number]>([0, 0]);
   const panOrigin = useRef<[number, number]>([0, 0]);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -1020,6 +1052,49 @@ export function IntelliMaps() {
 
   const MIN_ZOOM = 0.8;
   const MAX_ZOOM = 6;
+
+  const commitPendingHistory = useCallback(() => {
+    if (historyTimerRef.current !== null) {
+      window.clearTimeout(historyTimerRef.current);
+      historyTimerRef.current = null;
+    }
+    const pending = pendingHistoryRef.current;
+    if (!pending || pending === historyPresentRef.current) return;
+    historyUndoRef.current.push(historyPresentRef.current);
+    if (historyUndoRef.current.length > 60) historyUndoRef.current.shift();
+    historyPresentRef.current = pending;
+    pendingHistoryRef.current = null;
+    historyRedoRef.current = [];
+    setHistoryVersion((version) => version + 1);
+  }, []);
+
+  const undoZones = useCallback(() => {
+    commitPendingHistory();
+    const previous = historyUndoRef.current.pop();
+    if (!previous) return;
+    historyRedoRef.current.push(historyPresentRef.current);
+    historyPresentRef.current = previous;
+    pendingHistoryRef.current = null;
+    historyApplyingRef.current = true;
+    setZones(previous);
+    setHistoryVersion((version) => version + 1);
+  }, [commitPendingHistory]);
+
+  const redoZones = useCallback(() => {
+    commitPendingHistory();
+    const next = historyRedoRef.current.pop();
+    if (!next) return;
+    historyUndoRef.current.push(historyPresentRef.current);
+    historyPresentRef.current = next;
+    pendingHistoryRef.current = null;
+    historyApplyingRef.current = true;
+    setZones(next);
+    setHistoryVersion((version) => version + 1);
+  }, [commitPendingHistory]);
+
+  const canUndo = historyUndoRef.current.length > 0 || pendingHistoryRef.current !== null;
+  const canRedo = historyRedoRef.current.length > 0;
+  void historyVersion;
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -1050,6 +1125,21 @@ export function IntelliMaps() {
   }, [mapPan, activeZone, isEditMode, isDM]);
 
   const handlePanMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (draggingDraftPoint) {
+      const el = mapContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const point: MapPoint = [
+        Math.max(0, Math.min(100, ((e.clientX - rect.left - mapPan[0]) / mapZoom / rect.width) * 100)),
+        Math.max(0, Math.min(100, ((e.clientY - rect.top - mapPan[1]) / mapZoom / rect.height) * 100)),
+      ];
+      const movePoint = (points: MapPoint[]) => points.map((current, index) => index === draggingDraftPoint.index ? point : current);
+      if (draggingDraftPoint.kind === "line") setLinePoints(movePoint);
+      else if (draggingDraftPoint.kind === "area") setAreaPoints(movePoint);
+      else setShellPoints(movePoint);
+      setIsDragging(true);
+      return;
+    }
     if ((draggingPinId || draggingSlotId) && activeZoneId) {
       const el = mapContainerRef.current;
       if (!el) return;
@@ -1080,7 +1170,7 @@ export function IntelliMaps() {
     const nx = Math.min(panOvershoot, Math.max(cw - mapW - panOvershoot, panOrigin.current[0] + dx));
     const ny = Math.min(panOvershoot, Math.max(ch - mapH - panOvershoot, panOrigin.current[1] + dy));
     setMapPan([nx, ny]);
-  }, [activeZoneId, draggingPinId, draggingSlotId, isPanning, isDragging, mapPan, mapZoom]);
+  }, [activeZoneId, draggingDraftPoint, draggingPinId, draggingSlotId, isPanning, isDragging, mapPan, mapZoom]);
 
   const handlePanEnd = useCallback(() => {
     if (isDragging) {
@@ -1089,6 +1179,7 @@ export function IntelliMaps() {
     }
     setDraggingPinId(null);
     setDraggingSlotId(null);
+    setDraggingDraftPoint(null);
     setIsPanning(false);
     setIsDragging(false);
   }, [isDragging]);
@@ -1137,12 +1228,14 @@ export function IntelliMaps() {
         setMapsError(null);
         const remoteZones = await appStore.loadIntelliMapsState<MapZone[]>(loadLocalZones());
         if (!cancelled) {
+          historyResetPendingRef.current = true;
           setZones(normalizeZones(remoteZones));
           hasLoadedMapsRef.current = true;
         }
       } catch (err) {
         if (!cancelled) {
           setMapsError(err instanceof Error ? err.message : "Failed to load Intelli Maps state");
+          historyResetPendingRef.current = true;
           setZones(loadLocalZones());
           hasLoadedMapsRef.current = true;
         }
@@ -1158,6 +1251,60 @@ export function IntelliMaps() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasLoadedMapsRef.current) {
+      historyPresentRef.current = zones;
+      return;
+    }
+    if (historyResetPendingRef.current) {
+      if (historyTimerRef.current !== null) window.clearTimeout(historyTimerRef.current);
+      historyTimerRef.current = null;
+      historyUndoRef.current = [];
+      historyRedoRef.current = [];
+      historyPresentRef.current = zones;
+      pendingHistoryRef.current = null;
+      historyApplyingRef.current = false;
+      historyResetPendingRef.current = false;
+      setHistoryVersion((version) => version + 1);
+      return;
+    }
+    if (historyApplyingRef.current) {
+      historyApplyingRef.current = false;
+      historyPresentRef.current = zones;
+      return;
+    }
+
+    pendingHistoryRef.current = zones;
+    if (historyTimerRef.current !== null) window.clearTimeout(historyTimerRef.current);
+    historyTimerRef.current = window.setTimeout(commitPendingHistory, 240);
+    setHistoryVersion((version) => version + 1);
+    return () => {
+      if (historyTimerRef.current !== null) {
+        window.clearTimeout(historyTimerRef.current);
+        historyTimerRef.current = null;
+      }
+    };
+  }, [commitPendingHistory, zones]);
+
+  useEffect(() => {
+    if (!isDM || !isEditMode) return;
+    const handleHistoryKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT")) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undoZones();
+      } else if (key === "y" || (key === "z" && event.shiftKey)) {
+        event.preventDefault();
+        redoZones();
+      }
+    };
+    window.addEventListener("keydown", handleHistoryKeyDown);
+    return () => window.removeEventListener("keydown", handleHistoryKeyDown);
+  }, [isDM, isEditMode, redoZones, undoZones]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1218,8 +1365,8 @@ export function IntelliMaps() {
       setActiveZoneId(sectorId);
       setActiveGateId(null);
       setSelectedPinId(null); setEditingPin(null); setIsNewPin(false); setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
-      setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
-      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
+      setLinkMode(false); setLinkSource(null); setWallMode(false); setLinePoints([]);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setShellPoints([]); setPointConnectMode(false); setPointConnectSource(null); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 300);
@@ -1231,8 +1378,8 @@ export function IntelliMaps() {
       setActiveGateId(gateId);
       setActiveZoneId(null);
       setSelectedPinId(null); setEditingPin(null); setIsNewPin(false); setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
-      setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
-      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
+      setLinkMode(false); setLinkSource(null); setWallMode(false); setLinePoints([]);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setShellPoints([]); setPointConnectMode(false); setPointConnectSource(null); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 300);
@@ -1242,8 +1389,8 @@ export function IntelliMaps() {
     setZoomTransition(true);
     setTimeout(() => {
       setActiveZoneId(activeZone?.parentZoneId || null); setActiveGateId(null); setSelectedPinId(null); setEditingPin(null); setSelectedSlotId(null); setEditingSlot(null);
-      setIsNewPin(false); setIsNewSlot(false); setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
-      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
+      setIsNewPin(false); setIsNewSlot(false); setLinkMode(false); setLinkSource(null); setWallMode(false); setLinePoints([]);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setShellPoints([]); setPointConnectMode(false); setPointConnectSource(null); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 300);
@@ -1255,8 +1402,8 @@ export function IntelliMaps() {
       setActiveZoneId(zoneId);
       setActiveGateId(null);
       setSelectedPinId(null); setEditingPin(null); setIsNewPin(false); setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
-      setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
-      setAreaMode(false); setShellMode(false); setAreaPoints([]); setPlaceImageDraft("");
+      setLinkMode(false); setLinkSource(null); setWallMode(false); setLinePoints([]);
+      setAreaMode(false); setShellMode(false); setAreaPoints([]); setShellPoints([]); setPointConnectMode(false); setPointConnectSource(null); setPlaceImageDraft("");
       setMapZoom(1); setMapPan([0, 0]);
       setTimeout(() => setZoomTransition(false), 50);
     }, 220);
@@ -1333,8 +1480,8 @@ export function IntelliMaps() {
     setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, editorVariant } : zone));
     setSelectedPinId(null); setEditingPin(null); setIsNewPin(false);
     setSelectedSlotId(null); setEditingSlot(null); setIsNewSlot(false);
-    setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null);
-    setAreaMode(false); setShellMode(false); setAreaPoints([]);
+    setLinkMode(false); setLinkSource(null); setWallMode(false); setLinePoints([]);
+    setAreaMode(false); setShellMode(false); setAreaPoints([]); setShellPoints([]); setPointConnectMode(false); setPointConnectSource(null);
   }, [activeZoneId]);
 
   const saveBuildingSlot = useCallback(() => {
@@ -1445,12 +1592,10 @@ export function IntelliMaps() {
     return (
       <svg className="absolute inset-0 w-full h-full pointer-events-none z-[7]" viewBox="0 0 100 100" preserveAspectRatio="none">
         {zone.lines.map((line) => (
-          <line
+          <path
             key={line.id}
-            x1={line.start[0]}
-            y1={line.start[1]}
-            x2={line.end[0]}
-            y2={line.end[1]}
+            d={getLinePath(line.start, line.end, line.curve)}
+            fill="none"
             stroke={line.color}
             strokeWidth={line.width}
             strokeOpacity={line.opacity}
@@ -1496,7 +1641,7 @@ export function IntelliMaps() {
     const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
 
     if (shellMode) {
-      setAreaPoints((points) => [...points, [x, y]]);
+      setShellPoints((points) => [...points, [x, y]]);
       return;
     }
 
@@ -1506,25 +1651,11 @@ export function IntelliMaps() {
     }
 
     if (wallMode) {
-      if (!wallStart) {
-        setWallStart([x, y]);
-      } else {
-        const newLine: MapLine = {
-          id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          start: wallStart,
-          end: [x, y],
-          color: drawColor,
-          width: lineWidth,
-          opacity: Math.max(0.1, drawOpacity),
-          dashed: lineDashed,
-        };
-        setZones(prev => prev.map(z => z.id !== activeZone.id ? z : { ...z, lines: [...z.lines, newLine] }));
-        setWallStart([x, y]);
-      }
+      setLinePoints((points) => [...points, [x, y]]);
       return;
     }
 
-    if (linkMode) return;
+    if (linkMode || pointConnectMode) return;
 
     if (activeZone.editorVariant === "building") {
       const kind: BuildingSlotKind = "industrial";
@@ -1545,10 +1676,31 @@ export function IntelliMaps() {
       return;
     }
 
-    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 148, height: 82 });
+    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 124, height: 124 });
     setPlaceImageDraft("");
     setIsNewPin(true);
-  }, [isDM, isEditMode, activeZone, linkMode, isPanning, shellMode, areaMode, wallMode, wallStart, drawColor, lineWidth, drawOpacity, lineDashed]);
+  }, [isDM, isEditMode, activeZone, linkMode, pointConnectMode, isPanning, shellMode, areaMode, wallMode]);
+
+  const finishLine = useCallback(() => {
+    if (!activeZoneId || linePoints.length < 2) return;
+    const timestamp = Date.now();
+    const newLines: MapLine[] = linePoints.slice(1).map((point, index) => ({
+      id: `line-${timestamp}-${index}-${Math.random().toString(36).slice(2, 6)}`,
+      start: linePoints[index],
+      end: point,
+      color: drawColor,
+      width: lineWidth,
+      opacity: Math.max(0.1, drawOpacity),
+      dashed: lineDashed,
+      curve: lineCurve,
+    })).filter((line) => Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1]) > 0.01);
+    if (newLines.length > 0) {
+      setZones((previous) => previous.map((zone) => zone.id === activeZoneId ? { ...zone, lines: [...zone.lines, ...newLines] } : zone));
+    }
+    setLinePoints([]);
+    setWallMode(false);
+    setPointConnectSource(null);
+  }, [activeZoneId, drawColor, drawOpacity, lineCurve, lineDashed, linePoints, lineWidth]);
 
   const finishArea = useCallback(() => {
     if (!activeZoneId || areaPoints.length < 3) return;
@@ -1561,24 +1713,58 @@ export function IntelliMaps() {
     };
     setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, areas: [...zone.areas, newArea] } : zone));
     setAreaPoints([]);
+    setAreaMode(false);
+    setPointConnectSource(null);
   }, [activeZone?.areas.length, activeZoneId, areaPoints, drawColor, drawOpacity]);
 
   const finishBuildingShell = useCallback(() => {
-    if (!activeZoneId || areaPoints.length < 3) return;
+    if (!activeZoneId || shellPoints.length < 3) return;
     setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? {
       ...zone,
-      buildingShell: { points: areaPoints, color: drawColor, opacity: drawOpacity, wallWidth: lineWidth },
+      buildingShell: { points: shellPoints, color: drawColor, opacity: drawOpacity, wallWidth: lineWidth },
     } : zone));
-    setAreaPoints([]);
+    setShellPoints([]);
     setShellMode(false);
-  }, [activeZoneId, areaPoints, drawColor, drawOpacity, lineWidth]);
+  }, [activeZoneId, shellPoints, drawColor, drawOpacity, lineWidth]);
 
   const resetBuildingShell = useCallback(() => {
     if (!activeZoneId) return;
     setZones((prev) => prev.map((zone) => zone.id === activeZoneId ? { ...zone, buildingShell: createDefaultBuildingShell(drawColor) } : zone));
-    setAreaPoints([]);
+    setShellPoints([]);
     setShellMode(false);
   }, [activeZoneId, drawColor]);
+
+  const handleDraftPointClick = useCallback((target: DraftPointTarget) => {
+    if (!pointConnectMode) return;
+    const pointsFor = (kind: DraftGeometryKind) => kind === "line" ? linePoints : kind === "area" ? areaPoints : shellPoints;
+    const targetPoint = pointsFor(target.kind)[target.index];
+    if (!targetPoint) return;
+    if (!pointConnectSource) {
+      setPointConnectSource(target);
+      setPointConnectError(null);
+      return;
+    }
+    if (pointConnectSource.kind === target.kind && pointConnectSource.index === target.index) {
+      setPointConnectSource(null);
+      setPointConnectError(null);
+      return;
+    }
+    const sourcePoint = pointsFor(pointConnectSource.kind)[pointConnectSource.index];
+    if (!sourcePoint) {
+      setPointConnectSource(target);
+      return;
+    }
+    if (Math.hypot(targetPoint[0] - sourcePoint[0], targetPoint[1] - sourcePoint[1]) > 12) {
+      setPointConnectError("Choose a closer second point");
+      return;
+    }
+    const snapPoint = (points: MapPoint[]) => points.map((point, index) => index === pointConnectSource.index ? [...targetPoint] as MapPoint : point);
+    if (pointConnectSource.kind === "line") setLinePoints(snapPoint);
+    else if (pointConnectSource.kind === "area") setAreaPoints(snapPoint);
+    else setShellPoints(snapPoint);
+    setPointConnectSource(null);
+    setPointConnectError(null);
+  }, [areaPoints, linePoints, pointConnectMode, pointConnectSource, shellPoints]);
 
   const deleteMapLine = useCallback((lineId: string) => {
     if (!activeZoneId) return;
@@ -2316,16 +2502,26 @@ export function IntelliMaps() {
           {isDM && (
             <div style={{ display: "contents" }}>
               <span className="text-[11px]" style={S_DIM}>|</span>
+              {isEditMode && (
+                <div className="flex items-center gap-1">
+                  <button onClick={undoZones} disabled={!canUndo} className="p-1 disabled:opacity-30 hover:bg-[#1A1A4B]" style={S_ACCENT} title="Undo (Ctrl+Z)"><Undo2 size={11} /></button>
+                  <button onClick={redoZones} disabled={!canRedo} className="p-1 disabled:opacity-30 hover:bg-[#1A1A4B]" style={S_ACCENT} title="Redo (Ctrl+Y)"><Redo2 size={11} /></button>
+                </div>
+              )}
               <button onClick={() => {
                 setIsEditMode(!isEditMode);
                 if (isEditMode) {
                   setLinkMode(false);
                   setLinkSource(null);
                   setWallMode(false);
-                  setWallStart(null);
+                  setLinePoints([]);
                   setAreaMode(false);
                   setShellMode(false);
                   setAreaPoints([]);
+                  setShellPoints([]);
+                  setPointConnectMode(false);
+                  setPointConnectSource(null);
+                  setPointConnectError(null);
                   setSelectedSlotId(null);
                   setEditingSlot(null);
                   setIsNewSlot(false);
@@ -2382,22 +2578,24 @@ export function IntelliMaps() {
                 <div style={{ display: "contents" }}>
                   {activeZone.editorVariant === "building" ? (
                     <div style={{ display: "contents" }}>
-                      <button onClick={() => { setLinkMode(false); setWallMode(false); setWallStart(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !wallMode && !areaMode && !shellMode ? "#4AFF4A" : "#5A6A8A" }} title="Place building slots"><Boxes size={10} /> Slot</button>
-                      <button onClick={() => { setShellMode(!shellMode); setAreaPoints([]); setLinkMode(false); setWallMode(false); setWallStart(null); setAreaMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: shellMode ? drawColor : "#5A6A8A" }} title="Redraw the building shell"><Building2 size={10} /> Shell</button>
+                      <button onClick={() => { setLinkMode(false); setWallMode(false); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !wallMode && !areaMode && !shellMode && !pointConnectMode ? "#4AFF4A" : "#5A6A8A" }} title="Place building slots"><Boxes size={10} /> Slot</button>
+                      <button onClick={() => { setShellMode(!shellMode); setLinkMode(false); setWallMode(false); setAreaMode(false); setPointConnectMode(false); setPointConnectSource(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: shellMode ? drawColor : "#5A6A8A" }} title="Redraw the building shell"><Building2 size={10} /> Shell{shellPoints.length > 0 ? ` ${shellPoints.length}` : ""}</button>
                     </div>
                   ) : (
                     <div style={{ display: "contents" }}>
-                      <button onClick={() => { setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !linkMode && !wallMode && !areaMode ? "#4AFF4A" : "#5A6A8A" }} title="Place boxes on the map"><MapPin size={10} /> Place</button>
-                      <button onClick={() => { setLinkMode(!linkMode); setLinkSource(null); setWallMode(false); setWallStart(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: linkMode ? "#4AFFFF" : "#5A6A8A" }} title="Connect two places">{linkMode ? <Unlink size={10} /> : <Link2 size={10} />} Connect</button>
+                      <button onClick={() => { setLinkMode(false); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); setPointConnectError(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !linkMode && !wallMode && !areaMode && !pointConnectMode ? "#4AFF4A" : "#5A6A8A" }} title="Place boxes on the map"><MapPin size={10} /> Place</button>
+                      <button onClick={() => { setLinkMode(!linkMode); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: linkMode ? "#4AFFFF" : "#5A6A8A" }} title="Connect two places">{linkMode ? <Unlink size={10} /> : <Link2 size={10} />} Connect</button>
                     </div>
                   )}
-                  <button onClick={() => { setWallMode(!wallMode); setWallStart(null); setLinkMode(false); setLinkSource(null); setAreaMode(false); setShellMode(false); setAreaPoints([]); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: wallMode ? drawColor : "#5A6A8A" }} title="Draw connected line segments"><Minus size={10} /> Line</button>
-                  <button onClick={() => { setAreaMode(!areaMode); setAreaPoints([]); setLinkMode(false); setLinkSource(null); setWallMode(false); setWallStart(null); setShellMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: areaMode ? drawColor : "#5A6A8A" }} title="Draw a filled polygon"><Pentagon size={10} /> Area</button>
-                  {!linkMode && !wallMode && !areaMode && !shellMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFF4A", background: "#0A1A12", border: "1px solid #1A3A2A" }}>Click to add {activeZone.editorVariant === "building" ? "slot" : "place"}</span>}
+                  <button onClick={() => { setWallMode(!wallMode); setLinkMode(false); setLinkSource(null); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); setPointConnectError(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: wallMode ? drawColor : "#5A6A8A" }} title="Draw an editable line"><Minus size={10} /> Line{linePoints.length > 0 ? ` ${linePoints.length}` : ""}</button>
+                  <button onClick={() => { setAreaMode(!areaMode); setLinkMode(false); setLinkSource(null); setWallMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); setPointConnectError(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: areaMode ? drawColor : "#5A6A8A" }} title="Draw an editable filled polygon"><Pentagon size={10} /> Area{areaPoints.length > 0 ? ` ${areaPoints.length}` : ""}</button>
+                  {linePoints.length + areaPoints.length >= 2 && <button onClick={() => { setPointConnectMode(!pointConnectMode); setPointConnectSource(null); setPointConnectError(null); setLinkMode(false); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: pointConnectMode ? "#FFD34A" : "#5A6A8A" }} title="Snap the first selected nearby point onto the second"><Combine size={10} /> Connect Points</button>}
+                  {!linkMode && !wallMode && !areaMode && !shellMode && !pointConnectMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFF4A", background: "#0A1A12", border: "1px solid #1A3A2A" }}>Click to add {activeZone.editorVariant === "building" ? "slot" : "place"}</span>}
                   {linkMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFFFF", background: "#0A1A2A", border: "1px solid #1A3A4A" }}>{linkSource ? "Click 2nd pin" : "Click 1st pin"}</span>}
-                  {wallMode && <button onClick={() => setWallStart(null)} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: drawColor }}><Check size={10} /> {wallStart ? "Finish line" : "Click start"}</button>}
-                  {areaMode && <button onClick={finishArea} disabled={areaPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish ({areaPoints.length})</button>}
-                  {shellMode && <button onClick={finishBuildingShell} disabled={areaPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish shell ({areaPoints.length})</button>}
+                  {pointConnectMode && <span className="text-[10px] px-2 py-1" style={{ color: pointConnectError ? "#FF8A8A" : "#FFD34A", background: "#241D08", border: "1px solid #5A4918" }}>{pointConnectError || (pointConnectSource ? "Choose nearby target" : "Choose point to move")}</span>}
+                  {wallMode && <div className="flex gap-1"><button onClick={finishLine} disabled={linePoints.length < 2} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish ({linePoints.length})</button>{linePoints.length > 0 && <button onClick={() => { setLinePoints([]); setPointConnectSource(null); }} className={`${retro.button} p-1.5`} style={S_RED} title="Discard line draft"><X size={10} /></button>}</div>}
+                  {areaMode && <div className="flex gap-1"><button onClick={finishArea} disabled={areaPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish ({areaPoints.length})</button>{areaPoints.length > 0 && <button onClick={() => { setAreaPoints([]); setPointConnectSource(null); }} className={`${retro.button} p-1.5`} style={S_RED} title="Discard area draft"><X size={10} /></button>}</div>}
+                  {shellMode && <div className="flex gap-1"><button onClick={finishBuildingShell} disabled={shellPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish shell ({shellPoints.length})</button>{shellPoints.length > 0 && <button onClick={() => setShellPoints([])} className={`${retro.button} p-1.5`} style={S_RED} title="Discard shell draft"><X size={10} /></button>}</div>}
                 </div>
               )}
             </div>
@@ -2442,7 +2640,7 @@ export function IntelliMaps() {
             ) : !activeZone ? (
               <div className="absolute inset-0 flex items-center justify-center" style={{ padding: "8px", transform: `translate(${mapPan[0]}px, ${mapPan[1]}px) scale(${mapZoom})`, transformOrigin: "0 0", transition: isPanning ? "none" : "transform 0.1s ease-out" }}>{renderHexMap()}</div>
             ) : (
-              <div className="absolute inset-0" onClick={handleMapClick} style={{ cursor: isEditMode && isDM ? (wallMode ? "crosshair" : linkMode ? "pointer" : "crosshair") : (isDragging ? "grabbing" : (mapZoom > 1 ? "grab" : "default")), transform: `translate(${mapPan[0]}px, ${mapPan[1]}px) scale(${mapZoom})`, transformOrigin: "0 0", transition: isPanning ? "none" : "transform 0.1s ease-out" }}>
+              <div className="absolute inset-0" onClick={handleMapClick} style={{ cursor: isEditMode && isDM ? ((wallMode || areaMode || shellMode || pointConnectMode) ? "crosshair" : linkMode ? "pointer" : "crosshair") : (isDragging ? "grabbing" : (mapZoom > 1 ? "grab" : "default")), transform: `translate(${mapPan[0]}px, ${mapPan[1]}px) scale(${mapZoom})`, transformOrigin: "0 0", transition: isPanning ? "none" : "transform 0.1s ease-out" }}>
                 {(activeZone.useMapBg || !activeZone.image) ? (
                   <div className="absolute inset-0 pointer-events-none" style={{
                     background: `radial-gradient(ellipse at 30% 40%, ${activeZone.color}15 0%, transparent 50%), radial-gradient(ellipse at 70% 60%, ${activeZone.color}10 0%, transparent 50%), linear-gradient(180deg, #080828 0%, #0A0A3B 30%, #0E0E35 60%, #080828 100%)`,
@@ -2491,20 +2689,61 @@ export function IntelliMaps() {
                 )}
                 {renderBuildingShell(activeZone)}
                 {renderAreas(activeZone)}
-                {(areaMode || shellMode) && areaPoints.length > 0 && (
+                {linePoints.length > 0 && (
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none z-[6]" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    {linePoints.slice(1).map((point, index) => <path key={`draft-line-segment-${index}`} d={getLinePath(linePoints[index], point, lineCurve)} fill="none" stroke={drawColor} strokeOpacity={0.95} strokeWidth={lineWidth} strokeDasharray={lineDashed ? "5 4" : undefined} strokeLinecap="round" vectorEffect="non-scaling-stroke" />)}
+                  </svg>
+                )}
+                {areaPoints.length > 0 && (
                   <svg className="absolute inset-0 w-full h-full pointer-events-none z-[6]" viewBox="0 0 100 100" preserveAspectRatio="none">
                     <polyline points={areaPoints.map(([x, y]) => `${x},${y}`).join(" ")} fill={areaPoints.length >= 3 ? drawColor : "none"} fillOpacity={areaPoints.length >= 3 ? drawOpacity * 0.55 : 0} stroke={drawColor} strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
-                    {areaPoints.map(([x, y], index) => <circle key={`${x}-${y}-${index}`} cx={x} cy={y} r="0.8" fill={drawColor} vectorEffect="non-scaling-stroke" />)}
+                  </svg>
+                )}
+                {shellPoints.length > 0 && (
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none z-[6]" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <polyline points={shellPoints.map(([x, y]) => `${x},${y}`).join(" ")} fill={shellPoints.length >= 3 ? drawColor : "none"} fillOpacity={shellPoints.length >= 3 ? drawOpacity * 0.55 : 0} stroke={drawColor} strokeWidth={lineWidth} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
                   </svg>
                 )}
                 {renderConnectionLines(activeZone)}
                 {renderWalls(activeZone)}
                 {renderMapLines(activeZone)}
-                {wallStart && wallMode && (
-                  <div className="absolute z-20 pointer-events-none" style={{ left: `${wallStart[0]}%`, top: `${wallStart[1]}%`, transform: "translate(-50%, -50%)" }}>
-                    <div className="w-3 h-3 animate-pulse" style={{ background: "#7A7A8B44", border: "2px solid #8A8A9B", borderRadius: "50%" }} />
-                  </div>
-                )}
+                {isDM && isEditMode && ([
+                  { kind: "line", points: linePoints, color: drawColor },
+                  { kind: "area", points: areaPoints, color: "#FFD34A" },
+                  { kind: "shell", points: shellPoints, color: "#FF8A4A" },
+                ] as Array<{ kind: DraftGeometryKind; points: MapPoint[]; color: string }>).flatMap(({ kind, points, color }) => points.map((point, index) => {
+                  const target: DraftPointTarget = { kind, index };
+                  const isConnectSource = pointConnectSource?.kind === kind && pointConnectSource.index === index;
+                  const isConnectable = kind !== "shell";
+                  const sourcePoints = pointConnectSource?.kind === "line" ? linePoints : pointConnectSource?.kind === "area" ? areaPoints : shellPoints;
+                  const sourcePoint = pointConnectSource ? sourcePoints[pointConnectSource.index] : null;
+                  const isNearbyTarget = !sourcePoint || Math.hypot(point[0] - sourcePoint[0], point[1] - sourcePoint[1]) <= 12;
+                  const handleSize = kind === "area" ? 11 : 15;
+                  return (
+                    <button
+                      key={`draft-${kind}-${index}`}
+                      onMouseDown={(event) => {
+                        event.stopPropagation();
+                        if (event.button === 0 && !pointConnectMode) setDraggingDraftPoint(target);
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (pointConnectMode && isConnectable) handleDraftPointClick(target);
+                      }}
+                      className="absolute z-20 flex items-center justify-center text-[7px] font-bold"
+                      style={{
+                        left: `${point[0]}%`, top: `${point[1]}%`, transform: "translate(-50%, -50%)",
+                        width: handleSize, height: handleSize, fontSize: kind === "area" ? 6 : 7, borderRadius: kind === "line" ? "50%" : 2,
+                        color: "#071021", background: isConnectSource ? "#FFFFFF" : (pointConnectMode && sourcePoint && isNearbyTarget && isConnectable ? "#64D98B" : color),
+                        border: `2px solid ${isConnectSource ? "#FFD34A" : "#F0F4FF"}`,
+                        boxShadow: isConnectSource ? "0 0 12px #FFD34A" : `0 0 7px ${color}88`,
+                        cursor: pointConnectMode ? (isConnectable ? "crosshair" : "not-allowed") : "move",
+                        opacity: pointConnectMode && (!isConnectable || !isNearbyTarget) ? 0.35 : 1,
+                      }}
+                      title={pointConnectMode ? (isConnectable ? "Connect this point" : "Shell points cannot be connected") : `Drag ${kind} point ${index + 1}`}
+                    >{index + 1}</button>
+                  );
+                }))}
                 {activeZone.editorVariant === "building" && activeZone.buildingSlots.map((slot) => {
                   const meta = BUILDING_SLOT_KINDS[slot.kind];
                   const isSelected = selectedSlotId === slot.id;
@@ -2520,7 +2759,7 @@ export function IntelliMaps() {
                       role="button"
                       tabIndex={0}
                       onMouseDown={(event) => {
-                        if (event.button === 0 && isDM && isEditMode && !wallMode && !areaMode && !shellMode) {
+                        if (event.button === 0 && isDM && isEditMode && !wallMode && !areaMode && !shellMode && !pointConnectMode) {
                           event.stopPropagation();
                           setDraggingSlotId(slot.id);
                         }
@@ -2540,7 +2779,7 @@ export function IntelliMaps() {
                         backgroundImage: slot.filled ? undefined : `repeating-linear-gradient(135deg, transparent 0, transparent 7px, ${meta.color}16 7px, ${meta.color}16 10px)`,
                         border: `2px ${slot.filled ? "solid" : "dashed"} ${meta.color}`,
                         boxShadow: isSelected ? `0 0 22px ${meta.color}66` : "0 5px 14px rgba(0,0,0,0.4)",
-                        cursor: isDM && isEditMode && !wallMode && !areaMode && !shellMode ? "move" : "pointer",
+                        cursor: isDM && isEditMode && !wallMode && !areaMode && !shellMode && !pointConnectMode ? "move" : "pointer",
                       }}
                     >
                       <div className="px-2 py-1.5 flex items-center gap-1.5" style={{ background: `${meta.color}${slot.filled ? "22" : "0D"}`, borderBottom: `1px solid ${meta.color}44` }}>
@@ -2568,6 +2807,9 @@ export function IntelliMaps() {
                   const isSelected = selectedPinId === pin.id;
                   const isLinkSrc = linkSource === pin.id;
                   const wikiPage = wikiPages.find((page) => page.id === pin.wikiPageId);
+                  const placeSize = Math.max(96, Math.min(280, pin.width));
+                  const expandedWidth = Math.max(280, placeSize);
+                  const expandedHeight = Math.max(310, Math.min(360, placeSize + 100));
                   const selectPlace = () => {
                     if (wasDraggingRef.current) return;
                     if (linkMode && isDM && isEditMode) handlePinClickForLink(pin.id);
@@ -2584,41 +2826,41 @@ export function IntelliMaps() {
                       role="button"
                       tabIndex={0}
                       onMouseDown={(event) => {
-                        if (event.button === 0 && isDM && isEditMode && !linkMode && !wallMode && !areaMode) {
+                        if (event.button === 0 && isDM && isEditMode && !linkMode && !wallMode && !areaMode && !pointConnectMode) {
                           event.stopPropagation();
                           setDraggingPinId(pin.id);
                         }
                       }}
                       onClick={(event) => { event.stopPropagation(); selectPlace(); }}
                       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectPlace(); } }}
-                      className="absolute z-10 overflow-hidden text-left transition-[width,height,box-shadow] duration-200"
+                      className="absolute z-10 overflow-hidden text-left transition-[width,height,box-shadow] duration-200 flex flex-col"
                       style={{
                         left: `${pin.x}%`,
                         top: `${pin.y}%`,
                         transform: "translate(-50%, -50%)",
-                        width: isSelected ? Math.max(pin.width, 220) : pin.width,
-                        height: isSelected ? "auto" : pin.height,
-                        minHeight: pin.height,
+                        width: isSelected ? expandedWidth : placeSize,
+                        height: isSelected ? expandedHeight : placeSize,
                         background: isLinkSrc ? "rgba(10,38,52,0.96)" : "rgba(10,10,42,0.95)",
                         border: `2px solid ${isLinkSrc ? "#4AFFFF" : pin.color}`,
                         boxShadow: isSelected ? `0 0 22px ${pin.color}66` : "0 5px 16px rgba(0,0,0,0.42)",
-                        cursor: isDM && isEditMode && !linkMode && !wallMode && !areaMode ? "move" : "pointer",
+                        cursor: isDM && isEditMode && !linkMode && !wallMode && !areaMode && !pointConnectMode ? "move" : "pointer",
                       }}
                     >
                       {pin.images[0] && (
-                        <ImageWithFallback src={pin.images[0]} alt={pin.name} draggable={false} className="w-full object-cover pointer-events-none" style={{ height: isSelected ? 88 : Math.max(32, pin.height - 34), filter: "brightness(0.78) saturate(0.9)" }} />
+                        <ImageWithFallback src={pin.images[0]} alt={pin.name} draggable={false} className="w-full object-cover pointer-events-none shrink-0" style={{ height: isSelected ? 92 : Math.max(56, placeSize - 34), filter: "brightness(0.78) saturate(0.9)" }} />
                       )}
-                      <div className="px-2 py-1.5 flex items-center gap-1.5" style={{ background: `${pin.color}12` }}>
+                      <div className="px-2 py-1.5 flex items-center gap-1.5 shrink-0" style={{ background: `${pin.color}12` }}>
                         {renderIcon(pin.icon, 13, isLinkSrc ? "#4AFFFF" : pin.color)}
                         <span className="text-[10px] font-semibold truncate" style={{ color: isLinkSrc ? "#4AFFFF" : "#E0E8FF" }}>{pin.name}</span>
                         {pin.childMapId && <MapPinned size={10} className="ml-auto shrink-0" style={{ color: pin.color }} />}
                       </div>
                       {isSelected && !linkMode && (
-                        <div className="px-2 pb-2" style={{ borderTop: `1px solid ${pin.color}33` }}>
-                          {pin.description && <p className="text-[10px] leading-relaxed mt-2" style={S_TEXT}>{pin.description}</p>}
+                        <div className="px-2 pb-2 flex-1 min-h-0 overflow-y-auto" style={{ borderTop: `1px solid ${pin.color}33` }}>
+                          {pin.description && <div className="mt-2"><div className="text-[8px] mb-0.5" style={S_MUTED}>DESCRIPTION</div><p className="text-[10px] leading-relaxed pr-1 overflow-y-auto" style={{ ...S_TEXT, maxHeight: 96 }}>{pin.description}</p></div>}
+                          {pin.notes && <div className="mt-2"><div className="text-[8px] mb-0.5" style={S_MUTED}>NOTES</div><p className="text-[9px] italic leading-relaxed pr-1 overflow-y-auto" style={{ ...S_SUBTLE, maxHeight: 62 }}>{pin.notes}</p></div>}
                           {pin.images.length > 1 && (
                             <div className="grid grid-cols-3 gap-1 mt-2">
-                              {pin.images.slice(1, 4).map((imageUrl, index) => <ImageWithFallback key={`${imageUrl}-${index}`} src={imageUrl} alt={`${pin.name} ${index + 2}`} className="w-full h-10 object-cover" />)}
+                              {pin.images.slice(1).map((imageUrl, index) => <ImageWithFallback key={`${imageUrl}-${index}`} src={imageUrl} alt={`${pin.name} ${index + 2}`} className="w-full h-10 object-cover" />)}
                             </div>
                           )}
                           <div className="flex gap-1 mt-2 flex-wrap">
@@ -2645,7 +2887,7 @@ export function IntelliMaps() {
                 })}
                 {activeZone.editorVariant !== "building" && editingPin && isNewPin && (
                   <div className="absolute z-20 pointer-events-none" style={{ left: `${editingPin.x}%`, top: `${editingPin.y}%`, transform: "translate(-50%, -50%)" }}>
-                    <div className="flex items-center justify-center gap-1.5 animate-pulse" style={{ width: editingPin.width, height: editingPin.height, background: "rgba(14,14,53,0.9)", border: `2px solid ${editingPin.color}`, boxShadow: `0 0 15px ${editingPin.color}44`, color: editingPin.color }}><Plus size={16} /><span className="text-[10px]">New place</span></div>
+                    <div className="flex items-center justify-center gap-1.5 animate-pulse" style={{ width: editingPin.width, height: editingPin.width, background: "rgba(14,14,53,0.9)", border: `2px solid ${editingPin.color}`, boxShadow: `0 0 15px ${editingPin.color}44`, color: editingPin.color }}><Plus size={16} /><span className="text-[10px]">New place</span></div>
                   </div>
                 )}
                 <div className="absolute bottom-3 left-3 pointer-events-none">
@@ -2867,6 +3109,7 @@ export function IntelliMaps() {
                       <div key={line.id} className="flex items-center gap-1.5 text-[9px]" style={S_SUBTLE}>
                         <span className="w-8 h-[3px]" style={{ background: line.color, opacity: line.opacity, borderTop: line.dashed ? "1px dashed #060618" : undefined }} />
                         <span>Segment {index + 1}</span>
+                        {line.curve !== 0 && <span className="flex items-center gap-0.5" style={{ color: "#FFD34A" }} title={`Curve ${line.curve}`}><Spline size={8} /> {line.curve}</span>}
                         <span className="ml-auto" style={S_DIM}>{line.width}px</span>
                         {isDM && isEditMode && <button onClick={() => deleteMapLine(line.id)} className="p-0.5 hover:bg-[#2A1A1A]" style={S_RED} title="Delete line"><Trash2 size={8} /></button>}
                       </div>
@@ -2927,7 +3170,7 @@ export function IntelliMaps() {
                         <span className="w-7 text-right" style={S_DIM}>{activeZone.buildingShell.wallWidth}px</span>
                       </label>
                       <div className="flex gap-1">
-                        <button onClick={() => { setShellMode(true); setAreaPoints([]); setLinkMode(false); setWallMode(false); setWallStart(null); setAreaMode(false); }} className={`${retro.button} flex-1 px-2 py-1 text-[9px] flex items-center justify-center gap-1`} style={{ color: shellMode ? activeZone.buildingShell.color : "#FFB35A" }}><Building2 size={10} /> Redraw</button>
+                        <button onClick={() => { setShellMode(true); setShellPoints([]); setLinkMode(false); setWallMode(false); setAreaMode(false); setPointConnectMode(false); setPointConnectSource(null); }} className={`${retro.button} flex-1 px-2 py-1 text-[9px] flex items-center justify-center gap-1`} style={{ color: shellMode ? activeZone.buildingShell.color : "#FFB35A" }}><Building2 size={10} /> Redraw</button>
                         <button onClick={resetBuildingShell} className={`${retro.button} p-1.5`} style={S_MUTED} title="Reset to rectangular shell"><RotateCcw size={10} /></button>
                       </div>
                     </div>
@@ -2948,6 +3191,15 @@ export function IntelliMaps() {
                     <input type="range" min="1" max="12" step="1" value={lineWidth} onChange={(event) => setLineWidth(Number(event.target.value))} className="flex-1" />
                     <span className="w-7 text-right" style={S_DIM}>{lineWidth}px</span>
                   </label>
+                  <div className="text-[8px] mb-1" style={S_MUTED}>Line shape</div>
+                  <div className="grid grid-cols-2 gap-1 p-0.5 mb-2" style={{ background: "#070724", border: "1px solid #1A1A4B" }}>
+                    <button onClick={() => setLineCurve(0)} className="px-2 py-1 text-[9px] flex items-center justify-center gap-1" style={{ color: lineCurve === 0 ? "#E0E8FF" : "#687394", background: lineCurve === 0 ? "#19194B" : "transparent", border: lineCurve === 0 ? "1px solid #4A7BFF77" : "1px solid transparent" }}><Minus size={9} /> Straight</button>
+                    <button onClick={() => setLineCurve((curve) => curve === 0 ? 28 : curve)} className="px-2 py-1 text-[9px] flex items-center justify-center gap-1" style={{ color: lineCurve !== 0 ? "#FFF1C4" : "#687394", background: lineCurve !== 0 ? "#30260D" : "transparent", border: lineCurve !== 0 ? "1px solid #FFD34A77" : "1px solid transparent" }}><Spline size={9} /> Curve</button>
+                  </div>
+                  {lineCurve !== 0 && <label className="text-[8px] flex items-center gap-2 mb-2" style={S_MUTED}>Bend
+                    <input type="range" min="-50" max="50" step="1" value={lineCurve} onChange={(event) => setLineCurve(Number(event.target.value))} className="flex-1" />
+                    <span className="w-7 text-right" style={S_DIM}>{lineCurve}</span>
+                  </label>}
                   <button onClick={() => setLineDashed((value) => !value)} className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1 mb-3`} style={{ color: lineDashed ? "#4AFFFF" : "#5A6A8A" }}>
                     <Minus size={9} /> {lineDashed ? "Dashed line" : "Solid line"}
                   </button>
@@ -3084,16 +3336,10 @@ export function IntelliMaps() {
                       <div className="flex-1"><label className="text-[9px] block mb-0.5" style={S_MUTED}>Icon</label><select value={editingPin.icon} onChange={e => setEditingPin({ ...editingPin, icon: e.target.value })} className="w-full px-1 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}>{ICON_OPTIONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}</select></div>
                       <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Color</label><div className="flex gap-1 flex-wrap">{PIN_COLORS.map(c => <button key={c} onClick={() => setEditingPin({ ...editingPin, color: c })} className="w-4 h-4 transition-transform" style={{ background: c, border: editingPin.color === c ? "2px solid #FFF" : "1px solid #2A2A5B", transform: editingPin.color === c ? "scale(1.2)" : "scale(1)" }} />)}</div></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="text-[9px]" style={S_MUTED}>Box width
-                        <input type="range" min="96" max="280" step="4" value={editingPin.width} onChange={(event) => setEditingPin({ ...editingPin, width: Number(event.target.value) })} className="w-full mt-1" />
-                        <span className="block text-right" style={S_DIM}>{editingPin.width}px</span>
-                      </label>
-                      <label className="text-[9px]" style={S_MUTED}>Box height
-                        <input type="range" min="56" max="220" step="4" value={editingPin.height} onChange={(event) => setEditingPin({ ...editingPin, height: Number(event.target.value) })} className="w-full mt-1" />
-                        <span className="block text-right" style={S_DIM}>{editingPin.height}px</span>
-                      </label>
-                    </div>
+                    <label className="text-[9px] block" style={S_MUTED}>Box size
+                      <input type="range" min="96" max="280" step="4" value={editingPin.width} onChange={(event) => { const size = Number(event.target.value); setEditingPin({ ...editingPin, width: size, height: size }); }} className="w-full mt-1" />
+                      <span className="block text-right" style={S_DIM}>{editingPin.width}px square</span>
+                    </label>
                     <div className="grid grid-cols-2 gap-2">
                       <label className="text-[9px]" style={S_MUTED}>Horizontal position
                         <input type="number" min="0" max="100" step="0.5" value={Number(editingPin.x.toFixed(1))} onChange={(event) => setEditingPin({ ...editingPin, x: Math.max(0, Math.min(100, Number(event.target.value))) })} className="w-full px-2 py-1 mt-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} />
