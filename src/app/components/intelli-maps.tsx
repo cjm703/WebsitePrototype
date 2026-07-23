@@ -669,6 +669,31 @@ function getLinePath(start: MapPoint, end: MapPoint, curve = 0): string {
   return `M ${start[0]} ${start[1]} Q ${controlX} ${controlY} ${end[0]} ${end[1]}`;
 }
 
+function getConnectionRouteKey(aId: string, bId: string): string {
+  return [aId, bId].sort().join("::");
+}
+
+function distanceToPathSegment(point: MapPoint, start: MapPoint, end: MapPoint): number {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  if (dx === 0 && dy === 0) return Math.hypot(point[0] - start[0], point[1] - start[1]);
+  const t = Math.max(0, Math.min(1, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(point[0] - (start[0] + t * dx), point[1] - (start[1] + t * dy));
+}
+
+function getRouteInsertIndex(points: MapPoint[], point: MapPoint): number {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const distance = distanceToPathSegment(point, points[index], points[index + 1]);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  }
+  return nearestIndex;
+}
+
 interface MapArea {
   id: string;
   name: string;
@@ -703,6 +728,7 @@ interface BuildingSlot {
 interface MapZone {
   id: string; name: string; subtitle: string; color: string; image: string;
   pins: MapPin_t[]; fogMode: FogMode; connections: [string, string][]; sectorNumber: number;
+  connectionRoutes: Record<string, MapPoint[]>;
   walls: [number, number, number, number][]; // [x1,y1,x2,y2] in % coordinates
   lines: MapLine[];
   areas: MapArea[];
@@ -712,7 +738,7 @@ interface MapZone {
   mapType: "sector" | "place";
   parentZoneId?: string;
   parentPlaceId?: string;
-  schemaVersion: 5;
+  schemaVersion: 6;
   useMapBg?: boolean; // true = use procedural map-style background instead of image
   revealed?: boolean;
 }
@@ -761,7 +787,7 @@ function buildDefaultZones(): MapZone[] {
   const innerZones: MapZone[] = SECTORS.map(s => ({
     id: s.id, name: `Sector ${s.number}`, subtitle: "", color: s.color, image: "",
     sectorNumber: s.number, fogMode: "visible" as FogMode, connections: [], walls: [],
-    lines: [], areas: [], editorVariant: "places", buildingShell: createDefaultBuildingShell(s.color), buildingSlots: [], mapType: "sector", schemaVersion: 5, useMapBg: true, pins: [],
+    lines: [], areas: [], connectionRoutes: {}, editorVariant: "places", buildingShell: createDefaultBuildingShell(s.color), buildingSlots: [], mapType: "sector", schemaVersion: 6, useMapBg: true, pins: [],
   }));
 
   // Build outer subsector zones from pre-computed data
@@ -778,6 +804,7 @@ function buildDefaultZones(): MapZone[] {
         sectorNumber: sector.id,
         fogMode: "visible" as FogMode,
         connections: [],
+        connectionRoutes: {},
         walls: [],
         lines: [],
         areas: [],
@@ -785,7 +812,7 @@ function buildDefaultZones(): MapZone[] {
         buildingShell: createDefaultBuildingShell(sector.color),
         buildingSlots: [],
         mapType: "sector",
-        schemaVersion: 5,
+        schemaVersion: 6,
         useMapBg: true,
         pins: [],
       });
@@ -974,6 +1001,16 @@ function migrateZone(z: any): MapZone {
   const editorVariant: MapEditorVariant = z?.editorVariant === "building" ? "building" : "places";
   const buildingShell = migrateBuildingShell(z?.buildingShell, String(z?.color || "#6A7B9B"));
   const buildingSlots = Array.isArray(z?.buildingSlots) ? z.buildingSlots.map(migrateBuildingSlot) : [];
+  const rawConnectionRoutes = z?.connectionRoutes && typeof z.connectionRoutes === "object" ? z.connectionRoutes : {};
+  const connectionRoutes: Record<string, MapPoint[]> = Object.fromEntries(Object.entries(rawConnectionRoutes).map(([key, points]) => [
+    key,
+    Array.isArray(points)
+      ? points.slice(0, 32).filter((point: any) => Array.isArray(point) && point.length >= 2).map((point: any) => [
+          Math.max(0, Math.min(100, Number(point[0]) || 0)),
+          Math.max(0, Math.min(100, Number(point[1]) || 0)),
+        ] as MapPoint)
+      : [],
+  ]));
   return {
     ...z,
     name,
@@ -982,6 +1019,7 @@ function migrateZone(z: any): MapZone {
     pins,
     fogMode,
     connections: Array.isArray(z?.connections) ? z.connections : [],
+    connectionRoutes,
     walls: Array.isArray(z?.walls) ? z.walls : [],
     lines,
     areas,
@@ -991,7 +1029,7 @@ function migrateZone(z: any): MapZone {
     mapType: isPlaceMap ? "place" : "sector",
     parentZoneId: typeof z?.parentZoneId === "string" ? z.parentZoneId : undefined,
     parentPlaceId: typeof z?.parentPlaceId === "string" ? z.parentPlaceId : undefined,
-    schemaVersion: 5,
+    schemaVersion: 6,
     sectorNumber: z?.sectorNumber ?? 0,
     useMapBg: image ? (z?.useMapBg ?? false) : true,
   };
@@ -1154,11 +1192,30 @@ export function IntelliMaps() {
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null);
   const [draggingSlotId, setDraggingSlotId] = useState<string | null>(null);
   const [draggingDraftPoint, setDraggingDraftPoint] = useState<DraftPointTarget | null>(null);
+  const [selectedConnectionKey, setSelectedConnectionKey] = useState<string | null>(null);
+  const [draggingConnectionPoint, setDraggingConnectionPoint] = useState<{ routeKey: string; index: number } | null>(null);
   const panStart = useRef<[number, number]>([0, 0]);
   const panOrigin = useRef<[number, number]>([0, 0]);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const DRAG_THRESHOLD = 4;
   const wasDraggingRef = useRef(false);
+
+  useEffect(() => {
+    setSelectedConnectionKey(null);
+    setDraggingConnectionPoint(null);
+  }, [activeZoneId]);
+
+  useEffect(() => {
+    if (isEditMode) return;
+    setSelectedConnectionKey(null);
+    setDraggingConnectionPoint(null);
+  }, [isEditMode]);
+
+  useEffect(() => {
+    if (!selectedConnectionKey || !activeZone) return;
+    const stillExists = activeZone.connections.some(([aId, bId]) => getConnectionRouteKey(aId, bId) === selectedConnectionKey);
+    if (!stillExists) setSelectedConnectionKey(null);
+  }, [activeZone, selectedConnectionKey]);
 
   const MIN_ZOOM = 0.8;
   const MAX_ZOOM = 6;
@@ -1235,6 +1292,24 @@ export function IntelliMaps() {
   }, [mapPan, activeZone, isEditMode, isDM]);
 
   const handlePanMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (draggingConnectionPoint && activeZoneId) {
+      const el = mapContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const point: MapPoint = [
+        Math.max(0, Math.min(100, ((e.clientX - rect.left - mapPan[0]) / mapZoom / rect.width) * 100)),
+        Math.max(0, Math.min(100, ((e.clientY - rect.top - mapPan[1]) / mapZoom / rect.height) * 100)),
+      ];
+      setZones((prev) => prev.map((zone) => zone.id !== activeZoneId ? zone : {
+        ...zone,
+        connectionRoutes: {
+          ...zone.connectionRoutes,
+          [draggingConnectionPoint.routeKey]: (zone.connectionRoutes[draggingConnectionPoint.routeKey] || []).map((current, index) => index === draggingConnectionPoint.index ? point : current),
+        },
+      }));
+      setIsDragging(true);
+      return;
+    }
     if (draggingDraftPoint) {
       const el = mapContainerRef.current;
       if (!el) return;
@@ -1280,7 +1355,7 @@ export function IntelliMaps() {
     const nx = Math.min(panOvershoot, Math.max(cw - mapW - panOvershoot, panOrigin.current[0] + dx));
     const ny = Math.min(panOvershoot, Math.max(ch - mapH - panOvershoot, panOrigin.current[1] + dy));
     setMapPan([nx, ny]);
-  }, [activeZoneId, draggingDraftPoint, draggingPinId, draggingSlotId, isPanning, isDragging, mapPan, mapZoom]);
+  }, [activeZoneId, draggingConnectionPoint, draggingDraftPoint, draggingPinId, draggingSlotId, isPanning, isDragging, mapPan, mapZoom]);
 
   const handlePanEnd = useCallback(() => {
     if (isDragging) {
@@ -1290,6 +1365,7 @@ export function IntelliMaps() {
     setDraggingPinId(null);
     setDraggingSlotId(null);
     setDraggingDraftPoint(null);
+    setDraggingConnectionPoint(null);
     setIsPanning(false);
     setIsDragging(false);
   }, [isDragging]);
@@ -1523,12 +1599,22 @@ export function IntelliMaps() {
     if (!linkMode || !activeZoneId) return;
     if (!linkSource) { setLinkSource(pinId); return; }
     if (linkSource === pinId) { setLinkSource(null); return; }
+    const routeKey = getConnectionRouteKey(linkSource, pinId);
     setZones(prev => prev.map(z => {
       if (z.id !== activeZoneId) return z;
       const exists = z.connections.some(([a, b]) => (a === linkSource && b === pinId) || (a === pinId && b === linkSource));
-      if (exists) return { ...z, connections: z.connections.filter(([a, b]) => !((a === linkSource && b === pinId) || (a === pinId && b === linkSource))) };
+      if (exists) {
+        const connectionRoutes = { ...z.connectionRoutes };
+        delete connectionRoutes[routeKey];
+        return {
+          ...z,
+          connections: z.connections.filter(([a, b]) => !((a === linkSource && b === pinId) || (a === pinId && b === linkSource))),
+          connectionRoutes,
+        };
+      }
       return { ...z, connections: [...z.connections, [linkSource!, pinId] as [string, string]] };
     }));
+    setSelectedConnectionKey((current) => current === routeKey ? null : current);
     setLinkSource(null);
   }, [linkMode, linkSource, activeZoneId]);
 
@@ -1564,6 +1650,7 @@ export function IntelliMaps() {
       pins: [],
       fogMode: "visible",
       connections: [],
+      connectionRoutes: {},
       sectorNumber: activeZone.sectorNumber,
       walls: [],
       lines: [],
@@ -1574,7 +1661,7 @@ export function IntelliMaps() {
       mapType: "place",
       parentZoneId: activeZone.id,
       parentPlaceId: pin.id,
-      schemaVersion: 5,
+      schemaVersion: 6,
       useMapBg: true,
     };
     setZones((prev) => [
@@ -1631,9 +1718,15 @@ export function IntelliMaps() {
     if (!activeZoneId) return;
     setZones(prev => prev.map(z => {
       if (z.id !== activeZoneId) return z;
-      return { ...z, pins: z.pins.filter(p => p.id !== pinId), connections: z.connections.filter(([a, b]) => a !== pinId && b !== pinId) };
+      const connections = z.connections.filter(([a, b]) => a !== pinId && b !== pinId);
+      const remainingRouteKeys = new Set(connections.map(([a, b]) => getConnectionRouteKey(a, b)));
+      const connectionRoutes = Object.fromEntries(
+        Object.entries(z.connectionRoutes).filter(([routeKey]) => remainingRouteKeys.has(routeKey)),
+      );
+      return { ...z, pins: z.pins.filter(p => p.id !== pinId), connections, connectionRoutes };
     }));
     if (selectedPinId === pinId) setSelectedPinId(null);
+    setSelectedConnectionKey(null);
   }, [activeZoneId, selectedPinId]);
 
   const cycleFogMode = useCallback((zoneId: string) => {
@@ -1650,25 +1743,89 @@ export function IntelliMaps() {
     return <Ico size={size} style={{ color }} />;
   };
 
+  const addConnectionRoutePoint = useCallback((event: React.MouseEvent<SVGPolylineElement>, aId: string, bId: string) => {
+    event.stopPropagation();
+    if (!isDM || !isEditMode || linkMode || wallMode || areaMode || shellMode || pointConnectMode || !activeZoneId) return;
+    const container = mapContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const point: MapPoint = [
+      Math.max(0, Math.min(100, ((event.clientX - rect.left - mapPan[0]) / mapZoom / rect.width) * 100)),
+      Math.max(0, Math.min(100, ((event.clientY - rect.top - mapPan[1]) / mapZoom / rect.height) * 100)),
+    ];
+    const routeKey = getConnectionRouteKey(aId, bId);
+    setZones((prev) => prev.map((zone) => {
+      if (zone.id !== activeZoneId) return zone;
+      const pinA = zone.pins.find((pin) => pin.id === aId);
+      const pinB = zone.pins.find((pin) => pin.id === bId);
+      if (!pinA || !pinB) return zone;
+      const route = [...(zone.connectionRoutes[routeKey] || [])];
+      if (route.length >= 32) return zone;
+      const fullPath: MapPoint[] = [[pinA.x, pinA.y], ...route, [pinB.x, pinB.y]];
+      route.splice(getRouteInsertIndex(fullPath, point), 0, point);
+      return { ...zone, connectionRoutes: { ...zone.connectionRoutes, [routeKey]: route } };
+    }));
+    setSelectedConnectionKey(routeKey);
+    setSelectedPinId(null);
+  }, [activeZoneId, areaMode, isDM, isEditMode, linkMode, mapPan, mapZoom, pointConnectMode, shellMode, wallMode]);
+
+  const removeConnectionRoutePoint = useCallback((routeKey: string, pointIndex: number) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id !== activeZoneId ? zone : {
+      ...zone,
+      connectionRoutes: {
+        ...zone.connectionRoutes,
+        [routeKey]: (zone.connectionRoutes[routeKey] || []).filter((_, index) => index !== pointIndex),
+      },
+    }));
+  }, [activeZoneId]);
+
+  const clearConnectionRoute = useCallback((routeKey: string) => {
+    if (!activeZoneId) return;
+    setZones((prev) => prev.map((zone) => zone.id !== activeZoneId ? zone : {
+      ...zone,
+      connectionRoutes: { ...zone.connectionRoutes, [routeKey]: [] },
+    }));
+  }, [activeZoneId]);
+
   const renderConnectionLines = (zone: MapZone) => {
     if (!showPaths || zone.connections.length === 0) return null;
+    const canEditRoutes = isDM && isEditMode && !linkMode && !wallMode && !areaMode && !shellMode && !pointConnectMode;
     return (
-      <svg className="absolute inset-0 w-full h-full pointer-events-none z-[5]">
-        <defs>
-          <filter id="pathGlow"><feGaussianBlur stdDeviation="2" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-        </defs>
-        {zone.connections.map(([aId, bId], idx) => {
-          const pinA = zone.pins.find(p => p.id === aId);
-          const pinB = zone.pins.find(p => p.id === bId);
-          if (!pinA || !pinB) return null;
-          return (
-            <g key={`${aId}-${bId}-${idx}`} filter="url(#pathGlow)">
-              <line x1={`${pinA.x}%`} y1={`${pinA.y}%`} x2={`${pinB.x}%`} y2={`${pinB.y}%`} stroke={zone.color} strokeWidth="1.5" strokeDasharray="6 4" strokeOpacity="0.5" />
-              <line x1={`${pinA.x}%`} y1={`${pinA.y}%`} x2={`${pinB.x}%`} y2={`${pinB.y}%`} stroke={zone.color} strokeWidth="0.5" strokeOpacity="0.8" />
-            </g>
-          );
-        })}
-      </svg>
+      <>
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-[5]" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <defs>
+            <filter id="pathGlow"><feGaussianBlur stdDeviation="2" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          </defs>
+          {zone.connections.map(([aId, bId], idx) => {
+            const pinA = zone.pins.find(p => p.id === aId);
+            const pinB = zone.pins.find(p => p.id === bId);
+            if (!pinA || !pinB) return null;
+            const routeKey = getConnectionRouteKey(aId, bId);
+            const route = zone.connectionRoutes[routeKey] || [];
+            const points = [[pinA.x, pinA.y] as MapPoint, ...route, [pinB.x, pinB.y] as MapPoint].map(([x, y]) => `${x},${y}`).join(" ");
+            const isSelected = selectedConnectionKey === routeKey;
+            return (
+              <g key={`${aId}-${bId}-${idx}`} filter="url(#pathGlow)">
+                <polyline points={points} fill="none" stroke={isSelected ? "#FFFFFF" : zone.color} strokeWidth={isSelected ? 2.2 : 1.5} strokeDasharray="6 4" strokeOpacity={isSelected ? 0.9 : 0.5} vectorEffect="non-scaling-stroke" />
+                <polyline points={points} fill="none" stroke={zone.color} strokeWidth="0.7" strokeOpacity="0.9" vectorEffect="non-scaling-stroke" />
+                {canEditRoutes && <polyline points={points} fill="none" stroke="transparent" strokeWidth="16" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke", cursor: "crosshair" }} onClick={(event) => addConnectionRoutePoint(event, aId, bId)} />}
+              </g>
+            );
+          })}
+        </svg>
+        {canEditRoutes && selectedConnectionKey && (zone.connectionRoutes[selectedConnectionKey] || []).map(([x, y], index) => (
+          <button
+            key={`${selectedConnectionKey}-route-point-${index}`}
+            className="absolute z-[8] w-3.5 h-3.5 -ml-[7px] -mt-[7px]"
+            style={{ left: `${x}%`, top: `${y}%`, borderRadius: "50%", background: "#071021", border: "2px solid #FFFFFF", boxShadow: `0 0 9px ${zone.color}`, cursor: "move" }}
+            onMouseDown={(event) => { if (event.button !== 0) return; event.stopPropagation(); setDraggingConnectionPoint({ routeKey: selectedConnectionKey, index }); }}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => { event.stopPropagation(); removeConnectionRoutePoint(selectedConnectionKey, index); }}
+            title={`Drag bend ${index + 1}; double-click to remove`}
+          />
+        ))}
+      </>
     );
   };
 
@@ -2719,15 +2876,19 @@ export function IntelliMaps() {
                   ) : (
                     <div style={{ display: "contents" }}>
                       <button onClick={() => { setLinkMode(false); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); setPointConnectError(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: !linkMode && !wallMode && !areaMode && !pointConnectMode ? "#4AFF4A" : "#5A6A8A" }} title="Place boxes on the map"><MapPin size={10} /> Place</button>
-                      <button onClick={() => { setLinkMode(!linkMode); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: linkMode ? "#4AFFFF" : "#5A6A8A" }} title="Connect two places">{linkMode ? <Unlink size={10} /> : <Link2 size={10} />} Connect</button>
+                      <button onClick={() => { setLinkMode(!linkMode); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: linkMode ? "#4AFFFF" : "#5A6A8A" }} title="Connect two Place markers">{linkMode ? <Unlink size={10} /> : <Link2 size={10} />} Connect Places</button>
                     </div>
                   )}
                   <button onClick={() => { setWallMode(!wallMode); setLinkMode(false); setLinkSource(null); setAreaMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); setPointConnectError(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: wallMode ? drawColor : "#5A6A8A" }} title="Draw an editable line"><Minus size={10} /> Line{linePoints.length > 0 ? ` ${linePoints.length}` : ""}</button>
                   <button onClick={() => { setAreaMode(!areaMode); setLinkMode(false); setLinkSource(null); setWallMode(false); setShellMode(false); setPointConnectMode(false); setPointConnectSource(null); setPointConnectError(null); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: areaMode ? drawColor : "#5A6A8A" }} title="Draw an editable filled polygon"><Pentagon size={10} /> Area{areaPoints.length > 0 ? ` ${areaPoints.length}` : ""}</button>
-                  {linePoints.length + areaPoints.length >= 2 && <button onClick={() => { setPointConnectMode(!pointConnectMode); setPointConnectSource(null); setPointConnectError(null); setLinkMode(false); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: pointConnectMode ? "#FFD34A" : "#5A6A8A" }} title="Snap the first selected nearby point onto the second"><Combine size={10} /> Connect Points</button>}
-                  {!linkMode && !wallMode && !areaMode && !shellMode && !pointConnectMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFF4A", background: "#0A1A12", border: "1px solid #1A3A2A" }}>Click to add {activeZone.editorVariant === "building" ? "slot" : "place"}</span>}
-                  {linkMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFFFF", background: "#0A1A2A", border: "1px solid #1A3A4A" }}>{linkSource ? "Click 2nd pin" : "Click 1st pin"}</span>}
-                  {pointConnectMode && <span className="text-[10px] px-2 py-1" style={{ color: pointConnectError ? "#FF8A8A" : "#FFD34A", background: "#241D08", border: "1px solid #5A4918" }}>{pointConnectError || (pointConnectSource ? "Choose nearby target" : "Choose point to move")}</span>}
+                  {linePoints.length + areaPoints.length >= 2 && <button onClick={() => { setPointConnectMode(!pointConnectMode); setPointConnectSource(null); setPointConnectError(null); setLinkMode(false); setLinkSource(null); setWallMode(false); setAreaMode(false); setShellMode(false); }} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1`} style={{ color: pointConnectMode ? "#FFD34A" : "#5A6A8A" }} title="Snap the first selected nearby draft point onto the second"><Combine size={10} /> Snap Points</button>}
+                  {!linkMode && !wallMode && !areaMode && !shellMode && !pointConnectMode && (
+                    <span className="text-[10px] px-2 py-1" style={{ color: selectedConnectionKey ? "#4AFFFF" : "#4AFF4A", background: selectedConnectionKey ? "#0A1A2A" : "#0A1A12", border: selectedConnectionKey ? "1px solid #1A3A4A" : "1px solid #1A3A2A" }}>
+                      {selectedConnectionKey ? "Click path to add bend | drag handles to reshape" : `Click to add ${activeZone.editorVariant === "building" ? "slot" : "place"}`}
+                    </span>
+                  )}
+                  {linkMode && <span className="text-[10px] px-2 py-1" style={{ color: "#4AFFFF", background: "#0A1A2A", border: "1px solid #1A3A4A" }}>{linkSource ? "Click second Place" : "Click first Place"}</span>}
+                  {pointConnectMode && <span className="text-[10px] px-2 py-1" style={{ color: pointConnectError ? "#FF8A8A" : "#FFD34A", background: "#241D08", border: "1px solid #5A4918" }}>{pointConnectError || (pointConnectSource ? "Choose nearby target" : "Choose point to snap")}</span>}
                   {wallMode && <div className="flex gap-1"><button onClick={finishLine} disabled={linePoints.length < 2} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish ({linePoints.length})</button>{linePoints.length > 0 && <button onClick={() => { setLinePoints([]); setPointConnectSource(null); }} className={`${retro.button} p-1.5`} style={S_RED} title="Discard line draft"><X size={10} /></button>}</div>}
                   {areaMode && <div className="flex gap-1"><button onClick={finishArea} disabled={areaPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish ({areaPoints.length})</button>{areaPoints.length > 0 && <button onClick={() => { setAreaPoints([]); setPointConnectSource(null); }} className={`${retro.button} p-1.5`} style={S_RED} title="Discard area draft"><X size={10} /></button>}</div>}
                   {shellMode && <div className="flex gap-1"><button onClick={finishBuildingShell} disabled={shellPoints.length < 3} className={`${retro.button} px-2 py-1 text-[10px] flex items-center gap-1 disabled:opacity-40`} style={{ color: drawColor }}><Check size={10} /> Finish shell ({shellPoints.length})</button>{shellPoints.length > 0 && <button onClick={() => setShellPoints([])} className={`${retro.button} p-1.5`} style={S_RED} title="Discard shell draft"><X size={10} /></button>}</div>}
@@ -3236,11 +3397,35 @@ export function IntelliMaps() {
               {activeZone.editorVariant !== "building" && activeZone.connections.length > 0 && (
                 <div className="px-3 py-2" style={{ borderBottom: "1px solid #0E0E35" }}>
                   <div className="text-[9px] mb-1" style={S_SECTION_HDR}>PATHS ({activeZone.connections.length})</div>
+                  {isDM && isEditMode && <div className="text-[8px] mb-1.5 leading-relaxed" style={S_DIM}>Click a path on the map to add a bend. Drag its handles to reshape it; double-click a handle to remove it.</div>}
                   <div className="space-y-1">
                     {activeZone.connections.map(([aId, bId], idx) => {
                       const pinA = activeZone.pins.find(p => p.id === aId); const pinB = activeZone.pins.find(p => p.id === bId);
                       if (!pinA || !pinB) return null;
-                      return <div key={idx} className="flex items-center gap-1.5 text-[9px]" style={S_SUBTLE}><Link2 size={8} style={{ color: activeZone.color, opacity: 0.5 }} /><span style={{ color: pinA.color }}>{pinA.name}</span><span style={S_DIM}>→</span><span style={{ color: pinB.color }}>{pinB.name}</span></div>;
+                      const routeKey = getConnectionRouteKey(aId, bId);
+                      const bendCount = (activeZone.connectionRoutes[routeKey] || []).length;
+                      const isSelected = selectedConnectionKey === routeKey;
+                      return (
+                        <div key={`${routeKey}-${idx}`} className="flex items-center min-w-0 text-[9px]" style={{ ...S_SUBTLE, background: isSelected ? "#101C3D" : "transparent", border: isSelected ? `1px solid ${activeZone.color}88` : "1px solid transparent" }}>
+                          <button className="flex items-center gap-1.5 min-w-0 flex-1 px-1 py-1 text-left" onClick={() => setSelectedConnectionKey(isSelected ? null : routeKey)} title="Select this path for editing">
+                            <Link2 size={8} className="shrink-0" style={{ color: activeZone.color, opacity: isSelected ? 1 : 0.5 }} />
+                            <span className="truncate" style={{ color: pinA.color }}>{pinA.name}</span>
+                            <span className="shrink-0" style={S_DIM}>to</span>
+                            <span className="truncate" style={{ color: pinB.color }}>{pinB.name}</span>
+                            <span className="ml-auto shrink-0" style={S_DIM}>{bendCount} {bendCount === 1 ? "bend" : "bends"}</span>
+                          </button>
+                          {isSelected && isDM && isEditMode && bendCount > 0 && (
+                            <button
+                              onClick={() => clearConnectionRoute(routeKey)}
+                              className="mr-1 px-1 py-0.5 shrink-0 hover:bg-[#1A2A4B]"
+                              style={{ color: "#7ACBFF", border: "1px solid #2A4A6B" }}
+                              title="Remove all bends from this path"
+                            >
+                              Straighten
+                            </button>
+                          )}
+                        </div>
+                      );
                     })}
                   </div>
                 </div>
