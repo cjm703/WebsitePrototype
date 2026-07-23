@@ -2540,8 +2540,10 @@ function WikiEditorWorkspace() {
     const block = pageBlocks.find((entry) => entry.id === blockId);
     if (!block) return;
     const nextLayout = {
-      colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - block.layout.colSpan + 1, block.layout.colStart + deltaCol)),
-      rowStart: Math.max(1, block.layout.rowStart + deltaRow),
+      colStart: block.layout.allowOverflow
+        ? block.layout.colStart + deltaCol
+        : Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - block.layout.colSpan + 1, block.layout.colStart + deltaCol)),
+      rowStart: block.layout.allowOverflow ? block.layout.rowStart + deltaRow : Math.max(1, block.layout.rowStart + deltaRow),
     };
     updateBlocks(placeWikiBlock(pageBlocks, blockId, nextLayout));
   }, [pageBlocks, updateBlocks]);
@@ -2555,8 +2557,10 @@ function WikiEditorWorkspace() {
         ...block,
         layout: {
           ...block.layout,
-          colStart: Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - block.layout.colSpan + 1, block.layout.colStart + deltaCol)),
-          rowStart: Math.max(1, block.layout.rowStart + deltaRow),
+          colStart: block.layout.allowOverflow
+            ? block.layout.colStart + deltaCol
+            : Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - block.layout.colSpan + 1, block.layout.colStart + deltaCol)),
+          rowStart: block.layout.allowOverflow ? block.layout.rowStart + deltaRow : Math.max(1, block.layout.rowStart + deltaRow),
         },
       }));
     });
@@ -3027,8 +3031,10 @@ function WikiEditorWorkspace() {
       if (!source) return;
       const deltaCols = Math.round((event.clientX - state.startClientX) / Math.max(state.colWidth, 1));
       const deltaRows = Math.round((event.clientY - state.startClientY) / Math.max(state.rowHeight, 1));
-      const nextColStart = Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - state.colSpan + 1, state.originColStart + deltaCols));
-      const nextRowStart = Math.max(1, state.originRowStart + deltaRows);
+      const nextColStart = source.layout.allowOverflow
+        ? state.originColStart + deltaCols
+        : Math.max(1, Math.min(WIKI_BLOCK_COLUMNS - state.colSpan + 1, state.originColStart + deltaCols));
+      const nextRowStart = source.layout.allowOverflow ? state.originRowStart + deltaRows : Math.max(1, state.originRowStart + deltaRows);
       setLiveBlockLayouts((prev) => ({
         ...prev,
         [state.blockId]: {
@@ -6341,10 +6347,25 @@ function WikiEditorWorkspace() {
 
               {inspectorTab === "layout" && selectedBlock && (
                 <div className="space-y-3">
+                  <label className="flex items-start gap-2 rounded-md border p-2.5 cursor-pointer" style={{ borderColor: selectedBlock.layout.allowOverflow ? "#7A5B24" : "#1A345B", background: selectedBlock.layout.allowOverflow ? "#211A0B" : "#09142D" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedBlock.layout.allowOverflow === true}
+                      onChange={(event) => updateSingleBlock(selectedBlock.id, (block) => ({
+                        ...block,
+                        layout: { ...block.layout, allowOverflow: event.target.checked },
+                      }))}
+                      className="mt-0.5"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-[10px] font-semibold" style={{ color: selectedBlock.layout.allowOverflow ? "#FFD27A" : "#B8C8E8" }}>Allow out-of-bounds placement</span>
+                      <span className="block mt-0.5 text-[9px] leading-relaxed" style={S_MUTED}>Advanced override: column and row starts may go below 1 or beyond the normal desktop grid.</span>
+                    </span>
+                  </label>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label style={labelStyle}>Column Start</label>
-                      <input type="number" min={1} max={WIKI_BLOCK_COLUMNS} value={selectedBlock.layout.colStart} onChange={(event) => updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { colStart: Number(event.target.value) || 1 }))} className={inputClass} style={inputStyle} />
+                      <input type="number" min={selectedBlock.layout.allowOverflow ? undefined : 1} max={selectedBlock.layout.allowOverflow ? undefined : WIKI_BLOCK_COLUMNS} value={selectedBlock.layout.colStart} onChange={(event) => { if (Number.isFinite(event.currentTarget.valueAsNumber)) updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { colStart: event.currentTarget.valueAsNumber })); }} className={inputClass} style={inputStyle} />
                     </div>
                     <div>
                       <label style={labelStyle}>Column Span</label>
@@ -6352,7 +6373,7 @@ function WikiEditorWorkspace() {
                     </div>
                     <div>
                       <label style={labelStyle}>Row Start</label>
-                      <input type="number" min={1} value={selectedBlock.layout.rowStart} onChange={(event) => updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { rowStart: Number(event.target.value) || 1 }))} className={inputClass} style={inputStyle} />
+                      <input type="number" min={selectedBlock.layout.allowOverflow ? undefined : 1} value={selectedBlock.layout.rowStart} onChange={(event) => { if (Number.isFinite(event.currentTarget.valueAsNumber)) updateBlocks(placeWikiBlock(pageBlocks, selectedBlock.id, { rowStart: event.currentTarget.valueAsNumber })); }} className={inputClass} style={inputStyle} />
                     </div>
                     <div>
                       <label style={labelStyle}>Row Span</label>

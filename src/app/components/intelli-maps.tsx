@@ -622,10 +622,16 @@ interface DraftPointTarget {
   index: number;
 }
 
+type CompactPlaceDisplay = "auto" | "title" | "abbreviation" | "symbol";
+
 interface MapPin_t {
   id: string;
   name: string;
   subtitle: string;
+  abbreviation: string;
+  symbol: string;
+  compactDisplay: CompactPlaceDisplay;
+  thumbnailUrl: string;
   x: number;
   y: number;
   icon: string;
@@ -801,10 +807,17 @@ const LEGACY_PLACEHOLDER_IMAGES = new Set([
 
 function migratePin(pin: any): MapPin_t {
   const legacyImage = typeof pin?.image === "string" && pin.image.trim() ? [pin.image.trim()] : [];
+  const compactDisplay: CompactPlaceDisplay = ["auto", "title", "abbreviation", "symbol"].includes(pin?.compactDisplay)
+    ? pin.compactDisplay
+    : "auto";
   return {
     id: String(pin?.id || `place-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
     name: String(pin?.name || "Untitled Place"),
     subtitle: String(pin?.subtitle || ""),
+    abbreviation: String(pin?.abbreviation || ""),
+    symbol: String(pin?.symbol || ""),
+    compactDisplay,
+    thumbnailUrl: String(pin?.thumbnailUrl || pin?.thumbnail || ""),
     x: Number.isFinite(pin?.x) ? pin.x : 50,
     y: Number.isFinite(pin?.y) ? pin.y : 50,
     icon: String(pin?.icon || "pin"),
@@ -812,13 +825,71 @@ function migratePin(pin: any): MapPin_t {
     description: String(pin?.description || ""),
     notes: String(pin?.notes || ""),
     images: Array.isArray(pin?.images) ? pin.images.filter((value: unknown): value is string => typeof value === "string" && value.trim().length > 0) : legacyImage,
-    width: Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 124,
-    height: Number.isFinite(pin?.height) ? Math.max(96, Math.min(280, pin.height)) : (Number.isFinite(pin?.width) ? Math.max(96, Math.min(280, pin.width)) : 124),
+    width: Number.isFinite(pin?.width) ? Math.max(64, Math.min(280, pin.width)) : 124,
+    height: Number.isFinite(pin?.height) ? Math.max(64, Math.min(280, pin.height)) : (Number.isFinite(pin?.width) ? Math.max(64, Math.min(280, pin.width)) : 124),
     wikiPageId: typeof pin?.wikiPageId === "string" ? pin.wikiPageId : undefined,
     placeMapId: typeof pin?.placeMapId === "string" ? pin.placeMapId : undefined,
     buildingMapId: typeof pin?.buildingMapId === "string" ? pin.buildingMapId : undefined,
     childMapId: typeof pin?.childMapId === "string" ? pin.childMapId : undefined,
   };
+}
+
+function getPlaceAbbreviation(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1) return words.slice(0, 4).map((word) => word[0]).join("").toUpperCase();
+  return (words[0] || "?").slice(0, 3).toUpperCase();
+}
+
+function resolveCompactPlaceLabel(pin: MapPin_t, size: number): { kind: "title" | "abbreviation" | "symbol"; text: string } {
+  const symbol = pin.symbol.trim();
+  const abbreviation = pin.abbreviation.trim() || getPlaceAbbreviation(pin.name);
+  if (pin.compactDisplay === "symbol" && symbol) return { kind: "symbol", text: symbol };
+  if (pin.compactDisplay === "abbreviation") return { kind: "abbreviation", text: abbreviation };
+  if (pin.compactDisplay === "title") return { kind: "title", text: pin.name };
+  if (symbol) return { kind: "symbol", text: symbol };
+  const estimatedTitleWidth = pin.name.trim().length * 6.2;
+  return estimatedTitleWidth <= Math.max(30, size - 16)
+    ? { kind: "title", text: pin.name }
+    : { kind: "abbreviation", text: abbreviation };
+}
+
+function createPlaceThumbnail(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      reject(new Error("Choose a JPG, PNG, or WebP image."));
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      reject(new Error("Choose a thumbnail source smaller than 12 MB."));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const image = new window.Image();
+    image.onload = () => {
+      try {
+        const size = 512;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("This browser could not prepare the thumbnail.");
+        const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+        const sourceX = (image.naturalWidth - sourceSize) / 2;
+        const sourceY = (image.naturalHeight - sourceSize) / 2;
+        context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+        resolve(canvas.toDataURL("image/webp", 0.84));
+      } catch (error) {
+        reject(error);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("The selected image could not be read."));
+    };
+    image.src = objectUrl;
+  });
 }
 
 function migrateBuildingSlot(slot: any): BuildingSlot {
@@ -1052,6 +1123,7 @@ export function IntelliMaps() {
   const [lineDashed, setLineDashed] = useState(false);
   const [lineCurve, setLineCurve] = useState(0);
   const [placeImageDraft, setPlaceImageDraft] = useState("");
+  const [placeThumbnailBusy, setPlaceThumbnailBusy] = useState(false);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [editingSlot, setEditingSlot] = useState<BuildingSlot | null>(null);
   const [isNewSlot, setIsNewSlot] = useState(false);
@@ -1725,7 +1797,7 @@ export function IntelliMaps() {
       return;
     }
 
-    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", subtitle: "", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 124, height: 124 });
+    setEditingPin({ id: `place-${Date.now()}`, name: "Untitled Place", subtitle: "", abbreviation: "", symbol: "", compactDisplay: "auto", thumbnailUrl: "", x, y, icon: "pin", color: "#4A7BFF", description: "", notes: "", images: [], width: 124, height: 124 });
     setPlaceImageDraft("");
     setIsNewPin(true);
   }, [isDM, isEditMode, activeZone, linkMode, pointConnectMode, isPanning, shellMode, areaMode, wallMode]);
@@ -1836,6 +1908,20 @@ export function IntelliMaps() {
     setEditingPin({ ...editingPin, images: [...editingPin.images, imageUrl] });
     setPlaceImageDraft("");
   }, [editingPin, placeImageDraft]);
+
+  const handlePlaceThumbnailFile = useCallback(async (file: File | undefined) => {
+    if (!editingPin || !file) return;
+    setPlaceThumbnailBusy(true);
+    setMapsError(null);
+    try {
+      const thumbnailUrl = await createPlaceThumbnail(file);
+      setEditingPin((current) => current?.id === editingPin.id ? { ...current, thumbnailUrl } : current);
+    } catch (error) {
+      setMapsError(error instanceof Error ? error.message : "Failed to prepare the Place thumbnail");
+    } finally {
+      setPlaceThumbnailBusy(false);
+    }
+  }, [editingPin]);
 
   const deleteWall = useCallback((wallIdx: number) => {
     if (!activeZoneId) return;
@@ -2858,9 +2944,10 @@ export function IntelliMaps() {
                   const wikiPage = wikiPages.find((page) => page.id === pin.wikiPageId);
                   const hasPlaceMap = Boolean(pin.placeMapId && zones.some((zone) => zone.id === pin.placeMapId));
                   const hasBuildingMap = Boolean(pin.buildingMapId && zones.some((zone) => zone.id === pin.buildingMapId));
-                  const placeSize = Math.max(96, Math.min(280, pin.width));
+                  const placeSize = Math.max(64, Math.min(280, pin.width));
                   const expandedWidth = Math.max(280, placeSize);
                   const expandedHeight = Math.max(310, Math.min(360, placeSize + 100));
+                  const compactLabel = resolveCompactPlaceLabel(pin, placeSize);
                   const selectPlace = () => {
                     if (wasDraggingRef.current) return;
                     if (linkMode && isDM && isEditMode) handlePinClickForLink(pin.id);
@@ -2897,20 +2984,47 @@ export function IntelliMaps() {
                         cursor: isDM && isEditMode && !linkMode && !wallMode && !areaMode && !pointConnectMode ? "move" : "pointer",
                       }}
                     >
-                      <div className="h-8 px-2 flex items-center gap-1.5 shrink-0" style={{ background: `${pin.color}16`, borderBottom: `1px solid ${pin.color}44` }}>
-                        {renderIcon(pin.icon, 13, isLinkSrc ? "#4AFFFF" : pin.color)}
-                        <span className="text-[11px] font-semibold truncate flex-1" style={{ color: isLinkSrc ? "#4AFFFF" : "#E0E8FF" }}>{pin.name}</span>
-                        {pin.wikiPageId && <button onClick={(event) => { event.stopPropagation(); navigate(`/interface/inet-page/${pin.wikiPageId}`); }} className="p-0.5 shrink-0 hover:bg-[#1A1A4B]" style={S_ACCENT} title={wikiPage?.title || wikiPage?.name || "Open linked wiki article"}><BookOpen size={10} /></button>}
-                      </div>
-                      <div className="h-5 px-2 flex items-center shrink-0 text-[8px] truncate" style={{ color: pin.subtitle ? "#9AA8C8" : "#536080", background: "rgba(5,5,24,0.28)", borderBottom: `1px solid ${pin.color}22` }}>{pin.subtitle || " "}</div>
-                      <div className="flex-1 min-h-0 px-2 py-2" style={{ background: "rgba(4,4,22,0.18)" }}>
-                        <p className="h-full text-[9px] leading-relaxed whitespace-pre-wrap pr-1" style={{ ...S_TEXT, overflowY: isSelected ? "auto" : "hidden", overflowWrap: "anywhere" }}>{pin.description || <span style={S_DIM}>No description</span>}</p>
-                      </div>
-                      {(hasPlaceMap || hasBuildingMap) && (
-                        <div className={`grid ${hasPlaceMap && hasBuildingMap ? "grid-cols-2" : "grid-cols-1"} h-7 shrink-0`} style={{ borderTop: `1px solid ${pin.color}44` }}>
-                          {hasPlaceMap && <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "places"); }} className="text-[8px] flex items-center justify-center gap-1 hover:bg-[#1A1A4B]" style={{ color: pin.color, borderRight: hasBuildingMap ? "1px solid #2A2A5B" : undefined }}><MapPinned size={9} /> Place Map</button>}
-                          {hasBuildingMap && <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "building"); }} className="text-[8px] flex items-center justify-center gap-1 hover:bg-[#2A1E14]" style={{ color: "#FFB35A" }}><Building2 size={9} /> Building</button>}
+                      {!isSelected ? (
+                        <div
+                          className="relative h-full w-full flex items-center justify-center overflow-hidden px-2"
+                          style={pin.thumbnailUrl ? {
+                            backgroundImage: `linear-gradient(rgba(4,6,20,0.28), rgba(4,6,20,0.82)), url(${JSON.stringify(pin.thumbnailUrl)})`,
+                            backgroundPosition: "center",
+                            backgroundSize: "cover",
+                          } : { background: `${pin.color}12` }}
+                        >
+                          <span
+                            className="max-w-full text-center font-bold leading-none truncate"
+                            style={{
+                              color: isLinkSrc ? "#4AFFFF" : "#F2F5FF",
+                              fontSize: compactLabel.kind === "symbol" ? Math.max(18, Math.min(38, placeSize * 0.34)) : placeSize < 84 ? 9 : 11,
+                              textShadow: pin.thumbnailUrl ? "0 1px 5px #000, 0 0 2px #000" : undefined,
+                            }}
+                            title={pin.name}
+                          >
+                            {compactLabel.text}
+                          </span>
                         </div>
+                      ) : (
+                        <>
+                          <div className="h-8 px-2 flex items-center gap-1.5 shrink-0" style={{ background: `${pin.color}16`, borderBottom: `1px solid ${pin.color}44` }}>
+                            {pin.thumbnailUrl
+                              ? <ImageWithFallback src={pin.thumbnailUrl} alt="" className="w-6 h-6 object-cover shrink-0" />
+                              : renderIcon(pin.icon, 13, isLinkSrc ? "#4AFFFF" : pin.color)}
+                            <span className="text-[11px] font-semibold truncate flex-1" style={{ color: isLinkSrc ? "#4AFFFF" : "#E0E8FF" }}>{pin.name}</span>
+                            {pin.wikiPageId && <button onClick={(event) => { event.stopPropagation(); navigate(`/interface/inet-page/${pin.wikiPageId}`); }} className="p-0.5 shrink-0 hover:bg-[#1A1A4B]" style={S_ACCENT} title={wikiPage?.title || wikiPage?.name || "Open linked wiki article"}><BookOpen size={10} /></button>}
+                          </div>
+                          <div className="h-5 px-2 flex items-center shrink-0 text-[8px] truncate" style={{ color: pin.subtitle ? "#9AA8C8" : "#536080", background: "rgba(5,5,24,0.28)", borderBottom: `1px solid ${pin.color}22` }}>{pin.subtitle || " "}</div>
+                          <div className="flex-1 min-h-0 px-2 py-2" style={{ background: "rgba(4,4,22,0.18)" }}>
+                            <p className="h-full text-[9px] leading-relaxed whitespace-pre-wrap pr-1 overflow-y-auto" style={{ ...S_TEXT, overflowWrap: "anywhere" }}>{pin.description || <span style={S_DIM}>No description</span>}</p>
+                          </div>
+                          {(hasPlaceMap || hasBuildingMap) && (
+                            <div className={`grid ${hasPlaceMap && hasBuildingMap ? "grid-cols-2" : "grid-cols-1"} h-7 shrink-0`} style={{ borderTop: `1px solid ${pin.color}44` }}>
+                              {hasPlaceMap && <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "places"); }} className="text-[8px] flex items-center justify-center gap-1 hover:bg-[#1A1A4B]" style={{ color: pin.color, borderRight: hasBuildingMap ? "1px solid #2A2A5B" : undefined }}><MapPinned size={9} /> Place Map</button>}
+                              {hasBuildingMap && <button onClick={(event) => { event.stopPropagation(); createOrOpenPlaceMap(pin, "building"); }} className="text-[8px] flex items-center justify-center gap-1 hover:bg-[#2A1E14]" style={{ color: "#FFB35A" }}><Building2 size={9} /> Building</button>}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   );
@@ -3367,8 +3481,25 @@ export function IntelliMaps() {
                       <div className="flex-1"><label className="text-[9px] block mb-0.5" style={S_MUTED}>Icon</label><select value={editingPin.icon} onChange={e => setEditingPin({ ...editingPin, icon: e.target.value })} className="w-full px-1 py-1 text-[10px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}>{ICON_OPTIONS.map(ic => <option key={ic} value={ic}>{ic}</option>)}</select></div>
                       <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Color</label><div className="flex gap-1 flex-wrap">{PIN_COLORS.map(c => <button key={c} onClick={() => setEditingPin({ ...editingPin, color: c })} className="w-4 h-4 transition-transform" style={{ background: c, border: editingPin.color === c ? "2px solid #FFF" : "1px solid #2A2A5B", transform: editingPin.color === c ? "scale(1.2)" : "scale(1)" }} />)}</div></div>
                     </div>
+                    <div className="space-y-1.5 p-2" style={{ border: "1px solid #1A2D52", background: "#080824" }}>
+                      <div className="text-[9px]" style={S_MUTED}>Compact marker</div>
+                      <select value={editingPin.compactDisplay} onChange={(event) => setEditingPin({ ...editingPin, compactDisplay: event.target.value as CompactPlaceDisplay })} className="w-full px-2 py-1 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}>
+                        <option value="auto">Automatic: symbol, title, then abbreviation</option>
+                        <option value="title">Title</option>
+                        <option value="abbreviation">Abbreviation</option>
+                        <option value="symbol">Custom symbol</option>
+                      </select>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[8px]" style={S_MUTED}>Abbreviation
+                          <input type="text" maxLength={8} value={editingPin.abbreviation} onChange={(event) => setEditingPin({ ...editingPin, abbreviation: event.target.value })} placeholder={getPlaceAbbreviation(editingPin.name)} className="w-full px-2 py-1 mt-0.5 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} />
+                        </label>
+                        <label className="text-[8px]" style={S_MUTED}>Custom symbol
+                          <input type="text" maxLength={4} value={editingPin.symbol} onChange={(event) => setEditingPin({ ...editingPin, symbol: event.target.value })} placeholder="e.g. *" className="w-full px-2 py-1 mt-0.5 text-[9px] outline-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} />
+                        </label>
+                      </div>
+                    </div>
                     <label className="text-[9px] block" style={S_MUTED}>Box size
-                      <input type="range" min="96" max="280" step="4" value={editingPin.width} onChange={(event) => { const size = Number(event.target.value); setEditingPin({ ...editingPin, width: size, height: size }); }} className="w-full mt-1" />
+                      <input type="range" min="64" max="280" step="4" value={editingPin.width} onChange={(event) => { const size = Number(event.target.value); setEditingPin({ ...editingPin, width: size, height: size }); }} className="w-full mt-1" />
                       <span className="block text-right" style={S_DIM}>{editingPin.width}px square</span>
                     </label>
                     <div className="grid grid-cols-2 gap-2">
@@ -3380,6 +3511,27 @@ export function IntelliMaps() {
                       </label>
                     </div>
                     <div><label className="text-[9px] block mb-0.5" style={S_MUTED}>Description</label><textarea value={editingPin.description} rows={2} onChange={e => setEditingPin({ ...editingPin, description: e.target.value })} className="w-full px-2 py-1 text-[10px] outline-none resize-none" style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }} /></div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] block" style={S_MUTED}>Thumbnail</label>
+                      {editingPin.thumbnailUrl && <ImageWithFallback src={editingPin.thumbnailUrl} alt={`${editingPin.name} thumbnail`} className="w-16 h-16 object-cover" style={{ border: `1px solid ${editingPin.color}66` }} />}
+                      <input
+                        type="url"
+                        value={editingPin.thumbnailUrl.startsWith("data:") ? "" : editingPin.thumbnailUrl}
+                        onChange={(event) => setEditingPin({ ...editingPin, thumbnailUrl: event.target.value })}
+                        className="w-full px-2 py-1 text-[9px] outline-none"
+                        style={{ ...SUNKEN_INPUT, color: "#C0D0F0" }}
+                        placeholder={editingPin.thumbnailUrl.startsWith("data:") ? "Uploaded thumbnail" : "Thumbnail image URL"}
+                      />
+                      <div className="flex flex-wrap gap-1">
+                        <label className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1 cursor-pointer`} style={S_ACCENT}>
+                          <ImagePlus size={10} /> {placeThumbnailBusy ? "Preparing..." : "Upload"}
+                          <input type="file" accept="image/jpeg,image/png,image/webp" disabled={placeThumbnailBusy} className="hidden" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void handlePlaceThumbnailFile(file); }} />
+                        </label>
+                        {editingPin.images[0] && <button onClick={() => setEditingPin({ ...editingPin, thumbnailUrl: editingPin.images[0] })} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_SUBTLE}>Use first image</button>}
+                        {editingPin.thumbnailUrl && <button onClick={() => setEditingPin({ ...editingPin, thumbnailUrl: "" })} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_RED}>Clear</button>}
+                      </div>
+                      <div className="text-[8px] leading-relaxed" style={S_DIM}>Recommended: square 1:1 image, 512 x 512 px, JPG, PNG, or WebP; source files may be up to 12 MB. Uploads are center-cropped and resized automatically.</div>
+                    </div>
                     <div>
                       <label className="text-[9px] block mb-1" style={S_MUTED}>Images</label>
                       {editingPin.images.length > 0 && (

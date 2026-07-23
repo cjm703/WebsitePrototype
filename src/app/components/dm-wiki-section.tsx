@@ -2,11 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   ArchiveRestore,
+  CornerDownRight,
   Edit,
   FileText,
   GitBranch,
+  List,
+  ListTree,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
 } from "lucide-react";
 import { retro } from "./retro-styles";
@@ -46,6 +50,21 @@ export interface WikiSiteSummary {
   infobox?: unknown[];
   blocks?: unknown[];
   panels?: unknown[];
+  relationships?: {
+    id?: string;
+    type?: string;
+    targetArticleId?: string;
+    note?: string;
+  }[];
+}
+
+type ArticleLibrarySortMode = "alphabetical" | "families";
+
+interface ArticleLibraryRow {
+  page: WikiSiteSummary;
+  depth: number;
+  key: string;
+  parentTitle?: string;
 }
 
 interface DeletedWikiSite {
@@ -74,6 +93,8 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortMode, setSortMode] = useState<ArticleLibrarySortMode>("families");
 
   const publishPages = useCallback((nextPages: WikiSiteSummary[]) => {
     setPages(nextPages);
@@ -98,10 +119,73 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
     void load();
   }, [load]);
 
-  const sortedPages = useMemo(
-    () => [...pages].sort((a, b) => (a.title || "").localeCompare(b.title || "")),
-    [pages],
-  );
+  const libraryRows = useMemo<ArticleLibraryRow[]>(() => {
+    const byTitle = (a: WikiSiteSummary, b: WikiSiteSummary) => (a.title || "").localeCompare(b.title || "");
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const matchesSearch = (page: WikiSiteSummary) => !normalizedQuery || [page.title, page.description, page.category, page.id]
+      .some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+
+    if (sortMode === "alphabetical") {
+      return [...pages]
+        .filter(matchesSearch)
+        .sort(byTitle)
+        .map((page) => ({ page, depth: 0, key: page.id }));
+    }
+
+    const pagesById = new Map(pages.map((page) => [page.id, page]));
+    const childrenByParent = new Map<string, Set<string>>();
+    const parentsByChild = new Map<string, Set<string>>();
+    const addFamilyEdge = (parentId: string, childId: string) => {
+      if (!pagesById.has(parentId) || !pagesById.has(childId) || parentId === childId) return;
+      childrenByParent.set(parentId, new Set([...(childrenByParent.get(parentId) || []), childId]));
+      parentsByChild.set(childId, new Set([...(parentsByChild.get(childId) || []), parentId]));
+    };
+
+    pages.forEach((source) => {
+      (source.relationships || []).forEach((relationship) => {
+        const targetId = relationship.targetArticleId || "";
+        const type = (relationship.type || "").trim().toLowerCase();
+        if (type === "parent of") addFamilyEdge(source.id, targetId);
+        if (type === "child of") addFamilyEdge(targetId, source.id);
+      });
+    });
+
+    const visibleIds = new Set(pages.filter(matchesSearch).map((page) => page.id));
+    if (normalizedQuery) {
+      const pending = [...visibleIds];
+      while (pending.length > 0) {
+        const childId = pending.pop()!;
+        (parentsByChild.get(childId) || []).forEach((parentId) => {
+          if (visibleIds.has(parentId)) return;
+          visibleIds.add(parentId);
+          pending.push(parentId);
+        });
+      }
+    }
+
+    const rows: ArticleLibraryRow[] = [];
+    const encountered = new Set<string>();
+    const visit = (pageId: string, depth: number, path: string[], parentTitle?: string) => {
+      const page = pagesById.get(pageId);
+      if (!page || path.includes(pageId) || !visibleIds.has(pageId)) return;
+      const nextPath = [...path, pageId];
+      rows.push({ page, depth, parentTitle, key: nextPath.join(">") });
+      encountered.add(pageId);
+      [...(childrenByParent.get(pageId) || [])]
+        .map((childId) => pagesById.get(childId))
+        .filter((child): child is WikiSiteSummary => Boolean(child))
+        .sort(byTitle)
+        .forEach((child) => visit(child.id, depth + 1, nextPath, page.title || "Untitled Article"));
+    };
+
+    const roots = pages
+      .filter((page) => (parentsByChild.get(page.id)?.size || 0) === 0)
+      .filter((page) => visibleIds.has(page.id))
+      .sort(byTitle);
+    roots.forEach((root) => visit(root.id, 0, []));
+    pages.filter((page) => visibleIds.has(page.id) && !encountered.has(page.id)).sort(byTitle).forEach((page) => visit(page.id, 0, []));
+    return rows;
+  }, [pages, searchQuery, sortMode]);
 
   async function removePage(page: WikiSiteSummary) {
     const confirmed = window.confirm(
@@ -171,6 +255,38 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
         </div>
       )}
 
+      <div className={`${retro.sunken} p-3 flex flex-col lg:flex-row gap-3 lg:items-center`} style={DM_ROW_BORDER}>
+        <label className="relative flex-1 min-w-0">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={S_MUTED} />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search articles, categories, or descriptions..."
+            className="w-full bg-[#080824] pl-9 pr-3 py-2 text-[11px] outline-none"
+            style={{ color: "#D4E1FF", border: "1px solid #1A345B" }}
+          />
+        </label>
+        <div className="grid grid-cols-2 shrink-0" role="group" aria-label="Article library sorting">
+          <button
+            onClick={() => setSortMode("families")}
+            className={`${retro.button} px-3 py-2 text-[10px] flex items-center justify-center gap-1.5`}
+            style={sortMode === "families" ? S_ACCENT : S_SUBTLE}
+            title="Group parents and children into article families"
+          >
+            <ListTree size={11} /> Families
+          </button>
+          <button
+            onClick={() => setSortMode("alphabetical")}
+            className={`${retro.button} px-3 py-2 text-[10px] flex items-center justify-center gap-1.5`}
+            style={sortMode === "alphabetical" ? S_ACCENT : S_SUBTLE}
+            title="Sort all matching articles alphabetically"
+          >
+            <List size={11} /> A-Z
+          </button>
+        </div>
+      </div>
+
       <div className={`${retro.sunken} overflow-hidden`} style={DM_ROW_BORDER}>
         <div className="grid grid-cols-12 gap-2 px-3 py-2 text-[10px] uppercase tracking-wider" style={DM_TABLE_HDR}>
           <span className="col-span-4">Article</span>
@@ -182,17 +298,24 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
 
         {loading ? (
           <div className="px-4 py-12 text-center text-[12px]" style={S_MUTED}>Loading article library...</div>
-        ) : sortedPages.length === 0 ? (
+        ) : libraryRows.length === 0 ? (
           <div className="px-4 py-12 text-center">
             <FileText size={34} className="mx-auto mb-3" style={DM_EMPTY_ICON} />
-            <div className="text-[13px]" style={S_MUTED}>No active wiki articles</div>
-            <button onClick={() => navigate("/interface/wiki-editor/new")} className={`${retro.button} mt-3 px-4 py-2 text-[11px]`} style={S_ACCENT}>Create the first article</button>
+            <div className="text-[13px]" style={S_MUTED}>{pages.length === 0 ? "No active wiki articles" : "No articles match this search"}</div>
+            {pages.length === 0
+              ? <button onClick={() => navigate("/interface/wiki-editor/new")} className={`${retro.button} mt-3 px-4 py-2 text-[11px]`} style={S_ACCENT}>Create the first article</button>
+              : <button onClick={() => setSearchQuery("")} className={`${retro.button} mt-3 px-4 py-2 text-[11px]`} style={S_ACCENT}>Clear search</button>}
           </div>
-        ) : sortedPages.map((page) => (
-          <div key={page.id} className="grid grid-cols-12 gap-2 px-3 py-2.5 items-center hover:bg-[#0A0A30] transition-colors cursor-pointer" style={DM_BORDER_B_DARK} onClick={() => navigate(`/interface/wiki-editor/${page.id}`)}>
+        ) : libraryRows.map(({ page, depth, key, parentTitle }) => (
+          <div key={key} className="grid grid-cols-12 gap-2 px-3 py-2.5 items-center hover:bg-[#0A0A30] transition-colors cursor-pointer" style={DM_BORDER_B_DARK} onClick={() => navigate(`/interface/wiki-editor/${page.id}`)}>
             <div className="col-span-4 min-w-0">
-              <div className="truncate text-[12px] font-semibold" style={DM_PAGE_TITLE}>{page.title || "Untitled Article"}</div>
-              <div className="truncate text-[9px] mt-0.5" style={S_DIM}>{page.description || page.id}</div>
+              <div className="min-w-0" style={{ paddingLeft: sortMode === "families" ? Math.min(depth, 6) * 18 : 0 }}>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {sortMode === "families" && depth > 0 && <CornerDownRight size={11} className="shrink-0" style={S_DIM} />}
+                  <div className="truncate text-[12px] font-semibold" style={DM_PAGE_TITLE}>{page.title || "Untitled Article"}</div>
+                </div>
+                <div className="truncate text-[9px] mt-0.5" style={S_DIM}>{parentTitle ? `Child of ${parentTitle}` : (page.description || page.id)}</div>
+              </div>
             </div>
             <span className="col-span-2 truncate text-[10px]" style={S_SUBTLE}>{page.category || "Uncategorized"}</span>
             <div className="col-span-2 flex flex-wrap gap-1">
@@ -212,8 +335,8 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
         ))}
 
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-[10px]" style={DM_FOOTER_DIM}>
-          <span>{pages.filter((page) => page.articleQuality === "featured").length} featured &middot; {pages.filter((page) => page.articleQuality === "good").length} good</span>
-          <span>{pages.filter((page) => (page.infobox || []).length > 0).length} with infoboxes</span>
+          <span>{libraryRows.length} row{libraryRows.length === 1 ? "" : "s"} shown &middot; {pages.filter((page) => page.articleQuality === "featured").length} featured &middot; {pages.filter((page) => page.articleQuality === "good").length} good</span>
+          <span>{sortMode === "families" ? "Multi-parent children repeat under each parent" : `${pages.filter((page) => (page.infobox || []).length > 0).length} with infoboxes`}</span>
         </div>
       </div>
 

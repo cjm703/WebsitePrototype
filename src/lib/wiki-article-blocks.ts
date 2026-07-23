@@ -79,6 +79,7 @@ export interface WikiBlockLayout {
   rowSpan: number;
   minColSpan?: number;
   minRowSpan?: number;
+  allowOverflow?: boolean;
 }
 
 export interface WikiBlockVisibility {
@@ -1349,7 +1350,12 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
   const fluid = block.fluid || ({} as Partial<WikiBlockFluidSettings>);
   const behavior = block.behavior || ({} as WikiBlockBehavior);
   const normalizedColSpan = clampInt(layout.colSpan, base.minColSpan || 1, WIKI_BLOCK_COLUMNS);
-  const normalizedColStart = clampInt(layout.colStart, 1, Math.max(1, WIKI_BLOCK_COLUMNS - normalizedColSpan + 1));
+  const allowOverflow = layout.allowOverflow === true;
+  const rawColStart = Number.isFinite(layout.colStart) ? Math.trunc(layout.colStart as number) : 1;
+  const rawRowStart = Number.isFinite(layout.rowStart) ? Math.trunc(layout.rowStart as number) : 1;
+  const normalizedColStart = allowOverflow
+    ? rawColStart
+    : clampInt(rawColStart, 1, Math.max(1, WIKI_BLOCK_COLUMNS - normalizedColSpan + 1));
   return {
     id: block.id || `wiki-block-${uid()}`,
     type,
@@ -1359,10 +1365,11 @@ export function normalizeWikiArticleBlock(block: Partial<WikiArticleBlock>): Wik
     layout: {
       colStart: normalizedColStart,
       colSpan: normalizedColSpan,
-      rowStart: Math.max(1, layout.rowStart || 1),
+      rowStart: allowOverflow ? rawRowStart : Math.max(1, rawRowStart),
       rowSpan: Math.max(base.minRowSpan || 1, layout.rowSpan || base.rowSpan || WIKI_BLOCK_DEFAULT_ROW_SPAN),
       minColSpan: base.minColSpan,
       minRowSpan: base.minRowSpan,
+      allowOverflow,
     },
     appearance: {
       padding: block.appearance?.padding || (type === "divider" || type === "lineBox" || type === "spacer" ? "tight" : "normal"),
@@ -1721,14 +1728,16 @@ export function clampWikiBlockLayout(block: WikiArticleBlock): WikiArticleBlock 
   const minColSpan = block.layout.minColSpan || 1;
   const minRowSpan = block.layout.minRowSpan || 1;
   const colSpan = clampInt(block.layout.colSpan, minColSpan, WIKI_BLOCK_COLUMNS);
-  const colStart = clampInt(block.layout.colStart, 1, Math.max(1, WIKI_BLOCK_COLUMNS - colSpan + 1));
+  const colStart = block.layout.allowOverflow
+    ? block.layout.colStart
+    : clampInt(block.layout.colStart, 1, Math.max(1, WIKI_BLOCK_COLUMNS - colSpan + 1));
   return normalizeWikiArticleBlock({
     ...block,
     layout: {
       ...block.layout,
       colStart,
       colSpan,
-      rowStart: Math.max(1, block.layout.rowStart),
+      rowStart: block.layout.allowOverflow ? block.layout.rowStart : Math.max(1, block.layout.rowStart),
       rowSpan: Math.max(minRowSpan, block.layout.rowSpan),
     },
   });
