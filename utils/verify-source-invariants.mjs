@@ -12,6 +12,9 @@ const richEditor = read("src/app/components/rich-text-editor.tsx");
 const commerce = read("src/app/components/commerce-page.tsx");
 const initialData = read("src/app/components/initial-data.tsx");
 const dmArea = read("src/app/components/dm-area.tsx");
+const combatPage = read("src/app/components/combat-page.tsx");
+const intelliMaps = read("src/app/components/intelli-maps.tsx");
+const supabaseClient = read("src/lib/supabaseClient.ts");
 const migration = read("supabase/migrations/20260723000000_secure_app_schema.sql");
 parse(edge, { sourceType: "module", plugins: ["typescript"] });
 
@@ -71,6 +74,11 @@ assert.doesNotMatch(initialData, /missing = defaults\.filter/);
 
 assert.match(dmArea, /const DMCardManagerSection = lazy/);
 assert.doesNotMatch(dmArea, /import \{ DMCardManagerSection \}/);
+assert.match(intelliMaps, /addEventListener\("wheel", handleWheel, \{ passive: false \}\)/);
+assert.doesNotMatch(intelliMaps, /onWheel=\{handleWheel\}/);
+assert.match(combatPage, /YOUTUBE_EMBED_HOST = "https:\/\/www\.youtube\.com"/);
+assert.doesNotMatch(combatPage, /youtube-nocookie/);
+assert.match(supabaseClient, /channel\.state === "joining"/);
 assert.match(migration, /enable row level security/);
 assert.match(migration, /revoke all on table/);
 assert.match(migration, /drop policy if exists "combat_music_upload"/);

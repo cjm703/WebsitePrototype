@@ -1,5 +1,5 @@
 import { appStore } from "@/lib/app-store";
-import { supabase } from "@/lib/supabaseClient";
+import { removeSupabaseChannelSafely, supabase } from "@/lib/supabaseClient";
 import { safeGetJson, safeSetJson } from "../safe-storage";
 import { DEFAULT_ADVENTURE_FRAMEWORK, DEFAULT_ENCOUNTER_SETTINGS, ADVENTURE_OBJECTIVES } from "./data";
 import { DEFAULT_ADVENTURE_CONTENT, normalizeAdventureContent } from "./content";
@@ -210,7 +210,7 @@ export function subscribeAdventureState(listener: (state: AdventureStateDoc, sou
     closed = true;
     if (timer != null) window.clearTimeout(timer);
     window.removeEventListener(EVENT_NAME, localListener);
-    if (channel) void supabase.removeChannel(channel);
+    if (channel) removeSupabaseChannelSafely(channel);
   };
 }
 

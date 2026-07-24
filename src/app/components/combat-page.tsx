@@ -38,7 +38,7 @@ import {
   type CombatMusicStorageRef,
   uploadCombatMusicFileToStorage,
 } from "@/lib/combat-music-storage";
-import { supabase } from "@/lib/supabaseClient";
+import { removeSupabaseChannelSafely, supabase } from "@/lib/supabaseClient";
 import { retro } from "./retro-styles";
 import { safeGetItem, safeGetJson, safeSetJson } from "./safe-storage";
 import { DISPLAY_CONTENTS, S_ACCENT, S_DIM, S_GREEN, S_MUTED, S_RED, S_TEXT, S_WARN } from "./shared-styles";
@@ -208,7 +208,7 @@ const DEFAULT_COMBAT_STATE: CombatState = { messages: [], playerStates: {}, roun
 const DEFAULT_MUSIC_STATE: CombatMusicState = { tracks: [], active: [], queue: [], crossfadeSeconds: 4, masterVolume: 0.85, muted: false, updatedAt: "" };
 const DEFAULT_COMBAT_PRESENCE_STATE: CombatPresenceState = { users: {}, updatedAt: "" };
 const DEFAULT_AUDIO_EFFECTS: AudioEffectSettings = { reverb: 0, echo: 0, muffle: 0, thin: 0, bass: 0, mid: 0, treble: 0, speed: 1, pitch: 0 };
-const YOUTUBE_EMBED_HOST = "https://www.youtube-nocookie.com";
+const YOUTUBE_EMBED_HOST = "https://www.youtube.com";
 const QUICK_FLAGS = ["Guarded", "Concentrating", "Prone", "Hidden", "Bloodied", "Stunned"];
 const MAX_FEED_MESSAGES = 150;
 const MAX_STORAGE_AUDIO_FILE_BYTES = 50 * 1024 * 1024;
@@ -906,12 +906,18 @@ export function CombatPage() {
 
   useEffect(() => {
     void hydrate();
+    let closed = false;
     let refreshTimer: number | null = null;
     const scheduleHydrate = () => {
+      if (closed) return;
       if (refreshTimer != null) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => void hydrate(), 120);
+      refreshTimer = window.setTimeout(() => {
+        if (!closed) void hydrate();
+      }, 120);
     };
-    const interval = window.setInterval(() => void hydrate(), 2500);
+    const interval = window.setInterval(() => {
+      if (!closed) void hydrate();
+    }, 2500);
     let channel: ReturnType<typeof supabase.channel> | null = null;
 
     try {
@@ -926,9 +932,10 @@ export function CombatPage() {
     }
 
     return () => {
+      closed = true;
       window.clearInterval(interval);
       if (refreshTimer != null) window.clearTimeout(refreshTimer);
-      if (channel) void supabase.removeChannel(channel);
+      if (channel) removeSupabaseChannelSafely(channel);
     };
   }, [hydrate]);
 

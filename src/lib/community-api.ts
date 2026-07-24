@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient";
+import { removeSupabaseChannelSafely, supabase } from "./supabaseClient";
 import { safeGetItem, safeRemoveItem } from "@/app/components/safe-storage";
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env";
 
@@ -219,6 +219,7 @@ export function subscribeToCommunityMessages<T = Record<string, unknown>>(
   const channel = supabase
     .channel("community-messages")
     .on("postgres_changes", { event: "*", schema: "public", table: "community_messages" }, (payload) => {
+      if (isClosed) return;
       const raw = (payload.eventType === "DELETE" ? payload.old : payload.new) as any;
       const message = raw?.data ?? raw;
       if (!message) return;
@@ -251,6 +252,6 @@ export function subscribeToCommunityMessages<T = Record<string, unknown>>(
   return () => {
     isClosed = true;
     if (pollTimer != null) window.clearTimeout(pollTimer);
-    void supabase.removeChannel(channel);
+    removeSupabaseChannelSafely(channel);
   };
 }

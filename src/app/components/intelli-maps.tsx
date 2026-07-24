@@ -1263,14 +1263,14 @@ export function IntelliMaps() {
   const canRedo = historyRedoRef.current.length > 0;
   void historyVersion;
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
+  const handleWheel = useCallback((event: WheelEvent) => {
+    event.preventDefault();
     const container = mapContainerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
-    const cursorX = e.clientX - rect.left;
-    const cursorY = e.clientY - rect.top;
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const cursorX = event.clientX - rect.left;
+    const cursorY = event.clientY - rect.top;
+    const delta = event.deltaY > 0 ? 0.9 : 1.1;
     setMapZoom(prev => {
       const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev * delta));
       const scale = next / prev;
@@ -1281,6 +1281,13 @@ export function IntelliMaps() {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    const container = mapContainerRef.current;
+    if (!container) return undefined;
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
 
   const handlePanStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -2901,7 +2908,6 @@ export function IntelliMaps() {
             ref={mapContainerRef}
             className={`${retro.raised} flex-1 relative overflow-hidden`}
             style={{ background: "#060618", minHeight: 400, cursor: isDragging ? "grabbing" : (mapZoom > 1 ? "grab" : undefined) }}
-            onWheel={handleWheel}
             onMouseDown={handlePanStart}
             onMouseMove={handlePanMove}
             onMouseUp={handlePanEnd}
