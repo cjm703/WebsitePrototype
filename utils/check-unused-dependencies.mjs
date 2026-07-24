@@ -1,31 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { parse } from "@babel/parser";
 
 const root = process.cwd();
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const pnpmDir = path.join(root, "node_modules", ".pnpm");
-const parserPackage = fs
-  .readdirSync(pnpmDir)
-  .find((name) => name.startsWith("@babel+parser@"));
-if (!parserPackage) throw new Error("@babel/parser is required to inspect dependencies");
 
-const parserPath = path.join(
-  pnpmDir,
-  parserPackage,
-  "node_modules",
-  "@babel",
-  "parser",
-  "lib",
-  "index.js",
-);
-const { parse } = await import(pathToFileURL(parserPath).href);
-
-function filesIn(directory) {
+function filesIn(directory, pattern = /\.(?:js|mjs|ts|tsx)$/) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) return filesIn(fullPath);
-    return /\.(?:js|mjs|ts|tsx)$/.test(entry.name) ? [fullPath] : [];
+    if (entry.isDirectory()) return filesIn(fullPath, pattern);
+    return pattern.test(entry.name) ? [fullPath] : [];
   });
 }
 
@@ -38,7 +22,11 @@ function packageName(specifier) {
 }
 
 const used = new Set();
-for (const file of [...filesIn(path.join(root, "src")), path.join(root, "vite.config.ts")]) {
+for (const file of [
+  ...filesIn(path.join(root, "src")),
+  ...filesIn(path.join(root, "utils")),
+  path.join(root, "vite.config.ts"),
+]) {
   const source = fs.readFileSync(file, "utf8");
   const ast = parse(source, {
     sourceType: "module",
@@ -70,6 +58,14 @@ for (const file of [...filesIn(path.join(root, "src")), path.join(root, "vite.co
     }
   };
   visit(ast);
+}
+
+for (const file of filesIn(path.join(root, "src"), /\.css$/)) {
+  const source = fs.readFileSync(file, "utf8");
+  for (const match of source.matchAll(/@import\s+(?:url\(\s*)?["']([^"']+)["']/g)) {
+    const name = packageName(match[1]);
+    if (name) used.add(name);
+  }
 }
 
 const declared = {

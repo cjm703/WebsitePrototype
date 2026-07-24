@@ -1,28 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { parse } from "@babel/parser";
 
 const root = process.cwd();
-const pnpmDir = path.join(root, "node_modules", ".pnpm");
-const parserPackage = fs
-  .readdirSync(pnpmDir)
-  .find((name) => name.startsWith("@babel+parser@"));
-
-if (!parserPackage) {
-  throw new Error("@babel/parser is required to inspect TSX");
-}
-
-const parserPath = path.join(
-  pnpmDir,
-  parserPackage,
-  "node_modules",
-  "@babel",
-  "parser",
-  "lib",
-  "index.js",
-);
-const { parse } = await import(pathToFileURL(parserPath).href);
-
 const write = process.argv.includes("--write");
 const sourceRoot = path.join(root, "src");
 

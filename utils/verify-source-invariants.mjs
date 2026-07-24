@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { parse } from "@babel/parser";
 
 const root = process.cwd();
 const read = (relativePath) =>
@@ -13,22 +13,6 @@ const commerce = read("src/app/components/commerce-page.tsx");
 const initialData = read("src/app/components/initial-data.tsx");
 const dmArea = read("src/app/components/dm-area.tsx");
 const migration = read("supabase/migrations/20260723000000_secure_app_schema.sql");
-const parserPackage = fs
-  .readdirSync(path.join(root, "node_modules", ".pnpm"))
-  .find((name) => name.startsWith("@babel+parser@"));
-assert.ok(parserPackage, "@babel/parser is required for source verification");
-const parserPath = path.join(
-  root,
-  "node_modules",
-  ".pnpm",
-  parserPackage,
-  "node_modules",
-  "@babel",
-  "parser",
-  "lib",
-  "index.js",
-);
-const { parse } = await import(pathToFileURL(parserPath).href);
 parse(edge, { sourceType: "module", plugins: ["typescript"] });
 
 function routeBody(routeMarker, nextMarker) {
