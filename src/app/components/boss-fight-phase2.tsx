@@ -99,7 +99,7 @@ const BOX_TRANSITION_MS = 600;
 const L = { green: "#23ac38", teal: "#86cecb", yellow: "#fff100", dark: "#137a7f" } as const;
 const LIGHT_COLS = [L.green, L.teal, L.yellow, L.dark] as const;
 
-// ── Attack types & patterns ─────────��────────────────���������─────────���───────────
+// ── Attack types & patterns ─────────────────────────────────────────────
 interface BoxTarget {
   w: number;
   h: number;
@@ -308,7 +308,7 @@ const ATTACK_PATTERNS: Record<string, BoxTarget[]> = {
 };
 const ATTACK_NAMES = Object.keys(ATTACK_PATTERNS);
 
-// ════════════════════════════════════════════════════════��════════════��════════
+// ════════════════════════════════════════════════════════════════════════════
 // Keyframe animations (injected into <head> once)
 // ═════════════════════════════════════════════════════════════════════════════
 const STAGE_KEYFRAMES = `
@@ -568,9 +568,9 @@ const STAGE_KEYFRAMES = `
 }
 `;
 
-// ═══════════════════════════════════════════════════════════════����══════════════
+// ═════════════════════════════════════════════════════════════════════════════
 // StageDecoration — sits UNDERNEATH the battle box
-// ═══════════════════���══════════���═══════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spotlightPositions }: {
   visible: boolean;
   boxW: number;
@@ -641,7 +641,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         zIndex: 0,
       }}
     >
-      {/* ═══════════════════ STAGE FLOOR (below the box) ════════════��══════ */}
+      {/* ═══════════════════ STAGE FLOOR (below the box) ══════════════════ */}
       {/* Main floor platform */}
       <div style={{
         position: "absolute",
@@ -699,7 +699,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         }} />
       ))}
 
-      {/* ═══════════════ FOOTLIGHTS (front edge of stage) ══���════════════ */}
+      {/* ═══════════════ FOOTLIGHTS (front edge of stage) ══════════════ */}
       <div style={{
         position: "absolute",
         left: PAD_X - 10,
@@ -768,7 +768,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         );
       })}
 
-      {/* ════════════���══════ TOP TRUSS BAR (horizontal) ═══════════════════ */}
+      {/* ══════════════════ TOP TRUSS BAR (horizontal) ═══════════════════ */}
       <TrussBar x={PAD_X - 40} y={16} w={stageW - PAD_X * 2 + 68} />
       {/* Lower parallel bar */}
       <TrussBar x={PAD_X - 40} y={30} w={stageW - PAD_X * 2 + 68} />
@@ -846,7 +846,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         );
       })}
 
-      {/* ═══════════════ SIDE SPOTLIGHTS (on towers, aimed inward) ═════��═════════ */}
+      {/* ═══════════════ SIDE SPOTLIGHTS (on towers, aimed inward) ══════════════ */}
       {[0, 1].map((side) => {
         const col = side === 0 ? L.green : L.yellow;
         const towerX = side === 0 ? PAD_X - 35 : boxRight + 23;
@@ -894,7 +894,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         );
       })}
 
-      {/* ══════��════════ LASERS (sweeping — synced with gameplay angles) ═══════════════ */}
+      {/* ══════════════ LASERS (sweeping — synced with gameplay angles) ═══════════════ */}
       {laserPositions.map((lp, i) => {
         const laserX = boxLeft + BORDER_W + lp.pctX * boxW;
         const laserLen = boxH + PAD_BOT + 20;
@@ -917,7 +917,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         );
       })}
 
-      {/* ═════════════���═ LED STRIP on tower faces ��══════════════ */}
+      {/* ══════════════ LED STRIP on tower faces ══════════════ */}
       {[0, 1].map((side) => {
         const x = side === 0 ? PAD_X - 28 : boxRight + 30;
         return (
@@ -953,7 +953,7 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
         );
       })}
 
-      {/* ════════════��══ AMBIENT HAZE (very subtle atmosphere) ══════════════�� */}
+      {/* ══════════════ AMBIENT HAZE (very subtle atmosphere) ══════════════ */}
       <div style={{
         position: "absolute",
         left: PAD_X,
@@ -970,9 +970,9 @@ function StageDecoration({ visible, boxW, boxH, laserAngles, laserPositions, spo
   );
 }
 
-// ══════════════════════════════════════════════════════��══════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // Main component
-// ════════════════════════════════════════════��═════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
 
 export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(function BossFightPhase2({
   colors,
@@ -1184,7 +1184,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
     if (stageVisible) laserStartTimeRef.current = performance.now();
   }, [stageVisible]);
 
-  // ─�� Proportional heart repositioning on box resize + wall crush detection ──
+  // ─ Proportional heart repositioning on box resize + wall crush detection ──
   useEffect(() => {
     const prev = boxDimsRef.current;
     const next = { w: boxW, h: boxH };
@@ -1403,7 +1403,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
           }
         }
 
-        // Update ref directly ��� no state batching delay
+        // Update ref directly  no state batching delay
         laserAnglesRef.current = allAngles;
 
         // Apply damage with shared i-frames
@@ -1978,7 +1978,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
             throwWallHitRef.current = false;
           }
 
-          // ── Clockwork beams every 3s ��─
+          // ── Clockwork beams every 3s ─
           if (now - frustLastBeamRef.current >= FRUST_BEAM_INTERVAL) {
             frustLastBeamRef.current = now;
             const count = Math.random() < 0.3 ? 2 : 1;
@@ -2866,7 +2866,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
           ★ ANNOYANCE ★
         </div>
 
-        {/* ═══ Inner Cage — constrains player to center ��══ */}
+        {/* ═══ Inner Cage — constrains player to center ══ */}
         <div style={{
           position: "absolute",
           left: cx - ANNOY_CAGE_W / 2,
@@ -3273,7 +3273,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
           backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 3px, ${colors.accent}06 3px, ${colors.accent}06 6px)`,
           zIndex: 3,
         }} />
-        {/* ═══ Full-length lasers (4) ══�� */}
+        {/* ═══ Full-length lasers (4) ══ */}
         {stageVisible && LASER_CONFIGS.map((cfg, i) => {
           const rw = safeRenderBoxDims.w;
           const rh = safeRenderBoxDims.h;
@@ -3370,7 +3370,7 @@ export const BossFightPhase2 = forwardRef<Phase2DebugHandle, Phase2Props>(functi
             style={{ filter: resolveShielded ? "drop-shadow(0 0 8px #FFD700)" : iframeFeedback ? "drop-shadow(0 0 8px #fff)" : "drop-shadow(0 0 4px rgba(255,0,0,0.6))" }}
           />
         </div>
-        {/* ── Resolve ding particles ���─ */}
+        {/* ── Resolve ding particles ─ */}
         {resolveDings.map(d => {
           const age = performance.now() - d.spawnTime;
           const t = Math.min(1, age / RESOLVE_DING_LIFETIME);

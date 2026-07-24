@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { retro } from "./retro-styles";
 import { S_ACCENT, S_DIM, S_GREEN_BTN, S_MUTED, S_RED, S_TEXT, S_WARN, S_SECTION_HDR, S_ACCENT_HDR } from "./dm-styles";
 import { RichTextEditor } from "./rich-text-editor";

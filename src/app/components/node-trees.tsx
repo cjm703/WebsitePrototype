@@ -1,9 +1,10 @@
-﻿import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { retro } from "./retro-styles";
 import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight } from "lucide-react";
 import { appStore } from "@/lib/app-store";
 import { loadDMNodeTrees, loadPlayerState, saveDMNodeTrees, savePlayerState } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
+import { sanitizeRichHtml } from "@/lib/sanitize-rich-html";
 
 // Shared data types
 export type NodeShape = "circle" | "diamond" | "hexagon" | "square" | "star" | "triangle";
@@ -340,7 +341,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
           {viewingCard.effect && (
             <div className={`${retro.sunken} p-3`} style={{ background: theme.inputBg }}>
               <div className="text-[10px] mb-1" style={{ color: theme.labelColor }}>Effect:</div>
-              <div className="text-[12px]" style={{ color: theme.textColor }} dangerouslySetInnerHTML={{ __html: viewingCard.effect }} />
+              <div className="text-[12px]" style={{ color: theme.textColor }} dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(viewingCard.effect) }} />
             </div>
           )}
         </div>
@@ -1543,5 +1544,4 @@ useEffect(() => {
     </div>
   );
 }
-
 

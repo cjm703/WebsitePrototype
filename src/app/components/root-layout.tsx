@@ -1,5 +1,5 @@
-import { useEffect, useRef, Suspense } from "react";
-import { Outlet, useLocation } from "react-router";
+import { useEffect, useRef, Suspense, useState } from "react";
+import { Navigate, Outlet, useLocation } from "react-router";
 import { DiceAnimationOverlay } from "./dice-animation";
 import { hydrateSoundState, playNavClick, readLegacySoundState } from "./sound-effects";
 import { hydratePlacedStickersState, hydrateThemeState, readLegacyPlacedStickersState, readLegacyThemeState, type PlayerTheme, type PlacedSticker } from "./player-theme";
@@ -7,6 +7,11 @@ import { ErrorBoundary } from "./error-boundary";
 import { pruneIfNeeded, safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import { DISPLAY_CONTENTS } from "./shared-styles";
+import { validatePlayerSession } from "@/lib/player-state-api";
+import {
+  InterfaceSessionProvider,
+  type InterfaceSession,
+} from "./session-context";
 
 function RouteFallback() {
   return (
@@ -51,6 +56,38 @@ export function RootLayout() {
   const { pathname } = useLocation();
   const prevPath = useRef(pathname);
   const hydratedPlayerIdRef = useRef<string | null>(null);
+  const localPlayerId = (safeGetItem("inet-user-id") || "").trim();
+  const sessionToken = (safeGetItem("inet-session-token") || "").trim();
+  const [session, setSession] = useState<InterfaceSession | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<"loading" | "ready" | "invalid">(
+    localPlayerId && sessionToken ? "loading" : "invalid",
+  );
+
+  useEffect(() => {
+    if (!localPlayerId || !sessionToken) {
+      setSessionStatus("invalid");
+      return;
+    }
+
+    let cancelled = false;
+    void validatePlayerSession()
+      .then((verified) => {
+        if (cancelled) return;
+        if (verified.playerId !== localPlayerId) {
+          setSessionStatus("invalid");
+          return;
+        }
+        setSession({ playerId: verified.playerId, isDM: verified.isDM });
+        setSessionStatus("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setSessionStatus("invalid");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localPlayerId, sessionToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,13 +193,23 @@ export function RootLayout() {
     }
   }, [pathname]);
 
+  if (sessionStatus === "invalid") {
+    return <Navigate to="/" replace state={{ from: pathname }} />;
+  }
+
+  if (sessionStatus === "loading" || !session) {
+    return <RouteFallback />;
+  }
+
   return (
     <div style={DISPLAY_CONTENTS}>
-      <ErrorBoundary>
-        <Suspense fallback={<RouteFallback />}>
-          <Outlet />
-        </Suspense>
-      </ErrorBoundary>
+      <InterfaceSessionProvider value={session}>
+        <ErrorBoundary>
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet />
+          </Suspense>
+        </ErrorBoundary>
+      </InterfaceSessionProvider>
       <DiceAnimationOverlay />
     </div>
   );

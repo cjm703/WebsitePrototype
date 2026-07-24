@@ -312,8 +312,12 @@ export function RichTextEditor({
   const emitChange = useCallback(() => {
     const el = editorRef.current;
     if (!el) return;
+    const sanitized = sanitizeRichHtml(el.innerHTML);
+    if (sanitized !== el.innerHTML) {
+      el.innerHTML = sanitized;
+    }
     isInternalChange.current = true;
-    onChange(el.innerHTML);
+    onChange(sanitized);
   }, [onChange]);
 
   // Save selection, run command, emit change

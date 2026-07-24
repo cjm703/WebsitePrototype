@@ -1,8 +1,12 @@
-import { safeGetItem, safeGetJson, safeRemoveItem, safeSetJson } from "@/app/components/safe-storage";
+import { safeGetJson, safeRemoveItem, safeSetJson } from "@/app/components/safe-storage";
 import { IMAGE_STORAGE_LOCAL_KEY } from "./image-storage";
-import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env";
+import {
+  ApiRequestError,
+  publicApiFetch,
+  sessionApiFetch as apiFetch,
+} from "./api-client";
 
-const API_BASE = supabaseFunctionBase;
+export { ApiRequestError };
 const LOCAL_DM_LEVEL_CATEGORIES_KEY = "inet-dm-player-level-categories";
 const LEVEL_CATEGORIES_FALLBACK_STATE_KEY = "inet-dm-player-level-categories-fallback";
 const LOCAL_DM_MAGIC_LISTS_KEY = "inet-dm-player-magic-lists";
@@ -35,85 +39,31 @@ let wikiDraftEndpointsUnavailable = false;
 let wikiPlayerBootstrapEndpointUnavailable = false;
 let wikiSiteSaveEndpointUnavailable = false;
 let publicWikiBootstrapEndpointUnavailable = false;
+const collectionSnapshots = new Map<string, Set<string>>();
 
-export class ApiRequestError extends Error {
-  status: number;
-  code?: string;
-  body: Record<string, unknown>;
-
-  constructor(message: string, status: number, body: Record<string, unknown> = {}) {
-    super(message);
-    this.name = "ApiRequestError";
-    this.status = status;
-    this.code = typeof body.code === "string" ? body.code : undefined;
-    this.body = body;
-  }
+function rowIds(rows: Record<string, unknown>[]) {
+  return new Set(
+    rows
+      .map((row) => (typeof row?.id === "string" ? row.id.trim() : ""))
+      .filter(Boolean),
+  );
 }
 
-function buildHeaders(includeJson = true): HeadersInit {
-  const sessionToken = safeGetItem("inet-session-token") || "";
-
-  const headers: Record<string, string> = {
-    ...buildSupabasePublicHeaders(includeJson),
-    "X-Session-Token": sessionToken,
-  };
-
-  return headers;
+function rememberCollectionSnapshot(
+  key: string,
+  rows: Record<string, unknown>[],
+) {
+  collectionSnapshots.set(key, rowIds(rows));
 }
 
-async function apiFetch(path: string, init: RequestInit = {}) {
-  const sessionToken = safeGetItem("inet-session-token");
-  if (!sessionToken) {
-    throw new Error("Missing player session token");
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      ...buildHeaders(init.body != null),
-      ...(init.headers ?? {}),
-    },
-  });
-
-  const body = await res.json().catch(() => ({}));
-
-  if (res.status === 401) {
-    const message =
-      typeof body?.error === "string" ? body.error : "Player session expired";
-    if (/session|expired|revoked|invalid session|missing session token/i.test(message)) {
-      safeRemoveItem("inet-session-token");
-    }
-    throw new ApiRequestError(message, res.status, body);
-  }
-
-  if (!res.ok) {
-    throw new ApiRequestError(
-      typeof body?.error === "string" ? body.error : `Request failed: ${res.status}`,
-      res.status,
-      body,
-    );
-  }
-
-  return body;
-}
-
-async function publicApiFetch(path: string, init: RequestInit = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      ...buildSupabasePublicHeaders(init.body != null),
-      ...(init.headers ?? {}),
-    },
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new ApiRequestError(
-      typeof body?.error === "string" ? body.error : `Request failed: ${res.status}`,
-      res.status,
-      body,
-    );
-  }
-  return body;
+function collectionDeleteIds(
+  key: string,
+  rows: Record<string, unknown>[],
+) {
+  const previous = collectionSnapshots.get(key);
+  if (!previous) return [];
+  const next = rowIds(rows);
+  return Array.from(previous).filter((id) => !next.has(id));
 }
 
 function isMissingWikiEndpoint(err: unknown) {
@@ -124,10 +74,11 @@ function unavailableWikiEndpointError(path: string) {
   return new ApiRequestError(`Wiki endpoint is not deployed: ${path}`, 404);
 }
 
-function loadDMCollection<T>(path: string, responseKey: string): Promise<T[]> {
-  return apiFetch(path, { method: "GET" }).then(
-    (body) => (body?.[responseKey] ?? []) as T[],
-  );
+async function loadDMCollection<T>(path: string, responseKey: string): Promise<T[]> {
+  const body = await apiFetch(path, { method: "GET" });
+  const rows = (body?.[responseKey] ?? []) as T[];
+  rememberCollectionSnapshot(path, rows as Record<string, unknown>[]);
+  return rows;
 }
 
 function saveDMCollection(
@@ -135,14 +86,33 @@ function saveDMCollection(
   requestKey: string,
   rows: Record<string, unknown>[],
 ): Promise<void> {
+  const snapshotKey = path.replace(/\/save$/, "");
+  const deleteIds = collectionDeleteIds(snapshotKey, rows);
   return apiFetch(path, {
     method: "POST",
-    body: JSON.stringify({ [requestKey]: rows }),
-  }).then(() => undefined);
+    body: JSON.stringify({ [requestKey]: rows, deleteIds }),
+  }).then(() => {
+    rememberCollectionSnapshot(snapshotKey, rows);
+  });
 }
 
 export async function loadPlayerState() {
   return apiFetch("/player-state", { method: "GET" });
+}
+
+export async function validatePlayerSession() {
+  try {
+    return await apiFetch("/session/me", { method: "GET" }) as {
+      playerId: string;
+      isDM: boolean;
+    };
+  } catch (error) {
+    if (!(error instanceof ApiRequestError) || error.status !== 404) throw error;
+    const state = await apiFetch("/player-state", { method: "GET" });
+    const playerId = String(state?.player?.id || "");
+    if (!playerId) throw new ApiRequestError("Session profile is unavailable", 401);
+    return { playerId, isDM: playerId === "dm" };
+  }
 }
 
 export async function savePlayerState(payload: Record<string, unknown>) {
@@ -206,16 +176,26 @@ export async function loadDMTags<T>(kind: DMTagKind) {
     method: "GET",
   });
 
-  return (body?.tags ?? []) as T[];
+  const tags = (body?.tags ?? []) as T[];
+  rememberCollectionSnapshot(
+    `/dm/tags/${kind}`,
+    tags as Record<string, unknown>[],
+  );
+  return tags;
 }
 
 export async function saveDMTags(
   kind: DMTagKind,
   tags: Record<string, unknown>[],
 ) {
+  const snapshotKey = `/dm/tags/${kind}`;
+  const deleteIds = collectionDeleteIds(snapshotKey, tags);
   return apiFetch(`/dm/tags/${encodeURIComponent(kind)}/save`, {
     method: "POST",
-    body: JSON.stringify({ tags }),
+    body: JSON.stringify({ tags, deleteIds }),
+  }).then((body) => {
+    rememberCollectionSnapshot(snapshotKey, tags);
+    return body;
   });
 }
 
@@ -690,6 +670,10 @@ export async function loadDMImageStorage<T>(options: { forceRemote?: boolean } =
     const body = await apiFetch("/dm/image-storage", { method: "GET" });
     clearLocalImageStorageFallback();
     const images = (body?.images ?? []) as T[];
+    rememberCollectionSnapshot(
+      "/dm/image-storage",
+      images as Record<string, unknown>[],
+    );
     saveLocalDMImageStorage(images as unknown as Record<string, unknown>[]);
     return images;
   } catch (err) {
@@ -713,11 +697,13 @@ export async function saveDMImageStorage(
   }
 
   try {
+    const deleteIds = collectionDeleteIds("/dm/image-storage", images);
     await apiFetch("/dm/image-storage/save", {
       method: "POST",
-      body: JSON.stringify({ images }),
+      body: JSON.stringify({ images, deleteIds }),
     });
     clearLocalImageStorageFallback();
+    rememberCollectionSnapshot("/dm/image-storage", images);
     saveLocalDMImageStorage(images);
   } catch (err) {
     if (!shouldFallbackImageStorage(err)) throw err;
@@ -822,7 +808,16 @@ export async function deleteDMPlayer(playerId: string) {
 
 
 export async function loadWikiBootstrap() {
-  return apiFetch("/wiki/bootstrap", { method: "GET" });
+  const body = await apiFetch("/wiki/bootstrap", { method: "GET" });
+  rememberCollectionSnapshot(
+    "/wiki/sites",
+    Array.isArray(body?.sites) ? body.sites : [],
+  );
+  rememberCollectionSnapshot(
+    "/wiki/custom-panel-styles",
+    Array.isArray(body?.customPanelStyles) ? body.customPanelStyles : [],
+  );
+  return body;
 }
 
 export async function loadPlayerWikiBootstrap() {
@@ -907,8 +902,12 @@ export async function restoreWikiSite(siteId: string) {
 export async function saveWikiSites(sites: Record<string, unknown>[]) {
   await apiFetch("/wiki/sites/save", {
     method: "POST",
-    body: JSON.stringify({ sites }),
+    body: JSON.stringify({
+      sites,
+      deleteIds: collectionDeleteIds("/wiki/sites", sites),
+    }),
   });
+  rememberCollectionSnapshot("/wiki/sites", sites);
 }
 
 export async function saveWikiTemplates(wikiTemplates: Record<string, unknown>[]) {
@@ -930,6 +929,13 @@ export async function saveWikiCustomPanelStyles(
 ) {
   await apiFetch("/wiki/custom-panel-styles/save", {
     method: "POST",
-    body: JSON.stringify({ customPanelStyles }),
+    body: JSON.stringify({
+      customPanelStyles,
+      deleteIds: collectionDeleteIds(
+        "/wiki/custom-panel-styles",
+        customPanelStyles,
+      ),
+    }),
   });
+  rememberCollectionSnapshot("/wiki/custom-panel-styles", customPanelStyles);
 }

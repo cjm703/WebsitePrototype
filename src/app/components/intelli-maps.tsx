@@ -2294,7 +2294,7 @@ export function IntelliMaps() {
           return <g>{labels}</g>;
         })()}
 
-        {/* ═══════════ THE OUTER CITY WALL ═���═══��═════ */}
+        {/* ═══════════ THE OUTER CITY WALL ═════════ */}
         {(() => {
           const outerPts = OUTER_VERT_ANGLES.map(a => outerHexPol(a));
           const outerInner = OUTER_VERT_ANGLES.map(a => {

@@ -19,7 +19,7 @@ import { DISPLAY_CONTENTS, S_DIM, S_LINK, S_MUTED, S_RED, S_SUBTLE, S_TEXT, S_WA
 
 // ════════════════════════════════════════════
 // Types
-// ══════════════════════���═════════════════════
+// ═══════════════════════════════════════════
 
 interface TimelineEvent {
   id: string;
@@ -334,9 +334,9 @@ function ShapeLegendIcon({ shape, size, color }: { shape: string; size: number; 
   );
 }
 
-// ═══════════════════════════════════════════���
+// ═══════════════════════════════════════════
 // Helpers
-// ════���═══════════���═══════���═══��══════════════��
+// ═══════════════════════════════════════
 
 // ════════════════════════════════════════════
 // Calendar Math Helpers
@@ -663,9 +663,9 @@ function loadLocalCustomPresets(): TimelineCalendarPreset[] {
   return [];
 }
 
-// ══════════════════════════════════════��═══��═
+// ══════════════════════════════════════════
 // Wiki Link Picker
-// ══════════════════���═════════════════════════
+// ═══════════════════════════════════════════
 function WikiLinkPicker({ onAdd, onClose, existingIds, pages }: {
   onAdd: (link: { articleId: string; articleTitle: string; displayText: string }) => void;
   onClose: () => void;
@@ -765,7 +765,7 @@ function WikiLinkPicker({ onAdd, onClose, existingIds, pages }: {
 
 // ════════════════════════════════════════════
 // Move Event to Lane Dialog
-// ═════════════════════════��══════════════════
+// ═══════════════════════════════════════════
 function MoveToLaneDialog({ lanes, currentLaneId, onMove, onClose }: {
   lanes: TimelineLane[];
   currentLaneId: string;
@@ -807,9 +807,9 @@ function MoveToLaneDialog({ lanes, currentLaneId, onMove, onClose }: {
   );
 }
 
-// ════════════���════════════════════════���══════
+// ══════════════════════════════════════════
 // Component
-// ════════════════════════════════════��═══════
+// ═══════════════════════════════════════════
 
 export function CampaignTimeline() {
   const navigate = useNavigate();
@@ -1055,7 +1055,7 @@ export function CampaignTimeline() {
     }
   }, [data.books]);
 
-  // ═════════════��═════════════════════════════
+  // ══════════════════════════════════════════
   // Book CRUD
   // ═══════════════════════════════════════════
   const addBook = useCallback(() => {
@@ -1081,7 +1081,7 @@ export function CampaignTimeline() {
 
   // ═══════════════════════════════════════════
   // Lane CRUD
-  // ═══════════════════════════════════��═══════
+  // ══════════════════════════════════════════
   const addLane = useCallback((bookId: string) => {
     const book = data.books.find(b => b.id === bookId);
     const colorIdx = book ? book.lanes.length % LANE_PALETTE.length : 0;
@@ -1114,9 +1114,9 @@ export function CampaignTimeline() {
     setEditingCalendar(null);
   }, []);
 
-  // ══════════════���════════════════════════════
+  // ══════════════════════════════════════════
   // Era CRUD
-  // ═══════════════════════════════════════���═══
+  // ══════════════════════════════════════════
   const addEra = useCallback((bookId: string, laneId: string) => {
     const newEra: TimelineEra = { id: uid(), name: "New Era", color: ERA_PALETTE[Math.floor(Math.random() * ERA_PALETTE.length)], startPct: 0, endPct: 25 };
     setData(prev => ({ ...prev, books: prev.books.map(b => b.id === bookId ? { ...b, lanes: b.lanes.map(l => l.id === laneId ? { ...l, eras: [...(l.eras || []), newEra] } : l) } : b) }));
@@ -1270,7 +1270,7 @@ export function CampaignTimeline() {
 
 
 
-  // ══════════���════════════════════════════════
+  // ══════════════════════════════════════════
   // Drag Handlers
   // ═══════════════════════════════════════════
   const handleDragStart = useCallback((e: React.MouseEvent, eventId: string, laneId: string, currentSortIndex: number) => {
@@ -1356,15 +1356,15 @@ export function CampaignTimeline() {
     return () => { document.removeEventListener("mousemove", handleMouseMove); document.removeEventListener("mouseup", handleMouseUp); };
   }, [draggingEra, data.books, eraSnapEnabled, getCalendarSnapPoints, snapToNearest, updateEra]);
 
-  // ═════════════════════════════════��═════════
+  // ══════════════════════════════════════════
   // Input style helper
   // ═══════════════════════════════════════════
   const inputStyle: React.CSSProperties = { background: "#0C0C30", border: "1px solid #252560", color: "#C0D0F0", outline: "none", borderRadius: 3 };
   const labelStyle: React.CSSProperties = { color: "#6A7A9A", letterSpacing: "0.03em" };
 
-  // ══════════════════════════════��════════════
+  // ══════════════════════════════════════════
   // Decorative Timeline Rail SVG
-  // ═════════════════════════════════��═════════
+  // ══════════════════════════════════════════
   const renderTimelineRail = (laneColor: string, eventCount: number, _hasTimespan: boolean) => {
     const railId = `rail-${Math.random().toString(36).slice(2, 8)}`;
     return (
@@ -1543,9 +1543,9 @@ export function CampaignTimeline() {
     );
   };
 
-  // ═════════════════════════���═════════════════
+  // ══════════════════════════════════════════
   // Event Editor Modal
-  // ═══════════════════════════════��═══════���═══
+  // ═════════════════════════════════════════
   const renderEventEditor = () => {
     if (!editingEvent || !editingLaneId || !activeBookId) return null;
     const linkedSession = editingEvent.sessionId ? sessions.find(s => s.id === editingEvent.sessionId) : null;
@@ -1851,7 +1851,7 @@ export function CampaignTimeline() {
 
   // ═══════════════════════════════════════════
   // Render Event Node
-  // ════════════════════════════════════���══════
+  // ══════════════════════════════════════════
   const RAIL_Y = isDM ? 90 : 75;
 
   const renderEventNode = (event: TimelineEvent, xPos: number, laneColor: string, laneId: string) => {
@@ -3036,7 +3036,7 @@ export function CampaignTimeline() {
 
   // ═══════════════════════════════════════════
   // Consolidated View
-  // ═══════════════════════════���═══════════════
+  // ══════════════════════════════════════════
   const renderConsolidatedView = () => {
     if (!activeBook || activeBook.lanes.length === 0) return null;
     const allEvents: { event: TimelineEvent; laneId: string; laneName: string; laneColor: string }[] = [];

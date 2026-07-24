@@ -1,4 +1,5 @@
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "@/lib/supabase-env";
+import { buildSessionHeaders } from "@/lib/api-client";
 
 const SERVER = supabaseFunctionBase;
 const AUTH_HEADER = buildSupabasePublicHeaders(false);
@@ -44,7 +45,7 @@ export async function uploadProfilePicture(
   try {
     const resp = await fetch(`${SERVER}/profile-picture/upload`, {
       method: "POST",
-      headers: buildSupabasePublicHeaders(true),
+      headers: buildSessionHeaders(true),
       body: JSON.stringify({ userId, imageData }),
     });
     const data = await resp.json();
@@ -67,7 +68,7 @@ export async function deleteProfilePicture(
   try {
     const resp = await fetch(`${SERVER}/profile-picture/${encodeURIComponent(userId)}`, {
       method: "DELETE",
-      headers: AUTH_HEADER,
+      headers: buildSessionHeaders(false),
     });
     const data = await resp.json();
     if (!resp.ok) {

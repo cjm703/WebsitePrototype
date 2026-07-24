@@ -257,7 +257,7 @@ function applyCustomizationDocToLocal(doc: PlayerCustomizationDoc) {
   }
 }
 
-/* ═══════════════════════���═══════════════════ */
+/* ══════════════════════════════════════════ */
 /* Custom Sound Creator sub-component          */
 /* ═══════════════════════════════════════════ */
 function CustomSoundCreator({ slot, accentColor, labelColor, onSync }: { slot: SoundSlot; accentColor: string; labelColor: string; onSync: () => void }) {
@@ -410,7 +410,7 @@ function CustomSoundCreator({ slot, accentColor, labelColor, onSync }: { slot: S
       </div>
 
       <div className="space-y-3">
-        {/* ��─ Presets ── */}
+        {/* ─ Presets ── */}
         <div>
           <label className="text-[9px] block mb-1.5" style={S_SUBTLE}>Quick Start Presets</label>
           <div className="flex flex-wrap gap-1.5">
@@ -484,7 +484,7 @@ function CustomSoundCreator({ slot, accentColor, labelColor, onSync }: { slot: S
           </div>
         )}
 
-        {/* ── Advanced toggle ���─ */}
+        {/* ── Advanced toggle ─ */}
         <button
           onClick={() => setShowAdvanced(!showAdvanced)}
           className="flex items-center gap-1 text-[9px] w-full py-1.5 justify-center"

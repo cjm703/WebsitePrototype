@@ -259,7 +259,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "random",
     chance: 5,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["Quiet moment. Suspiciously quiet."],
     threshold: 0,
     statusEffectName: "",
   },
@@ -269,7 +269,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "low_hp",
     chance: 40,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["Health reserves are getting uncomfortably theoretical."],
     threshold: 25,
     statusEffectName: "",
   },
@@ -279,7 +279,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "high_wounds",
     chance: 35,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["That wound total is becoming a collection."],
     threshold: 75,
     statusEffectName: "",
   },
@@ -289,7 +289,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "high_weight",
     chance: 30,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["Inventory load says this is now a strength-building exercise."],
     threshold: 80,
     statusEffectName: "",
   },
@@ -299,7 +299,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "high_exhaustion",
     chance: 35,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["Exhaustion levels recommend an immediate appointment with a chair."],
     threshold: 50,
     statusEffectName: "",
   },
@@ -309,7 +309,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "status_effect",
     chance: 50,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["Poison detected. Please discontinue being poisoned."],
     threshold: 0,
     statusEffectName: "Poisoned",
   },
@@ -319,7 +319,7 @@ export const initialMascotTriggers: MascotTrigger[] = [
     type: "status_effect_count",
     chance: 40,
     enabled: true,
-    lines: ["Insert funny joke"],
+    lines: ["The status panel is beginning to need its own status panel."],
     threshold: 3,
     statusEffectName: "",
   },
@@ -384,28 +384,15 @@ export function seedInitialData(): void {
     }
   } catch { /* ignore */ }
 
-  // Merge any new default tags into existing tag lists (so new built-in tags
-  // like Equipment, Attribute Buff, Skill Buff appear even for returning users)
-  const tagMerges: [string, TagDefinition[]][] = [
-    ["inet-dm-itemTags", initialItemTags],
-    ["inet-dm-cardTags", initialCardTags],
-    ["inet-dm-infoTags", initialInfoTags],
-    ["inet-dm-statusTags", initialStatusTags],
-    ["inet-dm-wikiTags", initialWikiTags],
+  // Existing tag libraries are user-owned. Startup migrations may update field
+  // metadata, but never re-add a tag that the DM deliberately deleted.
+  const tagStorageKeys = [
+    "inet-dm-itemTags",
+    "inet-dm-cardTags",
+    "inet-dm-infoTags",
+    "inet-dm-statusTags",
+    "inet-dm-wikiTags",
   ];
-  for (const [key, defaults] of tagMerges) {
-    try {
-      const raw = safeGetItem(key);
-      if (!raw) continue;
-      const existing: TagDefinition[] = JSON.parse(raw);
-      const existingIds = new Set(existing.map(t => t.id));
-      const existingNames = new Set(existing.map(t => t.name));
-      const missing = defaults.filter(d => !existingIds.has(d.id) && !existingNames.has(d.name));
-      if (missing.length > 0) {
-        safeSetJson(key, [...existing, ...missing]);
-      }
-    } catch { /* ignore parse errors */ }
-  }
 
   // Migrate: update existing built-in tag fields with type metadata for returning users
   const TAG_FIELD_TYPE_MAP: Record<string, Record<string, Partial<TagField>>> = {
@@ -424,7 +411,7 @@ export function seedInitialData(): void {
     "Buff": { "Duration": { type: "number", placeholder: "Turns" }, "Amount": { type: "number", placeholder: "e.g. +2 or -1" } },
     "Timed Effect": { "Duration": { type: "number", placeholder: "Turns", required: true }, "Potency": { type: "number" }, "Damage": { type: "dice", placeholder: "e.g. 1d6" }, "Description": { type: "textarea" }, "Buff Type": { type: "dropdown", options: ["attribute", "skill", "resource"] }, "Buff Value": { placeholder: "e.g. +2, P, -1" } },
   };
-  for (const [storageKey] of tagMerges) {
+  for (const storageKey of tagStorageKeys) {
     try {
       const raw = safeGetItem(storageKey);
       if (!raw) continue;
@@ -519,33 +506,4 @@ export function seedInitialData(): void {
     }
   } catch { /* ignore */ }
 
-  // Merge any new default items (like test source items) into existing item lists
-  try {
-    const rawItems = safeGetItem("inet-dm-items");
-    if (rawItems) {
-      const existingItems: InitialItem[] = JSON.parse(rawItems);
-      const testItemDefaults = new Map(initialItems.filter(i => i.id.startsWith("mi-test-")).map(i => [i.id, i]));
-      const existingItemIds = new Set(existingItems.map(i => i.id));
-      const updatedItems = existingItems.map(i => testItemDefaults.has(i.id) ? testItemDefaults.get(i.id)! : i);
-      const missingItems = initialItems.filter(i => !existingItemIds.has(i.id));
-      if (missingItems.length > 0 || testItemDefaults.size > 0) {
-        safeSetJson("inet-dm-items", [...updatedItems, ...missingItems]);
-      }
-    }
-  } catch { /* ignore parse errors */ }
-
-  // Merge any new default cards (like test fire/ice cards) into existing card lists
-  try {
-    const rawCards2 = safeGetItem("inet-dm-cards");
-    if (rawCards2) {
-      const existingCards: InitialCard[] = JSON.parse(rawCards2);
-      const testCardDefaults = new Map(initialCards.filter(c => c.id.startsWith("mc-test-")).map(c => [c.id, c]));
-      const existingCardIds = new Set(existingCards.map(c => c.id));
-      const updatedCards = existingCards.map(c => testCardDefaults.has(c.id) ? testCardDefaults.get(c.id)! : c);
-      const missingCards = initialCards.filter(c => !existingCardIds.has(c.id));
-      if (missingCards.length > 0 || testCardDefaults.size > 0) {
-        safeSetJson("inet-dm-cards", [...updatedCards, ...missingCards]);
-      }
-    }
-  } catch { /* ignore parse errors */ }
 }

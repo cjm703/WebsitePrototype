@@ -1,6 +1,6 @@
 -- Run this in the Supabase SQL editor to enable permanent Combat music uploads.
 -- This keeps the bucket public so player browsers can stream tracks directly.
--- Because this site currently uses the public anon key, upload/delete policies are also anon.
+-- Uploads and deletes go through the DM-authenticated Edge Function.
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
@@ -45,29 +45,6 @@ begin
       using (bucket_id = 'combat-music');
   end if;
 
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'storage'
-      and tablename = 'objects'
-      and policyname = 'combat_music_upload'
-  ) then
-    create policy "combat_music_upload"
-      on storage.objects
-      for insert
-      to anon
-      with check (bucket_id = 'combat-music');
-  end if;
-
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'storage'
-      and tablename = 'objects'
-      and policyname = 'combat_music_delete'
-  ) then
-    create policy "combat_music_delete"
-      on storage.objects
-      for delete
-      to anon
-      using (bucket_id = 'combat-music');
-  end if;
+  drop policy if exists "combat_music_upload" on storage.objects;
+  drop policy if exists "combat_music_delete" on storage.objects;
 end $$;

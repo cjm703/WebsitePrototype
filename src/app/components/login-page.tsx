@@ -7,6 +7,10 @@ import { initialPlayers } from "./initial-data";
 import { verifyAuthCode, getAuthStatuses } from "./auth-utils";
 import { safeSetItem } from "./safe-storage";
 import type { LoginProfile } from "./types";
+import {
+  buildSupabasePublicHeaders,
+  supabaseFunctionBase,
+} from "@/lib/supabase-env";
 
 const DM_PROFILE: LoginProfile = {
   id: "dm",
@@ -15,38 +19,12 @@ const DM_PROFILE: LoginProfile = {
   description: "System Administrator · Full Access",
 };
 
-const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim();
-const PUBLIC_KEY = (
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  ""
-).trim();
-
-if (!SUPABASE_URL) {
-  throw new Error("Missing VITE_SUPABASE_URL in frontend environment");
-}
-
-if (!PUBLIC_KEY) {
-  throw new Error(
-    "Missing VITE_SUPABASE_ANON_KEY or VITE_SUPABASE_PUBLISHABLE_KEY in frontend environment"
-  );
-}
-
-const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
-
-function authHeaders(includeJson = false): Record<string, string> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${PUBLIC_KEY}`,
-    apikey: PUBLIC_KEY,
-  };
-  if (includeJson) headers["Content-Type"] = "application/json";
-  return headers;
-}
+const API_BASE = `${supabaseFunctionBase}/auth-codes`;
 
 async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
   const res = await fetch(`${API_BASE}/profiles`, {
     method: "GET",
-    headers: authHeaders(false),
+    headers: buildSupabasePublicHeaders(false),
   });
 
   if (!res.ok) {

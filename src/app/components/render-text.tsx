@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { safeGetItem } from "./safe-storage";
 import { loadPlayerWikiBootstrap } from "@/lib/player-state-api";

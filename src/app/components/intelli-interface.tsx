@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { logoutPlayerSession } from "@/lib/player-state-api";
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";

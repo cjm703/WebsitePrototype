@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { ArrowLeft, ChevronLeft, ChevronRight, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind } from "lucide-react";
@@ -527,8 +527,8 @@ export function CalendarPage() {
           </h1>
           <div className="text-[10px] mb-4" style={{ color: "#5A6A8A" }}>
             {currentDate.isStarfall
-              ? `Year ${currentDate.year} Â· Starfall Day`
-              : `Year ${currentDate.year} Â· ${CALENDAR_MONTHS[currentDate.month - 1]} Â· Day ${currentDate.day}`}
+              ? `Year ${currentDate.year} · Starfall Day`
+              : `Year ${currentDate.year} · ${CALENDAR_MONTHS[currentDate.month - 1]} · Day ${currentDate.day}`}
           </div>
 
           <div className="flex items-center gap-4 mb-4" style={{ position: "relative", zIndex: 30 }}>
@@ -541,7 +541,7 @@ export function CalendarPage() {
                 fontWeight: 700,
                 textShadow: `0 0 15px rgba(192,208,240,0.2)`,
               }}>
-                {isStarfallSelected ? (<div style={DISPLAY_CONTENTS}><span style={{ color: "#000000", textShadow: "0 0 4px rgba(30,30,60,0.8)" }}>â˜…</span> Starfall Days</div>) : CALENDAR_MONTHS[selectedMonth - 1]}
+                {isStarfallSelected ? (<div style={DISPLAY_CONTENTS}><span style={{ color: "#000000", textShadow: "0 0 4px rgba(30,30,60,0.8)" }}>★</span> Starfall Days</div>) : CALENDAR_MONTHS[selectedMonth - 1]}
               </div>
               <div className="text-[10px] mt-1" style={{ color: "#5A6A8A" }}>
                 {isStarfallSelected ? "Days outside the regular months" : `Month ${selectedMonth} of 13`}
@@ -873,7 +873,7 @@ export function CalendarPage() {
                       fontFamily="'Tahoma', 'Verdana', sans-serif"
                       style={{ pointerEvents: "none" }}
                     >
-                      â˜…
+                      ★
                     </text>
                     {/* Small star icon in the starfall zone */}
                     {(() => {
@@ -899,7 +899,7 @@ export function CalendarPage() {
                               textShadow: "none",
                               animation: "starfallPulse 2s ease-in-out infinite",
                             }}>
-                              â˜…
+                              ★
                             </div>
                           </div>
                         </foreignObject>
@@ -934,11 +934,11 @@ export function CalendarPage() {
             {isStarfallSelected ? (
               <div className="text-center">
                 <div className="text-[18px] mb-2" style={{ fontWeight: 700 }}>
-                  <span style={{ color: "#000000", textShadow: "0 0 4px rgba(30,30,60,0.8)" }}>â˜…</span>
+                  <span style={{ color: "#000000", textShadow: "0 0 4px rgba(30,30,60,0.8)" }}>★</span>
                   <span style={{ color: "#C0D0F0" }}> Starfall Days</span>
                 </div>
                 <div className="text-[12px] mb-3" style={{ color: "#5A6A8A" }}>
-                  Days that fall outside the 13 regular months â€” after the 28th of Hiemsyl.
+                  Days that fall outside the 13 regular months — after the 28th of Hiemsyl.
                 </div>
                 {selectedFlavorText && (
                   <div className="text-[11px] mb-3 italic" style={{ color: "#6A7A9A" }}>
@@ -963,8 +963,8 @@ export function CalendarPage() {
                       {CALENDAR_MONTHS[selectedMonth - 1]}
                     </div>
                     <div className="text-[11px]" style={{ color: "#5A6A8A" }}>
-                      Month {selectedMonth} of 13 Â· {DAYS_PER_MONTH} days
-                      {isCurrentMonth && " Â· Current Month"}
+                      Month {selectedMonth} of 13 · {DAYS_PER_MONTH} days
+                      {isCurrentMonth && " · Current Month"}
                     </div>
                     {selectedFlavorText && (
                       <div className="text-[10px] mt-1 italic" style={{ color: "#6A7A9A" }}>
@@ -1036,7 +1036,7 @@ export function CalendarPage() {
                   return (
                     <div className="mt-4">
                       <div className="text-[10px] mb-2" style={{ color: "#5A6A8A", fontWeight: 600 }}>
-                        WEEK {Math.ceil(displayWeekStart / 7)} FORECAST â€” {CALENDAR_MONTHS[selectedMonth - 1]}
+                        WEEK {Math.ceil(displayWeekStart / 7)} FORECAST — {CALENDAR_MONTHS[selectedMonth - 1]}
                       </div>
                       <div className="grid grid-cols-7 gap-1">
                         {weekDays.map((d, i) => {
@@ -1078,7 +1078,7 @@ export function CalendarPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <div className="text-[8px]" style={{ color: "#2A3A4A" }}>â€”</div>
+                                <div className="text-[8px]" style={{ color: "#2A3A4A" }}>—</div>
                               )}
                             </button>
                           );
@@ -1086,7 +1086,7 @@ export function CalendarPage() {
                       </div>
                       {isCurrentWeek && !hasAnyForecast && (
                         <div className="text-[9px] mt-1 text-center italic" style={{ color: "#3A4A5A" }}>
-                          No forecast set â€” the DM has not yet divined the weather.
+                          No forecast set — the DM has not yet divined the weather.
                         </div>
                       )}
                       {!isCurrentWeek && (
@@ -1142,7 +1142,7 @@ export function CalendarPage() {
                   background: selectedMonth === 14 ? "#0E0E35" : "#080825",
                 }}
               >
-                <div style={{ fontSize: 14, color: "#000000", flexShrink: 0 }}>â˜…</div>
+                <div style={{ fontSize: 14, color: "#000000", flexShrink: 0 }}>★</div>
                 <div>
                   <div className="text-[10px]" style={{
                     color: selectedMonth === 14 ? "#C0D0F0" : "#5A6A8A",

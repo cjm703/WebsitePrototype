@@ -29,7 +29,7 @@ import {
 } from "@/lib/community-api";
 import { loadPlayerState, loadDMItems, loadDMCards } from "@/lib/player-state-api";
 
-/* ── Seeded PRNG ────────────────────────────────────────────����──────── */
+/* ── Seeded PRNG ──────────────────────────────────────────────────── */
 function mkRand(seed: number) {
   let s = seed;
   return () => {
@@ -38,7 +38,7 @@ function mkRand(seed: number) {
   };
 }
 
-/* ── Types ──────────────────������─────────────────────���────────────────── */
+/* ── Types ───────────────────────────────────────────────────────── */
 interface BuildingSection {
   xOff: number;
   w: number;
@@ -63,7 +63,7 @@ interface Building {
   windowStyle: "grid" | "wide" | "narrow";
 }
 
-/* ── Building generator ──────────���─────────────────────────────���────── */
+/* ── Building generator ───────────────────────────────────────────── */
 function generateBuildings(
   seed: number,
   minW: number, maxW: number,
@@ -417,7 +417,7 @@ function renderBuilding(
   );
 }
 
-/* ─�� Blue Star component (HTML overlay — stays properly shaped) ──���──── */
+/* ─ Blue Star component (HTML overlay — stays properly shaped) ────── */
 /* ── Generalized Star component ────────────────────────────────────── */
 interface StarColors {
   bodyGrad: string;
@@ -791,7 +791,7 @@ function PixelSkyline() {
             {/* Steel reinforcement band at bottom */}
             <rect x={0} y={wBot - 0.2} width={100} height={0.4} fill="#08080F" />
             <rect x={0} y={wBot - 0.2} width={100} height={0.06} fill="#1A1A2C" opacity="0.35" />
-            {/* ── Anti-climb barrier at base ��─ */}
+            {/* ── Anti-climb barrier at base ─ */}
             <polygon points={`0,${wBot} 0,${wBot + 1.5} 100,${wBot + 1.5} 100,${wBot}`} fill="#080812" />
             <polygon points={`0,${wBot} 0,${wBot + 0.6} 100,${wBot + 0.6} 100,${wBot}`} fill="#0C0C1A" opacity="0.7" />
 
@@ -841,7 +841,7 @@ function PixelSkyline() {
       {/* Atmospheric haze between far & mid */}
       <rect x="0" y="48" width="100" height="22" fill="url(#fogBand)" />
 
-      {/* ═���═ MID LAYER ═══ */}
+      {/* ══ MID LAYER ═══ */}
       {midBuildings.map((b, bi) => renderBuilding(b, bi, "mid", 0.65, 97, false))}
 
       {/* Lighter haze between mid & near */}
@@ -901,7 +901,7 @@ function PixelSkyline() {
               <rect key={`tie-${i}`} x={i * 2 + 0.5} y={trackY + 0.1} width="0.15" height={railH - 0.2} fill="#1A1A44" opacity="0.3" />
             ))}
 
-            {/* ── Animated train ─�� */}
+            {/* ── Animated train ─ */}
             <g style={{
               animation: `skytrainSlide 22s linear infinite`,
               willChange: "transform",
@@ -1367,10 +1367,10 @@ function getImageTimeLeft(ts: number): string {
   return `${mins}m left`;
 }
 
-/* ── Sticker image map ────────────────────────────────────────────��── */
+/* ── Sticker image map ────────────────────────────────────────────── */
 
 
-/* ── Built-in emoji reactions ───────────────────────────────────────��� */
+/* ── Built-in emoji reactions ─────────────────────────────────────── */
 interface ReactionDef {
   id: string;
   display: string; // emoji char or sticker id prefixed with "sticker:"
@@ -1606,7 +1606,7 @@ function summarizeReplyText(msg: ChatMessage): string {
   return "(message)";
 }
 
-/* ── URL detection ────────────────────���────────────────────────────── */
+/* ── URL detection ────────────────────────────────────────────────── */
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi;
 
 function extractUrls(text: string): string[] {
@@ -1906,7 +1906,7 @@ function ColorWheelPicker({ currentColor, accent, onSelect, onClose }: {
   );
 }
 
-/* ── Custom Slider ─────────────────────────────────────────��───────── */
+/* ── Custom Slider ────────────────────────────────────────────────── */
 function CustomSlider({ value, min, max, step, accent, onChange }: {
   value: number; min: number; max: number; step: number; accent: string; onChange: (v: number) => void;
 }) {
@@ -1965,7 +1965,7 @@ function CustomSlider({ value, min, max, step, accent, onChange }: {
   );
 }
 
-/* ── Setting Toggle ──────────────────────────────────────────��────── */
+/* ── Setting Toggle ──────────────────────────────────────────────── */
 function SettingToggle({ label, description, checked, onChange, accent }: {
   label: string; description: string; checked: boolean; onChange: (v: boolean) => void; accent: string;
 }) {
@@ -2008,7 +2008,7 @@ export function CommunityPage() {
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm" || currentUser === "DM";
 
-  // ─�� NPC accounts (DM only) ──
+  // ─ NPC accounts (DM only) ──
   const [npcAccounts, setNpcAccounts] = useState<NpcAccount[]>([]);
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [showNpcPicker, setShowNpcPicker] = useState(false);
@@ -3271,7 +3271,7 @@ export function CommunityPage() {
       </div>
 
 
-      {/* �����═ Chat Panel Overlay ═══ */}
+      {/* ═ Chat Panel Overlay ═══ */}
       {/* ── Top Navigation Bar ── */}
       <div
         className="relative z-20 shrink-0 flex items-center gap-2 px-3 py-1.5"
@@ -3774,7 +3774,7 @@ export function CommunityPage() {
                 <SettingToggle label="Notification Sound" description="Play a chime when new messages arrive from others" checked={notifSound} onChange={setNotifSound} accent={accent} />
                 {/* Toggle: Image thumbnails */}
                 <SettingToggle label="Image Thumbnails" description="Show shared images as small thumbnails — click to expand" checked={imgThumbnails} onChange={setImgThumbnails} accent={accent} />
-                {/* Message grouping threshold ��� custom slider */}
+                {/* Message grouping threshold  custom slider */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px]" style={S_SUBTLE}>Message Grouping</span>

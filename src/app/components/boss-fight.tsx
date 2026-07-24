@@ -643,7 +643,7 @@ export function BossFight({
   const [cinematicFade, setCinematicFade] = useState(0); // 0→1 fade in
   const cinematicStarsRef = useRef<{ x: number; y: number; size: number; color: string; speed: number; twinkleSpeed: number; twinklePhase: number }[]>([]);
 
-  // ── Resolve system (Phase 2 only) ─���
+  // ── Resolve system (Phase 2 only) ─
   const RESOLVE_MAX = 240;
   const RESOLVE_DRAIN_RATE = 30; // per second — 8s total shield
   const [resolve, setResolve] = useState(RESOLVE_MAX);
@@ -1229,7 +1229,7 @@ export function BossFight({
 
       // Phase 3: Sweep attack — directional chase pattern
       // Beams sweep: up (left side, bottom→top), left (bottom side, right→left),
-      //              down (right side, top→bottom), right (top side, left��right)
+      //              down (right side, top→bottom), right (top side, leftright)
       // Last beam on each side is skipped → safe zone at the edge the player runs toward
       const sweepSidePattern: { side: MiniSide; startPos: number; endPos: number }[] = [
         { side: "left",   startPos: 0.9, endPos: 0.1 },  // horizontal beams sweep upward
@@ -1812,7 +1812,7 @@ export function BossFight({
         ctx.restore();
       }
 
-      // Draw mini-ships (Wave 3 dive bombs) ��� smaller gnarpy ships
+      // Draw mini-ships (Wave 3 dive bombs)  smaller gnarpy ships
       for (const ms of siMiniShipsRef.current) {
         if (!ms.alive) continue;
         if (aImg) {

@@ -7,29 +7,19 @@
  * Cache-bust v4
  */
 
-const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || "").trim();
-const PUBLIC_KEY = String(
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  ""
-).trim();
+import { safeGetItem } from "./safe-storage";
+import {
+  buildSupabasePublicHeaders,
+  supabaseFunctionBase,
+} from "@/lib/supabase-env";
 
-if (!SUPABASE_URL) {
-  throw new Error("Missing VITE_SUPABASE_URL in frontend environment");
-}
+const API_BASE = `${supabaseFunctionBase}/auth-codes`;
 
-if (!PUBLIC_KEY) {
-  throw new Error(
-    "Missing VITE_SUPABASE_ANON_KEY or VITE_SUPABASE_PUBLISHABLE_KEY in frontend environment"
-  );
-}
-
-const API_BASE = `${SUPABASE_URL}/functions/v1/make-server-8a5950b5/auth-codes`;
-
-const headers = () => ({
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${PUBLIC_KEY}`,
-  apikey: PUBLIC_KEY,
+const headers = (includeSession = false) => ({
+  ...buildSupabasePublicHeaders(true),
+  ...(includeSession
+    ? { "X-Session-Token": safeGetItem("inet-session-token") || "" }
+    : {}),
 });
 
 /** Resilient fetch wrapper with timeout and retry */
@@ -68,7 +58,7 @@ export async function setAuthCode(
 ): Promise<void> {
   const res = await resilientFetch(`${API_BASE}/set`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(true),
     body: JSON.stringify({ profileId, code }),
   });
   if (!res.ok) {
@@ -139,7 +129,7 @@ export async function removeAuthCode(profileId: string): Promise<void> {
     `${API_BASE}/${encodeURIComponent(profileId)}`,
     {
       method: "DELETE",
-      headers: headers(),
+      headers: headers(true),
     }
   );
   if (!res.ok) {
@@ -157,7 +147,7 @@ export async function migrateAuthCodes(
   try {
     const res = await resilientFetch(`${API_BASE}/migrate`, {
       method: "POST",
-      headers: headers(),
+      headers: headers(true),
       body: JSON.stringify({ codes }),
     });
     if (!res.ok) {

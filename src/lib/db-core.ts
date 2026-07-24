@@ -1,53 +1,48 @@
-import { supabase } from "./supabaseClient";
+import { sessionApiFetch } from "./api-client";
 
-type Row = { id: string; data: unknown; updated_at?: string };
+type Identifiable = { id: string };
 
-export async function listCollection<T>(table: string): Promise<T[]> {
-  const { data, error } = await supabase
-    .from(table)
-    .select("data")
-    .order("updated_at", { ascending: false });
+const collectionSnapshots = new Map<string, Set<string>>();
+const tagSnapshots = new Map<string, Set<string>>();
 
-  if (error) throw error;
-  return (data ?? []).map((row: any) => row.data as T);
+function encoded(value: string) {
+  return encodeURIComponent(value);
 }
 
-export async function replaceCollection<T extends { id: string }>(
+function rememberIds(cache: Map<string, Set<string>>, key: string, rows: Identifiable[]) {
+  cache.set(key, new Set(rows.map((row) => String(row.id))));
+}
+
+function deletedSinceLoad(
+  cache: Map<string, Set<string>>,
+  key: string,
+  rows: Identifiable[],
+) {
+  const previous = cache.get(key);
+  if (!previous) return [];
+  const next = new Set(rows.map((row) => String(row.id)));
+  return Array.from(previous).filter((id) => !next.has(id));
+}
+
+export async function listCollection<T extends Identifiable>(table: string): Promise<T[]> {
+  const body = await sessionApiFetch(`/data/collection/${encoded(table)}`, {
+    method: "GET",
+  });
+  const rows = Array.isArray(body?.rows) ? body.rows as T[] : [];
+  rememberIds(collectionSnapshots, table, rows);
+  return rows;
+}
+
+export async function replaceCollection<T extends Identifiable>(
   table: string,
   rows: T[],
 ): Promise<void> {
-  const { data: existing, error: existingError } = await supabase
-    .from(table)
-    .select("id");
-
-  if (existingError) throw existingError;
-
-  const nextIds = new Set(rows.map((r) => r.id));
-  const existingIds = (existing ?? []).map((r: any) => String(r.id));
-  const toDelete = existingIds.filter((id) => !nextIds.has(id));
-
-  if (toDelete.length > 0) {
-    const { error: deleteError } = await supabase
-      .from(table)
-      .delete()
-      .in("id", toDelete);
-
-    if (deleteError) throw deleteError;
-  }
-
-  if (rows.length === 0) return;
-
-  const payload: Row[] = rows.map((row) => ({
-    id: row.id,
-    data: row,
-    updated_at: new Date().toISOString(),
-  }));
-
-  const { error: upsertError } = await supabase
-    .from(table)
-    .upsert(payload, { onConflict: "id" });
-
-  if (upsertError) throw upsertError;
+  const deleteIds = deletedSinceLoad(collectionSnapshots, table, rows);
+  await sessionApiFetch(`/data/collection/${encoded(table)}/sync`, {
+    method: "POST",
+    body: JSON.stringify({ rows, deleteIds }),
+  });
+  rememberIds(collectionSnapshots, table, rows);
 }
 
 export async function loadPlayerDoc<T>(
@@ -55,14 +50,11 @@ export async function loadPlayerDoc<T>(
   playerId: string,
   fallback: T,
 ): Promise<T> {
-  const { data, error } = await supabase
-    .from(table)
-    .select("data")
-    .eq("player_id", playerId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return (data?.data as T | undefined) ?? fallback;
+  const body = await sessionApiFetch(
+    `/data/player-doc/${encoded(table)}/${encoded(playerId)}`,
+    { method: "GET" },
+  );
+  return (body?.data as T | null | undefined) ?? fallback;
 }
 
 export async function savePlayerDoc<T>(
@@ -70,65 +62,62 @@ export async function savePlayerDoc<T>(
   playerId: string,
   data: T,
 ): Promise<void> {
-  const { error } = await supabase.from(table).upsert(
+  await sessionApiFetch(
+    `/data/player-doc/${encoded(table)}/${encoded(playerId)}`,
     {
-      player_id: playerId,
-      data,
-      updated_at: new Date().toISOString(),
+      method: "POST",
+      body: JSON.stringify({ data }),
     },
-    { onConflict: "player_id" },
   );
-
-  if (error) throw error;
 }
 
-export async function listTagCollection<T>(kind: "item" | "card" | "info" | "status" | "wiki"): Promise<T[]> {
-  const { data, error } = await supabase
-    .from("app_tags")
-    .select("data")
-    .eq("kind", kind)
-    .order("updated_at", { ascending: false });
-
-  if (error) throw error;
-  return (data ?? []).map((row: any) => row.data as T);
+export async function listTagCollection<T extends Identifiable>(
+  kind: "item" | "card" | "info" | "status" | "wiki",
+): Promise<T[]> {
+  const body = await sessionApiFetch(`/data/tags/${encoded(kind)}`, {
+    method: "GET",
+  });
+  const rows = Array.isArray(body?.rows) ? body.rows as T[] : [];
+  rememberIds(tagSnapshots, kind, rows);
+  return rows;
 }
 
-export async function replaceTagCollection<T extends { id: string }>(
+export async function replaceTagCollection<T extends Identifiable>(
   kind: "item" | "card" | "info" | "status" | "wiki",
   rows: T[],
 ): Promise<void> {
-  const { data: existing, error: existingError } = await supabase
-    .from("app_tags")
-    .select("id")
-    .eq("kind", kind);
+  const deleteIds = deletedSinceLoad(tagSnapshots, kind, rows);
+  await sessionApiFetch(`/data/tags/${encoded(kind)}/sync`, {
+    method: "POST",
+    body: JSON.stringify({ rows, deleteIds }),
+  });
+  rememberIds(tagSnapshots, kind, rows);
+}
 
-  if (existingError) throw existingError;
+export async function loadSingletonDoc<T>(
+  table: string,
+  id: string,
+  fallback: T,
+): Promise<T> {
+  const body = await sessionApiFetch(`/data/doc/${encoded(table)}/${encoded(id)}`, {
+    method: "GET",
+  });
+  return (body?.data as T | null | undefined) ?? fallback;
+}
 
-  const nextIds = new Set(rows.map((r) => `${kind}:${r.id}`));
-  const existingIds = (existing ?? []).map((r: any) => String(r.id));
-  const toDelete = existingIds.filter((id) => !nextIds.has(id));
+export async function saveSingletonDoc<T>(
+  table: string,
+  id: string,
+  data: T,
+): Promise<void> {
+  await sessionApiFetch(`/data/doc/${encoded(table)}/${encoded(id)}`, {
+    method: "POST",
+    body: JSON.stringify({ data }),
+  });
+}
 
-  if (toDelete.length > 0) {
-    const { error: deleteError } = await supabase
-      .from("app_tags")
-      .delete()
-      .in("id", toDelete);
-
-    if (deleteError) throw deleteError;
-  }
-
-  if (rows.length === 0) return;
-
-  const payload = rows.map((row) => ({
-    id: `${kind}:${row.id}`,
-    kind,
-    data: row,
-    updated_at: new Date().toISOString(),
-  }));
-
-  const { error: upsertError } = await supabase
-    .from("app_tags")
-    .upsert(payload, { onConflict: "id" });
-
-  if (upsertError) throw upsertError;
+export async function deleteSingletonDoc(table: string, id: string): Promise<void> {
+  await sessionApiFetch(`/data/doc/${encoded(table)}/${encoded(id)}`, {
+    method: "DELETE",
+  });
 }

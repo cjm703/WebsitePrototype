@@ -3,6 +3,15 @@ import { safeGetItem, safeRemoveItem } from "@/app/components/safe-storage";
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "./supabase-env";
 
 const API_BASE = supabaseFunctionBase;
+let npcAccountSnapshot: Set<string> | null = null;
+
+function npcIds(rows: Record<string, unknown>[]) {
+  return new Set(
+    rows
+      .map((row) => (typeof row?.id === "string" ? row.id.trim() : ""))
+      .filter(Boolean),
+  );
+}
 
 function buildHeaders(includeJson = true): HeadersInit {
   const sessionToken = safeGetItem("inet-session-token") || "";
@@ -46,14 +55,21 @@ export async function listCommunityPlayers<T = Record<string, unknown>>() {
 
 export async function listNpcAccounts<T = Record<string, unknown>>() {
   const body = await apiFetch<{ npcAccounts?: T[] }>("/community/npcs", { method: "GET" });
-  return body.npcAccounts ?? [];
+  const rows = body.npcAccounts ?? [];
+  npcAccountSnapshot = npcIds(rows as Record<string, unknown>[]);
+  return rows;
 }
 
 export async function saveNpcAccounts(npcAccounts: Record<string, unknown>[]) {
+  const nextIds = npcIds(npcAccounts);
+  const deleteIds = npcAccountSnapshot
+    ? Array.from(npcAccountSnapshot).filter((id) => !nextIds.has(id))
+    : [];
   await apiFetch("/community/npcs/save", {
     method: "POST",
-    body: JSON.stringify({ npcAccounts }),
+    body: JSON.stringify({ npcAccounts, deleteIds }),
   });
+  npcAccountSnapshot = nextIds;
 }
 
 export async function listAllMessages<T = Record<string, unknown>>() {

@@ -1,49 +1,31 @@
-﻿import {
+import {
   listCollection,
   replaceCollection,
   listTagCollection,
   replaceTagCollection,
   loadPlayerDoc,
   savePlayerDoc,
+  loadSingletonDoc,
+  saveSingletonDoc,
+  deleteSingletonDoc,
 } from "./db-core";
-import { supabase } from "./supabaseClient";
 
 type Identifiable = { id: string };
 type TagKind = "item" | "card" | "info" | "status" | "wiki";
-
-type CollectionRow<T> = {
-  id: string;
-  data: T;
-  updated_at?: string;
-};
 
 async function loadSingletonCollectionDoc<T>(
   table: string,
   id: string,
   fallback: T,
 ): Promise<T> {
-  const { data, error } = await supabase
-    .from(table)
-    .select("data")
-    .eq("id", id)
-    .maybeSingle();
-  if (error) throw error;
-  return (data?.data as T | undefined) ?? fallback;
+  return loadSingletonDoc(table, id, fallback);
 }
 
 async function saveSingletonCollectionDoc<T extends Identifiable>(
   table: string,
   row: T,
 ): Promise<void> {
-  const payload: CollectionRow<T> = {
-    id: row.id,
-    data: row,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase
-    .from(table)
-    .upsert(payload, { onConflict: "id" });
-  if (error) throw error;
+  await saveSingletonDoc(table, row.id, row);
 }
 
 async function saveSingletonDataDoc<T>(
@@ -51,26 +33,14 @@ async function saveSingletonDataDoc<T>(
   id: string,
   data: T,
 ): Promise<void> {
-  const payload: CollectionRow<T> = {
-    id,
-    data,
-    updated_at: new Date().toISOString(),
-  };
-  const { error } = await supabase
-    .from(table)
-    .upsert(payload, { onConflict: "id" });
-  if (error) throw error;
+  await saveSingletonDoc(table, id, data);
 }
 
 async function deleteSingletonDataDoc(
   table: string,
   id: string,
 ): Promise<void> {
-  const { error } = await supabase
-    .from(table)
-    .delete()
-    .eq("id", id);
-  if (error) throw error;
+  await deleteSingletonDoc(table, id);
 }
 
 export const appStore = {

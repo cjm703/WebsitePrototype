@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { retro } from "./retro-styles";
 import { Eraser, Download, Eye, EyeOff, Grid3x3 } from "lucide-react";
 import { usePageVisibility } from "./use-visibility";
@@ -390,7 +390,7 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
                   imageRendering: "pixelated",
                 }}
               />
-              {/* Grid overlay canvas â€” sits on top, receives all mouse events */}
+              {/* Grid overlay canvas — sits on top, receives all mouse events */}
               <canvas
                 ref={gridRef}
                 width={displaySize}
@@ -466,11 +466,11 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
             style={{ color: "#3A4A6A", fontFamily: "'Courier New', monospace" }}
           >
             <span>{CANVAS_SIZE}x{CANVAS_SIZE}px</span>
-            <span>Â·</span>
+            <span>·</span>
             <span>Shared canvas</span>
             {showOtherPlayers && Object.keys(otherCursors).length > 0 && (
               <div style={DISPLAY_CONTENTS}>
-                <span>Â·</span>
+                <span>·</span>
                 <span style={S_GREEN}>
                   {Object.keys(otherCursors).length} other{Object.keys(otherCursors).length !== 1 ? "s" : ""} drawing
                 </span>
@@ -655,10 +655,10 @@ export function PartyColor({ onBack }: { onBack: () => void }) {
           style={{ color: "#3A4A6A", fontFamily: "'Courier New', monospace" }}
         >
           <div>
-            <span style={S_MUTED}>CONTROLS:</span> Click and drag to draw Â· Select colors from the palette Â· Use the eraser to correct mistakes
+            <span style={S_MUTED}>CONTROLS:</span> Click and drag to draw · Select colors from the palette · Use the eraser to correct mistakes
           </div>
           <div>
-            <span style={S_MUTED}>INFO:</span> Shared canvas â€” all players draw on the same board. Toggle the pixel grid in Settings to see cell boundaries.
+            <span style={S_MUTED}>INFO:</span> Shared canvas — all players draw on the same board. Toggle the pixel grid in Settings to see cell boundaries.
           </div>
         </div>
       </div>

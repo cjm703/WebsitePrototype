@@ -1538,7 +1538,13 @@ export function CombatPage() {
       try {
         setMusicUploadProgress({ label: file.name, percent: 8, phase: "uploading" });
         setMusicStatus(`Uploading ${file.name} to Supabase Storage...`);
-        storageAudio = await uploadCombatMusicFileToStorage(trackId, file);
+        storageAudio = await uploadCombatMusicFileToStorage(trackId, file, (percent) => {
+          setMusicUploadProgress({
+            label: file.name,
+            percent: clampNumber(percent * 0.8, 8, 88),
+            phase: "uploading",
+          });
+        });
         trackUrl = storageAudio.publicUrl;
         storageSaved = true;
         setMusicUploadProgress({ label: cleanName, percent: 88, phase: "saving" });
@@ -1628,7 +1634,13 @@ export function CombatPage() {
         const file = new File([blob], track.fileName || `${track.title || "audio"}.mp3`, {
           type: track.contentType || blob.type || "audio/mpeg",
         });
-        const storageAudio = await uploadCombatMusicFileToStorage(track.id, file);
+        const storageAudio = await uploadCombatMusicFileToStorage(track.id, file, (percent) => {
+          setMusicUploadProgress({
+            label: file.name,
+            percent: clampNumber(percent * 0.8, 8, 88),
+            phase: "uploading",
+          });
+        });
         await updateMusicTrack(track.id, {
           url: storageAudio.publicUrl,
           storageAudio,

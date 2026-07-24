@@ -163,7 +163,15 @@ function requireDM(playerId: string) {
   }
 }
 
+async function requireDMSession(c: any) {
+  const playerId = await resolveSessionPlayerId(c);
+  requireDM(playerId);
+  return playerId;
+}
+
 const authKey = (profileId: string) => `inet-authcode::${profileId}`;
+const authAttemptKey = (profileId: string, clientId: string) =>
+  `inet-authattempt::${profileId}::${clientId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${playerId}`;
 const imageStorageKey = "inet-image-storage";
@@ -172,6 +180,70 @@ const wikiArticleRevisionsKey = "inet-wiki-article-revisions";
 const wikiDeletedSitesKey = "inet-wiki-deleted-sites";
 const wikiTemplatesKey = "inet-wiki-templates";
 const wikiBlockStylePresetsKey = "inet-wiki-block-style-presets";
+const combatMusicBucket = (Deno.env.get("COMBAT_MUSIC_BUCKET") || "combat-music").trim();
+const MAX_COMBAT_MUSIC_BYTES = 50 * 1024 * 1024;
+const ALLOWED_COMBAT_MUSIC_TYPES = new Set([
+  "audio/aac",
+  "audio/flac",
+  "audio/m4a",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/ogg",
+  "audio/wave",
+  "audio/wav",
+  "audio/webm",
+  "audio/x-flac",
+  "audio/x-m4a",
+  "audio/x-wav",
+]);
+
+const AUTH_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+const AUTH_LOCKOUT_MS = 2 * 60 * 1000;
+const AUTH_MAX_ATTEMPTS = 5;
+
+function authClientId(c: any) {
+  const forwarded = String(c.req.header("x-forwarded-for") || "")
+    .split(",")[0]
+    .trim();
+  return (forwarded || String(c.req.header("cf-connecting-ip") || "unknown"))
+    .replace(/[^a-zA-Z0-9:._-]/g, "_")
+    .slice(0, 120);
+}
+
+async function getAuthAttemptState(c: any, profileId: string) {
+  const key = authAttemptKey(profileId, authClientId(c));
+  const stored = await kv.get(key);
+  const now = Date.now();
+  const startedAt = Number(stored?.startedAt || 0);
+  const lockedUntil = Number(stored?.lockedUntil || 0);
+
+  if (!startedAt || now - startedAt > AUTH_ATTEMPT_WINDOW_MS) {
+    return { key, count: 0, startedAt: now, lockedUntil: 0 };
+  }
+
+  return {
+    key,
+    count: Math.max(0, Number(stored?.count || 0)),
+    startedAt,
+    lockedUntil,
+  };
+}
+
+async function recordFailedAuthAttempt(c: any, profileId: string) {
+  const state = await getAuthAttemptState(c, profileId);
+  const count = state.count + 1;
+  await kv.set(state.key, {
+    count,
+    startedAt: state.startedAt,
+    lockedUntil: count >= AUTH_MAX_ATTEMPTS ? Date.now() + AUTH_LOCKOUT_MS : 0,
+  });
+}
+
+async function clearAuthAttempts(c: any, profileId: string) {
+  const state = await getAuthAttemptState(c, profileId);
+  await kv.del(state.key);
+}
 
 
 async function listEntityRows(table: "app_players" | "app_deleted_players") {
@@ -189,29 +261,47 @@ async function listEntityRows(table: "app_players" | "app_deleted_players") {
   }));
 }
 
-async function replaceEntityRows(
+function explicitDeleteIds(
+  value: unknown,
+  nextIds: string[],
+  protectedIds: string[] = [],
+) {
+  const retained = new Set(nextIds);
+  const protectedSet = new Set(protectedIds);
+  return Array.from(
+    new Set(
+      (Array.isArray(value) ? value : [])
+        .map((id) => typeof id === "string" ? id.trim() : "")
+        .filter(Boolean),
+    ),
+  ).filter((id) => !retained.has(id) && !protectedSet.has(id));
+}
+
+async function syncEntityRows(
   table: "app_players" | "app_deleted_players",
   rows: Array<{ id: string; [key: string]: any }>,
+  deleteIds: unknown,
 ) {
   const supabase = admin();
   const now = new Date().toISOString();
 
-  const nextIds = rows
-    .map((row) => typeof row?.id === "string" ? row.id.trim() : "")
-    .filter(Boolean);
+  const dedupedRows = Array.from(
+    new Map(
+      rows
+        .filter((row) => typeof row?.id === "string" && row.id.trim())
+        .map((row) => [row.id.trim(), { ...row, id: row.id.trim() }]),
+    ).values(),
+  );
+  const nextIds = dedupedRows.map((row) => row.id);
+  const idsToDelete = explicitDeleteIds(
+    deleteIds,
+    nextIds,
+    table === "app_players" ? ["dm"] : [],
+  );
 
-  const { data: existingRows, error: existingError } = await supabase
-    .from(table)
-    .select("id");
-
-  if (existingError) throw new Error(existingError.message);
-
-  const existingIds = (existingRows ?? []).map((row: any) => row.id as string);
-  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
-
-  const payload = rows.map((row) => ({
+  const payload = dedupedRows.map((row) => ({
     id: row.id,
-    data: { ...row, id: row.id },
+    data: sanitizeStoredValue({ ...row, id: row.id }),
     updated_at: now,
   }));
 
@@ -266,6 +356,141 @@ const DM_COLLECTIONS: Record<DMCollectionKey, { table: string; responseKey: stri
   "tags": { table: "app_tags", responseKey: "tags", requestKey: "tags" },
 };
 
+type AppWriteAccess = "dm" | "authenticated" | "player-self";
+
+const APP_COLLECTIONS: Record<string, { write: AppWriteAccess; read?: AppWriteAccess }> = {
+  app_node_trees: { write: "dm" },
+  app_players: { write: "player-self" },
+  app_deleted_players: { write: "dm", read: "dm" },
+  app_items: { write: "dm" },
+  app_cards: { write: "dm" },
+  app_infos: { write: "dm" },
+  app_info_subtabs: { write: "dm" },
+  app_notifications: { write: "dm" },
+  app_news: { write: "dm" },
+  app_sites: { write: "dm" },
+  app_custom_panel_styles: { write: "dm" },
+  community_custom_reactions: { write: "dm" },
+  app_commerce_shops: { write: "authenticated" },
+  app_commerce_ledger: { write: "authenticated" },
+};
+
+const APP_SINGLETONS: Record<string, { write: AppWriteAccess }> = {
+  app_nexus_nomad_state: { write: "authenticated" },
+  app_campaign_timeline_state: { write: "dm" },
+  app_timeline_calendar_presets: { write: "dm" },
+  app_intelli_maps_state: { write: "dm" },
+  app_session_log_state: { write: "dm" },
+  app_session_player_notes: { write: "authenticated" },
+  app_party_color_state: { write: "authenticated" },
+  app_party_color_cursors: { write: "authenticated" },
+  app_calendar_weather_state: { write: "dm" },
+  app_dm_customize_state: { write: "dm" },
+  app_arcade_catalog_state: { write: "authenticated" },
+  app_arcade_leaderboard_state: { write: "authenticated" },
+};
+
+const APP_PLAYER_DOCS = new Set([
+  "player_node_tree_unlocks",
+  "player_level_categories",
+  "player_commerce_cart",
+  "player_customization",
+  "player_wiki_editor_drafts",
+  "player_placed_stickers",
+  "player_arcade_profiles",
+]);
+
+const PLAYER_COMBAT_EDITABLE_FIELDS = new Set([
+  "currentHP",
+  "tempHP",
+  "currentWounds",
+  "state",
+  "status",
+  "statusEffects",
+]);
+
+function requireWriteAccess(playerId: string, access: AppWriteAccess, targetPlayerId?: string) {
+  if (access === "authenticated") return;
+  if (access === "dm") {
+    requireDM(playerId);
+    return;
+  }
+  if (playerId !== "dm" && playerId !== targetPlayerId) {
+    throw new Error("Cannot modify another player's data");
+  }
+}
+
+function requireSingletonWriteAccess(
+  playerId: string,
+  table: string,
+  id: string,
+  defaultAccess: AppWriteAccess,
+) {
+  if (table === "app_arcade_catalog_state") {
+    const dmOnly =
+      id === "default" ||
+      id === "combat-music-state" ||
+      id.startsWith("combat-music-audio-");
+    requireWriteAccess(playerId, dmOnly ? "dm" : "authenticated", playerId);
+    return;
+  }
+  requireWriteAccess(playerId, defaultAccess, playerId);
+}
+
+function sanitizeServerHtml(value: string) {
+  if (!/<\/?[a-z][\s\S]*>/i.test(value)) return value;
+
+  let clean = value;
+  const blocked = "script|iframe|object|embed|form|input|button|link|meta|base|svg|math";
+  clean = clean.replace(
+    new RegExp(`<(${blocked})\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>`, "gi"),
+    "",
+  );
+  clean = clean.replace(new RegExp(`<\\/?(?:${blocked})\\b[^>]*>`, "gi"), "");
+  clean = clean.replace(/\s(?:on[a-z0-9_-]+|srcdoc)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  clean = clean.replace(
+    /\s(href|src|xlink:href)\s*=\s*(["'])(.*?)\2/gi,
+    (match, name, quote, url) => {
+      const normalized = String(url)
+        .trim()
+        .replace(/[\u0000-\u001F\u007F\s]+/g, "")
+        .toLowerCase();
+      const safe =
+        !normalized ||
+        normalized.startsWith("#") ||
+        normalized.startsWith("/") ||
+        normalized.startsWith("./") ||
+        normalized.startsWith("../") ||
+        /^(https?:|mailto:|tel:|blob:)/.test(normalized) ||
+        (String(name).toLowerCase() === "src" &&
+          /^data:image\/(png|gif|jpe?g|webp|avif);base64,/.test(normalized));
+      return safe ? match : "";
+    },
+  );
+  clean = clean.replace(
+    /\sstyle\s*=\s*(["'])(.*?)\1/gi,
+    (match, _quote, style) =>
+      /(expression\s*\(|url\s*\(\s*['"]?\s*(javascript|vbscript|data:text\/html))/i.test(String(style))
+        ? ""
+        : match,
+  );
+  return clean;
+}
+
+function sanitizeStoredValue<T>(value: T): T {
+  if (typeof value === "string") return sanitizeServerHtml(value) as T;
+  if (Array.isArray(value)) return value.map((entry) => sanitizeStoredValue(entry)) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        sanitizeStoredValue(entry),
+      ]),
+    ) as T;
+  }
+  return value;
+}
+
 async function listCollectionRows(table: string) {
   const supabase = admin();
   const { data, error } = await supabase
@@ -279,6 +504,58 @@ async function listCollectionRows(table: string) {
     id: row.id,
     ...(row.data ?? {}),
   }));
+}
+
+async function syncCollectionRows(
+  table: string,
+  rows: Array<{ id: string; [key: string]: any }>,
+  deleteIds: unknown,
+  opts?: { revokeSessions?: boolean },
+) {
+  const supabase = admin();
+  const now = new Date().toISOString();
+  const dedupedRows = Array.from(
+    new Map(
+      rows
+        .filter((row) => typeof row?.id === "string" && row.id.trim())
+        .map((row) => {
+          const id = row.id.trim();
+          return [id, sanitizeStoredValue({ ...row, id })];
+        }),
+    ).values(),
+  );
+
+  if (dedupedRows.length > 0) {
+    const { error } = await supabase.from(table).upsert(
+      dedupedRows.map((row) => ({
+        id: row.id,
+        data: row,
+        updated_at: now,
+      })),
+      { onConflict: "id" },
+    );
+    if (error) throw new Error(error.message);
+  }
+
+  const safeDeleteIds = explicitDeleteIds(
+    deleteIds,
+    dedupedRows.map((row) => row.id),
+    table === "app_players" ? ["dm"] : [],
+  );
+  if (safeDeleteIds.length > 0) {
+    if (opts?.revokeSessions) {
+      const { error: revokeError } = await supabase
+        .from("app_sessions")
+        .delete()
+        .in("player_id", safeDeleteIds);
+      if (revokeError) throw new Error(revokeError.message);
+    }
+
+    const { error } = await supabase.from(table).delete().in("id", safeDeleteIds);
+    if (error) throw new Error(error.message);
+  }
+
+  return now;
 }
 
 async function listWikiSiteRows() {
@@ -327,6 +604,19 @@ async function listPlayerScopedRows(table: string) {
   }));
 }
 
+async function loadPlayerScopedRow(table: string, playerId: string) {
+  const { data, error } = await admin()
+    .from(table)
+    .select("data, updated_at")
+    .eq("player_id", playerId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return {
+    data: data?.data ?? null,
+    updatedAt: data?.updated_at ?? null,
+  };
+}
+
 async function loadSingletonCollectionRow(table: string, id = "default") {
   const supabase = admin();
   const { data, error } = await supabase
@@ -343,66 +633,6 @@ async function loadSingletonCollectionRow(table: string, id = "default") {
     updatedAt: data?.updated_at ?? null,
   };
 }
-
-async function replaceCollectionRows(
-  table: string,
-  rows: Array<{ id: string; [key: string]: any }>,
-  opts?: { revokeSessions?: boolean },
-) {
-  const supabase = admin();
-  const now = new Date().toISOString();
-
-  const dedupedRows = Array.from(
-    new Map(
-      rows
-        .filter((row) => typeof row?.id === "string" && row.id.trim())
-        .map((row) => [row.id.trim(), { ...row, id: row.id.trim() }])
-    ).values()
-  );
-
-  const nextIds = dedupedRows.map((row) => row.id);
-
-  const { data: existingRows, error: existingError } = await supabase
-    .from(table)
-    .select("id");
-
-  if (existingError) throw new Error(existingError.message);
-
-  const existingIds = (existingRows ?? []).map((row: any) => row.id as string);
-  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
-
-  const payload = dedupedRows.map((row) => ({
-    id: row.id,
-    data: { ...row, id: row.id },
-    updated_at: now,
-  }));
-
-  if (payload.length > 0) {
-    const { error: upsertError } = await supabase
-      .from(table)
-      .upsert(payload, { onConflict: "id" });
-
-    if (upsertError) throw new Error(upsertError.message);
-  }
-
-  if (idsToDelete.length > 0) {
-    if (opts?.revokeSessions) {
-      const { error: revokeError } = await supabase
-        .from("app_sessions")
-        .delete()
-        .in("player_id", idsToDelete);
-      if (revokeError) throw new Error(revokeError.message);
-    }
-
-    const { error: deleteError } = await supabase
-      .from(table)
-      .delete()
-      .in("id", idsToDelete);
-
-    if (deleteError) throw new Error(deleteError.message);
-  }
-}
-
 
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 
@@ -429,7 +659,11 @@ async function listTagRows(kind: DMTagKind) {
   }));
 }
 
-async function replaceTagRows(kind: DMTagKind, rows: Array<{ id: string; [key: string]: any }>) {
+async function syncTagRows(
+  kind: DMTagKind,
+  rows: Array<{ id: string; [key: string]: any }>,
+  deleteIds: unknown,
+) {
   const supabase = admin();
   const now = new Date().toISOString();
 
@@ -441,21 +675,17 @@ async function replaceTagRows(kind: DMTagKind, rows: Array<{ id: string; [key: s
     ).values()
   );
 
-  const { data: existingRows, error: existingError } = await supabase
-    .from("app_tags")
-    .select("id")
-    .eq("kind", kind);
-
-  if (existingError) throw new Error(existingError.message);
-
   const nextIds = dedupedRows.map((row) => `${kind}:${row.id}`);
-  const existingIds = (existingRows ?? []).map((row: any) => String(row.id));
-  const idsToDelete = existingIds.filter((id) => !nextIds.includes(id));
+  const prefixedDeleteIds = (Array.isArray(deleteIds) ? deleteIds : [])
+    .map((id) => typeof id === "string" ? id.trim() : "")
+    .filter(Boolean)
+    .map((id) => `${kind}:${id}`);
+  const idsToDelete = explicitDeleteIds(prefixedDeleteIds, nextIds);
 
   const payload = dedupedRows.map((row) => ({
     id: `${kind}:${row.id}`,
     kind,
-    data: { ...row, id: row.id },
+    data: sanitizeStoredValue({ ...row, id: row.id }),
     updated_at: now,
   }));
 
@@ -593,20 +823,25 @@ function registerRoutes(prefix: string) {
   });
 
   app.post(`${prefix}/auth-codes/set`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
 
-    const { profileId, code } = await c.req.json();
-    if (!profileId || typeof profileId !== "string") {
-      return c.json({ error: "Missing or invalid profileId" }, 400);
-    }
-    if (!code || typeof code !== "string") {
-      return c.json({ error: "Missing or invalid code" }, 400);
-    }
+      const { profileId, code } = await c.req.json();
+      if (!profileId || typeof profileId !== "string") {
+        return c.json({ error: "Missing or invalid profileId" }, 400);
+      }
+      if (!code || typeof code !== "string") {
+        return c.json({ error: "Missing or invalid code" }, 400);
+      }
 
-    const hash = await sha256(code);
-    await kv.set(authKey(profileId), { hash });
-    return c.json({ success: true });
+      const hash = await sha256(code);
+      await kv.set(authKey(profileId), { hash });
+      return c.json({ success: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
   });
 
   app.post(`${prefix}/auth-codes/verify`, async (c) => {
@@ -615,24 +850,30 @@ function registerRoutes(prefix: string) {
       if (unauthorized) return unauthorized;
 
       const body = await c.req.json();
-      console.log("VERIFY BODY:", body);
-
       const { profileId, code } = body;
       if (!profileId || typeof profileId !== "string") {
         return c.json({ error: "Missing or invalid profileId" }, 400);
       }
 
+      const attemptState = await getAuthAttemptState(c, profileId);
+      if (attemptState.lockedUntil > Date.now()) {
+        return c.json(
+          {
+            error: "Too many attempts. Try again shortly.",
+            retryAfterMs: attemptState.lockedUntil - Date.now(),
+          },
+          429,
+        );
+      }
+
       const key = authKey(profileId);
-      console.log("VERIFY KEY:", key);
-
       const stored = await kv.get(key);
-      console.log("VERIFY STORED:", stored);
-
       const playerId = profileId;
 
       await ensurePlayerExists(playerId, playerId === "dm" ? "DM" : undefined);
 
       if (!stored || !stored.hash) {
+        await clearAuthAttempts(c, profileId);
         const session = await createSession(playerId);
         return c.json({
           valid: true,
@@ -646,12 +887,14 @@ function registerRoutes(prefix: string) {
       const valid = inputHash === stored.hash;
 
       if (!valid) {
+        await recordFailedAuthAttempt(c, profileId);
         return c.json({
           valid: false,
           hasCode: true,
         });
       }
 
+      await clearAuthAttempts(c, profileId);
       const session = await createSession(playerId);
 
       return c.json({
@@ -730,61 +973,79 @@ function registerRoutes(prefix: string) {
   });
 
   app.delete(`${prefix}/auth-codes/:profileId`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
 
-    const profileId = c.req.param("profileId");
-    if (!profileId) {
-      return c.json({ error: "Missing profileId" }, 400);
+      const profileId = c.req.param("profileId");
+      if (!profileId) {
+        return c.json({ error: "Missing profileId" }, 400);
+      }
+
+      await kv.del(authKey(profileId));
+      return c.json({ success: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
     }
-
-    await kv.del(authKey(profileId));
-    return c.json({ success: true });
   });
 
   app.post(`${prefix}/auth-codes/migrate`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
 
-    const { codes } = await c.req.json();
-    if (!Array.isArray(codes)) {
-      return c.json({ error: "codes must be an array" }, 400);
-    }
-
-    let migrated = 0;
-    for (const { profileId, plainCode } of codes) {
-      if (!profileId || !plainCode) continue;
-      const existing = await kv.get(authKey(profileId));
-      if (!existing || !existing.hash) {
-        const hash = await sha256(plainCode);
-        await kv.set(authKey(profileId), { hash });
-        migrated++;
+      const { codes } = await c.req.json();
+      if (!Array.isArray(codes)) {
+        return c.json({ error: "codes must be an array" }, 400);
       }
-    }
 
-    return c.json({ success: true, migrated });
+      let migrated = 0;
+      for (const { profileId, plainCode } of codes) {
+        if (!profileId || !plainCode) continue;
+        const existing = await kv.get(authKey(profileId));
+        if (!existing || !existing.hash) {
+          const hash = await sha256(plainCode);
+          await kv.set(authKey(profileId), { hash });
+          migrated++;
+        }
+      }
+
+      return c.json({ success: true, migrated });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
   });
 
   app.post(`${prefix}/profile-picture/upload`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
 
-    const { userId, imageData } = await c.req.json();
-    if (!userId || typeof userId !== "string") {
-      return c.json({ error: "Missing or invalid userId" }, 400);
-    }
-    if (!imageData || typeof imageData !== "string") {
-      return c.json({ error: "Missing or invalid imageData" }, 400);
-    }
-    if (!imageData.startsWith("data:image/")) {
-      return c.json({ error: "imageData must be a data:image/ URL" }, 400);
-    }
-    if (imageData.length > 200_000) {
-      return c.json({ error: "Image too large" }, 400);
-    }
+      const requesterId = await resolveSessionPlayerId(c);
+      const { userId, imageData } = await c.req.json();
+      if (!userId || typeof userId !== "string") {
+        return c.json({ error: "Missing or invalid userId" }, 400);
+      }
+      if (requesterId !== "dm" && requesterId !== userId) {
+        return c.json({ error: "Cannot change another player's profile picture" }, 403);
+      }
+      if (!imageData || typeof imageData !== "string") {
+        return c.json({ error: "Missing or invalid imageData" }, 400);
+      }
+      if (!imageData.startsWith("data:image/")) {
+        return c.json({ error: "imageData must be a data:image/ URL" }, 400);
+      }
+      if (imageData.length > 200_000) {
+        return c.json({ error: "Image too large" }, 400);
+      }
 
-    await kv.set(pfpKey(userId), { imageData, updatedAt: Date.now() });
-    return c.json({ success: true });
+      await kv.set(pfpKey(userId), { imageData, updatedAt: Date.now() });
+      return c.json({ success: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
+    }
   });
 
   app.get(`${prefix}/profile-picture/:userId`, async (c) => {
@@ -826,16 +1087,324 @@ function registerRoutes(prefix: string) {
   });
 
   app.delete(`${prefix}/profile-picture/:userId`, async (c) => {
-    const unauthorized = requireApiKey(c);
-    if (unauthorized) return unauthorized;
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
 
-    const userId = c.req.param("userId");
-    if (!userId) {
-      return c.json({ error: "Missing userId" }, 400);
+      const requesterId = await resolveSessionPlayerId(c);
+      const userId = c.req.param("userId");
+      if (!userId) {
+        return c.json({ error: "Missing userId" }, 400);
+      }
+      if (requesterId !== "dm" && requesterId !== userId) {
+        return c.json({ error: "Cannot change another player's profile picture" }, 403);
+      }
+
+      await kv.del(pfpKey(userId));
+      return c.json({ success: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
     }
+  });
 
-    await kv.del(pfpKey(userId));
-    return c.json({ success: true });
+  app.post(`${prefix}/music/upload`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+
+      const form = await c.req.formData();
+      const file = form.get("file");
+      const path = String(form.get("path") || "").trim();
+      if (!(file instanceof File)) return c.json({ error: "Audio file is required" }, 400);
+      if (!path.startsWith("combat/") || path.includes("..")) {
+        return c.json({ error: "Invalid music storage path" }, 400);
+      }
+      if (file.size <= 0 || file.size > MAX_COMBAT_MUSIC_BYTES) {
+        return c.json({ error: "Audio file must be between 1 byte and 50 MB" }, 400);
+      }
+      const contentType = String(file.type || "audio/mpeg").toLowerCase();
+      if (!ALLOWED_COMBAT_MUSIC_TYPES.has(contentType)) {
+        return c.json({ error: "Unsupported audio type" }, 400);
+      }
+
+      const storage = admin().storage.from(combatMusicBucket);
+      const { error } = await storage.upload(path, file, {
+        cacheControl: "31536000",
+        contentType,
+        upsert: false,
+      });
+      if (error) throw new Error(error.message);
+      const { data } = storage.getPublicUrl(path);
+      return c.json({
+        storageRef: {
+          kind: "supabase-storage",
+          bucket: combatMusicBucket,
+          path,
+          publicUrl: data.publicUrl,
+          contentType,
+          sizeBytes: file.size,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/music/delete`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+
+      const body = await c.req.json();
+      const bucket = String(body?.bucket || "");
+      const path = String(body?.path || "");
+      if (bucket !== combatMusicBucket || !path.startsWith("combat/") || path.includes("..")) {
+        return c.json({ error: "Invalid music storage reference" }, 400);
+      }
+      const { error } = await admin().storage.from(combatMusicBucket).remove([path]);
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/data/collection/:table`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      const table = c.req.param("table");
+      const meta = APP_COLLECTIONS[table];
+      if (!meta) return c.json({ error: "Unknown application collection" }, 404);
+      if (meta.read === "dm") requireDM(playerId);
+
+      const rows = await listCollectionRows(table);
+      return c.json({ rows });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/data/collection/:table/sync`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      const table = c.req.param("table");
+      const meta = APP_COLLECTIONS[table];
+      if (!meta) return c.json({ error: "Unknown application collection" }, 404);
+
+      const body = await c.req.json();
+      const rows = Array.isArray(body?.rows) ? body.rows : [];
+      const deleteIds = Array.isArray(body?.deleteIds) ? body.deleteIds : [];
+
+      if (table === "app_players" && playerId !== "dm") {
+        const incoming = rows.find((row: any) => String(row?.id || "") === playerId);
+        if (!incoming) {
+          return c.json({ error: "The current player's row is required" }, 400);
+        }
+
+        const supabase = admin();
+        const { data: currentRow, error } = await supabase
+          .from("app_players")
+          .select("data")
+          .eq("id", playerId)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!currentRow) return c.json({ error: "Player profile not found" }, 404);
+
+        const nextPlayer = { ...(currentRow.data ?? {}), id: playerId };
+        for (const field of PLAYER_COMBAT_EDITABLE_FIELDS) {
+          if (field in incoming) nextPlayer[field] = sanitizeStoredValue(incoming[field]);
+        }
+        const updatedAt = await syncCollectionRows("app_players", [nextPlayer], []);
+        return c.json({ ok: true, updatedAt });
+      }
+
+      requireWriteAccess(playerId, meta.write, playerId);
+      const filteredDeleteIds =
+        table === "app_players" ? deleteIds.filter((id: string) => id !== "dm") : deleteIds;
+      const updatedAt = await syncCollectionRows(table, rows, filteredDeleteIds);
+      return c.json({ ok: true, updatedAt });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/data/tags/:kind`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await resolveSessionPlayerId(c);
+
+      const kind = assertTagKind(c.req.param("kind"));
+      const rows = await listTagRows(kind);
+      return c.json({ rows });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/data/tags/:kind/sync`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+
+      const kind = assertTagKind(c.req.param("kind"));
+      const body = await c.req.json();
+      const rows = Array.isArray(body?.rows) ? body.rows : [];
+      const deleteIds = new Set(
+        (Array.isArray(body?.deleteIds) ? body.deleteIds : [])
+          .filter((id: unknown) => typeof id === "string")
+          .map((id: string) => `${kind}:${id}`),
+      );
+      const sanitizedRows = rows.map((row: any) => sanitizeStoredValue(row));
+      const supabase = admin();
+      const now = new Date().toISOString();
+
+      if (sanitizedRows.length > 0) {
+        const { error } = await supabase.from("app_tags").upsert(
+          sanitizedRows.map((row: any) => ({
+            id: `${kind}:${row.id}`,
+            kind,
+            data: row,
+            updated_at: now,
+          })),
+          { onConflict: "id" },
+        );
+        if (error) throw new Error(error.message);
+      }
+      if (deleteIds.size > 0) {
+        const { error } = await supabase
+          .from("app_tags")
+          .delete()
+          .in("id", Array.from(deleteIds));
+        if (error) throw new Error(error.message);
+      }
+
+      return c.json({ ok: true, updatedAt: now });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/data/doc/:table/:id`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await resolveSessionPlayerId(c);
+
+      const table = c.req.param("table");
+      if (!APP_SINGLETONS[table]) {
+        return c.json({ error: "Unknown application document" }, 404);
+      }
+      const row = await loadSingletonCollectionRow(table, c.req.param("id"));
+      return c.json(row);
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/data/doc/:table/:id`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      const table = c.req.param("table");
+      const meta = APP_SINGLETONS[table];
+      if (!meta) return c.json({ error: "Unknown application document" }, 404);
+      const id = c.req.param("id");
+      requireSingletonWriteAccess(playerId, table, id, meta.write);
+
+      const body = await c.req.json();
+      const data = sanitizeStoredValue(body?.data);
+      const updatedAt = new Date().toISOString();
+      const { error } = await admin().from(table).upsert(
+        { id, data, updated_at: updatedAt },
+        { onConflict: "id" },
+      );
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, updatedAt });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.delete(`${prefix}/data/doc/:table/:id`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      const table = c.req.param("table");
+      const meta = APP_SINGLETONS[table];
+      if (!meta) return c.json({ error: "Unknown application document" }, 404);
+      requireSingletonWriteAccess(playerId, table, c.req.param("id"), meta.write);
+
+      const { error } = await admin().from(table).delete().eq("id", c.req.param("id"));
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.get(`${prefix}/data/player-doc/:table/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const table = c.req.param("table");
+      const playerId = c.req.param("playerId");
+      if (!APP_PLAYER_DOCS.has(table)) {
+        return c.json({ error: "Unknown player document" }, 404);
+      }
+      requireWriteAccess(requesterId, "player-self", playerId);
+
+      const data = await loadPlayerScopedRow(table, playerId);
+      return c.json({ data: data.data, updatedAt: data.updatedAt });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
+  });
+
+  app.post(`${prefix}/data/player-doc/:table/:playerId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const requesterId = await resolveSessionPlayerId(c);
+      const table = c.req.param("table");
+      const playerId = c.req.param("playerId");
+      if (!APP_PLAYER_DOCS.has(table)) {
+        return c.json({ error: "Unknown player document" }, 404);
+      }
+      requireWriteAccess(requesterId, "player-self", playerId);
+
+      const body = await c.req.json();
+      const updatedAt = new Date().toISOString();
+      const { error } = await admin().from(table).upsert(
+        {
+          player_id: playerId,
+          data: sanitizeStoredValue(body?.data),
+          updated_at: updatedAt,
+        },
+        { onConflict: "player_id" },
+      );
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, updatedAt });
+    } catch (err) {
+      return c.json({ error: String(err) }, 403);
+    }
   });
 
   app.get(`${prefix}/player-state`, async (c) => {
@@ -912,7 +1481,7 @@ function registerRoutes(prefix: string) {
       if ("quickItems" in body) {
         writes.push(
           supabase.from("player_quick_items").upsert(
-            { player_id: playerId, data: body.quickItems, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.quickItems), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -921,7 +1490,7 @@ function registerRoutes(prefix: string) {
       if ("sourceUsage" in body) {
         writes.push(
           supabase.from("player_source_usage_log").upsert(
-            { player_id: playerId, data: body.sourceUsage, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.sourceUsage), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -930,7 +1499,7 @@ function registerRoutes(prefix: string) {
       if ("activityLog" in body) {
         writes.push(
           supabase.from("player_activity_log").upsert(
-            { player_id: playerId, data: body.activityLog, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.activityLog), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -939,7 +1508,7 @@ function registerRoutes(prefix: string) {
       if ("skillSettings" in body) {
         writes.push(
           supabase.from("player_skill_settings").upsert(
-            { player_id: playerId, data: body.skillSettings, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.skillSettings), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -948,7 +1517,7 @@ function registerRoutes(prefix: string) {
       if ("skillProficiencies" in body) {
         writes.push(
           supabase.from("player_skill_proficiencies").upsert(
-            { player_id: playerId, data: body.skillProficiencies, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.skillProficiencies), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -957,7 +1526,7 @@ function registerRoutes(prefix: string) {
       if ("equipmentSlots" in body) {
         writes.push(
           supabase.from("player_equipment_slots").upsert(
-            { player_id: playerId, data: body.equipmentSlots, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.equipmentSlots), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -966,7 +1535,7 @@ function registerRoutes(prefix: string) {
       if ("statusEffects" in body) {
         writes.push(
           supabase.from("player_status_effects").upsert(
-            { player_id: playerId, data: body.statusEffects, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.statusEffects), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -975,7 +1544,7 @@ function registerRoutes(prefix: string) {
       if ("levelCategories" in body) {
         writes.push(
           supabase.from("player_level_categories").upsert(
-            { player_id: playerId, data: body.levelCategories, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.levelCategories), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -988,7 +1557,7 @@ function registerRoutes(prefix: string) {
       if ("nodeUnlocks" in body) {
         writes.push(
           supabase.from("player_node_tree_unlocks").upsert(
-            { player_id: playerId, data: body.nodeUnlocks, updated_at: now },
+            { player_id: playerId, data: sanitizeStoredValue(body.nodeUnlocks), updated_at: now },
             { onConflict: "player_id" },
           ),
         );
@@ -1009,7 +1578,7 @@ function registerRoutes(prefix: string) {
           supabase.from("app_players").upsert(
             {
               id: playerId,
-              data: { ...currentPlayer, ...body.playerPatch },
+              data: sanitizeStoredValue({ ...currentPlayer, ...body.playerPatch }),
               updated_at: now,
             },
             { onConflict: "id" },
@@ -1025,7 +1594,7 @@ function registerRoutes(prefix: string) {
           supabase.from("app_items").upsert(
             {
               id: item.id,
-              data: item,
+              data: sanitizeStoredValue(item),
               updated_at: now,
             },
             { onConflict: "id" },
@@ -1067,6 +1636,18 @@ function registerRoutes(prefix: string) {
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 500);
+    }
+  });
+
+  app.get(`${prefix}/session/me`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+
+      const playerId = await resolveSessionPlayerId(c);
+      return c.json({ playerId, isDM: playerId === "dm" });
+    } catch (err) {
+      return c.json({ error: String(err) }, 401);
     }
   });
 
@@ -1126,7 +1707,7 @@ function registerRoutes(prefix: string) {
 
       const payload = deduped.map((row: any) => ({
         id: row.id,
-        data: { ...row, id: row.id },
+        data: sanitizeStoredValue({ ...row, id: row.id }),
         updated_at: now,
       }));
 
@@ -1176,7 +1757,7 @@ function registerRoutes(prefix: string) {
     const { error } = await supabase
       .from(table)
       .upsert(
-        { player_id: playerId, data: dataValue, updated_at: now },
+        { player_id: playerId, data: sanitizeStoredValue(dataValue), updated_at: now },
         { onConflict: "player_id" },
       );
 
@@ -1189,7 +1770,7 @@ function registerRoutes(prefix: string) {
     const { error } = await supabase
       .from(table)
       .upsert(
-        { id, data: { ...(dataValue ?? {}), id }, updated_at: now },
+        { id, data: sanitizeStoredValue({ ...(dataValue ?? {}), id }), updated_at: now },
         { onConflict: "id" },
       );
 
@@ -1658,7 +2239,7 @@ function registerRoutes(prefix: string) {
       const sites = Array.isArray(body?.sites) ? body.sites : null;
       if (!sites) return c.json({ error: "sites must be an array" }, 400);
 
-      await replaceCollectionRows("app_sites", sites);
+      await syncCollectionRows("app_sites", sites, body?.deleteIds);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -1681,7 +2262,11 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "customPanelStyles must be an array" }, 400);
       }
 
-      await replaceCollectionRows("app_custom_panel_styles", customPanelStyles);
+      await syncCollectionRows(
+        "app_custom_panel_styles",
+        customPanelStyles,
+        body?.deleteIds,
+      );
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -2124,7 +2709,11 @@ function registerRoutes(prefix: string) {
 
       const body = await c.req.json();
       const npcAccounts = Array.isArray(body?.npcAccounts) ? body.npcAccounts : [];
-      await replaceCollectionRows("community_npc_accounts", npcAccounts);
+      await syncCollectionRows(
+        "community_npc_accounts",
+        npcAccounts,
+        body?.deleteIds,
+      );
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -2291,7 +2880,7 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "players must be an array" }, 400);
       }
 
-      await replaceEntityRows("app_players", body.players);
+      await syncEntityRows("app_players", body.players, body?.deleteIds);
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -2390,7 +2979,11 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "players must be an array" }, 400);
       }
 
-      await replaceEntityRows("app_deleted_players", body.players);
+      await syncEntityRows(
+        "app_deleted_players",
+        body.players,
+        body?.deleteIds,
+      );
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -2425,8 +3018,27 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "images must be an array" }, 400);
       }
 
-      await kv.set(imageStorageKey, body.images);
-      return c.json({ ok: true });
+      const current = await kv.get(imageStorageKey);
+      const nextImages = new Map(
+        (Array.isArray(current) ? current : [])
+          .filter((image: any) => typeof image?.id === "string" && image.id.trim())
+          .map((image: any) => [image.id.trim(), image]),
+      );
+      const incomingIds = body.images
+        .map((image: any) => typeof image?.id === "string" ? image.id.trim() : "")
+        .filter(Boolean);
+      for (const id of explicitDeleteIds(body?.deleteIds, incomingIds)) {
+        nextImages.delete(id);
+      }
+      for (const image of body.images) {
+        const id = typeof image?.id === "string" ? image.id.trim() : "";
+        if (id) {
+          nextImages.set(id, sanitizeStoredValue({ ...image, id }));
+        }
+      }
+      const images = Array.from(nextImages.values());
+      await kv.set(imageStorageKey, images);
+      return c.json({ ok: true, images });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
     }
@@ -2474,7 +3086,7 @@ function registerRoutes(prefix: string) {
         const { error } = await supabase
           .from("player_level_categories")
           .upsert(
-            { player_id: body.playerId, data: body.levelCategories, updated_at: now },
+            { player_id: body.playerId, data: sanitizeStoredValue(body.levelCategories), updated_at: now },
             { onConflict: "player_id" },
           );
 
@@ -2503,7 +3115,12 @@ function registerRoutes(prefix: string) {
         return c.json({ error: `${meta.requestKey} must be an array` }, 400);
       }
 
-      await replaceCollectionRows(meta.table, rows, { revokeSessions: meta.revokeSessions });
+      await syncCollectionRows(
+        meta.table,
+        rows,
+        body?.deleteIds,
+        { revokeSessions: meta.revokeSessions },
+      );
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -2553,7 +3170,7 @@ function registerRoutes(prefix: string) {
       const { error } = await supabase
         .from("player_level_categories")
         .upsert(
-          { player_id: body.playerId, data: body.levelCategories, updated_at: now },
+          { player_id: body.playerId, data: sanitizeStoredValue(body.levelCategories), updated_at: now },
           { onConflict: "player_id" },
         );
 
@@ -2632,7 +3249,7 @@ function registerRoutes(prefix: string) {
       const body = await c.req.json();
       const tags = Array.isArray(body?.tags) ? body.tags : [];
 
-      await replaceTagRows(kind, tags);
+      await syncTagRows(kind, tags, body?.deleteIds);
       return c.json({ ok: true });
     } catch (err) {
       const message = String(err);
@@ -2641,38 +3258,6 @@ function registerRoutes(prefix: string) {
     }
   });
 
-  app.get(`${prefix}/dm/test`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const playerId = await resolveSessionPlayerId(c);
-      requireDM(playerId);
-
-      return c.json({ ok: true, dm: true });
-    } catch (err) {
-      return c.json({ error: String(err) }, 403);
-    }
-  });
-
-  app.get(`${prefix}/debug-kv`, async (c) => {
-    try {
-      const unauthorized = requireApiKey(c);
-      if (unauthorized) return unauthorized;
-
-      const testKey = "debug-test";
-      await kv.set(testKey, { ok: true, time: Date.now() });
-      const value = await kv.get(testKey);
-
-      return c.json({
-        success: true,
-        value,
-      });
-    } catch (err) {
-      console.log("DEBUG KV ERROR:", err);
-      return c.json({ error: String(err) }, 500);
-    }
-  });
 }
 
 registerRoutes("/make-server-8a5950b5");

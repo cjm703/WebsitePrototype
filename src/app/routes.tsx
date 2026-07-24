@@ -1,7 +1,8 @@
-﻿import React from "react";
+import React from "react";
 import { createBrowserRouter } from "react-router";
 import { RootLayout } from "./components/root-layout";
 import { LoginPage } from "./components/login-page";
+import { RequireDMRoute } from "./components/require-dm-route";
 
 const interfaceChildren = [
   { index: true, lazy: () => import("./components/intelli-interface").then(m => ({ Component: m.IntelliInterface })) },
@@ -13,18 +14,23 @@ const interfaceChildren = [
   { path: "combat", lazy: () => import("./components/combat-page").then(m => ({ Component: m.CombatPage })) },
   { path: "nexus-nomad", lazy: () => import("./components/nexus-nomad").then(m => ({ Component: m.NexusNomad })) },
   { path: "intelli-maps", lazy: () => import("./components/intelli-maps").then(m => ({ Component: m.IntelliMaps })) },
-  { path: "dm-area", lazy: () => import("./components/dm-area").then(m => ({ Component: m.DMArea })) },
   { path: "game", lazy: () => import("./components/game").then(m => ({ Component: m.Game })) },
   { path: "customization", lazy: () => import("./components/customization-page").then(m => ({ Component: m.CustomizationPage })) },
   { path: "community", lazy: () => import("./components/community-page").then(m => ({ Component: m.CommunityPage })) },
   { path: "commerce", lazy: () => import("./components/commerce-page").then(m => ({ Component: m.CommercePage })) },
   { path: "calendar", lazy: () => import("./components/calendar-page").then(m => ({ Component: m.CalendarPage })) },
-  { path: "wiki-studio", lazy: () => import("./components/wiki-studio").then(m => ({ Component: m.WikiStudio })) },
-  { path: "wiki-editor/new", lazy: () => import("./components/wiki-editor").then(m => ({ Component: m.WikiEditor })) },
-  { path: "wiki-editor/:id", lazy: () => import("./components/wiki-editor").then(m => ({ Component: m.WikiEditor })) },
-  { path: "wiki-graph", lazy: () => import("./components/wiki-graph").then(m => ({ Component: m.WikiGraph })) },
   { path: "session-log", lazy: () => import("./components/session-log").then(m => ({ Component: m.SessionLog })) },
   { path: "campaign-timeline", lazy: () => import("./components/campaign-timeline").then(m => ({ Component: m.CampaignTimeline })) },
+  {
+    Component: RequireDMRoute,
+    children: [
+      { path: "dm-area", lazy: () => import("./components/dm-area").then(m => ({ Component: m.DMArea })) },
+      { path: "wiki-studio", lazy: () => import("./components/wiki-studio").then(m => ({ Component: m.WikiStudio })) },
+      { path: "wiki-editor/new", lazy: () => import("./components/wiki-editor").then(m => ({ Component: m.WikiEditor })) },
+      { path: "wiki-editor/:id", lazy: () => import("./components/wiki-editor").then(m => ({ Component: m.WikiEditor })) },
+      { path: "wiki-graph", lazy: () => import("./components/wiki-graph").then(m => ({ Component: m.WikiGraph })) },
+    ],
+  },
 ];
 
 export const router = createBrowserRouter([

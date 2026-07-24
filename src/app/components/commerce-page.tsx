@@ -658,7 +658,7 @@ export function CommercePage() {
   const accent = theme.accentColor;
 
   // ── State ──
-  const [shops, setShops] = useState<Shop[]>([TEST_SHOP]);
+  const [shops, setShops] = useState<Shop[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
   const [nexusNomadState, setNexusNomadState] = useState<NexusNomadInventoryState>(defaultNexusNomadInventoryState);
@@ -706,7 +706,7 @@ export function CommercePage() {
 
         if (cancelled) return;
 
-        setShops(Array.isArray(shopsData) && shopsData.length > 0 ? shopsData : [TEST_SHOP]);
+        setShops(Array.isArray(shopsData) ? shopsData : []);
         setCart(Array.isArray(cartData) ? cartData : []);
         setLedger(Array.isArray(ledgerData) ? ledgerData : []);
         setNexusNomadState(normalizeNexusNomadInventoryState(nexusStateData));
@@ -843,6 +843,19 @@ export function CommercePage() {
     setDraftShop({});
     setSelectedShopId(shop.id);
   }, [draftShop]);
+
+  const addExampleShop = useCallback(() => {
+    const shopId = uid();
+    setShops((previous) => [
+      ...previous,
+      {
+        ...TEST_SHOP,
+        id: shopId,
+        createdAt: Date.now(),
+        items: TEST_SHOP.items.map((item) => ({ ...item, id: uid() })),
+      },
+    ]);
+  }, []);
 
   const updateShop = useCallback((shopId: string, updates: Partial<Shop>) => {
     setShops(prev => prev.map(s => s.id === shopId ? { ...s, ...updates } : s));
@@ -1934,7 +1947,7 @@ export function CommercePage() {
 
   // ═══════════════════════════════════════════
   // Ledger
-  // ���══════════════════════════════════════════
+  // ══════════════════════════════════════════
   const renderLedger = () => {
     const entries = isDM ? ledger : ledger.filter(e => e.buyerId === currentUserId);
     const sorted = [...entries].sort((a, b) => b.timestamp - a.timestamp);
@@ -2078,6 +2091,15 @@ export function CommercePage() {
             <div className="flex flex-col items-center justify-center py-20">
               <Store size={48} style={{ color: STEEL.border }} className="mb-3" />
               <p className="text-[14px] font-semibold" style={{ color: STEEL.textMuted }}>{isDM ? "Create your first shop." : "No shops available yet."}</p>
+              {isDM && (
+                <button
+                  onClick={addExampleShop}
+                  className={`mt-3 flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold ${retro.button}`}
+                  style={{ color: "#E0E4F0" }}
+                >
+                  <Sparkles size={12} /> Add Example Shop
+                </button>
+              )}
             </div>
           )}
 

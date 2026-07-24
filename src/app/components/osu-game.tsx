@@ -242,7 +242,7 @@ interface RingEffect {
   color: string;
 }
 
-// ─── Component ────�����────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────
 export function OsuGame({
   onBack,
   onScoreSave,
@@ -823,7 +823,7 @@ export function OsuGame({
     [onScoreSave]
   );
 
-  // ─── Mouse handlers ──���──────────────────────────────────
+  // ─── Mouse handlers ────────────────────────────────────
   const handleMouseDown = useCallback(
     (e: MouseEvent) => {
       e.preventDefault(); // prevent native drag
