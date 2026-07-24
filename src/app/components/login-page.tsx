@@ -11,6 +11,7 @@ import {
   buildSupabasePublicHeaders,
   supabaseFunctionBase,
 } from "@/lib/supabase-env";
+import { IntelliLoadingMark } from "./intelli-loading-mark";
 
 const DM_PROFILE: LoginProfile = {
   id: "dm",
@@ -63,10 +64,6 @@ function LoadingLogo() {
   return (
     <>
       <style>{`
-        @keyframes icorp-spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
         @keyframes icorp-pulse {
           0%, 100% { opacity: 0.85; }
           50% { opacity: 1; }
@@ -74,51 +71,7 @@ function LoadingLogo() {
       `}</style>
 
       <div className="flex flex-col items-center justify-center">
-        <div
-          className="relative"
-          style={{
-            width: 112,
-            height: 112,
-            filter: "drop-shadow(0 0 24px rgba(225, 196, 160, 0.18))",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              borderRadius: "9999px",
-              border: "4px solid #d7b186",
-              boxShadow: "0 0 0 2px rgba(86, 60, 34, 0.3) inset",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              inset: 16,
-              borderRadius: "9999px",
-              border: "4px solid #ead4b8",
-              boxShadow: "0 0 0 2px rgba(86, 60, 34, 0.25) inset",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#f3e6d3",
-              fontSize: 44,
-              fontWeight: 400,
-              lineHeight: 1,
-              fontFamily: "'Georgia', 'Times New Roman', serif",
-              animation: "icorp-spin 1.6s linear infinite",
-              textShadow: "0 0 12px rgba(255,255,255,0.08)",
-            }}
-          >
-            I
-          </div>
-        </div>
+        <IntelliLoadingMark />
 
         <div
           className="mt-6 text-[11px] tracking-[0.35em]"
