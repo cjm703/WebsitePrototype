@@ -968,20 +968,49 @@ export function InetPage({ publicMode = false }: { publicMode?: boolean }) {
             )}
             <div className="mb-3 flex flex-wrap gap-1.5">
               {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTabbedReferenceTabs((prev) => ({ ...prev, [block.id]: tab.id }))}
-                  className="rounded-md border px-2 py-1 text-[10px] hover:opacity-85"
-                  style={{
-                    borderColor: tab.id === activeTab?.id ? accentColor : `${borderTone}AA`,
-                    background: tab.id === activeTab?.id ? `${accentColor}22` : "rgba(255,255,255,0.035)",
-                    color: tab.id === activeTab?.id ? titleColor : bodyColor,
-                    fontFamily: font,
-                    fontWeight: tab.id === activeTab?.id ? 700 : 500,
-                  }}
-                >
-                  {tab.label || "Tab"}
-                </button>
+                <React.Fragment key={tab.id}>
+                  {tab.separatorBefore ? (
+                    <span
+                      aria-hidden="true"
+                      className="mx-1 shrink-0 self-center"
+                      style={{
+                        width: 5,
+                        height: 26,
+                        borderLeft: `2px solid ${accentColor}`,
+                        borderRight: `1px solid ${borderTone}`,
+                        boxShadow: `0 0 8px ${accentColor}55`,
+                      }}
+                    />
+                  ) : null}
+                  <button
+                    onClick={() => setActiveTabbedReferenceTabs((prev) => ({ ...prev, [block.id]: tab.id }))}
+                    className="relative rounded-md border px-2 py-1 text-[10px] hover:opacity-85"
+                    style={{
+                      borderColor: tab.id === activeTab?.id ? accentColor : `${borderTone}AA`,
+                      background: tab.id === activeTab?.id ? `${accentColor}22` : "rgba(255,255,255,0.035)",
+                      color: tab.id === activeTab?.id ? titleColor : bodyColor,
+                      fontFamily: font,
+                      fontWeight: tab.id === activeTab?.id ? 700 : 500,
+                    }}
+                    title={tab.locked ? `${tab.label || "Tab"} - locked tier` : undefined}
+                  >
+                    {tab.label || "Tab"}
+                    {tab.locked ? (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-1.5 -top-2 flex h-4 w-4 items-center justify-center rounded-full border"
+                        style={{
+                          borderColor: accentColor,
+                          background: backgroundTone,
+                          color: accentColor,
+                          boxShadow: `0 0 7px ${accentColor}66`,
+                        }}
+                      >
+                        <Lock size={9} strokeWidth={2.4} />
+                      </span>
+                    ) : null}
+                  </button>
+                </React.Fragment>
               ))}
             </div>
             {activeTab ? (

@@ -16,6 +16,9 @@ const combatPage = read("src/app/components/combat-page.tsx");
 const intelliMaps = read("src/app/components/intelli-maps.tsx");
 const supabaseClient = read("src/lib/supabaseClient.ts");
 const migration = read("supabase/migrations/20260723000000_secure_app_schema.sql");
+const wikiBlocks = read("src/lib/wiki-article-blocks.ts");
+const wikiEditor = read("src/app/components/wiki-editor.tsx");
+const inetPage = read("src/app/components/inet-page.tsx");
 parse(edge, { sourceType: "module", plugins: ["typescript"] });
 
 function routeBody(routeMarker, nextMarker) {
@@ -82,6 +85,18 @@ assert.match(supabaseClient, /channel\.state === "joining"/);
 assert.match(migration, /enable row level security/);
 assert.match(migration, /revoke all on table/);
 assert.match(migration, /drop policy if exists "combat_music_upload"/);
+assert.match(
+  wikiBlocks,
+  /locked:\s*tier\.id === "level-7" \|\| tier\.id === "level-8"/,
+);
+assert.match(
+  wikiBlocks,
+  /separatorBefore:\s*tier\.id === "level-7"/,
+);
+assert.match(wikiEditor, /tab\.separatorBefore/);
+assert.match(wikiEditor, /tab\.locked/);
+assert.match(inetPage, /tab\.separatorBefore/);
+assert.match(inetPage, /tab\.locked/);
 
 const removedUiDirectory = path.join(root, "src/app/components/ui");
 assert.equal(

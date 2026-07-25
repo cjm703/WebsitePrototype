@@ -149,6 +149,8 @@ export interface WikiTabbedReferenceTab {
   columns: string[];
   rows: WikiReferenceTableRow[];
   html?: string;
+  locked?: boolean;
+  separatorBefore?: boolean;
 }
 
 export interface WikiArticleBlock {
@@ -362,6 +364,8 @@ export function createMagicSpellTierTabs(): WikiTabbedReferenceTab[] {
         cells: ["[[Spell Article Name]]", "", "", "", "", ""],
       },
     ],
+    locked: tier.id === "level-7" || tier.id === "level-8",
+    separatorBefore: tier.id === "level-7",
   }));
 }
 
@@ -380,13 +384,18 @@ function normalizeTabbedReferenceTabs(tabs: Partial<WikiTabbedReferenceTab>[] | 
   return source.map((tab, index) => {
     const columns = Array.isArray(tab.columns) && tab.columns.length > 0 ? tab.columns : ["Name", "Level", "School", "Summary"];
     const rows = normalizeReferenceRows(tab.rows || [], columns.length);
+    const tabId = tab.id || `tab-${uid()}`;
+    const isMagicLevelSeven = /^magic-level-7-/.test(tabId);
+    const isLockedMagicTier = isMagicLevelSeven || /^magic-level-8-/.test(tabId);
     return {
-      id: tab.id || `tab-${uid()}`,
+      id: tabId,
       label: tab.label || `Tab ${index + 1}`,
       title: tab.title || tab.label || `Tab ${index + 1}`,
       columns,
       rows: rows.length > 0 ? rows : [{ id: `row-${uid()}`, cells: Array.from({ length: columns.length }, () => "") }],
       html: tab.html || "",
+      locked: typeof tab.locked === "boolean" ? tab.locked : isLockedMagicTier,
+      separatorBefore: typeof tab.separatorBefore === "boolean" ? tab.separatorBefore : isMagicLevelSeven,
     };
   });
 }
