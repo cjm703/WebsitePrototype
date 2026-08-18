@@ -23,9 +23,20 @@ class MemoryStorage {
 }
 
 const localStorage = new MemoryStorage();
+const sessionStorage = new MemoryStorage();
+let reloadCount = 0;
 globalThis.localStorage = localStorage;
 globalThis.window = {
   localStorage,
+  sessionStorage,
+  location: {
+    pathname: "/interface/game",
+    search: "",
+    hash: "",
+    reload() {
+      reloadCount += 1;
+    },
+  },
   dispatchEvent() {},
 };
 
@@ -185,11 +196,41 @@ async function testLegacyCollectionDeletionDiff() {
   );
 }
 
+async function testStaleChunkDetection() {
+  const lazyModule = await bundledModule("src/lib/lazy-module.ts");
+  assert.equal(
+    lazyModule.isStaleChunkError(
+      new TypeError("Failed to fetch dynamically imported module: https://example.test/assets/game-old.js"),
+    ),
+    true,
+  );
+  assert.equal(
+    lazyModule.isStaleChunkError(new Error("ChunkLoadError: Loading chunk game failed")),
+    true,
+  );
+  assert.equal(lazyModule.isStaleChunkError(new Error("Game data was invalid")), false);
+  assert.equal(
+    lazyModule.reloadOnceForStaleChunk(
+      new TypeError("Failed to fetch dynamically imported module: /assets/game-old.js"),
+    ),
+    true,
+  );
+  assert.equal(reloadCount, 1);
+  assert.equal(
+    lazyModule.reloadOnceForStaleChunk(
+      new TypeError("Failed to fetch dynamically imported module: /assets/game-old.js"),
+    ),
+    false,
+  );
+  assert.equal(reloadCount, 1);
+}
+
 try {
   await testAuthRequests();
   await testSessionValidation();
   await testCollectionDeletionDiff();
   await testLegacyCollectionDeletionDiff();
+  await testStaleChunkDetection();
   process.stdout.write("Runtime behavior checks passed.\n");
 } finally {
   await vite.close();

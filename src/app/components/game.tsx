@@ -3,14 +3,15 @@ import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_TEXT, S_ACCENT, S_GREEN, S_RED, S_ACCENT_HDR } from "./shared-styles";
 import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, type LucideIcon } from "lucide-react";
+import { importWithStaleChunkRecovery } from "@/lib/lazy-module";
 
-const SnakeGame = React.lazy(() => import("./snake-game").then(m => ({ default: m.SnakeGame })));
-const RunnerGame = React.lazy(() => import("./runner-game").then(m => ({ default: m.RunnerGame })));
-const PartyColor = React.lazy(() => import("./party-color").then(m => ({ default: m.PartyColor })));
-const OsuGame = React.lazy(() => import("./osu-game").then(m => ({ default: m.OsuGame })));
-const BossFightLauncher = React.lazy(() => import("./boss-fight-launcher").then(m => ({ default: m.BossFightLauncher })));
-const DoodleJumpGame = React.lazy(() => import("./doodle-jump-game").then(m => ({ default: m.DoodleJumpGame })));
-const ArcadeStore = React.lazy(() => import("./arcade-store").then(m => ({ default: m.ArcadeStore })));
+const SnakeGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./snake-game")).then((module) => ({ default: module.SnakeGame })));
+const RunnerGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./runner-game")).then((module) => ({ default: module.RunnerGame })));
+const PartyColor = React.lazy(() => importWithStaleChunkRecovery(() => import("./party-color")).then((module) => ({ default: module.PartyColor })));
+const OsuGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./osu-game")).then((module) => ({ default: module.OsuGame })));
+const BossFightLauncher = React.lazy(() => importWithStaleChunkRecovery(() => import("./boss-fight-launcher")).then((module) => ({ default: module.BossFightLauncher })));
+const DoodleJumpGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./doodle-jump-game")).then((module) => ({ default: module.DoodleJumpGame })));
+const ArcadeStore = React.lazy(() => importWithStaleChunkRecovery(() => import("./arcade-store")).then((module) => ({ default: module.ArcadeStore })));
 import {
   saveScore,
   getTopScores,
