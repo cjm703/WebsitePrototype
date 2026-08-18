@@ -27,13 +27,13 @@ export function buildSessionHeaders(includeJson = true): Record<string, string> 
   };
 }
 
-export async function sessionApiFetch(path: string, init: RequestInit = {}) {
+export async function sessionApiFetchAt(baseUrl: string, path: string, init: RequestInit = {}) {
   const sessionToken = safeGetItem("inet-session-token");
   if (!sessionToken) {
     throw new ApiRequestError("Missing player session token", 401);
   }
 
-  const response = await fetch(`${supabaseFunctionBase}${path}`, {
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
     ...init,
     headers: {
       ...buildSessionHeaders(init.body != null),
@@ -60,6 +60,10 @@ export async function sessionApiFetch(path: string, init: RequestInit = {}) {
   }
 
   return body;
+}
+
+export function sessionApiFetch(path: string, init: RequestInit = {}) {
+  return sessionApiFetchAt(supabaseFunctionBase, path, init);
 }
 
 export async function publicApiFetch(path: string, init: RequestInit = {}) {

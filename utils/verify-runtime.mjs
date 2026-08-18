@@ -225,12 +225,234 @@ async function testStaleChunkDetection() {
   assert.equal(reloadCount, 1);
 }
 
+async function testAdventurePrototypeEngine() {
+  const engine = await bundledModule("supabase/functions/_shared/adventure-prototype.ts");
+  let room = engine.createPrototypeRoom({
+    id: "room-1",
+    name: "Sync Test",
+    hostPlayerId: "dm",
+    members: [
+      { playerId: "player-1", displayName: "Player One" },
+      { playerId: "player-2", displayName: "Player Two" },
+    ],
+    now: "2026-08-18T00:00:00.000Z",
+  });
+
+  assert.equal(room.status, "lobby");
+  assert.equal(room.version, 1);
+  assert.equal(room.members.length, 2);
+  assert.equal(engine.canViewPrototypeRoom(room, "player-1"), true);
+  assert.equal(engine.canViewPrototypeRoom(room, "stranger"), false);
+
+  const joinAction = { id: "join-1", type: "join", expectedVersion: 1 };
+  let result = engine.resolvePrototypeAction(room, joinAction, "player-1", "2026-08-18T00:00:01.000Z");
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  room = result.room;
+  assert.equal(room.version, 2);
+  assert.ok(room.members.find((member) => member.playerId === "player-1").joinedAt);
+
+  result = engine.resolvePrototypeAction(room, joinAction, "player-1", "2026-08-18T00:00:02.000Z");
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, false);
+  assert.equal(result.room.version, 2);
+
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "start-player", type: "start", expectedVersion: room.version },
+    "player-1",
+    "2026-08-18T00:00:03.000Z",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "forbidden");
+
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "start-dm", type: "start", expectedVersion: room.version },
+    "dm",
+    "2026-08-18T00:00:04.000Z",
+  );
+  assert.equal(result.ok, true);
+  room = result.room;
+  assert.equal(room.status, "active");
+  assert.equal(room.units.some((unit) => unit.ownerId === "player-2"), false);
+  assert.equal(engine.getPrototypeActiveUnit(room).ownerId, "player-1");
+
+  const skipped = engine.resolvePrototypeAction(
+    room,
+    { id: "skip-dm", type: "skip_turn", expectedVersion: room.version },
+    "dm",
+    "2026-08-18T00:00:04.500Z",
+  );
+  assert.equal(skipped.ok, true);
+  assert.equal(engine.getPrototypeActiveUnit(skipped.room).ownerId, "dm");
+  const playerSkip = engine.resolvePrototypeAction(
+    room,
+    { id: "skip-player", type: "skip_turn", expectedVersion: room.version },
+    "player-1",
+    "2026-08-18T00:00:04.750Z",
+  );
+  assert.equal(playerSkip.ok, false);
+  assert.equal(playerSkip.code, "forbidden");
+
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "wrong-turn", type: "move", expectedVersion: room.version, payload: { position: { x: 6, y: 2 } } },
+    "dm",
+    "2026-08-18T00:00:05.000Z",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "forbidden");
+
+  const playerUnit = engine.getPrototypeUnitForActor(room, "player-1");
+  const reachable = engine.getPrototypeReachablePoints(room, playerUnit);
+  assert.equal(reachable.some((point) => point.x === 1 && point.y === 4), true);
+  const wallTestRoom = {
+    ...room,
+    units: room.units.map((unit) => unit.ownerId === "player-1"
+      ? { ...unit, position: { x: 3, y: 2 } }
+      : unit),
+  };
+  const wallReachable = engine.getPrototypeReachablePoints(
+    wallTestRoom,
+    engine.getPrototypeUnitForActor(wallTestRoom, "player-1"),
+  );
+  assert.equal(wallReachable.some((point) => point.x === 3 && point.y === 3), false);
+  assert.equal(wallReachable.some((point) => point.x === 3 && point.y === 4), false);
+
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "move-1", type: "move", expectedVersion: room.version, payload: { position: { x: 1, y: 4 } } },
+    "player-1",
+    "2026-08-18T00:00:06.000Z",
+  );
+  assert.equal(result.ok, true);
+  room = result.room;
+  assert.deepEqual(engine.getPrototypeUnitForActor(room, "player-1").position, { x: 1, y: 4 });
+  assert.equal(engine.getPrototypeUnitForActor(room, "player-1").moveRemaining, 1);
+
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "stale", type: "end_turn", expectedVersion: room.version - 1 },
+    "player-1",
+    "2026-08-18T00:00:07.000Z",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "conflict");
+
+  room = {
+    ...room,
+    version: 20,
+    activeTurnIndex: 0,
+    units: room.units.map((unit) => unit.ownerId === "player-1"
+      ? { ...unit, position: { x: 1, y: 1 }, moveRemaining: 3, actionTaken: false }
+      : { ...unit, position: { x: 1, y: 2 }, moveRemaining: 3, actionTaken: false }),
+  };
+
+  for (let attackIndex = 0; attackIndex < 4; attackIndex += 1) {
+    const dmUnit = engine.getPrototypeUnitForActor(room, "dm");
+    result = engine.resolvePrototypeAction(
+      room,
+      { id: `attack-${attackIndex}`, type: "attack", expectedVersion: room.version, payload: { targetUnitId: dmUnit.id } },
+      "player-1",
+      `2026-08-18T00:01:0${attackIndex}.000Z`,
+    );
+    assert.equal(result.ok, true);
+    room = result.room;
+    if (attackIndex < 3) {
+      result = engine.resolvePrototypeAction(
+        room,
+        { id: `repeat-${attackIndex}`, type: "attack", expectedVersion: room.version, payload: { targetUnitId: dmUnit.id } },
+        "player-1",
+        `2026-08-18T00:01:1${attackIndex}.000Z`,
+      );
+      assert.equal(result.ok, false);
+
+      result = engine.resolvePrototypeAction(
+        room,
+        { id: `end-player-${attackIndex}`, type: "end_turn", expectedVersion: room.version },
+        "player-1",
+        `2026-08-18T00:01:2${attackIndex}.000Z`,
+      );
+      assert.equal(result.ok, true);
+      room = result.room;
+      assert.equal(engine.getPrototypeActiveUnit(room).ownerId, "dm");
+
+      result = engine.resolvePrototypeAction(
+        room,
+        { id: `end-dm-${attackIndex}`, type: "end_turn", expectedVersion: room.version },
+        "dm",
+        `2026-08-18T00:01:3${attackIndex}.000Z`,
+      );
+      assert.equal(result.ok, true);
+      room = result.room;
+      assert.equal(engine.getPrototypeActiveUnit(room).ownerId, "player-1");
+    }
+  }
+
+  assert.equal(room.status, "completed");
+  assert.equal(room.winner, "players");
+  assert.equal(engine.getPrototypeUnitForActor(room, "dm").hp, 0);
+
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "close-player", type: "close", expectedVersion: room.version },
+    "player-1",
+    "2026-08-18T00:02:00.000Z",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "forbidden");
+  result = engine.resolvePrototypeAction(
+    room,
+    { id: "close-dm", type: "close", expectedVersion: room.version },
+    "dm",
+    "2026-08-18T00:02:01.000Z",
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.room.status, "closed");
+}
+
+async function testAdventurePrototypeApi() {
+  localStorage.setItem("inet-session-token", "player-session");
+  const requests = [];
+  globalThis.fetch = async (url, init = {}) => {
+    requests.push({ url: String(url), init });
+    return new Response(JSON.stringify({ room: { id: "room-1", version: 8 } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const api = await bundledModule("src/lib/adventure-prototype-api.ts");
+  await api.sendPrototypeAction({ id: "room-1", version: 7 }, "end_turn");
+  assert.equal(requests[0].url, "https://project.example.test/functions/v1/adventure-prototype/rooms/room-1/actions");
+  const body = JSON.parse(String(requests[0].init.body));
+  assert.equal(body.type, "end_turn");
+  assert.equal(body.expectedVersion, 7);
+  assert.equal("actorId" in body, false);
+  assert.equal(new Headers(requests[0].init.headers).get("X-Session-Token"), "player-session");
+
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({
+      error: "The room changed before this action was saved.",
+      code: "conflict",
+      room: { id: "room-1", version: 9 },
+    }),
+    { status: 409, headers: { "Content-Type": "application/json" } },
+  );
+  await assert.rejects(
+    () => api.sendPrototypeAction({ id: "room-1", version: 8 }, "end_turn"),
+    (error) => error?.status === 409 && error?.body?.room?.version === 9,
+  );
+}
+
 try {
   await testAuthRequests();
   await testSessionValidation();
   await testCollectionDeletionDiff();
   await testLegacyCollectionDeletionDiff();
   await testStaleChunkDetection();
+  await testAdventurePrototypeEngine();
+  await testAdventurePrototypeApi();
   process.stdout.write("Runtime behavior checks passed.\n");
 } finally {
   await vite.close();

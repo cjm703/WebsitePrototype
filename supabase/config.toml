@@ -1,2 +1,5 @@
 [functions.make-server-8a5950b5]
 verify_jwt = false
+
+[functions.adventure-prototype]
+verify_jwt = false
