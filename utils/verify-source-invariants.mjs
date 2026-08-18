@@ -12,6 +12,7 @@ const richEditor = read("src/app/components/rich-text-editor.tsx");
 const commerce = read("src/app/components/commerce-page.tsx");
 const initialData = read("src/app/components/initial-data.tsx");
 const dmArea = read("src/app/components/dm-area.tsx");
+const dmWikiSection = read("src/app/components/dm-wiki-section.tsx");
 const combatPage = read("src/app/components/combat-page.tsx");
 const intelliMaps = read("src/app/components/intelli-maps.tsx");
 const supabaseClient = read("src/lib/supabaseClient.ts");
@@ -77,6 +78,9 @@ assert.doesNotMatch(initialData, /missing = defaults\.filter/);
 
 assert.match(dmArea, /const DMCardManagerSection = lazy/);
 assert.doesNotMatch(dmArea, /import \{ DMCardManagerSection \}/);
+assert.match(dmWikiSection, /expandedFamilyArticleIds/);
+assert.match(dmWikiSection, /Boolean\(normalizedQuery\) \|\| expandedFamilyArticleIds\.has\(pageId\)/);
+assert.match(dmWikiSection, /aria-expanded=\{isExpanded\}/);
 assert.match(intelliMaps, /addEventListener\("wheel", handleWheel, \{ passive: false \}\)/);
 assert.doesNotMatch(intelliMaps, /onWheel=\{handleWheel\}/);
 assert.match(combatPage, /YOUTUBE_EMBED_HOST = "https:\/\/www\.youtube\.com"/);

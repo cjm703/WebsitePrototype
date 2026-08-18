@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   ArchiveRestore,
+  ChevronDown,
+  ChevronRight,
   CornerDownRight,
   Edit,
   FileText,
@@ -65,6 +67,8 @@ interface ArticleLibraryRow {
   depth: number;
   key: string;
   parentTitle?: string;
+  hasChildren: boolean;
+  isExpanded: boolean;
 }
 
 interface DeletedWikiSite {
@@ -95,6 +99,16 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
   const [status, setStatus] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortMode, setSortMode] = useState<ArticleLibrarySortMode>("families");
+  const [expandedFamilyArticleIds, setExpandedFamilyArticleIds] = useState<Set<string>>(() => new Set());
+
+  const toggleFamilyArticle = useCallback((articleId: string) => {
+    setExpandedFamilyArticleIds((current) => {
+      const next = new Set(current);
+      if (next.has(articleId)) next.delete(articleId);
+      else next.add(articleId);
+      return next;
+    });
+  }, []);
 
   const publishPages = useCallback((nextPages: WikiSiteSummary[]) => {
     setPages(nextPages);
@@ -129,7 +143,7 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
       return [...pages]
         .filter(matchesSearch)
         .sort(byTitle)
-        .map((page) => ({ page, depth: 0, key: page.id }));
+        .map((page) => ({ page, depth: 0, key: page.id, hasChildren: false, isExpanded: false }));
     }
 
     const pagesById = new Map(pages.map((page) => [page.id, page]));
@@ -164,28 +178,47 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
     }
 
     const rows: ArticleLibraryRow[] = [];
-    const encountered = new Set<string>();
     const visit = (pageId: string, depth: number, path: string[], parentTitle?: string) => {
       const page = pagesById.get(pageId);
       if (!page || path.includes(pageId) || !visibleIds.has(pageId)) return;
       const nextPath = [...path, pageId];
-      rows.push({ page, depth, parentTitle, key: nextPath.join(">") });
-      encountered.add(pageId);
-      [...(childrenByParent.get(pageId) || [])]
+      const children = [...(childrenByParent.get(pageId) || [])]
         .map((childId) => pagesById.get(childId))
         .filter((child): child is WikiSiteSummary => Boolean(child))
-        .sort(byTitle)
-        .forEach((child) => visit(child.id, depth + 1, nextPath, page.title || "Untitled Article"));
+        .filter((child) => visibleIds.has(child.id))
+        .sort(byTitle);
+      const hasChildren = children.length > 0;
+      const isExpanded = Boolean(normalizedQuery) || expandedFamilyArticleIds.has(pageId);
+      rows.push({ page, depth, parentTitle, key: nextPath.join(">"), hasChildren, isExpanded });
+      if (!isExpanded) return;
+      children.forEach((child) => visit(child.id, depth + 1, nextPath, page.title || "Untitled Article"));
+    };
+
+    const coveredIds = new Set<string>();
+    const markCovered = (pageId: string, path: string[]) => {
+      if (coveredIds.has(pageId) || path.includes(pageId) || !visibleIds.has(pageId)) return;
+      coveredIds.add(pageId);
+      const nextPath = [...path, pageId];
+      (childrenByParent.get(pageId) || []).forEach((childId) => markCovered(childId, nextPath));
     };
 
     const roots = pages
       .filter((page) => (parentsByChild.get(page.id)?.size || 0) === 0)
       .filter((page) => visibleIds.has(page.id))
       .sort(byTitle);
-    roots.forEach((root) => visit(root.id, 0, []));
-    pages.filter((page) => visibleIds.has(page.id) && !encountered.has(page.id)).sort(byTitle).forEach((page) => visit(page.id, 0, []));
+    roots.forEach((root) => {
+      markCovered(root.id, []);
+      visit(root.id, 0, []);
+    });
+    pages
+      .filter((page) => visibleIds.has(page.id) && !coveredIds.has(page.id))
+      .sort(byTitle)
+      .forEach((page) => {
+        markCovered(page.id, []);
+        visit(page.id, 0, []);
+      });
     return rows;
-  }, [pages, searchQuery, sortMode]);
+  }, [expandedFamilyArticleIds, pages, searchQuery, sortMode]);
 
   async function removePage(page: WikiSiteSummary) {
     const confirmed = window.confirm(
@@ -306,11 +339,27 @@ export function DMWikiSection({ onPagesChange }: DMWikiSectionProps) {
               ? <button onClick={() => navigate("/interface/wiki-editor/new")} className={`${retro.button} mt-3 px-4 py-2 text-[11px]`} style={S_ACCENT}>Create the first article</button>
               : <button onClick={() => setSearchQuery("")} className={`${retro.button} mt-3 px-4 py-2 text-[11px]`} style={S_ACCENT}>Clear search</button>}
           </div>
-        ) : libraryRows.map(({ page, depth, key, parentTitle }) => (
+        ) : libraryRows.map(({ page, depth, key, parentTitle, hasChildren, isExpanded }) => (
           <div key={key} className="grid grid-cols-12 gap-2 px-3 py-2.5 items-center hover:bg-[#0A0A30] transition-colors cursor-pointer" style={DM_BORDER_B_DARK} onClick={() => navigate(`/interface/wiki-editor/${page.id}`)}>
             <div className="col-span-4 min-w-0">
               <div className="min-w-0" style={{ paddingLeft: sortMode === "families" ? Math.min(depth, 6) * 18 : 0 }}>
                 <div className="flex items-center gap-1.5 min-w-0">
+                  {sortMode === "families" && (hasChildren ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleFamilyArticle(page.id);
+                      }}
+                      className="flex h-5 w-5 shrink-0 items-center justify-center border transition-colors hover:bg-[#172A4B]"
+                      style={{ borderColor: "#29466D", color: "#9BBEFF", background: "#0A1730" }}
+                      aria-label={(isExpanded ? "Collapse " : "Expand ") + (page.title || "Untitled Article")}
+                      aria-expanded={isExpanded}
+                      title={isExpanded ? "Collapse child articles" : "Expand child articles"}
+                    >
+                      {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                  ) : <span className="h-5 w-5 shrink-0" aria-hidden="true" />)}
                   {sortMode === "families" && depth > 0 && <CornerDownRight size={11} className="shrink-0" style={S_DIM} />}
                   <div className="truncate text-[12px] font-semibold" style={DM_PAGE_TITLE}>{page.title || "Untitled Article"}</div>
                 </div>
