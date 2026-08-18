@@ -8,6 +8,7 @@ import { removeSupabaseChannelSafely, supabase } from "./supabaseClient";
 import { supabaseUrl } from "./supabase-env";
 
 export type PrototypeProfile = { id: string; name: string };
+export type PrototypeBot = { id: string; name: string; createdAt: string; updatedAt: string };
 export type PrototypeConnectionState = "connecting" | "live" | "polling" | "offline";
 const PROTOTYPE_API_BASE = `${supabaseUrl}/functions/v1/adventure-prototype`;
 
@@ -20,6 +21,23 @@ export async function listPrototypeProfiles() {
   return (Array.isArray(body?.profiles) ? body.profiles : []) as PrototypeProfile[];
 }
 
+export async function listPrototypeBots() {
+  const body = await prototypeApiFetch("/bots", { method: "GET" });
+  return (Array.isArray(body?.bots) ? body.bots : []) as PrototypeBot[];
+}
+
+export async function createPrototypeBot(name: string) {
+  const body = await prototypeApiFetch("/bots", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  return body.bot as PrototypeBot;
+}
+
+export async function deletePrototypeBot(botId: string) {
+  await prototypeApiFetch(`/bots/${encodeURIComponent(botId)}`, { method: "DELETE" });
+}
+
 export async function listPrototypeRooms() {
   const body = await prototypeApiFetch("/rooms", { method: "GET" });
   return (Array.isArray(body?.rooms) ? body.rooms : []) as PrototypeRoom[];
@@ -30,7 +48,7 @@ export async function loadPrototypeRoom(roomId: string) {
   return body.room as PrototypeRoom;
 }
 
-export async function createAdventurePrototypeRoom(input: { name: string; invitedPlayerIds: string[] }) {
+export async function createAdventurePrototypeRoom(input: { name: string; invitedPlayerIds: string[]; botIds: string[] }) {
   const body = await prototypeApiFetch("/rooms", {
     method: "POST",
     body: JSON.stringify(input),

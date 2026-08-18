@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
+  Bot,
   Check,
   Crosshair,
   DoorClosed,
@@ -12,6 +13,7 @@ import {
   Shield,
   SkipForward,
   Swords,
+  Trash2,
   UserPlus,
   Users,
   Wifi,
@@ -20,15 +22,20 @@ import {
 } from "lucide-react";
 import {
   createAdventurePrototypeRoom,
+  createPrototypeBot,
+  deletePrototypeBot,
+  listPrototypeBots,
   listPrototypeProfiles,
   listPrototypeRooms,
   sendPrototypeAction,
   subscribePrototypeRoom,
   type PrototypeConnectionState,
+  type PrototypeBot,
   type PrototypeProfile,
   type PrototypeRoom,
 } from "@/lib/adventure-prototype-api";
 import {
+  canControlPrototypeUnit,
   getPrototypeActiveUnit,
   getPrototypeReachablePoints,
 } from "../../../supabase/functions/_shared/adventure-prototype";
@@ -70,6 +77,7 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
   const { playerId, isDM } = useInterfaceSession();
   const [rooms, setRooms] = useState<PrototypeRoom[]>([]);
   const [profiles, setProfiles] = useState<PrototypeProfile[]>([]);
+  const [bots, setBots] = useState<PrototypeBot[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [room, setRoom] = useState<PrototypeRoom | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,16 +87,22 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
   const [connection, setConnection] = useState<PrototypeConnectionState>("connecting");
   const [roomName, setRoomName] = useState("Prototype Encounter");
   const [invitedIds, setInvitedIds] = useState<string[]>([]);
+  const [selectedBotIds, setSelectedBotIds] = useState<string[]>([]);
+  const [botName, setBotName] = useState("");
+  const [botBusy, setBotBusy] = useState(false);
+  const [deletingBotId, setDeletingBotId] = useState<string | null>(null);
   const [mode, setMode] = useState<BoardMode>("move");
 
   const refreshOverview = useCallback(async () => {
     try {
-      const [nextRooms, nextProfiles] = await Promise.all([
+      const [nextRooms, nextProfiles, nextBots] = await Promise.all([
         listPrototypeRooms(),
         isDM ? listPrototypeProfiles() : Promise.resolve([]),
+        isDM ? listPrototypeBots() : Promise.resolve([]),
       ]);
       setRooms(nextRooms);
       setProfiles(nextProfiles);
+      setBots(nextBots);
       setError(null);
       if (!isDM && !selectedRoomId && nextRooms.length === 1) setSelectedRoomId(nextRooms[0].id);
     } catch (nextError) {
@@ -129,20 +143,60 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
   }, [selectedRoomId]);
 
   const createRoom = async () => {
-    if (!isDM || invitedIds.length === 0) return;
+    if (!isDM || invitedIds.length + selectedBotIds.length === 0) return;
     setCreating(true);
     setError(null);
     try {
-      const nextRoom = await createAdventurePrototypeRoom({ name: roomName, invitedPlayerIds: invitedIds });
+      const nextRoom = await createAdventurePrototypeRoom({
+        name: roomName,
+        invitedPlayerIds: invitedIds,
+        botIds: selectedBotIds,
+      });
       setRooms((current) => [nextRoom, ...current.filter((entry) => entry.id !== nextRoom.id)]);
       setSelectedRoomId(nextRoom.id);
       setRoom(nextRoom);
       setInvitedIds([]);
+      setSelectedBotIds([]);
       setRoomName("Prototype Encounter");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Could not create the room.");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const addBot = async () => {
+    const name = botName.trim();
+    if (!isDM || !name || botBusy) return;
+    setBotBusy(true);
+    setError(null);
+    try {
+      const bot = await createPrototypeBot(name);
+      setBots((current) => [bot, ...current]);
+      if (invitedIds.length + selectedBotIds.length < 6) {
+        setSelectedBotIds((current) => [bot.id, ...current]);
+      }
+      setBotName("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not create the bot profile.");
+    } finally {
+      setBotBusy(false);
+    }
+  };
+
+  const removeBot = async (bot: PrototypeBot) => {
+    if (!isDM || deletingBotId) return;
+    if (!window.confirm(`Delete bot profile "${bot.name}"? Existing rooms will keep their saved copy.`)) return;
+    setDeletingBotId(bot.id);
+    setError(null);
+    try {
+      await deletePrototypeBot(bot.id);
+      setBots((current) => current.filter((entry) => entry.id !== bot.id));
+      setSelectedBotIds((current) => current.filter((id) => id !== bot.id));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Could not delete the bot profile.");
+    } finally {
+      setDeletingBotId(null);
     }
   };
 
@@ -167,8 +221,10 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
   }, [actionPending, room]);
 
   const activeUnit = room ? getPrototypeActiveUnit(room) : null;
-  const myUnit = room?.units.find((unit) => unit.ownerId === playerId) || null;
-  const isMyTurn = room?.status === "active" && activeUnit?.ownerId === playerId;
+  const isMyTurn = room?.status === "active" && Boolean(activeUnit && canControlPrototypeUnit(activeUnit, playerId));
+  const myUnit = isMyTurn
+    ? activeUnit
+    : room?.units.find((unit) => unit.ownerId === playerId) || null;
   const myMember = room?.members.find((member) => member.playerId === playerId) || null;
   const reachable = useMemo(() => {
     if (!room || !activeUnit || !isMyTurn) return new Set<string>();
@@ -188,6 +244,7 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
   };
 
   const ConnectionIcon = connectionView(connection).Icon;
+  const selectedSlotCount = invitedIds.length + selectedBotIds.length;
 
   return (
     <div className="min-h-[620px]" style={{ color: "#C8D6F4" }}>
@@ -258,7 +315,7 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
               <section className="mx-auto max-w-2xl" style={PANEL}>
                 <div className="border-b border-[#23295A] px-5 py-4">
                   <div className="flex items-center gap-2 text-[15px] font-bold" style={S_TEXT}><Plus size={16} style={S_ACCENT} /> Create Prototype Room</div>
-                  <div className="mt-1 text-[10px]" style={S_DIM}>Invite profiles now. Players enter from their own Arcade invitation panel.</div>
+                  <div className="mt-1 text-[10px]" style={S_DIM}>Build a test party from invited profiles and reusable DM-controlled bots.</div>
                 </div>
                 <div className="space-y-5 p-5">
                   <label className="block text-[10px]" style={S_MUTED}>
@@ -272,7 +329,7 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
                   </label>
                   <div>
                     <div className="mb-2 flex items-center justify-between text-[10px]" style={S_MUTED}>
-                      <span>INVITED PLAYERS</span><span>{invitedIds.length}/6</span>
+                      <span>INVITED PLAYERS</span><span>{selectedSlotCount}/6 SLOTS</span>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {profiles.map((profile) => {
@@ -281,7 +338,9 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
                           <button
                             key={profile.id}
                             type="button"
-                            onClick={() => setInvitedIds((current) => selected ? current.filter((id) => id !== profile.id) : current.length < 6 ? [...current, profile.id] : current)}
+                            onClick={() => setInvitedIds((current) => selected
+                              ? current.filter((id) => id !== profile.id)
+                              : current.length + selectedBotIds.length < 6 ? [...current, profile.id] : current)}
                             className="flex items-center justify-between border px-3 py-2 text-left text-[11px]"
                             style={{ borderColor: selected ? "#3E9B70" : "#252D5B", background: selected ? "#0C2A20" : "#070A20", color: selected ? "#7DE5B2" : "#A6B2D4" }}
                           >
@@ -292,10 +351,73 @@ export function AdventurePrototype({ onBack }: { onBack: () => void }) {
                     </div>
                     {profiles.length === 0 && <div className="border border-[#252D5B] p-3 text-[10px]" style={S_DIM}>No player profiles are available.</div>}
                   </div>
+                  <div>
+                    <div className="mb-2 flex items-center justify-between text-[10px]" style={S_MUTED}>
+                      <span className="flex items-center gap-1.5"><Bot size={12} /> BOT PLAYERS</span>
+                      <span>{selectedBotIds.length} SELECTED</span>
+                    </div>
+                    <div className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                      <input
+                        value={botName}
+                        onChange={(event) => setBotName(event.target.value.slice(0, 40))}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void addBot();
+                          }
+                        }}
+                        placeholder="New bot name"
+                        aria-label="New bot name"
+                        className="min-w-0 border border-[#2B356B] bg-[#05081C] px-3 py-2 text-[11px] outline-none focus:border-[#4F8DFF]"
+                        style={S_TEXT}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void addBot()}
+                        disabled={!botName.trim() || botBusy}
+                        className={`${retro.button} flex min-w-24 items-center justify-center gap-2 px-3 text-[10px] disabled:opacity-40`}
+                        style={S_ACCENT}
+                      >
+                        {botBusy ? <LoaderCircle size={12} className="animate-spin" /> : <Plus size={12} />} Add Bot
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {bots.map((bot) => {
+                        const selected = selectedBotIds.includes(bot.id);
+                        return (
+                          <div key={bot.id} className="grid grid-cols-[minmax(0,1fr)_auto] border" style={{ borderColor: selected ? "#A87835" : "#252D5B", background: selected ? "#2B210E" : "#070A20" }}>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedBotIds((current) => selected
+                                ? current.filter((id) => id !== bot.id)
+                                : current.length + invitedIds.length < 6 ? [...current, bot.id] : current)}
+                              className="flex min-w-0 items-center justify-between gap-2 px-3 py-2 text-left text-[11px]"
+                              style={{ color: selected ? "#FFD58A" : "#A6B2D4" }}
+                            >
+                              <span className="flex min-w-0 items-center gap-2"><Bot size={13} className="shrink-0" /><span className="truncate">{bot.name}</span></span>
+                              {selected && <Check size={13} className="shrink-0" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void removeBot(bot)}
+                              disabled={deletingBotId === bot.id}
+                              title={`Delete ${bot.name}`}
+                              aria-label={`Delete bot ${bot.name}`}
+                              className="border-l border-[#252D5B] px-2 disabled:opacity-40"
+                              style={S_RED}
+                            >
+                              {deletingBotId === bot.id ? <LoaderCircle size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {bots.length === 0 && <div className="border border-[#252D5B] p-3 text-[10px]" style={S_DIM}>No bot players have been created.</div>}
+                  </div>
                   <button
                     type="button"
                     onClick={() => void createRoom()}
-                    disabled={creating || invitedIds.length === 0}
+                    disabled={creating || selectedSlotCount === 0}
                     className={`${retro.button} flex w-full items-center justify-center gap-2 py-2.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-40`}
                     style={S_GREEN}
                   >
@@ -362,7 +484,7 @@ function RoomView(props: {
             <h2 className="truncate text-[18px] font-bold" style={S_TEXT}>{room.name}</h2>
             <span className="border px-2 py-0.5 text-[9px]" style={{ borderColor: statusColor(room.status), color: statusColor(room.status) }}>{room.status.toUpperCase()}</span>
           </div>
-          <div className="mt-1 text-[10px]" style={S_DIM}>Round {room.round} | Version {room.version} | {room.members.length} invited</div>
+          <div className="mt-1 text-[10px]" style={S_DIM}>Round {room.round} | Version {room.version} | {room.members.length} party slot{room.members.length === 1 ? "" : "s"}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {room.status === "lobby" && !props.isDM && !props.myMemberJoined && (
@@ -396,11 +518,19 @@ function RoomView(props: {
               {room.members.map((member) => (
                 <div key={member.playerId} className="flex items-center justify-between gap-3 border border-[#222A56] bg-[#070A20] px-3 py-3">
                   <div className="min-w-0">
-                    <div className="truncate text-[11px]" style={S_TEXT}>{member.displayName}</div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="truncate text-[11px]" style={S_TEXT}>{member.displayName}</div>
+                      {member.kind === "bot" && (
+                        <span className="flex shrink-0 items-center gap-1 border border-[#8B642E] bg-[#2B210E] px-1.5 py-0.5 text-[8px]" style={S_WARN}>
+                          <Bot size={9} /> BOT
+                        </span>
+                      )}
+                    </div>
                     {member.playerId === props.playerId && <div className="mt-1 text-[8px]" style={S_ACCENT}>THIS PROFILE</div>}
+                    {member.kind === "bot" && <div className="mt-1 text-[8px]" style={S_DIM}>DM CONTROLLED</div>}
                   </div>
                   <span className="flex items-center gap-1 text-[9px]" style={member.joinedAt ? S_GREEN : S_DIM}>
-                    {member.joinedAt ? <Check size={11} /> : <LoaderCircle size={11} />} {member.joinedAt ? "JOINED" : "INVITED"}
+                    {member.joinedAt ? <Check size={11} /> : <LoaderCircle size={11} />} {member.kind === "bot" ? "READY" : member.joinedAt ? "JOINED" : "INVITED"}
                   </span>
                 </div>
               ))}
@@ -413,6 +543,7 @@ function RoomView(props: {
               <div>Move up to 3 spaces per turn.</div>
               <div>Basic attacks deal 3 damage at adjacent range.</div>
               <div>The player team acts against the DM Unit.</div>
+              <div>Bot turns are played by the DM and follow the same rules.</div>
             </div>
           </section>
         </div>
@@ -463,9 +594,9 @@ function RoomView(props: {
                       <div
                         className="flex h-[72%] w-[72%] max-h-12 max-w-12 items-center justify-center border text-[12px] font-bold"
                         style={{
-                          borderColor: unit.team === "dm" ? "#F47A91" : "#79B8FF",
-                          background: unit.team === "dm" ? "#481528" : "#112E58",
-                          color: unit.team === "dm" ? "#FFB0BE" : "#B9D9FF",
+                          borderColor: unit.team === "dm" ? "#F47A91" : unit.isBot ? "#D7A24A" : "#79B8FF",
+                          background: unit.team === "dm" ? "#481528" : unit.isBot ? "#3B2A0D" : "#112E58",
+                          color: unit.team === "dm" ? "#FFB0BE" : unit.isBot ? "#FFE0A3" : "#B9D9FF",
                         }}
                       >
                         {unit.team === "dm" ? "DM" : unit.name.slice(0, 2).toUpperCase()}
@@ -498,10 +629,13 @@ function RoomView(props: {
                   return (
                     <div key={unit.id} className="border border-[#202753] bg-[#070A20] p-2">
                       <div className="mb-1 flex items-center justify-between gap-2 text-[10px]">
-                        <span className="truncate" style={unit.team === "dm" ? S_RED : S_TEXT}>{unit.name}{unit.ownerId === props.playerId ? " (You)" : ""}</span>
+                        <span className="flex min-w-0 items-center gap-1.5 truncate" style={unit.team === "dm" ? S_RED : S_TEXT}>
+                          {unit.isBot && <Bot size={10} className="shrink-0" style={S_WARN} />}
+                          <span className="truncate">{unit.name}{unit.ownerId === props.playerId ? " (You)" : unit.isBot && props.isDM ? " (DM Bot)" : ""}</span>
+                        </span>
                         <span style={unit.hp > 0 ? S_GREEN : S_RED}>{unit.hp}/{unit.maxHp}</span>
                       </div>
-                      <div className="h-1.5 overflow-hidden bg-[#171B38]"><div className="h-full" style={{ width: `${hpPercent}%`, background: unit.team === "dm" ? "#D75D77" : "#4F8DFF" }} /></div>
+                      <div className="h-1.5 overflow-hidden bg-[#171B38]"><div className="h-full" style={{ width: `${hpPercent}%`, background: unit.team === "dm" ? "#D75D77" : unit.isBot ? "#D7A24A" : "#4F8DFF" }} /></div>
                     </div>
                   );
                 })}

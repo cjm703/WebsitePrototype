@@ -28,7 +28,7 @@ app.use("*", logger(console.log));
 app.use("/*", cors({
   origin: "*",
   allowHeaders: ["Content-Type", "Authorization", "apikey", "X-Session-Token"],
-  allowMethods: ["GET", "POST", "OPTIONS"],
+  allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
   exposeHeaders: ["Content-Length"],
   maxAge: 600,
 }));
@@ -156,6 +156,70 @@ function authFailureStatus(message: string): 401 | 403 | 500 {
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => c.json({ status: "ok" }));
 
+  app.get(`${prefix}/bots`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      const { data, error } = await admin()
+        .from("adventure_prototype_bots")
+        .select("id, name, created_at, updated_at")
+        .order("updated_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      return c.json({ bots: (data ?? []).map((row: any) => ({
+        id: String(row.id),
+        name: String(row.name),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      })) });
+    } catch (error) {
+      const message = String(error);
+      return c.json({ error: message }, authFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/bots`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await requireDMSession(c);
+      const body = await c.req.json();
+      const name = typeof body?.name === "string"
+        ? body.name.trim().replace(/\s+/g, " ").slice(0, 40)
+        : "";
+      if (!name) return c.json({ error: "Give the bot a name." }, 400);
+      const now = new Date().toISOString();
+      const bot = { id: crypto.randomUUID(), name, created_by: playerId, created_at: now, updated_at: now };
+      const { error } = await admin().from("adventure_prototype_bots").insert(bot);
+      if (error) throw new Error(error.message);
+      return c.json({ bot: { id: bot.id, name, createdAt: now, updatedAt: now } }, 201);
+    } catch (error) {
+      const message = String(error);
+      return c.json({ error: message }, authFailureStatus(message));
+    }
+  });
+
+  app.delete(`${prefix}/bots/:botId`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await requireDMSession(c);
+      const { data, error } = await admin()
+        .from("adventure_prototype_bots")
+        .delete()
+        .eq("id", c.req.param("botId"))
+        .eq("created_by", playerId)
+        .select("id")
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data) return c.json({ error: "Bot profile not found." }, 404);
+      return c.json({ ok: true });
+    } catch (error) {
+      const message = String(error);
+      return c.json({ error: message }, authFailureStatus(message));
+    }
+  });
+
   app.get(`${prefix}/profiles`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
@@ -209,16 +273,34 @@ function registerRoutes(prefix: string) {
         (Array.isArray(body?.invitedPlayerIds) ? body.invitedPlayerIds : [])
           .map((value: unknown) => typeof value === "string" ? value.trim() : "")
           .filter((value: string) => value && value !== "dm"),
-      )).slice(0, PROTOTYPE_MAX_PLAYERS) as string[];
-      if (invitedPlayerIds.length === 0) return c.json({ error: "Invite at least one player." }, 400);
+      )) as string[];
+      const botIds = Array.from(new Set(
+        (Array.isArray(body?.botIds) ? body.botIds : [])
+          .map((value: unknown) => typeof value === "string" ? value.trim() : "")
+          .filter(Boolean),
+      )) as string[];
+      if (invitedPlayerIds.length + botIds.length === 0) {
+        return c.json({ error: "Invite a player or add a bot." }, 400);
+      }
+      if (invitedPlayerIds.length + botIds.length > PROTOTYPE_MAX_PLAYERS) {
+        return c.json({ error: `Rooms support up to ${PROTOTYPE_MAX_PLAYERS} player slots.` }, 400);
+      }
 
-      const { data: playerRows, error: playerError } = await admin()
-        .from("app_players")
-        .select("id, data")
-        .in("id", invitedPlayerIds);
+      const playerQuery = admin().from("app_players").select("id, data");
+      const { data: playerRows, error: playerError } = invitedPlayerIds.length > 0
+        ? await playerQuery.in("id", invitedPlayerIds)
+        : { data: [], error: null };
       if (playerError) throw new Error(playerError.message);
       if ((playerRows ?? []).length !== invitedPlayerIds.length) {
         return c.json({ error: "One or more invited profiles no longer exist." }, 400);
+      }
+      const botQuery = admin().from("adventure_prototype_bots").select("id, name").eq("created_by", hostPlayerId);
+      const { data: botRows, error: botError } = botIds.length > 0
+        ? await botQuery.in("id", botIds)
+        : { data: [], error: null };
+      if (botError) throw new Error(botError.message);
+      if ((botRows ?? []).length !== botIds.length) {
+        return c.json({ error: "One or more bot profiles no longer exist." }, 400);
       }
       const profileById = new Map<string, any>(
         (playerRows ?? []).map((row: any): [string, any] => [String(row.id), row]),
@@ -228,10 +310,19 @@ function registerRoutes(prefix: string) {
         id: crypto.randomUUID(),
         name: name || "Adventure Prototype",
         hostPlayerId,
-        members: invitedPlayerIds.map((playerId) => ({
-          playerId,
-          displayName: String(profileById.get(playerId)?.data?.name || playerId),
-        })),
+        members: [
+          ...invitedPlayerIds.map((playerId) => ({
+            playerId,
+            displayName: String(profileById.get(playerId)?.data?.name || playerId),
+            kind: "player" as const,
+          })),
+          ...(botRows ?? []).map((bot: any) => ({
+            playerId: `bot:${String(bot.id)}`,
+            displayName: String(bot.name),
+            kind: "bot" as const,
+            botId: String(bot.id),
+          })),
+        ],
         now,
       });
       const { error } = await admin().from("adventure_prototype_rooms").insert({

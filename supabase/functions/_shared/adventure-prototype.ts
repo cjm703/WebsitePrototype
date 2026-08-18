@@ -22,11 +22,16 @@ export type PrototypeMember = {
   playerId: string;
   displayName: string;
   joinedAt: string | null;
+  kind?: "player" | "bot";
+  controllerId?: string;
+  botId?: string;
 };
 
 export type PrototypeUnit = {
   id: string;
   ownerId: string;
+  controllerId?: string;
+  isBot?: boolean;
   name: string;
   team: PrototypeTeam;
   hp: number;
@@ -81,7 +86,12 @@ export type PrototypeActionResult =
   | { ok: true; room: PrototypeRoom; changed: boolean }
   | { ok: false; room: PrototypeRoom; reason: string; code: "conflict" | "forbidden" | "invalid" };
 
-type NewRoomMember = { playerId: string; displayName: string };
+type NewRoomMember = {
+  playerId: string;
+  displayName: string;
+  kind?: "player" | "bot";
+  botId?: string;
+};
 
 function pointKey(point: PrototypePoint) {
   return `${point.x}:${point.y}`;
@@ -212,14 +222,22 @@ export function createPrototypeRoom(input: {
   members: NewRoomMember[];
   now: string;
 }): PrototypeRoom {
-  const members = input.members.slice(0, PROTOTYPE_MAX_PLAYERS).map((member) => ({
-    playerId: member.playerId,
-    displayName: member.displayName,
-    joinedAt: null,
-  }));
+  const members = input.members.slice(0, PROTOTYPE_MAX_PLAYERS).map((member): PrototypeMember => {
+    const isBot = member.kind === "bot";
+    return {
+      playerId: member.playerId,
+      displayName: member.displayName,
+      joinedAt: isBot ? input.now : null,
+      kind: isBot ? "bot" : "player",
+      controllerId: isBot ? input.hostPlayerId : member.playerId,
+      botId: isBot ? member.botId : undefined,
+    };
+  });
   const playerUnits = members.map((member, index): PrototypeUnit => ({
     id: `unit-${member.playerId}`,
     ownerId: member.playerId,
+    controllerId: member.controllerId || member.playerId,
+    isBot: member.kind === "bot",
     name: member.displayName,
     team: "players",
     hp: PROTOTYPE_MAX_HP,
@@ -231,6 +249,7 @@ export function createPrototypeRoom(input: {
   const dmUnit: PrototypeUnit = {
     id: `unit-${input.hostPlayerId}`,
     ownerId: input.hostPlayerId,
+    controllerId: input.hostPlayerId,
     name: "DM Unit",
     team: "dm",
     hp: PROTOTYPE_MAX_HP,
@@ -279,6 +298,10 @@ export function canViewPrototypeRoom(room: PrototypeRoom, actorId: string) {
   return room.hostPlayerId === actorId || room.members.some((member) => member.playerId === actorId);
 }
 
+export function canControlPrototypeUnit(unit: PrototypeUnit, actorId: string) {
+  return (unit.controllerId || unit.ownerId) === actorId;
+}
+
 export function resolvePrototypeAction(
   room: PrototypeRoom,
   action: PrototypeActionRequest,
@@ -311,7 +334,7 @@ export function resolvePrototypeAction(
     if (!isHost) return reject(room, "Only the DM can start the encounter.", "forbidden");
     if (room.status !== "lobby") return reject(room, "The encounter has already started.");
     const joinedIds = new Set(room.members.filter((entry) => entry.joinedAt).map((entry) => entry.playerId));
-    if (joinedIds.size === 0) return reject(room, "At least one invited player must join first.");
+    if (joinedIds.size === 0) return reject(room, "At least one player or bot must be ready first.");
     const units = room.units
       .filter((unit) => unit.team === "dm" || joinedIds.has(unit.ownerId))
       .map(resetUnitForTurn);
@@ -343,7 +366,7 @@ export function resolvePrototypeAction(
 
   if (room.status !== "active") return reject(room, "The encounter is not active.");
   const actorUnit = activeUnit(room);
-  if (!actorUnit || actorUnit.ownerId !== actorId) return reject(room, "It is not your turn.", "forbidden");
+  if (!actorUnit || !canControlPrototypeUnit(actorUnit, actorId)) return reject(room, "It is not your turn.", "forbidden");
   if (actorUnit.hp <= 0) return reject(room, "This unit cannot act.");
 
   if (action.type === "move") {

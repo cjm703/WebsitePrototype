@@ -410,6 +410,75 @@ async function testAdventurePrototypeEngine() {
   );
   assert.equal(result.ok, true);
   assert.equal(result.room.status, "closed");
+
+  let botRoom = engine.createPrototypeRoom({
+    id: "bot-room",
+    name: "Bot Test",
+    hostPlayerId: "dm",
+    members: [{
+      playerId: "bot:bot-1",
+      displayName: "Test Bot",
+      kind: "bot",
+      botId: "bot-1",
+    }],
+    now: "2026-08-18T01:00:00.000Z",
+  });
+  const botMember = botRoom.members[0];
+  const botUnit = engine.getPrototypeUnitForActor(botRoom, "bot:bot-1");
+  assert.equal(botMember.kind, "bot");
+  assert.equal(botMember.controllerId, "dm");
+  assert.ok(botMember.joinedAt);
+  assert.equal(botUnit.isBot, true);
+  assert.equal(botUnit.controllerId, "dm");
+  assert.equal(engine.canControlPrototypeUnit(botUnit, "dm"), true);
+  assert.equal(engine.canControlPrototypeUnit(botUnit, "player-1"), false);
+
+  result = engine.resolvePrototypeAction(
+    botRoom,
+    { id: "start-bot-room", type: "start", expectedVersion: botRoom.version },
+    "dm",
+    "2026-08-18T01:00:01.000Z",
+  );
+  assert.equal(result.ok, true);
+  botRoom = result.room;
+  assert.equal(engine.getPrototypeActiveUnit(botRoom).ownerId, "bot:bot-1");
+
+  result = engine.resolvePrototypeAction(
+    botRoom,
+    { id: "move-bot", type: "move", expectedVersion: botRoom.version, payload: { position: { x: 1, y: 4 } } },
+    "dm",
+    "2026-08-18T01:00:02.000Z",
+  );
+  assert.equal(result.ok, true);
+  botRoom = result.room;
+  assert.deepEqual(engine.getPrototypeUnitForActor(botRoom, "bot:bot-1").position, { x: 1, y: 4 });
+
+  result = engine.resolvePrototypeAction(
+    botRoom,
+    { id: "end-bot", type: "end_turn", expectedVersion: botRoom.version },
+    "dm",
+    "2026-08-18T01:00:03.000Z",
+  );
+  assert.equal(result.ok, true);
+  botRoom = result.room;
+  assert.equal(engine.getPrototypeActiveUnit(botRoom).ownerId, "dm");
+
+  const forgedPlayerRoom = {
+    ...botRoom,
+    activeTurnIndex: 0,
+    members: [
+      ...botRoom.members,
+      { playerId: "player-1", displayName: "Player One", joinedAt: "2026-08-18T01:00:00.000Z" },
+    ],
+  };
+  result = engine.resolvePrototypeAction(
+    forgedPlayerRoom,
+    { id: "player-controls-bot", type: "end_turn", expectedVersion: forgedPlayerRoom.version },
+    "player-1",
+    "2026-08-18T01:00:04.000Z",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "forbidden");
 }
 
 async function testAdventurePrototypeApi() {
@@ -430,6 +499,21 @@ async function testAdventurePrototypeApi() {
   assert.equal(body.expectedVersion, 7);
   assert.equal("actorId" in body, false);
   assert.equal(new Headers(requests[0].init.headers).get("X-Session-Token"), "player-session");
+
+  await api.createAdventurePrototypeRoom({
+    name: "Bots",
+    invitedPlayerIds: [],
+    botIds: ["bot-1"],
+  });
+  const createRoomBody = JSON.parse(String(requests[1].init.body));
+  assert.deepEqual(createRoomBody.botIds, ["bot-1"]);
+
+  await api.createPrototypeBot("Test Bot");
+  assert.equal(requests[2].url, "https://project.example.test/functions/v1/adventure-prototype/bots");
+  assert.equal(JSON.parse(String(requests[2].init.body)).name, "Test Bot");
+  await api.deletePrototypeBot("bot-1");
+  assert.equal(requests[3].url, "https://project.example.test/functions/v1/adventure-prototype/bots/bot-1");
+  assert.equal(requests[3].init.method, "DELETE");
 
   globalThis.fetch = async () => new Response(
     JSON.stringify({
