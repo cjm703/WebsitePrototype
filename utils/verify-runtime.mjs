@@ -231,6 +231,7 @@ async function testOfficeBusinessMapState() {
   assert.equal(defaults.version, 3);
   assert.equal(defaults.sectors.length, 6);
   assert.ok(defaults.sectors.every((sector) => Array.isArray(sector.slots)));
+  assert.ok(defaults.sectors.every((sector) => sector.visualShape === "rectangle"));
   assert.ok(defaults.sectors.some((sector) => sector.slots.length > 0));
   assert.equal(defaults.layers.length, 5);
   assert.equal(defaults.background.mode, "solid");
@@ -376,21 +377,28 @@ async function testFacilityDepthState() {
   assert.equal(park.businessMap.expansions.length, 1);
   assert.equal(park.businessMap.expansions[0].status, "available");
   assert.deepEqual(park.businessMap.expansions[0].unlockSectorIds, ["mystic-expansion-west", "mystic-expansion-east"]);
-  assert.equal(park.presetId, "mystic-lands-park-v3");
+  assert.equal(park.presetId, "mystic-lands-park-v4");
   assert.deepEqual(park.businessMap.grid, { width: 32, height: 24, showGrid: true, snapToGrid: false });
   const entrance = park.businessMap.sectors.find((sector) => sector.id === "mystic-entrance");
   const center = park.businessMap.sectors.find((sector) => sector.id === "mystic-center");
   const alley = park.businessMap.sectors.find((sector) => sector.id === "mystic-annex");
   assert.equal(entrance.x + entrance.width / 2, park.businessMap.grid.width / 2);
   assert.equal(entrance.y + entrance.height, 23);
-  assert.equal(center.width, 12);
-  assert.equal(center.height, 7);
+  assert.equal(center.width, 10);
+  assert.equal(center.height, 10);
+  assert.equal(center.visualShape, "ellipse");
   assert.equal(alley.name, "Wayfarer Alley");
+  assert.ok(alley.y < center.y);
   assert.ok(alley.width * alley.height <= 8);
+  assert.equal(alley.visualShape, "organic");
   const parkRing = park.businessMap.shapes.find((shape) => shape.id === "park-ring");
   assert.equal(parkRing.curved, true);
   assert.ok(parkRing.points.length >= 12);
   assert.equal(parkRing.strokeWidth, 1.5);
+  assert.equal(parkRing.color, "#555A61");
+  const ringWidth = Math.max(...parkRing.points.map((point) => point.x)) - Math.min(...parkRing.points.map((point) => point.x));
+  const ringHeight = Math.max(...parkRing.points.map((point) => point.y)) - Math.min(...parkRing.points.map((point) => point.y));
+  assert.ok(Math.abs(ringWidth - ringHeight) < 0.2);
   const parkGrounds = park.businessMap.shapes.find((shape) => shape.id === "park-boundary");
   assert.ok(Math.min(...parkGrounds.points.map((point) => point.x)) <= entrance.x);
   assert.ok(Math.max(...parkGrounds.points.map((point) => point.x)) >= entrance.x + entrance.width);
@@ -399,6 +407,7 @@ async function testFacilityDepthState() {
   ["mystic-northwest", "mystic-northeast", "mystic-east", "mystic-southeast", "mystic-southwest"].forEach((id) => {
     const surrounding = park.businessMap.sectors.find((sector) => sector.id === id);
     assert.ok(surrounding.y + surrounding.height <= center.y + center.height);
+    assert.equal(surrounding.visualShape, "organic");
   });
   const expansion = park.businessMap.expansions[0];
   assert.ok(expansion.y + expansion.height < 5);
@@ -462,8 +471,9 @@ async function testFacilityDepthState() {
   v1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x = 4;
   v1Park.businessMap.shapes.push({ ...v1Park.businessMap.shapes[0], id: "custom-park-shape" });
   const migratedV1Park = stateModel.normalizeFacilityOfficeState({ facilities: [v1Park] }).facilities.find((facility) => facility.id === park.id);
-  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v3");
-  assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 10);
+  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v4");
+  assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 11);
+  assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").visualShape, "ellipse");
   assert.ok(migratedV1Park.businessMap.shapes.some((shape) => shape.id === "custom-park-shape"));
 
   const owned = stateModel.normalizeFacilityOfficeState({

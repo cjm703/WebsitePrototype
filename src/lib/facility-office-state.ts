@@ -125,6 +125,7 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
           width: presetSector.width,
           height: presetSector.height,
           unlockExpansionId: presetSector.unlockExpansionId,
+          visualShape: presetSector.visualShape,
           slots,
         };
       }),

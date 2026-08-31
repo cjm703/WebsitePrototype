@@ -38,6 +38,7 @@ export type {
   BusinessMapShape,
   BusinessMapShapeKind,
   BusinessSlotCategory,
+  BusinessSectorVisualShape,
   FacilityAddition,
   OfficeBusinessMapState,
   OfficeBusinessSector,

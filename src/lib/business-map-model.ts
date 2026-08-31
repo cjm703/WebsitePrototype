@@ -22,6 +22,7 @@ export type BusinessMapShapeKind = "wall" | "pathway" | "area" | "label";
 export type BusinessMapBackgroundFit = "cover" | "contain" | "stretch";
 export type FacilityStatKey = "capacity" | "appeal" | "revenue" | "expenses" | "security" | "maintenance" | "staff" | "condition";
 export type BusinessSectorState = "active" | "locked";
+export type BusinessSectorVisualShape = "rectangle" | "ellipse" | "organic";
 export type BusinessExpansionStatus = "available" | "funded" | "complete";
 
 export interface FacilityStatModifier {
@@ -119,6 +120,7 @@ export interface OfficeBusinessSector {
   state: BusinessSectorState;
   unlockExpansionId: string;
   zoneType: string;
+  visualShape?: BusinessSectorVisualShape;
 }
 
 export interface OfficeBusinessExpansion {
@@ -443,6 +445,7 @@ function normalizeSector(raw: unknown, index: number, grid: BusinessMapGrid, fal
     state: "active" as BusinessSectorState,
     unlockExpansionId: "",
     zoneType: "General",
+    visualShape: "rectangle" as BusinessSectorVisualShape,
   };
   return {
     ...normalizeBusinessMapRect(source, base, grid),
@@ -459,6 +462,7 @@ function normalizeSector(raw: unknown, index: number, grid: BusinessMapGrid, fal
     state: source.state === "locked" ? "locked" : "active",
     unlockExpansionId: cleanText(source.unlockExpansionId, "", 100).trim(),
     zoneType: cleanText(source.zoneType, "General", 60).trim() || "General",
+    visualShape: source.visualShape === "ellipse" || source.visualShape === "organic" ? source.visualShape : "rectangle",
   };
 }
 
@@ -492,6 +496,7 @@ export function createDefaultOfficeBusinessMap(): OfficeBusinessMapState {
     state: "active",
     unlockExpansionId: "",
     zoneType: "General",
+    visualShape: "rectangle",
   });
   return {
     version: 3,
@@ -537,6 +542,7 @@ export function createFacilityBusinessMap(facilityName: string): OfficeBusinessM
       state: "active",
       unlockExpansionId: "",
       zoneType: "General",
+      visualShape: "rectangle",
     }],
   };
 }

@@ -62,9 +62,10 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   condition: 100,
 };
 
-export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
+export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v4";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
 export const PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v2";
+export const RECENT_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
 
 const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
@@ -180,9 +181,9 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
     layerId: "pathways",
     name: "Guest Path",
     points,
-    color: "#D7C48A",
-    fillColor: "#D7C48A",
-    opacity: 0.82,
+    color: "#555A61",
+    fillColor: "#555A61",
+    opacity: 0.96,
     strokeWidth: id === "park-ring" ? 1.5 : 1.15,
     label: "",
     curved,
@@ -225,7 +226,7 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
   return normalizeOfficeBusinessMap({
     version: 3,
     name: "Mystic Lands Park",
-    description: "A fenced destination park organized around a large central commons and circular promenade, with five themed districts to its sides and north, a single southern entrance, a small western alley, and a reserved northern expansion beyond the fence.",
+    description: "A fenced destination park organized around a circular central commons and roundabout, with five organic themed districts to its sides and north, a single southern entrance, a small northwest alley, and a reserved northern expansion beyond the fence.",
     grid: { width: 32, height: 24, showGrid: true, snapToGrid: false },
     background: { mode: "solid", color: "#06110D", imageUrl: "", opacity: 1, fit: "cover" },
     layers: BUSINESS_MAP_LAYER_DEFAULTS,
@@ -240,25 +241,25 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       fence("fence-southeast", [{ x: 19, y: 23 }, { x: 31, y: 23 }]),
       fence("entrance-gate-west", [{ x: 13, y: 22.2 }, { x: 13, y: 23.8 }]),
       fence("entrance-gate-east", [{ x: 19, y: 22.2 }, { x: 19, y: 23.8 }]),
-      road("park-ring", [{ x: 16, y: 8.6 }, { x: 20, y: 9.2 }, { x: 22.4, y: 11 }, { x: 23, y: 13.5 }, { x: 22.2, y: 16.2 }, { x: 19.5, y: 18 }, { x: 16, y: 18.6 }, { x: 12.5, y: 18 }, { x: 9.8, y: 16.2 }, { x: 9, y: 13.5 }, { x: 9.6, y: 11 }, { x: 12, y: 9.2 }, { x: 16, y: 8.6 }]),
-      road("path-entrance", [{ x: 16, y: 18.6 }, { x: 16, y: 20 }], false),
-      road("path-northwest", [{ x: 12, y: 9.2 }, { x: 9, y: 8 }]),
-      road("path-north", [{ x: 16, y: 8.6 }, { x: 16, y: 8 }], false),
-      road("path-northeast", [{ x: 20, y: 9.2 }, { x: 23, y: 8 }]),
-      road("path-west", [{ x: 9, y: 13.5 }, { x: 8.5, y: 13.5 }], false),
-      road("path-east", [{ x: 23, y: 13.5 }, { x: 23.5, y: 13.5 }], false),
-      road("alley-road", [{ x: 10, y: 16 }, { x: 7.5, y: 17.5 }, { x: 6, y: 19 }]),
-      label("alley-label", "ALLEY", 2.2, 17.6),
+      road("park-ring", [{ x: 16, y: 7.8 }, { x: 18.4, y: 8.3 }, { x: 20.3, y: 9.7 }, { x: 21.7, y: 11.6 }, { x: 22.2, y: 14 }, { x: 21.7, y: 16.4 }, { x: 20.3, y: 18.3 }, { x: 18.4, y: 19.7 }, { x: 16, y: 20.2 }, { x: 13.6, y: 19.7 }, { x: 11.7, y: 18.3 }, { x: 10.3, y: 16.4 }, { x: 9.8, y: 14 }, { x: 10.3, y: 11.6 }, { x: 11.7, y: 9.7 }, { x: 13.6, y: 8.3 }, { x: 16, y: 7.8 }]),
+      road("path-entrance", [{ x: 16, y: 20.2 }, { x: 16, y: 21 }], false),
+      road("path-northwest", [{ x: 11.7, y: 9.7 }, { x: 10, y: 8.7 }, { x: 8.5, y: 8 }]),
+      road("path-north", [{ x: 16, y: 7.8 }, { x: 16, y: 8.5 }], false),
+      road("path-northeast", [{ x: 20.3, y: 9.7 }, { x: 22, y: 8.7 }, { x: 23.5, y: 8 }]),
+      road("path-west", [{ x: 9.8, y: 14 }, { x: 9, y: 14 }], false),
+      road("path-east", [{ x: 22.2, y: 14 }, { x: 23, y: 14 }], false),
+      road("alley-road", [{ x: 11.7, y: 9.7 }, { x: 8, y: 7.5 }, { x: 5, y: 7 }]),
+      label("alley-label", "ALLEY", 1.8, 5.8),
     ],
     sectors: [
-      sector({ id: "mystic-entrance", name: "Moonstone Entrance", description: "The park's only public entrance, handling ticketing, guest services, and the first security checkpoint inside the southern fence line.", color: "#79B8FF", zoneType: "Entrance", x: 13, y: 20, width: 6, height: 3, slots: [parkSlot("entrance-gates", "Enchanted Gatehouse", "Commercial", 1, 1, 5, 3, ["entrance", "guest-service"]), parkSlot("entrance-security", "Arrival Security", "Security", 7, 1, 4, 3, ["security", "entrance"]), parkSlot("entrance-information", "Guest Information", "Office", 13, 1, 4, 3, ["guest-service"])] }),
-      sector({ id: "mystic-center", name: "Aetherheart Commons", description: "The park's large central landmark and circulation hub, enclosed by the circular Grand Promenade.", color: "#C084FC", zoneType: "Central Hub", x: 10, y: 10, width: 12, height: 7, slots: [parkSlot("center-landmark", "Grand Landmark", "Commercial", 2, 2, 6, 5, ["landmark", "attraction"]), parkSlot("center-food", "Central Food Concourse", "Commercial", 10, 2, 6, 4, ["food", "guest-service"]), parkSlot("center-stage", "Festival Stage", "Operations", 2, 9, 6, 4, ["entertainment", "event"]), parkSlot("center-utility", "Central Utilities", "Utility", 11, 9, 4, 3, ["power", "maintenance"])] }),
-      sector({ id: "mystic-northwest", name: "Whisperwood Gardens", description: "A shaded enchanted-garden district northwest of the Commons, designed for gentle attractions and exploration.", color: "#54C7A0", zoneType: "Garden", x: 2, y: 6, width: 7, height: 3, slots: [parkSlot("whisperwood-attraction", "Garden Attraction", "Commercial", 1, 1, 7, 5, ["nature", "attraction"]), parkSlot("whisperwood-kiosk", "Garden Kiosk", "Commercial", 10, 2, 4, 3, ["retail", "food"])] }),
-      sector({ id: "mystic-northeast", name: "Dragonspire Heights", description: "The park's high-energy northern ride district, visible from across the grounds.", color: "#F47A91", zoneType: "Thrill", x: 12, y: 6, width: 8, height: 3, slots: [parkSlot("dragonspire-anchor", "Signature Thrill Ride", "Commercial", 1, 1, 9, 6, ["thrill", "attraction"]), parkSlot("dragonspire-support", "Ride Operations", "Operations", 12, 2, 4, 4, ["ride-support", "staff"])] }),
-      sector({ id: "mystic-east", name: "Crystal Carnival", description: "Games, midway entertainment, colorful stalls, and quick-service attractions northeast of the Commons.", color: "#5CC8D7", zoneType: "Midway", x: 23, y: 6, width: 7, height: 3, slots: [parkSlot("carnival-games", "Midway Games", "Commercial", 1, 1, 7, 4, ["games", "attraction"]), parkSlot("carnival-retail", "Prize and Retail Hall", "Commercial", 10, 1, 6, 4, ["retail", "prizes"]), parkSlot("carnival-food", "Carnival Food Stall", "Commercial", 3, 8, 5, 3, ["food"])] }),
-      sector({ id: "mystic-southeast", name: "Starlight Promenade", description: "An eastern entertainment district with performances and premium dining.", color: "#D7A24A", zoneType: "Entertainment", x: 23, y: 11, width: 7, height: 5, slots: [parkSlot("starlight-theater", "Promenade Theater", "Commercial", 1, 1, 8, 5, ["entertainment", "theater"]), parkSlot("starlight-dining", "Premium Dining", "Commercial", 11, 1, 6, 4, ["food", "premium"])] }),
-      sector({ id: "mystic-southwest", name: "Runebrook Hollow", description: "A western family district organized around water, quiet rides, and sheltered rest areas.", color: "#79B8FF", zoneType: "Family", x: 2, y: 11, width: 7, height: 5, slots: [parkSlot("runebrook-family", "Family Attraction", "Commercial", 1, 1, 8, 5, ["family", "attraction"]), parkSlot("runebrook-rest", "Sheltered Rest Area", "Utility", 11, 1, 5, 4, ["guest-service", "rest"])] }),
-      sector({ id: "mystic-annex", name: "Wayfarer Alley", description: "A very small service alley reached by a narrow road from the western side of the Commons.", color: "#E18A5B", zoneType: "Alley", x: 2, y: 18, width: 4, height: 2, slots: [parkSlot("annex-storage", "Alley Storage", "Storage", 2, 2, 6, 4, ["storage", "supplies"]), parkSlot("annex-security", "Alley Service Gate", "Security", 10, 2, 4, 4, ["security", "service"])] }),
+      sector({ id: "mystic-entrance", name: "Moonstone Entrance", description: "The park's only public entrance, handling ticketing, guest services, and the first security checkpoint inside the southern fence line.", color: "#79B8FF", zoneType: "Entrance", visualShape: "organic", x: 13, y: 20, width: 6, height: 3, slots: [parkSlot("entrance-gates", "Enchanted Gatehouse", "Commercial", 1, 1, 5, 3, ["entrance", "guest-service"]), parkSlot("entrance-security", "Arrival Security", "Security", 7, 1, 4, 3, ["security", "entrance"]), parkSlot("entrance-information", "Guest Information", "Office", 13, 1, 4, 3, ["guest-service"])] }),
+      sector({ id: "mystic-center", name: "Aetherheart Commons", description: "The park's circular central landmark and circulation hub, enclosed by the Grand Promenade roundabout.", color: "#C084FC", zoneType: "Central Hub", visualShape: "ellipse", x: 11, y: 9, width: 10, height: 10, slots: [parkSlot("center-landmark", "Grand Landmark", "Commercial", 2, 2, 6, 5, ["landmark", "attraction"]), parkSlot("center-food", "Central Food Concourse", "Commercial", 10, 2, 6, 4, ["food", "guest-service"]), parkSlot("center-stage", "Festival Stage", "Operations", 2, 9, 6, 4, ["entertainment", "event"]), parkSlot("center-utility", "Central Utilities", "Utility", 11, 9, 4, 3, ["power", "maintenance"])] }),
+      sector({ id: "mystic-northwest", name: "Whisperwood Gardens", description: "A shaded enchanted-garden district north of the Commons, designed for gentle attractions and exploration.", color: "#54C7A0", zoneType: "Garden", visualShape: "organic", x: 6, y: 6, width: 5, height: 3, slots: [parkSlot("whisperwood-attraction", "Garden Attraction", "Commercial", 1, 1, 7, 5, ["nature", "attraction"]), parkSlot("whisperwood-kiosk", "Garden Kiosk", "Commercial", 10, 2, 4, 3, ["retail", "food"])] }),
+      sector({ id: "mystic-northeast", name: "Dragonspire Heights", description: "The park's high-energy northern ride district, visible from across the grounds.", color: "#F47A91", zoneType: "Thrill", visualShape: "organic", x: 12, y: 6, width: 8, height: 3, slots: [parkSlot("dragonspire-anchor", "Signature Thrill Ride", "Commercial", 1, 1, 9, 6, ["thrill", "attraction"]), parkSlot("dragonspire-support", "Ride Operations", "Operations", 12, 2, 4, 4, ["ride-support", "staff"])] }),
+      sector({ id: "mystic-east", name: "Crystal Carnival", description: "Games, midway entertainment, colorful stalls, and quick-service attractions northeast of the Commons.", color: "#5CC8D7", zoneType: "Midway", visualShape: "organic", x: 21, y: 6, width: 5, height: 3, slots: [parkSlot("carnival-games", "Midway Games", "Commercial", 1, 1, 7, 4, ["games", "attraction"]), parkSlot("carnival-retail", "Prize and Retail Hall", "Commercial", 10, 1, 6, 4, ["retail", "prizes"]), parkSlot("carnival-food", "Carnival Food Stall", "Commercial", 3, 8, 5, 3, ["food"])] }),
+      sector({ id: "mystic-southeast", name: "Starlight Promenade", description: "An eastern entertainment district with performances and premium dining.", color: "#D7A24A", zoneType: "Entertainment", visualShape: "organic", x: 22, y: 11, width: 7, height: 6, slots: [parkSlot("starlight-theater", "Promenade Theater", "Commercial", 1, 1, 8, 5, ["entertainment", "theater"]), parkSlot("starlight-dining", "Premium Dining", "Commercial", 11, 1, 6, 4, ["food", "premium"])] }),
+      sector({ id: "mystic-southwest", name: "Runebrook Hollow", description: "A western family district organized around water, quiet rides, and sheltered rest areas.", color: "#79B8FF", zoneType: "Family", visualShape: "organic", x: 3, y: 11, width: 7, height: 6, slots: [parkSlot("runebrook-family", "Family Attraction", "Commercial", 1, 1, 8, 5, ["family", "attraction"]), parkSlot("runebrook-rest", "Sheltered Rest Area", "Utility", 11, 1, 5, 4, ["guest-service", "rest"])] }),
+      sector({ id: "mystic-annex", name: "Wayfarer Alley", description: "A very small northwest service alley reached by a narrow curved road from the Commons.", color: "#E18A5B", zoneType: "Alley", visualShape: "organic", x: 2, y: 6, width: 3, height: 2, slots: [parkSlot("annex-storage", "Alley Storage", "Storage", 2, 2, 6, 4, ["storage", "supplies"]), parkSlot("annex-security", "Alley Service Gate", "Security", 10, 2, 4, 4, ["security", "service"])] }),
       sector({ id: "mystic-expansion-west", name: "Celestial Wilds", description: "The western half of the northern expansion, ready for a new themed district.", color: "#8B7BE8", zoneType: "Expansion", x: 11, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("celestial-anchor", "Expansion Anchor A", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("celestial-support", "Expansion Support A", "Utility", 13, 3, 4, 4, ["utility", "expansion"])] }),
       sector({ id: "mystic-expansion-east", name: "Astral Frontier", description: "The eastern half of the northern expansion, built for another major park experience.", color: "#9B8CFF", zoneType: "Expansion", x: 17, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("astral-anchor", "Expansion Anchor B", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("astral-support", "Expansion Support B", "Operations", 13, 3, 4, 4, ["operations", "expansion"])] }),
     ],
@@ -313,5 +314,6 @@ export function isMysticLandsPark(candidate: unknown) {
     || source.presetId === MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === LEGACY_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID
+    || source.presetId === RECENT_MYSTIC_LANDS_PARK_PRESET_ID
     || source.name === "Mystic Lands Park";
 }

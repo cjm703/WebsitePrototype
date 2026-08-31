@@ -235,6 +235,21 @@ function rectStyle(rect: BusinessMapRect, grid: OfficeBusinessMapState["grid"]):
   };
 }
 
+function sectorShapeStyle(sector: OfficeBusinessSector): React.CSSProperties {
+  if (sector.visualShape === "ellipse") {
+    return { borderRadius: "50%", padding: "12% 14%" };
+  }
+  if (sector.visualShape === "organic") {
+    const alternate = sector.id.split("").reduce((total, character) => total + character.charCodeAt(0), 0) % 2 === 0;
+    return {
+      borderRadius: alternate
+        ? "34% 22% 30% 20% / 24% 32% 22% 30%"
+        : "22% 34% 20% 30% / 32% 22% 30% 24%",
+    };
+  }
+  return { borderRadius: 0 };
+}
+
 function canUseMap(map: OfficeBusinessMapState, isDM: boolean, playerId: string, action: "install" | "remove") {
   return isDM || canPlayerEditBusinessMap(map, playerId, action);
 }
@@ -519,6 +534,7 @@ export function OfficeBusinessMap({
       layers: BUSINESS_MAP_LAYER_DEFAULTS.map((layer) => ({ ...layer })),
       shapes: [],
       slots: [],
+      visualShape: "rectangle",
     };
     emit({ ...current, sectors: [...current.sectors, sector] });
     setSelectedSectorId(id);
@@ -950,8 +966,19 @@ export function OfficeBusinessMap({
                     <text key={shape.id} x={point.x} y={point.y} fill={selected ? "#FFFFFF" : shape.color} opacity={shape.opacity} fontSize="0.55" fontWeight="700" style={{ pointerEvents: interactive ? "all" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? [...new Set([...selectedShapeIds, shape.id])] : [shape.id]); }}>{shape.label || shape.name}</text>
                   );
                 }
+                if (shape.kind === "pathway") {
+                  const roadWidth = Math.max(5, shape.strokeWidth * 4);
+                  const path = shapePath(shape);
+                  return (
+                    <g key={shape.id} style={{ pointerEvents: interactive ? "all" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? selectedShapeIds.includes(shape.id) ? selectedShapeIds.filter((id) => id !== shape.id) : [...selectedShapeIds, shape.id] : [shape.id]); }}>
+                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#16191E"} strokeOpacity={shape.opacity} strokeWidth={roadWidth + 3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      <path d={path} fill="none" stroke={selected ? "#747A84" : shape.color} strokeOpacity={shape.opacity} strokeWidth={roadWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      <path d={path} fill="none" stroke="#F1D06E" strokeOpacity={Math.min(1, shape.opacity + 0.1)} strokeWidth="0.8" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                    </g>
+                  );
+                }
                 return (
-                  <path key={shape.id} d={shapePath(shape)} fill="none" stroke={selected ? "#FFFFFF" : shape.color} strokeOpacity={shape.opacity} strokeWidth={selected ? shape.strokeWidth + 0.08 : shape.strokeWidth} strokeLinecap={shape.kind === "pathway" ? "round" : "square"} strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ pointerEvents: interactive ? "stroke" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? selectedShapeIds.includes(shape.id) ? selectedShapeIds.filter((id) => id !== shape.id) : [...selectedShapeIds, shape.id] : [shape.id]); }} />
+                  <path key={shape.id} d={shapePath(shape)} fill="none" stroke={selected ? "#FFFFFF" : shape.color} strokeOpacity={shape.opacity} strokeWidth={selected ? shape.strokeWidth + 0.08 : shape.strokeWidth} strokeLinecap="square" strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ pointerEvents: interactive ? "stroke" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? selectedShapeIds.includes(shape.id) ? selectedShapeIds.filter((id) => id !== shape.id) : [...selectedShapeIds, shape.id] : [shape.id]); }} />
                 );
               })}
               {pendingShape && (
@@ -984,6 +1011,7 @@ export function OfficeBusinessMap({
               const selected = selectedSectorId === sector.id;
               const filled = sector.slots.filter((slot) => slot.filled).length;
               const locked = !isBusinessSectorUnlocked(value, sector);
+              const ellipse = sector.visualShape === "ellipse";
               return (
                 <button
                   type="button"
@@ -998,12 +1026,12 @@ export function OfficeBusinessMap({
                     if (!editMode && !locked) setActiveSectorId(sector.id);
                   }}
                   className="absolute overflow-hidden border p-2 text-left"
-                  style={{ ...rectStyle(sector, value.grid), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: locked ? "#101018CC" : `${sector.color}38`, opacity: locked ? 0.55 : 1, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: locked && !editMode ? "not-allowed" : editMode && tool === "select" ? "move" : "pointer" }}
+                  style={{ ...rectStyle(sector, value.grid), ...sectorShapeStyle(sector), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: locked ? "#101018CC" : `${sector.color}38`, opacity: locked ? 0.55 : 1, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: locked && !editMode ? "not-allowed" : editMode && tool === "select" ? "move" : "pointer" }}
                 >
-                  <div className="flex h-full min-h-0 flex-col">
-                    <div className="truncate text-[10px] font-bold">{sector.name}</div>
+                  <div className={`flex h-full min-h-0 flex-col ${ellipse ? "items-center justify-center text-center" : ""}`}>
+                    <div className={ellipse ? "max-w-full whitespace-normal text-center text-[10px] font-bold leading-tight" : "truncate text-[10px] font-bold"}>{sector.name}</div>
                     <div className="mt-1 truncate text-[8px]" style={{ color: sector.color }}>{sector.width}x{sector.height}</div>
-                    <div className="mt-auto text-[8px]" style={S_DIM}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>
+                    <div className={ellipse ? "mt-1 text-[8px]" : "mt-auto text-[8px]"} style={S_DIM}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>
                   </div>
                   {editMode && tool === "select" && <ResizeHandle onPointerDown={(event) => startRectOperation(event, "sector", "resize", sector.id, sector)} />}
                 </button>
@@ -1273,6 +1301,7 @@ function SectorInspector({ sector, isDM, editMode, grid, onUpdate, onOpen, onDel
           <Field label="Sector Name"><input value={sector.name} onChange={(event) => onUpdate({ name: event.target.value.slice(0, 60) })} className="w-full border bg-transparent px-2 py-2 text-[10px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
           <Field label="Description"><textarea value={sector.description} onChange={(event) => onUpdate({ description: event.target.value.slice(0, 600) })} rows={4} className="w-full resize-none border bg-transparent px-2 py-2 text-[10px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
           <Field label="Sector Color"><input type="color" value={sector.color} onChange={(event) => onUpdate({ color: event.target.value })} className="h-9 w-full border bg-transparent p-1" style={{ borderColor: CONTROL_BORDER }} /></Field>
+          <Field label="Area Shape"><select value={sector.visualShape || "rectangle"} onChange={(event) => onUpdate({ visualShape: event.target.value as OfficeBusinessSector["visualShape"] })} className="w-full border bg-[#08080D] px-2 py-2 text-[10px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}><option value="rectangle">Rectangle</option><option value="ellipse">Ellipse</option><option value="organic">Organic</option></select></Field>
           <RectInputs rect={sector} grid={grid} onUpdate={onUpdate} />
         </>
       ) : <div className="text-[10px] leading-5" style={S_MUTED}>{sector.description || "No sector description."}</div>}
