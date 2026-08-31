@@ -208,6 +208,8 @@ assert.match(businessMapStorage, /business-map\/assets\/upload/);
 assert.match(officeStateApi, /office\/facility-addition\/action/);
 assert.match(officeStateApi, /office\/facility-expansion\/action/);
 assert.match(officeStateApi, /office\/personal-funds\/update/);
+assert.match(officeStateApi, /channel\.httpSend\("office-state-updated"/);
+assert.doesNotMatch(officeStateApi, /channel\.send\(/);
 assert.match(routes, /nexus-nomad\/facility\/:facilityId\/map/);
 assert.match(facilityMapPage, /FacilityStatsSidebar/);
 assert.match(facilityMapPage, /canManageAdditions=\{canManage\}/);

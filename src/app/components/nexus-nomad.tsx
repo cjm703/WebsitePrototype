@@ -4478,7 +4478,7 @@ export function NexusNomad() {
                       </div>
                       <div className="flex items-center gap-5">
                         <div><span className="block font-mono text-[14px] font-semibold" style={NS_BLUE}>{fac.businessMap.sectors.length}</span><span className="text-[8px] uppercase tracking-wider" style={NS_DIM}>Sections</span></div>
-                        <div><span className="block font-mono text-[14px] font-semibold" style={NS_ACCENT_GREEN}>{countInstalledFacilityAdditions(fac.businessMap)}</span><span className="text-[8px] uppercase tracking-wider" style={NS_DIM}>Installed</span></div>
+                        <div><span className="block font-mono text-[14px] font-semibold" style={NS_ACCENT_GREEN}>{countInstalledFacilityAdditions([fac.businessMap])}</span><span className="text-[8px] uppercase tracking-wider" style={NS_DIM}>Installed</span></div>
                         <ChevronRight size={16} style={nsAccentHalf(accent)} />
                       </div>
                     </button>

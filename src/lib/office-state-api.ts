@@ -66,11 +66,7 @@ export function subscribeToOfficeStateSignals(onSignal: () => void) {
     .subscribe();
 
   return {
-    notify: () => channel.send({
-      type: "broadcast",
-      event: "office-state-updated",
-      payload: { updatedAt: new Date().toISOString() },
-    }),
+    notify: () => channel.httpSend("office-state-updated", { updatedAt: new Date().toISOString() }),
     unsubscribe: () => removeSupabaseChannelSafely(channel),
   };
 }

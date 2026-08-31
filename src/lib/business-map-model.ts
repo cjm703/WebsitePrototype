@@ -632,9 +632,10 @@ export function isFacilityAdditionCompatible(slot: OfficeBusinessSlot, addition:
   return categoryCompatible && tagsCompatible && footprintCompatible;
 }
 
-export function countInstalledFacilityAdditions(maps: Array<OfficeBusinessMapState | null | undefined>) {
+export function countInstalledFacilityAdditions(maps: Array<OfficeBusinessMapState | null | undefined> | OfficeBusinessMapState | null | undefined) {
   const counts: Record<string, number> = {};
-  maps.forEach((map) => map?.sectors.forEach((sector) => sector.slots.forEach((slot) => {
+  const mapList = Array.isArray(maps) ? maps : maps ? [maps] : [];
+  mapList.forEach((map) => map?.sectors.forEach((sector) => sector.slots.forEach((slot) => {
     if (!slot.installedAdditionId) return;
     counts[slot.installedAdditionId] = (counts[slot.installedAdditionId] || 0) + 1;
   })));

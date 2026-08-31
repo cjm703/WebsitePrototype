@@ -329,6 +329,7 @@ async function testOfficeBusinessMapState() {
   assert.equal(swapped.sectors[0].slots[0].installedAdditionId, replacement.id);
   assert.equal(swapped.sectors[0].slots[0].occupant, replacement.name);
   assert.deepEqual(officeMap.countInstalledFacilityAdditions([installed]), { [addition.id]: 1 });
+  assert.deepEqual(officeMap.countInstalledFacilityAdditions(installed), { [addition.id]: 1 });
   assert.equal(officeMap.canPlayerEditBusinessMap(installed, "player-1", "install"), true);
   assert.equal(officeMap.canPlayerEditBusinessMap(installed, "player-1", "remove"), false);
   const restricted = {
