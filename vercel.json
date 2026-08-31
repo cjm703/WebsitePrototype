@@ -23,9 +23,19 @@
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
       ]
+    },
+    {
+      "source": "/api/inet-server/:path*",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/inet-server/:path*",
+      "destination": "https://fkfwnkbzgktvhdbybgrw.supabase.co/functions/v1/make-server-8a5950b5/:path*"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

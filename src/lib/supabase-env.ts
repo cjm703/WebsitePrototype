@@ -7,6 +7,10 @@ const rawSupabasePublicKey = String(
 const rawSupabaseFunctionBase = String(
   import.meta.env.VITE_SUPABASE_FUNCTION_BASE || "",
 ).trim();
+const productionFunctionProxy = "/api/inet-server";
+const configuredProductionFunctionBase = rawSupabaseFunctionBase.startsWith("/")
+  ? rawSupabaseFunctionBase
+  : productionFunctionProxy;
 
 if (!rawSupabaseUrl) {
   throw new Error("Missing VITE_SUPABASE_URL in frontend environment");
@@ -21,7 +25,9 @@ if (!rawSupabasePublicKey) {
 export const supabaseUrl = rawSupabaseUrl;
 export const supabasePublicKey = rawSupabasePublicKey;
 export const supabaseFunctionBase = (
-  rawSupabaseFunctionBase || `${supabaseUrl}/functions/v1/make-server-8a5950b5`
+  import.meta.env.PROD
+    ? configuredProductionFunctionBase
+    : rawSupabaseFunctionBase || `${supabaseUrl}/functions/v1/make-server-8a5950b5`
 ).replace(/\/+$/, "");
 
 export function buildSupabasePublicHeaders(includeJson = false): Record<string, string> {

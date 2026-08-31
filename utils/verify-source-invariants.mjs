@@ -18,6 +18,7 @@ const gamePage = read("src/app/components/game.tsx");
 const routeErrorPage = read("src/app/components/route-error-page.tsx");
 const lazyModule = read("src/lib/lazy-module.ts");
 const vercelConfig = read("vercel.json");
+const supabaseEnv = read("src/lib/supabase-env.ts");
 const combatPage = read("src/app/components/combat-page.tsx");
 const intelliMaps = read("src/app/components/intelli-maps.tsx");
 const supabaseClient = read("src/lib/supabaseClient.ts");
@@ -126,6 +127,23 @@ assert.match(routeErrorPage, /useRouteError\(\)/);
 assert.match(lazyModule, /failed to fetch dynamically imported module/i);
 assert.match(lazyModule, /window\.location\.reload\(\)/);
 assert.match(vercelConfig, /no-cache, no-store, must-revalidate/);
+const parsedVercelConfig = JSON.parse(vercelConfig);
+assert.deepEqual(parsedVercelConfig.rewrites[0], {
+  source: "/api/inet-server/:path*",
+  destination: "https://fkfwnkbzgktvhdbybgrw.supabase.co/functions/v1/make-server-8a5950b5/:path*",
+});
+assert.ok(
+  parsedVercelConfig.headers.some(
+    (rule) =>
+      rule.source === "/api/inet-server/:path*" &&
+      rule.headers.some(
+        (header) => header.key === "Cache-Control" && header.value === "no-store",
+      ),
+  ),
+);
+assert.match(supabaseEnv, /import\.meta\.env\.PROD[\s\S]*configuredProductionFunctionBase/);
+assert.match(supabaseEnv, /productionFunctionProxy = "\/api\/inet-server"/);
+assert.match(supabaseEnv, /rawSupabaseFunctionBase\.startsWith\("\/"\)/);
 assert.match(dmArea, /id: "system" as const, label: "System Status"/);
 assert.match(dmArea, /<DMSystemStatus/);
 assert.doesNotMatch(dmArea, /id: "notifs"|activeSection === "notifs"/);
