@@ -1,7 +1,9 @@
 import {
+  MYSTIC_LANDS_PARK_PRESET_ID,
   createMysticLandsParkFacility,
   ensureMysticLandsAdditions,
   ensurePersonalFund,
+  isMysticLandsPark,
   normalizeFacilityDepthFields,
   normalizeFacilityStats,
   normalizePersonalFunds,
@@ -104,6 +106,65 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
       ...current.filter((entry) => !defaultIds.has(entry.id)),
     ];
   };
+  const mergeParkSectors = () => {
+    if (!existingMap) return presetMap.sectors;
+    const currentById = new Map(existingMap.sectors.map((sector) => [sector.id, sector]));
+    const presetIds = new Set(presetMap.sectors.map((sector) => sector.id));
+    return [
+      ...presetMap.sectors.map((presetSector) => {
+        const currentSector = currentById.get(presetSector.id);
+        if (!currentSector) return presetSector;
+        const slots = mergeById(presetSector.slots, currentSector.slots);
+        return {
+          ...presetSector,
+          ...currentSector,
+          x: presetSector.x,
+          y: presetSector.y,
+          width: presetSector.width,
+          height: presetSector.height,
+          unlockExpansionId: presetSector.unlockExpansionId,
+          slots,
+        };
+      }),
+      ...existingMap.sectors.filter((sector) => !presetIds.has(sector.id)),
+    ];
+  };
+  const legacyParkShapeIds = new Set([
+    "park-boundary",
+    "path-entrance",
+    "path-northwest",
+    "path-northeast",
+    "path-east",
+    "path-southeast",
+    "path-southwest",
+    "west-service-road",
+    "park-label",
+    "road-label",
+  ]);
+  presetMap.shapes.forEach((shape) => legacyParkShapeIds.add(shape.id));
+  const mergeParkShapes = () => existingMap
+    ? [...presetMap.shapes, ...existingMap.shapes.filter((shape) => !legacyParkShapeIds.has(shape.id))]
+    : presetMap.shapes;
+  const mergeParkExpansions = () => {
+    if (!existingMap) return presetMap.expansions;
+    const currentById = new Map(existingMap.expansions.map((expansion) => [expansion.id, expansion]));
+    const presetIds = new Set(presetMap.expansions.map((expansion) => expansion.id));
+    return [
+      ...presetMap.expansions.map((presetExpansion) => {
+        const currentExpansion = currentById.get(presetExpansion.id);
+        return currentExpansion ? {
+          ...presetExpansion,
+          ...currentExpansion,
+          x: presetExpansion.x,
+          y: presetExpansion.y,
+          width: presetExpansion.width,
+          height: presetExpansion.height,
+          unlockSectorIds: presetExpansion.unlockSectorIds,
+        } : presetExpansion;
+      }),
+      ...existingMap.expansions.filter((expansion) => !presetIds.has(expansion.id)),
+    ];
+  };
   const mergedMap = existingMap ? {
     ...presetMap,
     ...existingMap,
@@ -115,14 +176,14 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
       height: Math.max(existingMap.grid.height, presetMap.grid.height),
     },
     layers: mergeById(presetMap.layers, existingMap.layers),
-    shapes: mergeById(presetMap.shapes, existingMap.shapes),
-    sectors: mergeById(presetMap.sectors, existingMap.sectors),
-    expansions: mergeById(presetMap.expansions, existingMap.expansions),
+    shapes: mergeParkShapes(),
+    sectors: mergeParkSectors(),
+    expansions: mergeParkExpansions(),
   } : presetMap;
   return normalizeFacilityRecord({
     ...preset,
     ...existing,
-    presetId: existing.presetId || preset.presetId,
+    presetId: MYSTIC_LANDS_PARK_PRESET_ID,
     baseStats: existing.baseStats || preset.baseStats,
     businessMap: mergedMap,
   })!;
@@ -133,7 +194,7 @@ export function normalizeFacilityOfficeState(raw: unknown): FacilityOfficeState 
   let facilities = Array.isArray(source.facilities)
     ? source.facilities.map((facility, index) => normalizeFacilityRecord(facility, index)).filter((facility): facility is FacilityRecord => Boolean(facility))
     : [];
-  const parkIndex = facilities.findIndex((facility) => facility.id === "facility-mystic-lands-park" || facility.presetId === "mystic-lands-park-v1" || facility.name === "Mystic Lands Park");
+  const parkIndex = facilities.findIndex(isMysticLandsPark);
   if (parkIndex >= 0) facilities = facilities.map((facility, index) => index === parkIndex ? mergeMysticPark(facility) : facility);
   else facilities = [...facilities, mergeMysticPark(undefined)];
 
@@ -154,7 +215,7 @@ export function normalizeFacilityOfficeState(raw: unknown): FacilityOfficeState 
       collapsed: Boolean(category.collapsed),
     }];
   });
-  const parkId = facilities.find((facility) => facility.presetId === "mystic-lands-park-v1")!.id;
+  const parkId = facilities.find(isMysticLandsPark)!.id;
   if (!facilityCats.some((category) => category.facilityIds.includes(parkId))) {
     const commercial = facilityCats.find((category) => category.name.toLowerCase().includes("commercial"));
     if (commercial) commercial.facilityIds = [...commercial.facilityIds, parkId];

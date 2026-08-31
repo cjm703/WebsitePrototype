@@ -376,13 +376,40 @@ async function testFacilityDepthState() {
   assert.equal(park.businessMap.expansions.length, 1);
   assert.equal(park.businessMap.expansions[0].status, "available");
   assert.deepEqual(park.businessMap.expansions[0].unlockSectorIds, ["mystic-expansion-west", "mystic-expansion-east"]);
+  assert.equal(park.presetId, "mystic-lands-park-v2");
+  assert.deepEqual(park.businessMap.grid, { width: 30, height: 24, showGrid: true, snapToGrid: true });
+  const entrance = park.businessMap.sectors.find((sector) => sector.id === "mystic-entrance");
+  assert.equal(entrance.x + entrance.width / 2, park.businessMap.grid.width / 2);
+  assert.equal(entrance.y + entrance.height, 24);
+  const expansion = park.businessMap.expansions[0];
+  assert.ok(expansion.y + expansion.height < 5);
+  assert.ok(park.businessMap.shapes.some((shape) => shape.id === "fence-north"));
+  assert.ok(park.businessMap.shapes.some((shape) => shape.id === "fence-southwest"));
+  assert.ok(park.businessMap.shapes.some((shape) => shape.id === "fence-southeast"));
+  park.businessMap.sectors.forEach((sector, index) => {
+    park.businessMap.sectors.slice(index + 1).forEach((other) => {
+      const overlaps = sector.x < other.x + other.width
+        && sector.x + sector.width > other.x
+        && sector.y < other.y + other.height
+        && sector.y + sector.height > other.y;
+      assert.equal(overlaps, false, `${sector.id} overlaps ${other.id}`);
+    });
+  });
 
   const additions = depth.ensureMysticLandsAdditions([]);
-  assert.equal(additions.length, 10);
-  const gatehouse = additions.find((addition) => addition.id === "mystic-add-gatehouse");
-  assert.ok(gatehouse);
+  assert.equal(additions.length, 0);
+  assert.equal(depth.ensureMysticLandsAdditions([{ id: "mystic-add-gatehouse" }]).length, 0);
+  const gatehouse = {
+    ...officeMap.createFacilityAddition(0),
+    id: "test-gatehouse",
+    name: "Test Gatehouse",
+    category: "Commercial",
+    tags: ["entrance", "guest-service"],
+    statModifiers: [{ stat: "capacity", amount: 180 }, { stat: "revenue", amount: 350 }],
+  };
+  const testAdditions = [gatehouse];
   const installedMap = officeMap.installFacilityAddition(park.businessMap, "mystic-entrance", "entrance-gates", gatehouse, "player-1");
-  const stats = depth.calculateFacilityStats(park.baseStats, installedMap, additions);
+  const stats = depth.calculateFacilityStats(park.baseStats, installedMap, testAdditions);
   assert.equal(stats.capacity, park.baseStats.capacity + 180);
   assert.equal(stats.revenue, park.baseStats.revenue + 350);
 
@@ -407,8 +434,17 @@ async function testFacilityDepthState() {
   const mergedParkMap = mergedParkState.facilities.find((facility) => facility.id === park.id).businessMap;
   assert.ok(mergedParkMap.sectors.some((sector) => sector.id === "legacy-custom-park-sector"));
   assert.ok(mergedParkMap.sectors.some((sector) => sector.id === "mystic-center"));
-  assert.equal(mergedParkMap.grid.width, 28);
-  assert.equal(mergedParkMap.grid.height, 22);
+  assert.equal(mergedParkMap.grid.width, 30);
+  assert.equal(mergedParkMap.grid.height, 24);
+
+  const v1Park = structuredClone(park);
+  v1Park.presetId = "mystic-lands-park-v1";
+  v1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x = 10;
+  v1Park.businessMap.shapes.push({ ...v1Park.businessMap.shapes[0], id: "custom-park-shape" });
+  const migratedV1Park = stateModel.normalizeFacilityOfficeState({ facilities: [v1Park] }).facilities.find((facility) => facility.id === park.id);
+  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v2");
+  assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 11);
+  assert.ok(migratedV1Park.businessMap.shapes.some((shape) => shape.id === "custom-park-shape"));
 
   const owned = stateModel.normalizeFacilityOfficeState({
     ...migrated,

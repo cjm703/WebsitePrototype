@@ -132,6 +132,7 @@ export interface OfficeBusinessMapProps {
   onExpansionAction?: (expansionId: string, action: "fund" | "complete") => Promise<void>;
   canFundExpansions?: boolean;
   personalFundBalance?: number;
+  operationsPanel?: React.ReactNode;
 }
 
 const TOOL_META: Array<{ id: EditorTool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -255,6 +256,7 @@ export function OfficeBusinessMap({
   onExpansionAction,
   canFundExpansions = false,
   personalFundBalance = 0,
+  operationsPanel,
 }: OfficeBusinessMapProps) {
   const [activeSectorId, setActiveSectorId] = useState<string | null>(null);
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(value.sectors[0]?.id || null);
@@ -264,6 +266,7 @@ export function OfficeBusinessMap({
   const [editMode, setEditMode] = useState(false);
   const [tool, setTool] = useState<EditorTool>("select");
   const [inspectorMode, setInspectorMode] = useState<InspectorMode>("selection");
+  const [rightPanelTab, setRightPanelTab] = useState<"inspect" | "operations">("inspect");
   const [pendingPoints, setPendingPoints] = useState<BusinessMapPoint[]>([]);
   const [operation, setOperation] = useState<PointerOperation | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -300,6 +303,28 @@ export function OfficeBusinessMap({
     setSelectedShapeIds([]);
     setBrokenBackground(false);
   }, [mapKey]);
+
+  useEffect(() => {
+    const positionAtEntrance = () => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2);
+    };
+    const frame = window.requestAnimationFrame(positionAtEntrance);
+    const timeout = window.setTimeout(positionAtEntrance, 120);
+    const observer = typeof ResizeObserver === "undefined" || !canvasRef.current ? null : new ResizeObserver(positionAtEntrance);
+    if (canvasRef.current) observer?.observe(canvasRef.current);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+      observer?.disconnect();
+    };
+  }, [activeSectorId, mapKey]);
+
+  useEffect(() => {
+    if (operationsPanel) setRightPanelTab("inspect");
+  }, [activeSectorId, inspectorMode, selectedSectorId, selectedShapeIds, selectedSlotId]);
 
   useEffect(() => {
     if (activeSectorId && !value.sectors.some((sector) => sector.id === activeSectorId)) {
@@ -820,7 +845,7 @@ export function OfficeBusinessMap({
             <IconButton label="Zoom out" onClick={() => setZoom((current) => Math.max(0.6, Number((current - 0.15).toFixed(2))))} disabled={zoom <= 0.6}><ZoomOut size={11} /></IconButton>
             <span className="w-12 text-center text-[8px]" style={S_DIM}>{Math.round(zoom * 100)}%</span>
             <IconButton label="Zoom in" onClick={() => setZoom((current) => Math.min(2.5, Number((current + 0.15).toFixed(2))))} disabled={zoom >= 2.5}><ZoomIn size={11} /></IconButton>
-            <IconButton label="Reset zoom" onClick={() => { setZoom(1); if (viewportRef.current) { viewportRef.current.scrollLeft = 0; viewportRef.current.scrollTop = 0; } }}><Maximize2 size={11} /></IconButton>
+            <IconButton label="Reset zoom" onClick={() => { setZoom(1); if (viewportRef.current) { viewportRef.current.scrollLeft = Math.max(0, (viewportRef.current.scrollWidth - viewportRef.current.clientWidth) / 2); viewportRef.current.scrollTop = viewportRef.current.scrollHeight; } }}><Maximize2 size={11} /></IconButton>
           </div>
           {isDM && (
             <>
@@ -864,7 +889,7 @@ export function OfficeBusinessMap({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_310px]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
         <div
           ref={viewportRef}
           className="relative min-w-0 max-h-[680px] min-h-[380px] overflow-auto border"
@@ -1023,8 +1048,15 @@ export function OfficeBusinessMap({
           </div>
         </div>
 
-        <aside className="min-h-[380px] border border-[#1A1A2B] bg-[#050508] p-3">
-          {inspectorMode === "settings" ? (
+        <aside className="min-h-[380px] max-h-[680px] overflow-y-auto border border-[#1A1A2B] bg-[#050508]">
+          {operationsPanel && (
+            <div className="sticky top-0 z-20 grid grid-cols-2 border-b border-[#1A1A2B] bg-[#050508] p-1" role="tablist" aria-label="Facility map side panel">
+              <button type="button" role="tab" aria-selected={rightPanelTab === "inspect"} onClick={() => setRightPanelTab("inspect")} className="flex items-center justify-center gap-1.5 border px-2 py-2 text-[9px] font-semibold" style={{ color: rightPanelTab === "inspect" ? "#E5ECFF" : "#65708A", borderColor: rightPanelTab === "inspect" ? "#394866" : "transparent", background: rightPanelTab === "inspect" ? "#101723" : "transparent" }}><Eye size={11} />Inspect</button>
+              <button type="button" role="tab" aria-selected={rightPanelTab === "operations"} onClick={() => setRightPanelTab("operations")} className="flex items-center justify-center gap-1.5 border px-2 py-2 text-[9px] font-semibold" style={{ color: rightPanelTab === "operations" ? "#E5ECFF" : "#65708A", borderColor: rightPanelTab === "operations" ? "#394866" : "transparent", background: rightPanelTab === "operations" ? "#101723" : "transparent" }}><Building2 size={11} />Operations</button>
+            </div>
+          )}
+          <div className="p-3">
+          {rightPanelTab === "operations" && operationsPanel ? operationsPanel : inspectorMode === "settings" ? (
             <MapSettingsInspector
               map={value}
               surfaceName={activeSector?.name || value.name}
@@ -1083,6 +1115,7 @@ export function OfficeBusinessMap({
           ) : (
             <EmptyInspector icon={activeSector ? Grid3X3 : Building2} text={isDM && editMode ? "Select an element, or open map settings." : "Select a map element to inspect it."} />
           )}
+          </div>
         </aside>
       </div>
 

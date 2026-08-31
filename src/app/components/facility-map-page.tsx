@@ -53,10 +53,10 @@ function formatStat(key: keyof FacilityStats, value: number) {
   return `${Math.round(value).toLocaleString()}${FACILITY_STAT_META[key].unit}`;
 }
 
-function FacilityStatsSidebar({ facility, current, preview, fundBalance, ownerName, isOwner, isDM }: { facility: FacilityRecord; current: FacilityStats; preview: FacilityStats; fundBalance: number; ownerName: string; isOwner: boolean; isDM: boolean }) {
+function FacilityOperationsPanel({ facility, current, preview, fundBalance, ownerName, isOwner, isDM }: { facility: FacilityRecord; current: FacilityStats; preview: FacilityStats; fundBalance: number; ownerName: string; isOwner: boolean; isDM: boolean }) {
   const expansions = facility.businessMap?.expansions || [];
   return (
-    <aside className="min-w-0 border-l border-[#20283A] bg-[#05080D] p-4 xl:sticky xl:top-0 xl:max-h-[calc(100vh-32px)] xl:overflow-y-auto">
+    <div className="min-w-0">
       <div className="border-b border-[#20283A] pb-4">
         <div className="flex items-center gap-2 text-[12px] font-semibold" style={TEXT}><Building2 size={14} color="#78B7FF" />Facility Operations</div>
         <div className="mt-3 flex items-center justify-between text-[9px]"><span style={DIM}>OWNER</span><span className="truncate" style={TEXT}>{ownerName || "Unassigned"}</span></div>
@@ -97,7 +97,7 @@ function FacilityStatsSidebar({ facility, current, preview, fundBalance, ownerNa
           ))}
         </div>
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -270,7 +270,7 @@ export function FacilityMapPage() {
 
       {error && <div className="border-b border-[#5A3038] bg-[#17090D] px-6 py-2 text-[9px] text-[#F29AA3]">{error}</div>}
 
-      <div className="grid min-h-[calc(100vh-65px)] grid-cols-1 xl:grid-cols-[minmax(0,1fr)_310px]">
+      <div className="min-h-[calc(100vh-65px)]">
         <section className="min-w-0 p-4 lg:p-6">
           <OfficeBusinessMap
             value={facility.businessMap}
@@ -289,9 +289,9 @@ export function FacilityMapPage() {
             onExpansionAction={handleExpansion}
             canFundExpansions={isOwner}
             personalFundBalance={fundBalance}
+            operationsPanel={currentStats ? <FacilityOperationsPanel facility={facility} current={currentStats} preview={previewStats} fundBalance={fundBalance} ownerName={ownerName} isOwner={isOwner} isDM={session.isDM} /> : undefined}
           />
         </section>
-        {currentStats && <FacilityStatsSidebar facility={facility} current={currentStats} preview={previewStats} fundBalance={fundBalance} ownerName={ownerName} isOwner={isOwner} isDM={session.isDM} />}
       </div>
     </main>
   );
