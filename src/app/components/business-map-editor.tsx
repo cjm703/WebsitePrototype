@@ -15,6 +15,7 @@ import {
   Factory,
   Grid3X3,
   Hand,
+  Hammer,
   ImageOff,
   ImagePlus,
   Layers3,
@@ -56,6 +57,7 @@ import {
   createFacilityAddition,
   installFacilityAddition,
   isFacilityAdditionCompatible,
+  isBusinessSectorUnlocked,
   normalizeBusinessMapRect,
   removeFacilityAddition,
   resizeOfficeBusinessMapGrid,
@@ -71,6 +73,7 @@ import {
   type OfficeBusinessSector,
   type OfficeBusinessSlot,
 } from "@/lib/business-map-model";
+import { FACILITY_STAT_KEYS, FACILITY_STAT_META } from "@/lib/facility-depth-model";
 import { deleteBusinessMapImage, uploadBusinessMapImage } from "@/lib/business-map-storage";
 import type { FacilityAdditionAction } from "@/lib/office-state-api";
 import { retro } from "./retro-styles";
@@ -124,6 +127,11 @@ export interface OfficeBusinessMapProps {
   currentPlayerId?: string;
   players?: BusinessMapPlayerOption[];
   onPlayerAction?: (action: FacilityAdditionAction) => Promise<void>;
+  canManageAdditions?: boolean;
+  onAdditionPreviewChange?: (addition: FacilityAddition | null) => void;
+  onExpansionAction?: (expansionId: string, action: "fund" | "complete") => Promise<void>;
+  canFundExpansions?: boolean;
+  personalFundBalance?: number;
 }
 
 const TOOL_META: Array<{ id: EditorTool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -242,6 +250,11 @@ export function OfficeBusinessMap({
   currentPlayerId = "",
   players = [],
   onPlayerAction,
+  canManageAdditions = false,
+  onAdditionPreviewChange,
+  onExpansionAction,
+  canFundExpansions = false,
+  personalFundBalance = 0,
 }: OfficeBusinessMapProps) {
   const [activeSectorId, setActiveSectorId] = useState<string | null>(null);
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(value.sectors[0]?.id || null);
@@ -260,6 +273,7 @@ export function OfficeBusinessMap({
   const [brokenBackground, setBrokenBackground] = useState(false);
   const [busySlotId, setBusySlotId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [busyExpansionId, setBusyExpansionId] = useState<string | null>(null);
   const [additionSearch, setAdditionSearch] = useState("");
 
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -277,6 +291,8 @@ export function OfficeBusinessMap({
   const selectedShapes = surface.shapes.filter((shape) => selectedShapeIds.includes(shape.id));
   const selectedShape = selectedShapes[0] || null;
   const slotLayer = surface.layers.find((layer) => layer.id === "slots");
+  const canInstallAdditions = isDM || canManageAdditions || canUseMap(value, isDM, currentPlayerId, "install");
+  const canRemoveAdditions = isDM || canManageAdditions || canUseMap(value, isDM, currentPlayerId, "remove");
 
   useEffect(() => {
     setHistory({ past: [], future: [] });
@@ -295,6 +311,11 @@ export function OfficeBusinessMap({
   useEffect(() => {
     setBrokenBackground(false);
   }, [activeSectorId, surface.background.imageUrl]);
+
+  useEffect(() => {
+    onAdditionPreviewChange?.(additions.find((addition) => addition.id === selectedAdditionId) || null);
+    return () => onAdditionPreviewChange?.(null);
+  }, [additions, onAdditionPreviewChange, selectedAdditionId]);
 
   const pushHistory = useCallback((snapshot = valueRef.current) => {
     setHistory((current) => ({
@@ -654,15 +675,15 @@ export function OfficeBusinessMap({
       setActionError("No copies of that Facility Addition are available.");
       return;
     }
-    if (slot.filled) {
-      setActionError("Remove the current assignment before installing another addition.");
+    if (slot.filled && !slot.installedAdditionId) {
+      setActionError("Remove the custom assignment before installing an addition.");
       return;
     }
     if (isDM) {
       emit(installFacilityAddition(valueRef.current, activeSector.id, slot.id, addition, currentPlayerId || "dm"));
       return;
     }
-    if (!canUseMap(value, isDM, currentPlayerId, "install") || !onPlayerAction) {
+    if (!canInstallAdditions || !onPlayerAction) {
       setActionError("You do not have permission to install additions on this map.");
       return;
     }
@@ -683,7 +704,7 @@ export function OfficeBusinessMap({
       emit(removeFacilityAddition(valueRef.current, activeSector.id, slot.id));
       return;
     }
-    if (!canUseMap(value, isDM, currentPlayerId, "remove") || !onPlayerAction) {
+    if (!canRemoveAdditions || !onPlayerAction) {
       setActionError("You do not have permission to remove additions from this map.");
       return;
     }
@@ -748,6 +769,20 @@ export function OfficeBusinessMap({
     return additions.filter((addition) => `${addition.name} ${addition.category} ${addition.tags.join(" ")}`.toLowerCase().includes(query));
   }, [additionSearch, additions]);
   const selectedAddition = additions.find((addition) => addition.id === selectedAdditionId) || null;
+  const unlockedSectors = useMemo(() => value.sectors.filter((sector) => isBusinessSectorUnlocked(value, sector)), [value]);
+
+  const runExpansionAction = async (expansionId: string, action: "fund" | "complete") => {
+    if (!onExpansionAction || busyExpansionId) return;
+    setActionError("");
+    setBusyExpansionId(expansionId);
+    try {
+      await onExpansionAction(expansionId, action);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Expansion update failed.");
+    } finally {
+      setBusyExpansionId(null);
+    }
+  };
 
   const visibleShapes = useMemo(() => {
     const layerIndex = new Map(surface.layers.map((layer, index) => [layer.id, index]));
@@ -777,7 +812,7 @@ export function OfficeBusinessMap({
             <span className="truncate">{activeSector ? activeSector.name : value.name}</span>
           </div>
           <div className="mt-1 text-[9px]" style={S_DIM}>
-            {activeSector ? activeSector.description || "Sector interior" : `${value.sectors.length} sectors | ${occupiedCount}/${slotCount} slots filled`}
+            {activeSector ? activeSector.description || "Sector interior" : `${unlockedSectors.length} active sectors | ${occupiedCount}/${slotCount} slots filled`}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -832,7 +867,7 @@ export function OfficeBusinessMap({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_310px]">
         <div
           ref={viewportRef}
-          className="relative max-h-[680px] min-h-[380px] overflow-auto border"
+          className="relative min-w-0 max-h-[680px] min-h-[380px] overflow-auto border"
           style={{ borderColor: SURFACE_BORDER, background: "#020204", cursor: canvasCursor }}
           onPointerDown={startPan}
         >
@@ -844,7 +879,7 @@ export function OfficeBusinessMap({
             onClick={handleCanvasClick}
             style={{
               width: `${zoom * 100}%`,
-              minWidth: `${Math.round(720 * zoom)}px`,
+              minWidth: `${Math.round(560 * zoom)}px`,
               aspectRatio: `${value.grid.width} / ${value.grid.height}`,
               backgroundColor: mapBackground.color,
               backgroundImage: value.grid.showGrid
@@ -909,9 +944,21 @@ export function OfficeBusinessMap({
               })}
             </svg>
 
-            {!activeSector && value.sectors.map((sector) => {
+            {!activeSector && value.expansions.filter((expansion) => expansion.status !== "complete").map((expansion) => {
+              const funded = expansion.status === "funded";
+              const canAfford = personalFundBalance >= expansion.cost;
+              return (
+                <div key={expansion.id} className="absolute z-10 flex flex-col justify-between overflow-hidden border border-dashed p-2 text-left" style={{ ...rectStyle(expansion, value.grid), borderColor: funded ? "#FFD56A" : "#8B7BE8", background: funded ? "#3A2B0CBB" : "#17102DBB", color: "#E5ECFF" }}>
+                  <div><div className="flex items-center gap-1 text-[9px] font-bold"><Hammer size={10} />{expansion.name}</div><div className="mt-1 text-[7px]" style={S_DIM}>{funded ? "EXPANSION UNDERWAY" : `${expansion.cost.toLocaleString()} ${expansion.currency}`}</div></div>
+                  {funded && isDM && onExpansionAction ? <button type="button" onClick={(event) => { event.stopPropagation(); void runExpansionAction(expansion.id, "complete"); }} disabled={busyExpansionId === expansion.id} className={`${retro.button} mt-2 px-2 py-1 text-[8px] disabled:opacity-40`} style={S_GREEN}>{busyExpansionId === expansion.id ? "Completing..." : "Complete Expansion"}</button> : !funded && canFundExpansions && onExpansionAction ? <button type="button" onClick={(event) => { event.stopPropagation(); void runExpansionAction(expansion.id, "fund"); }} disabled={!canAfford || busyExpansionId === expansion.id} className={`${retro.button} mt-2 px-2 py-1 text-[8px] disabled:opacity-35`} style={S_GREEN}>{canAfford ? "Fund Expansion" : "Insufficient Personal Funds"}</button> : <div className="mt-2 text-[7px]" style={S_DIM}>{funded ? "Awaiting DM completion" : "Development plot locked"}</div>}
+                </div>
+              );
+            })}
+
+            {!activeSector && value.sectors.filter((sector) => (isDM && editMode) || isBusinessSectorUnlocked(value, sector)).map((sector) => {
               const selected = selectedSectorId === sector.id;
               const filled = sector.slots.filter((slot) => slot.filled).length;
+              const locked = !isBusinessSectorUnlocked(value, sector);
               return (
                 <button
                   type="button"
@@ -923,15 +970,15 @@ export function OfficeBusinessMap({
                     setSelectedSectorId(sector.id);
                     setSelectedShapeIds([]);
                     setInspectorMode("selection");
-                    if (!editMode) setActiveSectorId(sector.id);
+                    if (!editMode && !locked) setActiveSectorId(sector.id);
                   }}
                   className="absolute overflow-hidden border p-2 text-left"
-                  style={{ ...rectStyle(sector, value.grid), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: `${sector.color}38`, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: editMode && tool === "select" ? "move" : "pointer" }}
+                  style={{ ...rectStyle(sector, value.grid), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: locked ? "#101018CC" : `${sector.color}38`, opacity: locked ? 0.55 : 1, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: locked && !editMode ? "not-allowed" : editMode && tool === "select" ? "move" : "pointer" }}
                 >
                   <div className="flex h-full min-h-0 flex-col">
                     <div className="truncate text-[10px] font-bold">{sector.name}</div>
                     <div className="mt-1 truncate text-[8px]" style={{ color: sector.color }}>{sector.width}x{sector.height}</div>
-                    <div className="mt-auto text-[8px]" style={S_DIM}>{filled}/{sector.slots.length} slots</div>
+                    <div className="mt-auto text-[8px]" style={S_DIM}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>
                   </div>
                   {editMode && tool === "select" && <ResizeHandle onPointerDown={(event) => startRectOperation(event, "sector", "resize", sector.id, sector)} />}
                 </button>
@@ -942,7 +989,7 @@ export function OfficeBusinessMap({
               const selected = selectedSlotId === slot.id;
               const color = businessSlotCategoryColor(slot.category);
               const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
-              const canDrop = canUseMap(value, isDM, currentPlayerId, "install") && !slot.filled;
+              const canDrop = canInstallAdditions && (!slot.filled || Boolean(slot.installedAdditionId));
               return (
                 <button
                   type="button"
@@ -1015,8 +1062,8 @@ export function OfficeBusinessMap({
               grid={value.grid}
               isDM={isDM}
               editMode={editMode}
-              canInstall={canUseMap(value, isDM, currentPlayerId, "install")}
-              canRemove={canUseMap(value, isDM, currentPlayerId, "remove")}
+               canInstall={canInstallAdditions}
+               canRemove={canRemoveAdditions}
               busy={busySlotId === selectedSlot.id}
               onUpdate={(updates) => updateSlot(activeSector.id, selectedSlot.id, updates)}
               onInstall={(addition) => void handleInstall(selectedSlot, addition)}
@@ -1045,7 +1092,7 @@ export function OfficeBusinessMap({
         selected={selectedAddition}
         usage={additionUsage}
         isDM={isDM}
-        canDrag={canUseMap(value, isDM, currentPlayerId, "install")}
+        canDrag={canInstallAdditions}
         query={additionSearch}
         uploadProgress={assetProgress}
         onQuery={setAdditionSearch}
@@ -1261,6 +1308,18 @@ function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM,
           <div className="text-[8px]" style={S_DIM}>INSTALLED ADDITION</div>
           <div className="mt-1 text-[11px]" style={S_TEXT}>{installed?.name || slot.occupant}</div>
           {canRemove && <button type="button" onClick={onRemove} disabled={busy} className={`${retro.button} mt-2 flex w-full items-center justify-center gap-2 py-2 text-[9px] disabled:opacity-40`} style={S_RED}>{busy ? <LoaderCircle size={10} className="animate-spin" /> : <Trash2 size={10} />} Remove</button>}
+          {canInstall && (
+            <div className="mt-3 border-t border-[#294A39] pt-3">
+              <div className="mb-2 text-[8px]" style={S_DIM}>SWITCH TO</div>
+              <div className="max-h-36 space-y-1 overflow-y-auto">
+                {compatible.filter((addition) => addition.id !== slot.installedAdditionId).map((addition) => {
+                  const available = Math.max(0, addition.quantity - (additionUsage[addition.id] || 0));
+                  return <button type="button" key={addition.id} onClick={() => onInstall(addition)} disabled={available <= 0 || busy} className="flex w-full items-center gap-2 border border-[#1A1A2B] p-2 text-left disabled:opacity-35"><AdditionThumb addition={addition} /><span className="min-w-0 flex-1 truncate text-[9px]" style={S_TEXT}>{addition.name}</span><span className="text-[8px]" style={S_DIM}>{available}</span></button>;
+                })}
+                {compatible.filter((addition) => addition.id !== slot.installedAdditionId).length === 0 && <div className="py-2 text-center text-[8px]" style={S_DIM}>No alternate additions.</div>}
+              </div>
+            </div>
+          )}
         </div>
       ) : !slot.filled && canInstall ? (
         <div className="border border-[#1A1A2B] p-3">
@@ -1316,7 +1375,7 @@ function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isD
             {isDM ? <><input value={selected.name} onChange={(event) => onUpdate(selected.id, { name: event.target.value.slice(0, 80) })} className="w-full border bg-transparent px-2 py-2 text-[11px] font-semibold" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><textarea value={selected.description} onChange={(event) => onUpdate(selected.id, { description: event.target.value.slice(0, 1200) })} rows={3} placeholder="Description" className="w-full resize-none border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><input value={selected.tags.join(", ")} onChange={(event) => onUpdate(selected.id, { tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 30) })} placeholder="Compatibility tags" className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></> : <><div className="text-[11px] font-semibold" style={S_TEXT}>{selected.name}</div><div className="text-[9px] leading-5" style={S_MUTED}>{selected.description || "No description."}</div><div className="text-[8px]" style={S_DIM}>{selected.tags.join(", ") || "No tags"}</div></>}
           </div>
           <div className="space-y-2">
-            {isDM ? <><Field label="Category"><select value={selected.category} onChange={(event) => onUpdate(selected.id, { category: event.target.value as BusinessSlotCategory })} className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{BUSINESS_SLOT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></Field><div className="grid grid-cols-3 gap-2"><Field label="Quantity"><input type="number" min="0" max="999" value={selected.quantity} onChange={(event) => onUpdate(selected.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Width"><input type="number" min="1" max="32" value={selected.width} onChange={(event) => onUpdate(selected.id, { width: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Height"><input type="number" min="1" max="24" value={selected.height} onChange={(event) => onUpdate(selected.id, { height: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><label className={`${retro.button} flex cursor-pointer items-center justify-center gap-1 py-2 text-[8px]`} style={S_TEXT}><Upload size={9} /> Thumbnail<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadThumbnail(selected, file); event.currentTarget.value = ""; }} /></label>{uploadProgress != null && <ProgressBar value={uploadProgress} />}<button type="button" onClick={() => onDelete(selected)} disabled={(usage[selected.id] || 0) > 0} className={`${retro.button} flex w-full items-center justify-center gap-1 py-2 text-[8px] disabled:opacity-30`} style={S_RED}><Trash2 size={9} /> Delete</button></> : <div className="text-[9px]" style={S_DIM}>{Math.max(0, selected.quantity - (usage[selected.id] || 0))} available of {selected.quantity}</div>}
+            {isDM ? <><Field label="Category"><select value={selected.category} onChange={(event) => onUpdate(selected.id, { category: event.target.value as BusinessSlotCategory })} className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{BUSINESS_SLOT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></Field><div className="grid grid-cols-3 gap-2"><Field label="Quantity"><input type="number" min="0" max="999" value={selected.quantity} onChange={(event) => onUpdate(selected.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Width"><input type="number" min="1" max="32" value={selected.width} onChange={(event) => onUpdate(selected.id, { width: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Height"><input type="number" min="1" max="24" value={selected.height} onChange={(event) => onUpdate(selected.id, { height: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-2"><Field label="Purchase Cost"><input type="number" min="0" value={selected.cost} onChange={(event) => onUpdate(selected.id, { cost: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Monthly Upkeep"><input type="number" min="0" value={selected.monthlyUpkeep} onChange={(event) => onUpdate(selected.id, { monthlyUpkeep: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-1">{FACILITY_STAT_KEYS.map((stat) => <Field key={stat} label={FACILITY_STAT_META[stat].label}><input type="number" value={selected.statModifiers.find((modifier) => modifier.stat === stat)?.amount || 0} onChange={(event) => { const amount = Number(event.target.value) || 0; onUpdate(selected.id, { statModifiers: [...selected.statModifiers.filter((modifier) => modifier.stat !== stat), ...(amount ? [{ stat, amount }] : [])] }); }} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>)}</div><label className={`${retro.button} flex cursor-pointer items-center justify-center gap-1 py-2 text-[8px]`} style={S_TEXT}><Upload size={9} /> Thumbnail<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadThumbnail(selected, file); event.currentTarget.value = ""; }} /></label>{uploadProgress != null && <ProgressBar value={uploadProgress} />}<button type="button" onClick={() => onDelete(selected)} disabled={(usage[selected.id] || 0) > 0} className={`${retro.button} flex w-full items-center justify-center gap-1 py-2 text-[8px] disabled:opacity-30`} style={S_RED}><Trash2 size={9} /> Delete</button></> : <><div className="text-[9px]" style={S_DIM}>{Math.max(0, selected.quantity - (usage[selected.id] || 0))} available of {selected.quantity}</div><div className="text-[8px]" style={S_DIM}>{selected.cost.toLocaleString()} CR · {selected.monthlyUpkeep.toLocaleString()} CR upkeep</div><div className="space-y-1">{selected.statModifiers.map((modifier) => <div key={modifier.stat} className="flex justify-between text-[8px]"><span style={S_DIM}>{FACILITY_STAT_META[modifier.stat].label}</span><span style={modifier.amount >= 0 ? S_GREEN : S_RED}>{modifier.amount >= 0 ? "+" : ""}{modifier.amount}</span></div>)}</div></>}
             <div className="text-[7px]" style={S_DIM}>Thumbnail: recommended 1200x900 (4:3), PNG or WebP.</div>
           </div>
         </div>

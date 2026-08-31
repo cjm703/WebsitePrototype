@@ -20,6 +20,14 @@ export const BUSINESS_SLOT_CATEGORIES = [
 export type BusinessSlotCategory = typeof BUSINESS_SLOT_CATEGORIES[number];
 export type BusinessMapShapeKind = "wall" | "pathway" | "area" | "label";
 export type BusinessMapBackgroundFit = "cover" | "contain" | "stretch";
+export type FacilityStatKey = "capacity" | "appeal" | "revenue" | "expenses" | "security" | "maintenance" | "staff" | "condition";
+export type BusinessSectorState = "active" | "locked";
+export type BusinessExpansionStatus = "available" | "funded" | "complete";
+
+export interface FacilityStatModifier {
+  stat: FacilityStatKey;
+  amount: number;
+}
 
 export interface BusinessMapAssetRef {
   kind: "supabase-storage";
@@ -108,6 +116,27 @@ export interface OfficeBusinessSector {
   layers: BusinessMapLayer[];
   shapes: BusinessMapShape[];
   slots: OfficeBusinessSlot[];
+  state: BusinessSectorState;
+  unlockExpansionId: string;
+  zoneType: string;
+}
+
+export interface OfficeBusinessExpansion {
+  id: string;
+  name: string;
+  description: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  cost: number;
+  currency: string;
+  status: BusinessExpansionStatus;
+  unlockSectorIds: string[];
+  fundedBy: string;
+  fundedAt: string;
+  completedBy: string;
+  completedAt: string;
 }
 
 export interface BusinessMapPermissions {
@@ -117,14 +146,16 @@ export interface BusinessMapPermissions {
 }
 
 export interface OfficeBusinessMapState {
-  version: 2;
+  version: 3;
   name: string;
+  description: string;
   grid: BusinessMapGrid;
   background: BusinessMapBackground;
   layers: BusinessMapLayer[];
   shapes: BusinessMapShape[];
   permissions: BusinessMapPermissions;
   sectors: OfficeBusinessSector[];
+  expansions: OfficeBusinessExpansion[];
 }
 
 export interface FacilityAddition {
@@ -138,6 +169,10 @@ export interface FacilityAddition {
   height: number;
   thumbnailUrl: string;
   thumbnailAsset?: BusinessMapAssetRef;
+  cost: number;
+  monthlyUpkeep: number;
+  ownerPlayerId: string;
+  statModifiers: FacilityStatModifier[];
   createdAt: string;
   updatedAt: string;
 }
@@ -222,6 +257,17 @@ function cleanColor(value: unknown, fallback: string) {
 function cleanStringList(value: unknown, maxItems = 30) {
   if (!Array.isArray(value)) return [];
   return Array.from(new Set(value.map((entry) => cleanText(entry, "", 60).trim()).filter(Boolean))).slice(0, maxItems);
+}
+
+function normalizeStatModifiers(value: unknown): FacilityStatModifier[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<FacilityStatKey>(["capacity", "appeal", "revenue", "expenses", "security", "maintenance", "staff", "condition"]);
+  return value.slice(0, 24).flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const source = candidate as Partial<FacilityStatModifier>;
+    if (!allowed.has(source.stat as FacilityStatKey)) return [];
+    return [{ stat: source.stat as FacilityStatKey, amount: clamp(finiteNumber(source.amount, 0), -1000000, 1000000) }];
+  });
 }
 
 export function normalizeBusinessMapGrid(raw: unknown): BusinessMapGrid {
@@ -394,6 +440,9 @@ function normalizeSector(raw: unknown, index: number, grid: BusinessMapGrid, fal
     layers: cloneLayers(),
     shapes: [],
     slots: [],
+    state: "active" as BusinessSectorState,
+    unlockExpansionId: "",
+    zoneType: "General",
   };
   return {
     ...normalizeBusinessMapRect(source, base, grid),
@@ -407,25 +456,53 @@ function normalizeSector(raw: unknown, index: number, grid: BusinessMapGrid, fal
       ? source.shapes.slice(0, 300).map((shape, shapeIndex) => normalizeBusinessMapShape(shape, shapeIndex, grid)).filter((shape): shape is BusinessMapShape => Boolean(shape))
       : [],
     slots: Array.isArray(source.slots) ? source.slots.slice(0, 160).map((slot, slotIndex) => normalizeSlot(slot, slotIndex, grid)) : [],
+    state: source.state === "locked" ? "locked" : "active",
+    unlockExpansionId: cleanText(source.unlockExpansionId, "", 100).trim(),
+    zoneType: cleanText(source.zoneType, "General", 60).trim() || "General",
+  };
+}
+
+function normalizeExpansion(raw: unknown, index: number, grid: BusinessMapGrid): OfficeBusinessExpansion {
+  const source = raw && typeof raw === "object" ? raw as Partial<OfficeBusinessExpansion> : {};
+  const rect = normalizeBusinessMapRect(source, { x: 0, y: 0, width: 4, height: 3 }, grid);
+  const status: BusinessExpansionStatus = source.status === "funded" || source.status === "complete" ? source.status : "available";
+  return {
+    ...rect,
+    id: cleanId(source.id, `expansion-${index + 1}`),
+    name: cleanText(source.name, `Expansion ${index + 1}`, 80).trim() || `Expansion ${index + 1}`,
+    description: cleanText(source.description, "", 900),
+    cost: clamp(Math.floor(finiteNumber(source.cost, 0)), 0, 1000000000),
+    currency: cleanText(source.currency, "CR", 12).trim() || "CR",
+    status,
+    unlockSectorIds: cleanStringList(source.unlockSectorIds, 20),
+    fundedBy: cleanText(source.fundedBy, "", 100),
+    fundedAt: cleanText(source.fundedAt, "", 80),
+    completedBy: cleanText(source.completedBy, "", 100),
+    completedAt: cleanText(source.completedAt, "", 80),
   };
 }
 
 export function createDefaultOfficeBusinessMap(): OfficeBusinessMapState {
   const grid = normalizeBusinessMapGrid(null);
-  const sector = (raw: Omit<OfficeBusinessSector, "background" | "layers" | "shapes">): OfficeBusinessSector => ({
+  const sector = (raw: Omit<OfficeBusinessSector, "background" | "layers" | "shapes" | "state" | "unlockExpansionId" | "zoneType">): OfficeBusinessSector => ({
     ...raw,
     background: { ...DEFAULT_BACKGROUND },
     layers: cloneLayers(),
     shapes: [],
+    state: "active",
+    unlockExpansionId: "",
+    zoneType: "General",
   });
   return {
-    version: 2,
+    version: 3,
     name: "Wasp Office Business Layout",
+    description: "General company facility layout.",
     grid,
     background: { ...DEFAULT_BACKGROUND },
     layers: cloneLayers(),
     shapes: [],
     permissions: { ...DEFAULT_PERMISSIONS },
+    expansions: [],
     sectors: [
       sector({ id: "sector-front", name: "Front Office", description: "Reception, intake, and public-facing business.", color: "#79B8FF", x: 0, y: 0, width: 4, height: 3, slots: [createDefaultBusinessSlot("slot-reception", "Reception Slot", "Office", 0, 0), createDefaultBusinessSlot("slot-client", "Client Service Slot", "Commercial", 4, 0)] }),
       sector({ id: "sector-operations", name: "Operations", description: "Planning, dispatch, and active business coordination.", color: "#54C7A0", x: 4, y: 0, width: 5, height: 4, slots: [createDefaultBusinessSlot("slot-command", "Command Slot", "Operations", 0, 0), createDefaultBusinessSlot("slot-team", "Team Slot", "Office", 4, 0)] }),
@@ -443,6 +520,7 @@ export function createFacilityBusinessMap(facilityName: string): OfficeBusinessM
   return {
     ...map,
     name: `${name} Layout`,
+    description: `Dedicated facility map for ${name}.`,
     sectors: [{
       id: createBusinessMapId("sector"),
       name: "Main Floor",
@@ -456,6 +534,9 @@ export function createFacilityBusinessMap(facilityName: string): OfficeBusinessM
       layers: cloneLayers(),
       shapes: [],
       slots: [],
+      state: "active",
+      unlockExpansionId: "",
+      zoneType: "General",
     }],
   };
 }
@@ -466,8 +547,9 @@ export function normalizeOfficeBusinessMap(raw: unknown): OfficeBusinessMapState
   const source = raw as Partial<OfficeBusinessMapState> & { version?: number };
   const grid = normalizeBusinessMapGrid(source.grid);
   return {
-    version: 2,
+    version: 3,
     name: cleanText(source.name, fallback.name, 100).trim() || fallback.name,
+    description: cleanText(source.description, fallback.description, 1200),
     grid,
     background: normalizeBusinessMapBackground(source.background),
     layers: normalizeBusinessMapLayers(source.layers),
@@ -482,6 +564,9 @@ export function normalizeOfficeBusinessMap(raw: unknown): OfficeBusinessMapState
     sectors: Array.isArray(source.sectors)
       ? source.sectors.slice(0, 60).map((sector, index) => normalizeSector(sector, index, grid, fallback.sectors[index % fallback.sectors.length]))
       : fallback.sectors,
+    expansions: Array.isArray(source.expansions)
+      ? source.expansions.slice(0, 20).map((expansion, index) => normalizeExpansion(expansion, index, grid))
+      : [],
   };
 }
 
@@ -509,6 +594,10 @@ export function normalizeFacilityAdditions(raw: unknown): FacilityAddition[] {
       height: clamp(Math.floor(finiteNumber(source.height, 1)), 1, MAX_BUSINESS_MAP_GRID_HEIGHT),
       thumbnailUrl: cleanText(source.thumbnailUrl, source.thumbnailAsset?.publicUrl || "", 3000),
       thumbnailAsset: source.thumbnailAsset && typeof source.thumbnailAsset === "object" ? source.thumbnailAsset as BusinessMapAssetRef : undefined,
+      cost: clamp(Math.floor(finiteNumber(source.cost, 0)), 0, 1000000000),
+      monthlyUpkeep: clamp(Math.floor(finiteNumber(source.monthlyUpkeep, 0)), 0, 1000000000),
+      ownerPlayerId: cleanText(source.ownerPlayerId, "", 100).trim(),
+      statModifiers: normalizeStatModifiers(source.statModifiers),
       createdAt,
       updatedAt: cleanText(source.updatedAt, createdAt, 80),
     };
@@ -527,6 +616,10 @@ export function createFacilityAddition(index = 0): FacilityAddition {
     width: 1,
     height: 1,
     thumbnailUrl: "",
+    cost: 0,
+    monthlyUpkeep: 0,
+    ownerPlayerId: "",
+    statModifiers: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -546,6 +639,11 @@ export function countInstalledFacilityAdditions(maps: Array<OfficeBusinessMapSta
     counts[slot.installedAdditionId] = (counts[slot.installedAdditionId] || 0) + 1;
   })));
   return counts;
+}
+
+export function isBusinessSectorUnlocked(map: OfficeBusinessMapState, sector: OfficeBusinessSector) {
+  if (sector.state !== "locked" || !sector.unlockExpansionId) return sector.state !== "locked";
+  return map.expansions.some((expansion) => expansion.id === sector.unlockExpansionId && expansion.status === "complete");
 }
 
 export function canPlayerEditBusinessMap(map: OfficeBusinessMapState, playerId: string, action: "install" | "remove") {

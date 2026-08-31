@@ -9,6 +9,19 @@ export interface FacilityAdditionAction {
   additionId?: string;
 }
 
+export interface FacilityExpansionAction {
+  action: "fund" | "complete";
+  facilityId: string;
+  expansionId: string;
+}
+
+export interface PersonalFundUpdate {
+  playerId: string;
+  balance?: number;
+  delta?: number;
+  note?: string;
+}
+
 export async function saveOfficeState<T>(state: T, expectedRevision: number): Promise<T> {
   const body = await sessionApiFetch("/office/state/save", {
     method: "POST",
@@ -21,6 +34,22 @@ export async function applyFacilityAdditionAction<T>(action: FacilityAdditionAct
   const body = await sessionApiFetch("/office/facility-addition/action", {
     method: "POST",
     body: JSON.stringify(action),
+  });
+  return body.state as T;
+}
+
+export async function applyFacilityExpansionAction<T>(action: FacilityExpansionAction): Promise<T> {
+  const body = await sessionApiFetch("/office/facility-expansion/action", {
+    method: "POST",
+    body: JSON.stringify(action),
+  });
+  return body.state as T;
+}
+
+export async function updateOfficePersonalFund<T>(update: PersonalFundUpdate): Promise<T> {
+  const body = await sessionApiFetch("/office/personal-funds/update", {
+    method: "POST",
+    body: JSON.stringify(update),
   });
   return body.state as T;
 }
@@ -45,4 +74,3 @@ export function subscribeToOfficeStateSignals(onSignal: () => void) {
     unsubscribe: () => removeSupabaseChannelSafely(channel),
   };
 }
-

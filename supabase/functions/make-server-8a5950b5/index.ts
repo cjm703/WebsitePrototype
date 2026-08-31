@@ -865,6 +865,11 @@ function officeBusinessMapForScope(state: JsonRecord, scopeId: string) {
   return facility?.businessMap && typeof facility.businessMap === "object" ? facility.businessMap as JsonRecord : null;
 }
 
+function officeFacilityForScope(state: JsonRecord, scopeId: string) {
+  if (scopeId === "global" || !Array.isArray(state?.facilities)) return null;
+  return state.facilities.find((entry: any) => String(entry?.id || "") === scopeId) || null;
+}
+
 function findBusinessMapSlot(map: JsonRecord, sectorId: string, slotId: string) {
   const sector = Array.isArray(map?.sectors)
     ? map.sectors.find((entry: any) => String(entry?.id || "") === sectorId)
@@ -875,14 +880,31 @@ function findBusinessMapSlot(map: JsonRecord, sectorId: string, slotId: string) 
   return { sector, slot };
 }
 
-function playerCanModifyBusinessMap(map: JsonRecord, playerId: string, action: "install" | "remove") {
+function playerCanModifyBusinessMap(map: JsonRecord, playerId: string, action: "install" | "remove", facility?: JsonRecord | null) {
   if (playerId === "dm") return true;
+  const ownerPlayerId = String(facility?.ownerPlayerId || "").trim();
+  if (ownerPlayerId) return ownerPlayerId === playerId;
   const permissions = map?.permissions && typeof map.permissions === "object" ? map.permissions : {};
   const allowed = Array.isArray(permissions.allowedPlayerIds)
     ? permissions.allowedPlayerIds.map((entry: any) => String(entry || "")).filter(Boolean)
     : [];
   if (allowed.length > 0 && !allowed.includes(playerId)) return false;
   return action === "install" ? permissions.playerCanInstall !== false : permissions.playerCanRemove === true;
+}
+
+function officePersonalFunds(state: JsonRecord) {
+  if (!Array.isArray(state.personalFunds)) state.personalFunds = [];
+  return state.personalFunds as JsonRecord[];
+}
+
+function officePersonalFund(state: JsonRecord, playerId: string, create = false) {
+  const funds = officePersonalFunds(state);
+  let fund = funds.find((entry: any) => String(entry?.playerId || "") === playerId) || null;
+  if (!fund && create) {
+    fund = { playerId, balance: 0, currency: "CR", note: "", updatedAt: "", updatedBy: "" };
+    funds.push(fund);
+  }
+  return fund;
 }
 
 function additionFitsBusinessSlot(slot: JsonRecord, addition: JsonRecord) {
@@ -981,7 +1003,8 @@ function registerRoutes(prefix: string) {
       const next = JSON.parse(JSON.stringify(current)) as JsonRecord;
       const map = officeBusinessMapForScope(next, scopeId);
       if (!map) return c.json({ error: "Business map was not found" }, 404);
-      if (!playerCanModifyBusinessMap(map, playerId, action)) {
+      const facility = officeFacilityForScope(next, scopeId);
+      if (!playerCanModifyBusinessMap(map, playerId, action, facility)) {
         return c.json({ error: `You do not have permission to ${action} facility additions on this map` }, 403);
       }
 
@@ -994,7 +1017,7 @@ function registerRoutes(prefix: string) {
           ? next.facilityAdditions.find((entry: any) => String(entry?.id || "") === additionId)
           : null;
         if (!addition) return c.json({ error: "Facility addition was not found" }, 404);
-        if (slot.installedAdditionId) return c.json({ error: "Remove the installed addition before replacing it" }, 409);
+        if (String(slot.installedAdditionId || "") === additionId) return c.json({ error: "That addition is already installed here" }, 409);
         if (slot.filled && !slot.installedAdditionId) return c.json({ error: "This slot already has a custom assignment" }, 409);
         if (!additionFitsBusinessSlot(slot, addition)) {
           return c.json({ error: "That facility addition is not compatible with this slot" }, 409);
@@ -1025,6 +1048,103 @@ function registerRoutes(prefix: string) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const status = /session/i.test(message) ? 401 : 500;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post(`${prefix}/office/personal-funds/update`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await requireDMSession(c);
+      const body = await c.req.json();
+      const targetPlayerId = String(body?.playerId || "").trim();
+      if (!targetPlayerId || targetPlayerId === "dm") return c.json({ error: "A valid player is required" }, 400);
+
+      const current = await loadOfficeStateRecord();
+      if (!current) return c.json({ error: "Office state is not available" }, 404);
+      const next = JSON.parse(JSON.stringify(current)) as JsonRecord;
+      const fund = officePersonalFund(next, targetPlayerId, true)!;
+      const currentBalance = Math.max(0, Math.round(Number(fund.balance) || 0));
+      const hasBalance = Number.isFinite(Number(body?.balance));
+      const hasDelta = Number.isFinite(Number(body?.delta));
+      if (!hasBalance && !hasDelta && typeof body?.note !== "string") {
+        return c.json({ error: "Provide a balance, adjustment, or note" }, 400);
+      }
+      const requested = hasBalance ? Number(body.balance) : currentBalance + Number(body.delta || 0);
+      fund.balance = Math.max(0, Math.min(1000000000, Math.round(requested)));
+      fund.currency = "CR";
+      if (typeof body?.note === "string") fund.note = String(body.note).slice(0, 300);
+      fund.updatedAt = new Date().toISOString();
+      fund.updatedBy = playerId;
+
+      const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
+      const stamped = stampOfficeState(next, playerId, currentRevision);
+      await persistOfficeStateRecord(stamped);
+      return c.json({ ok: true, state: stamped });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post(`${prefix}/office/facility-expansion/action`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const action = body?.action === "fund" || body?.action === "complete" ? body.action as "fund" | "complete" : null;
+      const facilityId = String(body?.facilityId || "").trim();
+      const expansionId = String(body?.expansionId || "").trim();
+      if (!action || !facilityId || !expansionId) return c.json({ error: "A valid facility expansion action is required" }, 400);
+
+      const current = await loadOfficeStateRecord();
+      if (!current) return c.json({ error: "Office state is not available" }, 404);
+      const next = JSON.parse(JSON.stringify(current)) as JsonRecord;
+      const facility = officeFacilityForScope(next, facilityId);
+      if (!facility) return c.json({ error: "Facility was not found" }, 404);
+      const map = facility.businessMap && typeof facility.businessMap === "object" ? facility.businessMap as JsonRecord : null;
+      const expansion = Array.isArray(map?.expansions)
+        ? map.expansions.find((entry: any) => String(entry?.id || "") === expansionId)
+        : null;
+      if (!expansion) return c.json({ error: "Expansion project was not found" }, 404);
+
+      if (action === "fund") {
+        if (String(facility.ownerPlayerId || "") !== playerId) return c.json({ error: "Only the assigned facility owner can fund this expansion" }, 403);
+        if (expansion.status !== "available") return c.json({ error: "This expansion has already been funded" }, 409);
+        const cost = Math.max(0, Math.round(Number(expansion.cost) || 0));
+        const fund = officePersonalFund(next, playerId, false);
+        const balance = Math.max(0, Math.round(Number(fund?.balance) || 0));
+        if (!fund || balance < cost) return c.json({ error: "Insufficient Personal Funds" }, 409);
+        fund.balance = balance - cost;
+        fund.updatedAt = new Date().toISOString();
+        fund.updatedBy = playerId;
+        expansion.status = "funded";
+        expansion.fundedBy = playerId;
+        expansion.fundedAt = new Date().toISOString();
+      } else {
+        await requireDMSession(c);
+        if (expansion.status !== "funded") return c.json({ error: "The owner must fund this expansion first" }, 409);
+        expansion.status = "complete";
+        expansion.completedBy = playerId;
+        expansion.completedAt = new Date().toISOString();
+        if (Array.isArray(map.sectors)) {
+          const unlockIds = new Set(Array.isArray(expansion.unlockSectorIds) ? expansion.unlockSectorIds.map(String) : []);
+          map.sectors.forEach((sector: any) => {
+            if (unlockIds.has(String(sector?.id || "")) || String(sector?.unlockExpansionId || "") === expansionId) sector.state = "active";
+          });
+        }
+      }
+
+      const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
+      const stamped = stampOfficeState(next, playerId, currentRevision);
+      await persistOfficeStateRecord(stamped);
+      return c.json({ ok: true, state: stamped });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
       return c.json({ error: message }, status);
     }
   });

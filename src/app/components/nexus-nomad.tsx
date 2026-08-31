@@ -28,7 +28,6 @@ import {
   countInstalledFacilityAdditions,
   createDefaultOfficeBusinessMap,
   createFacilityBusinessMap,
-  normalizeFacilityAdditions,
   normalizeOfficeBusinessMap,
   type BusinessMapPlayerOption,
   type FacilityAddition,
@@ -39,8 +38,17 @@ import {
   applyFacilityAdditionAction as applyFacilityAdditionServerAction,
   saveOfficeState,
   subscribeToOfficeStateSignals,
+  updateOfficePersonalFund,
   type FacilityAdditionAction,
 } from "@/lib/office-state-api";
+import {
+  createMysticLandsParkFacility,
+  ensureMysticLandsAdditions,
+  ensurePersonalFund,
+  type FacilityStats,
+  type PersonalFund,
+} from "@/lib/facility-depth-model";
+import { normalizeFacilityOfficeState, normalizeFacilityRecord } from "@/lib/facility-office-state";
 import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
   NS_DARK, NS_SUBDIM, NS_BRIGHT, NS_SOFT, NS_MID, NS_GOLD, NS_BLUE, NS_RED,
@@ -551,6 +559,10 @@ interface Facility {
   expenses?: string;
   employeesOnSite?: string;
   businessMap?: OfficeBusinessMapState;
+  ownerPlayerId?: string;
+  presetId?: string;
+  baseStats?: FacilityStats;
+  revenueDestination?: "owner-personal-fund";
 }
 
 interface FacilityCategory {
@@ -667,10 +679,12 @@ interface NexusNomadState {
   invTabs: InvSubTab[];
   businessMap: OfficeBusinessMapState;
   facilityAdditions: FacilityAddition[];
+  companyFunds: number;
+  personalFunds: PersonalFund[];
 }
 
 const NEXUS_NOMAD_STATE_ID = "default";
-const NEXUS_NOMAD_STATE_VERSION = 4;
+const NEXUS_NOMAD_STATE_VERSION = 5;
 
 function loadLocalOfficeReputation(): number {
   return 25;
@@ -683,6 +697,13 @@ function clonePlain<T>(value: T): T {
 }
 
 function buildDefaultNexusNomadState(): NexusNomadState {
+  const facilityDefaults = normalizeFacilityOfficeState({
+    facilities: [...clonePlain(DEFAULT_FACILITIES), createMysticLandsParkFacility()],
+    facilityCats: [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }],
+    facilityAdditions: ensureMysticLandsAdditions([]),
+    personalFunds: [],
+    companyFunds: 50000,
+  });
   return {
     id: NEXUS_NOMAD_STATE_ID,
     version: NEXUS_NOMAD_STATE_VERSION,
@@ -700,14 +721,16 @@ function buildDefaultNexusNomadState(): NexusNomadState {
     employeeCats: [{ id: "cat-default", name: "General", employeeIds: DEFAULT_EMPLOYEES.map(e => e.id), collapsed: false }],
     presets: [],
     loadouts: [],
-    facilities: clonePlain(DEFAULT_FACILITIES),
-    facilityCats: [{ id: "fcat-default", name: "General", facilityIds: DEFAULT_FACILITIES.map(f => f.id), collapsed: false }],
+    facilities: facilityDefaults.facilities as Facility[],
+    facilityCats: facilityDefaults.facilityCats,
     contracts: clonePlain(DEFAULT_CONTRACTS),
     contractCats: [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }],
     officeInfo: clonePlain(DEFAULT_OFFICE_INFO),
     invTabs: clonePlain(DEFAULT_INVENTORY),
     businessMap: createDefaultOfficeBusinessMap(),
-    facilityAdditions: [],
+    facilityAdditions: facilityDefaults.facilityAdditions,
+    companyFunds: facilityDefaults.companyFunds,
+    personalFunds: facilityDefaults.personalFunds,
   };
 }
 
@@ -725,6 +748,7 @@ function buildRemoteSentinelNexusNomadState(): NexusNomadState {
 function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefined): NexusNomadState {
   const fallback = buildDefaultNexusNomadState();
   if (!raw || typeof raw !== "object") return fallback;
+  const facilityState = normalizeFacilityOfficeState(raw);
   return {
     id: typeof raw.id === "string" && raw.id.trim() ? raw.id : fallback.id,
     version: NEXUS_NOMAD_STATE_VERSION,
@@ -741,34 +765,28 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
     employeeCats: Array.isArray(raw.employeeCats) ? raw.employeeCats : fallback.employeeCats,
     presets: Array.isArray(raw.presets) ? raw.presets : fallback.presets,
     loadouts: Array.isArray(raw.loadouts) ? raw.loadouts : fallback.loadouts,
-    facilities: Array.isArray(raw.facilities)
-      ? raw.facilities
-          .map((facility) => {
-            if (!facility || typeof facility !== "object") return null;
-            const source = facility as Facility;
-            return {
-              ...source,
-              businessMap: source.businessMap
-                ? normalizeOfficeBusinessMap(source.businessMap)
-                : undefined,
-            };
-          })
-          .filter((facility): facility is Facility => facility !== null)
-      : fallback.facilities,
-    facilityCats: Array.isArray(raw.facilityCats) ? raw.facilityCats : fallback.facilityCats,
+    facilities: facilityState.facilities as Facility[],
+    facilityCats: facilityState.facilityCats,
     contracts: Array.isArray(raw.contracts) ? raw.contracts : fallback.contracts,
     contractCats: Array.isArray(raw.contractCats) ? raw.contractCats : fallback.contractCats,
     officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo as OfficeInfoData : fallback.officeInfo,
     invTabs: Array.isArray(raw.invTabs) ? raw.invTabs : fallback.invTabs,
     businessMap: normalizeOfficeBusinessMap(raw.businessMap),
-    facilityAdditions: normalizeFacilityAdditions(raw.facilityAdditions),
+    facilityAdditions: facilityState.facilityAdditions,
+    companyFunds: facilityState.companyFunds,
+    personalFunds: facilityState.personalFunds,
   };
 }
 
 function mergeRemoteMapInstallations(local: OfficeBusinessMapState, remote: OfficeBusinessMapState) {
   const remoteSectors = new Map(remote.sectors.map((sector) => [sector.id, sector]));
+  const remoteExpansions = new Map(remote.expansions.map((expansion) => [expansion.id, expansion]));
   return {
     ...local,
+    expansions: local.expansions.map((expansion) => {
+      const remoteExpansion = remoteExpansions.get(expansion.id);
+      return remoteExpansion ? { ...expansion, status: remoteExpansion.status, fundedBy: remoteExpansion.fundedBy, fundedAt: remoteExpansion.fundedAt, completedBy: remoteExpansion.completedBy, completedAt: remoteExpansion.completedAt } : expansion;
+    }),
     sectors: local.sectors.map((sector) => {
       const remoteSector = remoteSectors.get(sector.id);
       if (!remoteSector) return sector;
@@ -800,6 +818,7 @@ function mergeRemoteInstallationChanges(local: NexusNomadState, remote: NexusNom
     revision: remote.revision,
     updatedAt: remote.updatedAt,
     updatedBy: remote.updatedBy,
+    personalFunds: remote.personalFunds,
     businessMap: mergeRemoteMapInstallations(local.businessMap, remote.businessMap),
     facilities: local.facilities.map((facility) => {
       const remoteFacility = remoteFacilities.get(facility.id);
@@ -1580,6 +1599,8 @@ export function NexusNomad() {
   const [officeInfo, setOfficeInfo] = useState<OfficeInfoData>(initialStateRef.current.officeInfo);
   const [businessMap, setBusinessMap] = useState<OfficeBusinessMapState>(initialStateRef.current.businessMap);
   const [facilityAdditions, setFacilityAdditions] = useState<FacilityAddition[]>(initialStateRef.current.facilityAdditions);
+  const [companyFunds, setCompanyFunds] = useState(initialStateRef.current.companyFunds);
+  const [personalFunds, setPersonalFunds] = useState<PersonalFund[]>(initialStateRef.current.personalFunds);
   const [officeRevision, setOfficeRevision] = useState(initialStateRef.current.revision);
   const [officeUpdatedAt, setOfficeUpdatedAt] = useState(initialStateRef.current.updatedAt);
   const [officeUpdatedBy, setOfficeUpdatedBy] = useState(initialStateRef.current.updatedBy);
@@ -1658,6 +1679,8 @@ export function NexusNomad() {
     setOfficeInfo(state.officeInfo);
     setBusinessMap(state.businessMap);
     setFacilityAdditions(state.facilityAdditions);
+    setCompanyFunds(state.companyFunds);
+    setPersonalFunds(state.personalFunds);
     setInvTabs(state.invTabs);
     setActiveInvTab((prev) => {
       if (prev && state.invTabs.some((tab) => tab.id === prev)) return prev;
@@ -1754,11 +1777,13 @@ export function NexusNomad() {
       invTabs,
       businessMap,
       facilityAdditions,
+      companyFunds,
+      personalFunds,
     };
   }, [
     officeName, reputation, entityReps, govConfig, employees, employeeCats,
     presets, loadouts, facilities, facilityCats, contracts, contractCats, officeInfo, invTabs, businessMap,
-    facilityAdditions, officeRevision, officeUpdatedAt, officeUpdatedBy,
+    facilityAdditions, companyFunds, personalFunds, officeRevision, officeUpdatedAt, officeUpdatedBy,
   ]);
 
   const persistentStateJson = useMemo(() => JSON.stringify(persistentState), [persistentState]);
@@ -1884,6 +1909,19 @@ export function NexusNomad() {
     setStateSaveError(null);
     showSaveNotice("saved", "Facility map updated.", 1400);
     void officeStateSignalRef.current?.notify();
+  }, [applyLoadedState, showSaveNotice]);
+
+  const handlePersonalFundUpdate = useCallback(async (playerId: string, update: { balance?: number; delta?: number; note?: string }) => {
+    try {
+      showSaveNotice("saving", "Updating Personal Funds...");
+      const saved = normalizeNexusNomadState(await updateOfficePersonalFund<NexusNomadState>({ playerId, ...update }));
+      lastSavedStateJsonRef.current = JSON.stringify(saved);
+      applyLoadedState(saved);
+      showSaveNotice("saved", "Personal Funds updated.", 1600);
+      void officeStateSignalRef.current?.notify();
+    } catch (error) {
+      showSaveNotice("error", error instanceof Error ? error.message : "Personal Funds could not be updated.", 4500);
+    }
   }, [applyLoadedState, showSaveNotice]);
 
   const saveRep = useCallback((v: number) => {
@@ -2117,7 +2155,7 @@ export function NexusNomad() {
   const addFacilityToCat = useCallback((catId: string) => {
     const n = newFacName.trim();
     if (!n) return;
-    const fac: Facility = { id: uid(), name: n, type: newFacType, status: "Active", statusColor: "#4ACA6A" };
+    const fac = normalizeFacilityRecord({ id: uid(), name: n, type: newFacType, status: "Active", statusColor: "#4ACA6A" }) as Facility;
     setFacilities(prev => {
       const next = [...prev, fac];
       saveFacilities(next);
@@ -2158,6 +2196,20 @@ export function NexusNomad() {
       return next;
     });
   }, []);
+
+  const assignFacilityOwner = useCallback((facility: Facility, ownerPlayerId: string) => {
+    const businessMap = facility.businessMap ? {
+      ...facility.businessMap,
+      permissions: {
+        ...facility.businessMap.permissions,
+        playerCanInstall: true,
+        playerCanRemove: true,
+        allowedPlayerIds: ownerPlayerId ? [ownerPlayerId] : [],
+      },
+    } : undefined;
+    editFacility(facility.id, { ownerPlayerId, revenueDestination: "owner-personal-fund", businessMap });
+    if (ownerPlayerId) setPersonalFunds((current) => ensurePersonalFund(current, ownerPlayerId));
+  }, [editFacility]);
 
   const selectedFacility = selectedFacilityId ? facilities.find(f => f.id === selectedFacilityId) : null;
 
@@ -3098,7 +3150,7 @@ export function NexusNomad() {
                     </div>
                     <ChevronRight size={12} style={NS_SUBDIM} />
                   </div>
-                  <div className="text-[20px] font-bold" style={NS_GOLD}>50,000 CR</div>
+                  <div className="text-[20px] font-bold" style={NS_GOLD}>{companyFunds.toLocaleString()} CR</div>
                 </div>
               </div>
 
@@ -3311,6 +3363,7 @@ export function NexusNomad() {
             const totalRevenue = facilities.reduce((sum, f) => sum + parseNum(f.revenue), 0);
             const totalExpenses = facilities.reduce((sum, f) => sum + parseNum(f.expenses), 0);
             const netIncome = totalRevenue - totalExpenses;
+            const visibleFundPlayers = isDM ? businessMapPlayers : businessMapPlayers.filter((player) => player.id === currentUserId);
 
             return (
               <div className="space-y-6">
@@ -3356,6 +3409,32 @@ export function NexusNomad() {
                     <div className="text-[18px] font-bold font-mono" style={nsIncomeColor(netIncome)}>
                       {netIncome !== 0 ? `${netIncome > 0 ? "+" : ""}${netIncome.toLocaleString()} CR` : "—"}
                     </div>
+                  </div>
+                </div>
+
+                {sectionHeader("Personal Funds", <Coins size={12} />)}
+                <div style={innerPanelStyle} className="p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div><div className="text-[10px] font-semibold" style={NS_PALE}>Player-owned business funds</div><div className="mt-1 text-[8px]" style={NS_DIM}>Facility revenue is directed here conceptually. The DM applies income and other adjustments manually.</div></div>
+                    <div className="text-[8px]" style={NS_SUBDIM}>{visibleFundPlayers.length} accounts</div>
+                  </div>
+                  <div className="space-y-2">
+                    {visibleFundPlayers.map((player) => {
+                      const fund = personalFunds.find((entry) => entry.playerId === player.id);
+                      const balance = fund?.balance || 0;
+                      const ownedFacilities = facilities.filter((facility) => facility.ownerPlayerId === player.id);
+                      return (
+                        <div key={player.id} className="grid grid-cols-1 gap-3 border border-[#1A1A2B] bg-[#06060A] p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                          <div className="min-w-0"><div className="flex items-center gap-2"><UserPlus size={10} style={NS_ICON_GOLD_SOFT} /><span className="truncate text-[11px] font-semibold" style={NS_TEXT}>{player.name}</span></div><div className="mt-1 truncate text-[8px]" style={NS_DIM}>{ownedFacilities.length ? ownedFacilities.map((facility) => facility.name).join(", ") : "No assigned facilities"}</div></div>
+                          <div className="flex items-center gap-2">
+                            {isDM && <button type="button" onClick={() => void handlePersonalFundUpdate(player.id, { delta: -100 })} disabled={balance <= 0} className="h-7 w-7 border border-[#3A2730] text-[11px] text-[#E67A86] disabled:opacity-30" title="Remove 100 CR">−</button>}
+                            {isDM ? <input key={`${player.id}-${balance}`} type="number" min="0" defaultValue={balance} onBlur={(event) => { const next = Math.max(0, Math.round(Number(event.target.value) || 0)); if (next !== balance) void handlePersonalFundUpdate(player.id, { balance: next }); }} className="w-32 border border-[#39314B] bg-[#090912] px-2 py-1.5 text-right text-[12px] font-mono outline-none" style={NS_GOLD} aria-label={`${player.name} personal funds`} /> : <div className="w-32 text-right text-[13px] font-mono font-bold" style={NS_GOLD}>{balance.toLocaleString()} CR</div>}
+                            {isDM && <button type="button" onClick={() => void handlePersonalFundUpdate(player.id, { delta: 100 })} className="h-7 w-7 border border-[#244234] text-[11px] text-[#62C68D]" title="Add 100 CR">+</button>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {visibleFundPlayers.length === 0 && <div className="py-5 text-center text-[9px]" style={NS_DIM}>No player accounts are available.</div>}
                   </div>
                 </div>
 
@@ -4040,32 +4119,8 @@ export function NexusNomad() {
           {activeTab === "facilities" && selectedFacility && (() => {
             const fac = selectedFacility;
             const meta = FACILITY_TYPE_META[fac.type] || FACILITY_TYPE_META.Facility;
-            const facField = (label: string, field: keyof Facility, placeholder: string, multiline?: boolean) => (
-              <div>
-                <span className="text-[9px] uppercase tracking-wider font-semibold block mb-1" style={NS_DIM}>{label}</span>
-                {isDM ? (
-                  multiline ? (
-                    <textarea
-                      value={(fac[field] as string) || ""}
-                      onChange={e => editFacility(fac.id, { [field]: e.target.value })}
-                      placeholder={placeholder}
-                      className="w-full text-[11px] bg-transparent outline-none px-2 py-1.5 rounded resize-y min-h-[60px]"
-                      style={NS_DETAIL_INPUT}
-                    />
-                  ) : (
-                    <input
-                      value={(fac[field] as string) || ""}
-                      onChange={e => editFacility(fac.id, { [field]: e.target.value })}
-                      placeholder={placeholder}
-                      className="w-full text-[11px] bg-transparent outline-none px-2 py-1.5 rounded"
-                      style={NS_DETAIL_INPUT}
-                    />
-                  )
-                ) : (
-                  <p className="text-[11px] leading-relaxed px-0.5" style={NS_MUTED}>{(fac[field] as string) || "—"}</p>
-                )}
-              </div>
-            );
+            const owner = businessMapPlayers.find((player) => player.id === fac.ownerPlayerId);
+            const ownerFund = personalFunds.find((fund) => fund.playerId === fac.ownerPlayerId);
 
             const STATUS_OPTIONS = [
               { label: "Active", color: "#4ACA6A" },
@@ -4162,6 +4217,37 @@ export function NexusNomad() {
                           {fac.status || "Active"}
                         </span>
                       )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,0.55fr)]">
+                    <div style={innerPanelStyle} className="p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <Crown size={10} style={NS_ICON_GOLD_SOFT} />
+                        <span className="text-[9px] font-semibold uppercase tracking-wider" style={NS_DIM}>Facility Owner</span>
+                      </div>
+                      {isDM ? (
+                        <select
+                          value={fac.ownerPlayerId || ""}
+                          onChange={(event) => assignFacilityOwner(fac, event.target.value)}
+                          className="w-full bg-transparent px-2 py-1.5 text-[11px] outline-none"
+                          style={NS_DETAIL_SELECT}
+                        >
+                          <option value="">Company owned</option>
+                          {businessMapPlayers.map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}
+                        </select>
+                      ) : (
+                        <p className="px-0.5 text-[11px] font-medium" style={NS_MUTED}>{owner?.name || "Company owned"}</p>
+                      )}
+                    </div>
+                    <div style={innerPanelStyle} className="p-3">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <Coins size={10} style={NS_ICON_GREEN_SOFT} />
+                        <span className="text-[9px] font-semibold uppercase tracking-wider" style={NS_DIM}>Personal Funds</span>
+                      </div>
+                      <p className="font-mono text-[12px] font-semibold" style={NS_ACCENT_GREEN}>
+                        {fac.ownerPlayerId ? `${(ownerFund?.balance || 0).toLocaleString()} CR` : "Not assigned"}
+                      </p>
                     </div>
                   </div>
 
@@ -4335,50 +4421,67 @@ export function NexusNomad() {
                           : "No business map is attached to this facility."}
                       </p>
                     </div>
-                    {isDM && !fac.businessMap && (
-                      <button
-                        type="button"
-                        onClick={() => editFacility(fac.id, { businessMap: createFacilityBusinessMap(fac.name) })}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded text-[10px] font-medium hover:opacity-80 transition-opacity"
-                        style={nsAccentBtn(accent)}
-                      >
-                        <Plus size={11} />
-                        Add Facility Map
-                      </button>
-                    )}
-                    {isDM && fac.businessMap && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (window.confirm(`Remove the business map from ${fac.name}? This cannot be undone.`)) {
-                            const assets = collectBusinessMapAssets(fac.businessMap!);
-                            editFacility(fac.id, { businessMap: undefined });
-                            assets.forEach((asset) => void deleteBusinessMapImage(asset).catch(() => undefined));
-                          }
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded text-[9px] hover:opacity-80 transition-opacity"
-                        style={NS_BTN_DELETE}
-                      >
-                        <Trash2 size={10} />
-                        Remove Map
-                      </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isDM && !fac.businessMap && (
+                        <button
+                          type="button"
+                          onClick={() => editFacility(fac.id, { businessMap: createFacilityBusinessMap(fac.name) })}
+                          className="flex items-center gap-1.5 rounded px-3 py-2 text-[10px] font-medium transition-opacity hover:opacity-80"
+                          style={nsAccentBtn(accent)}
+                        >
+                          <Plus size={11} />
+                          Add Facility Map
+                        </button>
+                      )}
+                      {fac.businessMap && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/interface/nexus-nomad/facility/${encodeURIComponent(fac.id)}/map`)}
+                          className="flex items-center gap-1.5 rounded px-3 py-2 text-[10px] font-medium transition-opacity hover:opacity-80"
+                          style={nsAccentBtn(accent)}
+                        >
+                          <Waypoints size={11} />
+                          Open Facility Map
+                          <ChevronRight size={11} />
+                        </button>
+                      )}
+                      {isDM && fac.businessMap && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`Remove the business map from ${fac.name}? This cannot be undone.`)) {
+                              const assets = collectBusinessMapAssets(fac.businessMap!);
+                              editFacility(fac.id, { businessMap: undefined });
+                              assets.forEach((asset) => void deleteBusinessMapImage(asset).catch(() => undefined));
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded px-3 py-2 text-[9px] transition-opacity hover:opacity-80"
+                          style={NS_BTN_DELETE}
+                        >
+                          <Trash2 size={10} />
+                          Remove Map
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {fac.businessMap ? (
-                    <OfficeBusinessMap
-                      value={fac.businessMap}
-                      onChange={(next) => editFacility(fac.id, { businessMap: next })}
-                      isDM={isDM}
-                      facilities={facilities.map((facility) => ({ id: facility.id, name: facility.name }))}
-                      additions={facilityAdditions}
-                      onAdditionsChange={setFacilityAdditions}
-                      additionUsage={facilityAdditionUsage}
-                      mapKey={fac.id}
-                      currentPlayerId={currentUserId}
-                      players={businessMapPlayers}
-                      onPlayerAction={handleFacilityAdditionAction}
-                    />
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/interface/nexus-nomad/facility/${encodeURIComponent(fac.id)}/map`)}
+                      className="grid w-full grid-cols-1 gap-4 border p-5 text-left transition-colors hover:border-[#5A7AAA] md:grid-cols-[minmax(0,1fr)_auto] md:items-center"
+                      style={{ borderColor: "#24243A", background: "#06060A" }}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-[12px] font-semibold" style={NS_BRIGHT}>{fac.businessMap.name}</p>
+                        <p className="mt-1 text-[9px]" style={NS_DIM}>{fac.businessMap.description || `${fac.name} facility layout`}</p>
+                      </div>
+                      <div className="flex items-center gap-5">
+                        <div><span className="block font-mono text-[14px] font-semibold" style={NS_BLUE}>{fac.businessMap.sectors.length}</span><span className="text-[8px] uppercase tracking-wider" style={NS_DIM}>Sections</span></div>
+                        <div><span className="block font-mono text-[14px] font-semibold" style={NS_ACCENT_GREEN}>{countInstalledFacilityAdditions(fac.businessMap)}</span><span className="text-[8px] uppercase tracking-wider" style={NS_DIM}>Installed</span></div>
+                        <ChevronRight size={16} style={nsAccentHalf(accent)} />
+                      </div>
+                    </button>
                   ) : (
                     <div className="flex min-h-[120px] items-center justify-center border border-dashed p-5 text-center" style={{ borderColor: "#24243A", background: "#06060A" }}>
                       <div>

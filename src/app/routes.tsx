@@ -25,6 +25,7 @@ const interfaceChildren = [
   { path: "personal-files", lazy: lazyRoute(() => import("./components/personal-files"), (module) => module.PersonalFiles) },
   { path: "combat", lazy: lazyRoute(() => import("./components/combat-page"), (module) => module.CombatPage) },
   { path: "nexus-nomad", lazy: lazyRoute(() => import("./components/nexus-nomad"), (module) => module.NexusNomad) },
+  { path: "nexus-nomad/facility/:facilityId/map", lazy: lazyRoute(() => import("./components/facility-map-page"), (module) => module.FacilityMapPage) },
   { path: "intelli-maps", lazy: lazyRoute(() => import("./components/intelli-maps"), (module) => module.IntelliMaps) },
   { path: "game", lazy: lazyRoute(() => import("./components/game"), (module) => module.Game) },
   { path: "customization", lazy: lazyRoute(() => import("./components/customization-page"), (module) => module.CustomizationPage) },

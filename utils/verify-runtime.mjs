@@ -228,7 +228,7 @@ async function testStaleChunkDetection() {
 async function testOfficeBusinessMapState() {
   const officeMap = await bundledModule("src/lib/business-map-model.ts");
   const defaults = officeMap.createDefaultOfficeBusinessMap();
-  assert.equal(defaults.version, 2);
+  assert.equal(defaults.version, 3);
   assert.equal(defaults.sectors.length, 6);
   assert.ok(defaults.sectors.every((sector) => Array.isArray(sector.slots)));
   assert.ok(defaults.sectors.some((sector) => sector.slots.length > 0));
@@ -286,7 +286,7 @@ async function testOfficeBusinessMapState() {
     { x: normalized.sectors[0].x, y: normalized.sectors[0].y, width: normalized.sectors[0].width, height: normalized.sectors[0].height },
     { x: 0, y: 0, width: 12, height: 1 },
   );
-  assert.equal(normalized.version, 2);
+  assert.equal(normalized.version, 3);
   assert.equal(normalized.sectors[0].slots[0].category, "Unassigned");
   assert.equal(normalized.sectors[0].slots[0].filled, true);
   assert.equal(normalized.sectors[0].slots[0].occupant, "Workshop");
@@ -324,6 +324,10 @@ async function testOfficeBusinessMapState() {
   const installed = officeMap.installFacilityAddition(installMap, installMap.sectors[0].id, slot.id, addition, "player-1");
   assert.equal(installed.sectors[0].slots[0].installedAdditionId, addition.id);
   assert.equal(installed.sectors[0].slots[0].installedBy, "player-1");
+  const replacement = { ...addition, id: "addition-generator-quiet", name: "Quiet Generator" };
+  const swapped = officeMap.installFacilityAddition(installed, installed.sectors[0].id, slot.id, replacement, "player-1");
+  assert.equal(swapped.sectors[0].slots[0].installedAdditionId, replacement.id);
+  assert.equal(swapped.sectors[0].slots[0].occupant, replacement.name);
   assert.deepEqual(officeMap.countInstalledFacilityAdditions([installed]), { [addition.id]: 1 });
   assert.equal(officeMap.canPlayerEditBusinessMap(installed, "player-1", "install"), true);
   assert.equal(officeMap.canPlayerEditBusinessMap(installed, "player-1", "remove"), false);
@@ -353,6 +357,73 @@ async function testOfficeBusinessMapState() {
     },
   };
   assert.equal(officeMap.collectBusinessMapAssets(assetMap).length, 1);
+}
+
+async function testFacilityDepthState() {
+  const officeMap = await bundledModule("src/lib/business-map-model.ts");
+  const depth = await bundledModule("src/lib/facility-depth-model.ts");
+  const stateModel = await bundledModule("src/lib/facility-office-state.ts");
+
+  const park = depth.createMysticLandsParkFacility();
+  assert.equal(park.businessMap.sectors.length, 10);
+  assert.equal(
+    park.businessMap.sectors.filter((sector) => officeMap.isBusinessSectorUnlocked(park.businessMap, sector)).length,
+    8,
+  );
+  assert.equal(park.businessMap.expansions.length, 1);
+  assert.equal(park.businessMap.expansions[0].status, "available");
+  assert.deepEqual(park.businessMap.expansions[0].unlockSectorIds, ["mystic-expansion-west", "mystic-expansion-east"]);
+
+  const additions = depth.ensureMysticLandsAdditions([]);
+  assert.equal(additions.length, 10);
+  const gatehouse = additions.find((addition) => addition.id === "mystic-add-gatehouse");
+  assert.ok(gatehouse);
+  const installedMap = officeMap.installFacilityAddition(park.businessMap, "mystic-entrance", "entrance-gates", gatehouse, "player-1");
+  const stats = depth.calculateFacilityStats(park.baseStats, installedMap, additions);
+  assert.equal(stats.capacity, park.baseStats.capacity + 180);
+  assert.equal(stats.revenue, park.baseStats.revenue + 350);
+
+  const migrated = stateModel.normalizeFacilityOfficeState({
+    id: "default",
+    version: 4,
+    facilities: [{ id: "legacy-facility", name: "Old Workshop", type: "Facility" }],
+    facilityCats: [{ id: "legacy", name: "Legacy", facilityIds: ["legacy-facility"] }],
+    facilityAdditions: [],
+  });
+  assert.equal(migrated.version, 5);
+  assert.ok(migrated.facilities.some((facility) => facility.id === "legacy-facility"));
+  assert.ok(migrated.facilities.some((facility) => facility.id === "facility-mystic-lands-park"));
+
+  const legacyParkMap = officeMap.createFacilityBusinessMap("Mystic Lands Park");
+  legacyParkMap.sectors[0].id = "legacy-custom-park-sector";
+  const mergedParkState = stateModel.normalizeFacilityOfficeState({
+    facilities: [{ ...park, businessMap: legacyParkMap }],
+    facilityCats: [],
+    facilityAdditions: [],
+  });
+  const mergedParkMap = mergedParkState.facilities.find((facility) => facility.id === park.id).businessMap;
+  assert.ok(mergedParkMap.sectors.some((sector) => sector.id === "legacy-custom-park-sector"));
+  assert.ok(mergedParkMap.sectors.some((sector) => sector.id === "mystic-center"));
+  assert.equal(mergedParkMap.grid.width, 28);
+  assert.equal(mergedParkMap.grid.height, 22);
+
+  const owned = stateModel.normalizeFacilityOfficeState({
+    ...migrated,
+    facilities: migrated.facilities.map((facility) => facility.id === park.id ? { ...facility, ownerPlayerId: "player-1" } : facility),
+    personalFunds: [{ playerId: "player-1", balance: 20000 }],
+  });
+  const localPark = owned.facilities.find((facility) => facility.id === park.id);
+  localPark.businessMap.description = "Locally edited map description";
+  const remote = structuredClone(owned);
+  remote.revision = 7;
+  remote.personalFunds[0].balance = 5000;
+  remote.facilities.find((facility) => facility.id === park.id).businessMap = installedMap;
+  const rebased = stateModel.rebaseFacilityOfficeEdits(owned, remote, park.id);
+  const rebasedPark = rebased.facilities.find((facility) => facility.id === park.id);
+  assert.equal(rebased.revision, 7);
+  assert.equal(rebased.personalFunds[0].balance, 5000);
+  assert.equal(rebasedPark.businessMap.description, "Locally edited map description");
+  assert.equal(rebasedPark.businessMap.sectors.find((sector) => sector.id === "mystic-entrance").slots.find((slot) => slot.id === "entrance-gates").installedAdditionId, gatehouse.id);
 }
 
 async function testStorageSafetyAndStatusApi() {
@@ -406,6 +477,7 @@ try {
   await testStaleChunkDetection();
   await testStorageSafetyAndStatusApi();
   await testOfficeBusinessMapState();
+  await testFacilityDepthState();
   process.stdout.write("Runtime behavior checks passed.\n");
 } finally {
   await vite.close();
