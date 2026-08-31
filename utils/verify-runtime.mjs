@@ -226,14 +226,32 @@ async function testStaleChunkDetection() {
 }
 
 async function testOfficeBusinessMapState() {
-  const officeMap = await bundledModule("src/app/components/office-business-map.tsx");
+  const officeMap = await bundledModule("src/lib/business-map-model.ts");
   const defaults = officeMap.createDefaultOfficeBusinessMap();
-  assert.equal(defaults.version, 1);
+  assert.equal(defaults.version, 2);
   assert.equal(defaults.sectors.length, 6);
   assert.ok(defaults.sectors.every((sector) => Array.isArray(sector.slots)));
   assert.ok(defaults.sectors.some((sector) => sector.slots.length > 0));
+  assert.equal(defaults.layers.length, 5);
+  assert.equal(defaults.background.mode, "solid");
+  assert.equal(defaults.permissions.playerCanInstall, true);
+
+  const facilityMap = officeMap.createFacilityBusinessMap("North Warehouse");
+  assert.equal(facilityMap.name, "North Warehouse Layout");
+  assert.equal(facilityMap.sectors.length, 1);
+  assert.equal(facilityMap.sectors[0].name, "Main Floor");
+  assert.deepEqual(
+    {
+      x: facilityMap.sectors[0].x,
+      y: facilityMap.sectors[0].y,
+      width: facilityMap.sectors[0].width,
+      height: facilityMap.sectors[0].height,
+    },
+    { x: 0, y: 0, width: 12, height: 8 },
+  );
 
   const normalized = officeMap.normalizeOfficeBusinessMap({
+    version: 1,
     name: "Test Business",
     sectors: [{
       id: "sector-test",
@@ -244,6 +262,12 @@ async function testOfficeBusinessMapState() {
       y: -5,
       width: 99,
       height: 0,
+      shapes: [{
+        id: "area-test",
+        kind: "area",
+        points: [{ x: -4, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 99 }],
+        fillColor: "#123456",
+      }],
       slots: [{
         id: "slot-test",
         name: "Test Slot",
@@ -260,13 +284,75 @@ async function testOfficeBusinessMapState() {
   assert.equal(normalized.name, "Test Business");
   assert.deepEqual(
     { x: normalized.sectors[0].x, y: normalized.sectors[0].y, width: normalized.sectors[0].width, height: normalized.sectors[0].height },
-    { x: 0, y: 0, width: 12, height: 3 },
+    { x: 0, y: 0, width: 12, height: 1 },
   );
+  assert.equal(normalized.version, 2);
   assert.equal(normalized.sectors[0].slots[0].category, "Unassigned");
   assert.equal(normalized.sectors[0].slots[0].filled, true);
   assert.equal(normalized.sectors[0].slots[0].occupant, "Workshop");
+  assert.deepEqual(normalized.sectors[0].slots[0].acceptedCategories, []);
+  assert.equal(normalized.sectors[0].shapes[0].kind, "area");
+  assert.equal(normalized.sectors[0].shapes[0].points[0].x, 0);
+  assert.equal(normalized.sectors[0].shapes[0].points[2].y, 8);
   assert.ok(normalized.sectors[0].slots[0].x + normalized.sectors[0].slots[0].width <= 12);
   assert.ok(normalized.sectors[0].slots[0].y + normalized.sectors[0].slots[0].height <= 8);
+
+  const additions = officeMap.normalizeFacilityAdditions([{
+    id: "addition-generator",
+    name: "Backup Generator",
+    category: "Utility",
+    tags: ["power", "exterior"],
+    quantity: 2,
+    width: 2,
+    height: 2,
+  }]);
+  const addition = additions[0];
+  const slot = {
+    ...officeMap.createDefaultBusinessSlot("slot-generator", "Generator Pad", "Utility", 0, 0),
+    acceptedCategories: ["Utility"],
+    acceptedTags: ["power"],
+    width: 3,
+    height: 2,
+  };
+  const installMap = officeMap.createFacilityBusinessMap("Power Station");
+  installMap.sectors[0].slots = [slot];
+  assert.equal(officeMap.isFacilityAdditionCompatible(slot, addition), true);
+  assert.equal(
+    officeMap.isFacilityAdditionCompatible(slot, { ...addition, category: "Office" }),
+    false,
+  );
+  const installed = officeMap.installFacilityAddition(installMap, installMap.sectors[0].id, slot.id, addition, "player-1");
+  assert.equal(installed.sectors[0].slots[0].installedAdditionId, addition.id);
+  assert.equal(installed.sectors[0].slots[0].installedBy, "player-1");
+  assert.deepEqual(officeMap.countInstalledFacilityAdditions([installed]), { [addition.id]: 1 });
+  assert.equal(officeMap.canPlayerEditBusinessMap(installed, "player-1", "install"), true);
+  assert.equal(officeMap.canPlayerEditBusinessMap(installed, "player-1", "remove"), false);
+  const restricted = {
+    ...installed,
+    permissions: { ...installed.permissions, allowedPlayerIds: ["player-2"] },
+  };
+  assert.equal(officeMap.canPlayerEditBusinessMap(restricted, "player-1", "install"), false);
+  assert.equal(officeMap.canPlayerEditBusinessMap(restricted, "player-2", "install"), true);
+  const removed = officeMap.removeFacilityAddition(installed, installed.sectors[0].id, slot.id);
+  assert.equal(removed.sectors[0].slots[0].filled, false);
+  assert.equal(removed.sectors[0].slots[0].installedAdditionId, "");
+
+  const resized = officeMap.resizeOfficeBusinessMapGrid(defaults, { width: 8, height: 6 });
+  assert.deepEqual({ width: resized.grid.width, height: resized.grid.height }, { width: 8, height: 6 });
+  assert.ok(resized.sectors.every((sector) => sector.x + sector.width <= 8 && sector.y + sector.height <= 6));
+
+  const recoveredBackground = officeMap.normalizeBusinessMapBackground({ mode: "image", imageUrl: "" });
+  assert.equal(recoveredBackground.mode, "solid");
+  const assetMap = {
+    ...defaults,
+    background: {
+      ...defaults.background,
+      mode: "image",
+      imageUrl: "https://example.test/map.png",
+      imageAsset: { kind: "supabase-storage", bucket: "business-map-assets", path: "business-maps/map.png", publicUrl: "https://example.test/map.png", contentType: "image/png", size: 12, originalName: "map.png", createdAt: "now" },
+    },
+  };
+  assert.equal(officeMap.collectBusinessMapAssets(assetMap).length, 1);
 }
 
 async function testStorageSafetyAndStatusApi() {

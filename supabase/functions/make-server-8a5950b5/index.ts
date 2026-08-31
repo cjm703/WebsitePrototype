@@ -182,6 +182,14 @@ const wikiTemplatesKey = "inet-wiki-templates";
 const wikiBlockStylePresetsKey = "inet-wiki-block-style-presets";
 const combatMusicBucket = (Deno.env.get("COMBAT_MUSIC_BUCKET") || "combat-music").trim();
 const MAX_COMBAT_MUSIC_BYTES = 50 * 1024 * 1024;
+const businessMapAssetBucket = (Deno.env.get("BUSINESS_MAP_ASSET_BUCKET") || "business-map-assets").trim();
+const MAX_BUSINESS_MAP_IMAGE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_BUSINESS_MAP_IMAGE_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
 const ALLOWED_COMBAT_MUSIC_TYPES = new Set([
   "audio/aac",
   "audio/flac",
@@ -376,7 +384,7 @@ const APP_COLLECTIONS: Record<string, { write: AppWriteAccess; read?: AppWriteAc
 };
 
 const APP_SINGLETONS: Record<string, { write: AppWriteAccess }> = {
-  app_nexus_nomad_state: { write: "authenticated" },
+  app_nexus_nomad_state: { write: "dm" },
   app_campaign_timeline_state: { write: "dm" },
   app_timeline_calendar_presets: { write: "dm" },
   app_intelli_maps_state: { write: "dm" },
@@ -817,9 +825,278 @@ async function clearDeletedPlayers() {
   if (deleteError) throw new Error(deleteError.message);
 }
 
+type JsonRecord = Record<string, any>;
+
+async function loadOfficeStateRecord() {
+  const { data, error } = await admin()
+    .from("app_nexus_nomad_state")
+    .select("data, updated_at")
+    .eq("id", "default")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.data && typeof data.data === "object" ? data.data as JsonRecord : null;
+}
+
+async function persistOfficeStateRecord(state: JsonRecord) {
+  const updatedAt = new Date().toISOString();
+  const { error } = await admin().from("app_nexus_nomad_state").upsert(
+    { id: "default", data: state, updated_at: updatedAt },
+    { onConflict: "id" },
+  );
+  if (error) throw new Error(error.message);
+}
+
+function officeBusinessMaps(state: JsonRecord) {
+  const maps: JsonRecord[] = [];
+  if (state?.businessMap && typeof state.businessMap === "object") maps.push(state.businessMap);
+  if (Array.isArray(state?.facilities)) {
+    state.facilities.forEach((facility: any) => {
+      if (facility?.businessMap && typeof facility.businessMap === "object") maps.push(facility.businessMap);
+    });
+  }
+  return maps;
+}
+
+function officeBusinessMapForScope(state: JsonRecord, scopeId: string) {
+  if (scopeId === "global") return state?.businessMap && typeof state.businessMap === "object" ? state.businessMap as JsonRecord : null;
+  const facility = Array.isArray(state?.facilities)
+    ? state.facilities.find((entry: any) => String(entry?.id || "") === scopeId)
+    : null;
+  return facility?.businessMap && typeof facility.businessMap === "object" ? facility.businessMap as JsonRecord : null;
+}
+
+function findBusinessMapSlot(map: JsonRecord, sectorId: string, slotId: string) {
+  const sector = Array.isArray(map?.sectors)
+    ? map.sectors.find((entry: any) => String(entry?.id || "") === sectorId)
+    : null;
+  const slot = Array.isArray(sector?.slots)
+    ? sector.slots.find((entry: any) => String(entry?.id || "") === slotId)
+    : null;
+  return { sector, slot };
+}
+
+function playerCanModifyBusinessMap(map: JsonRecord, playerId: string, action: "install" | "remove") {
+  if (playerId === "dm") return true;
+  const permissions = map?.permissions && typeof map.permissions === "object" ? map.permissions : {};
+  const allowed = Array.isArray(permissions.allowedPlayerIds)
+    ? permissions.allowedPlayerIds.map((entry: any) => String(entry || "")).filter(Boolean)
+    : [];
+  if (allowed.length > 0 && !allowed.includes(playerId)) return false;
+  return action === "install" ? permissions.playerCanInstall !== false : permissions.playerCanRemove === true;
+}
+
+function additionFitsBusinessSlot(slot: JsonRecord, addition: JsonRecord) {
+  const acceptedCategories = Array.isArray(slot?.acceptedCategories)
+    ? slot.acceptedCategories.map((entry: any) => String(entry || ""))
+    : slot?.category && slot.category !== "Unassigned" ? [String(slot.category)] : [];
+  const acceptedTags = Array.isArray(slot?.acceptedTags)
+    ? slot.acceptedTags.map((entry: any) => String(entry || ""))
+    : [];
+  const additionTags = Array.isArray(addition?.tags)
+    ? addition.tags.map((entry: any) => String(entry || ""))
+    : [];
+  const categoryFits = acceptedCategories.length === 0 || acceptedCategories.includes(String(addition?.category || "Unassigned"));
+  const tagsFit = acceptedTags.length === 0 || additionTags.some((tag: string) => acceptedTags.includes(tag));
+  const footprintFits = Math.max(1, Number(addition?.width) || 1) <= Math.max(1, Number(slot?.width) || 1)
+    && Math.max(1, Number(addition?.height) || 1) <= Math.max(1, Number(slot?.height) || 1);
+  return categoryFits && tagsFit && footprintFits;
+}
+
+function installedAdditionCount(state: JsonRecord, additionId: string) {
+  let count = 0;
+  officeBusinessMaps(state).forEach((map) => {
+    if (!Array.isArray(map?.sectors)) return;
+    map.sectors.forEach((sector: any) => {
+      if (!Array.isArray(sector?.slots)) return;
+      sector.slots.forEach((slot: any) => {
+        if (String(slot?.installedAdditionId || "") === additionId) count += 1;
+      });
+    });
+  });
+  return count;
+}
+
+function stampOfficeState(state: JsonRecord, playerId: string, previousRevision: number) {
+  return {
+    ...state,
+    id: "default",
+    revision: previousRevision + 1,
+    updatedAt: new Date().toISOString(),
+    updatedBy: playerId,
+  };
+}
+
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
     return c.json({ status: "ok", prefix });
+  });
+
+  app.post(`${prefix}/office/state/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await requireDMSession(c);
+      const body = await c.req.json();
+      if (!body?.state || typeof body.state !== "object") {
+        return c.json({ error: "Office state is required" }, 400);
+      }
+
+      const current = await loadOfficeStateRecord();
+      const currentRevision = Math.max(0, Math.floor(Number(current?.revision) || 0));
+      const expectedRevision = Math.max(0, Math.floor(Number(body.expectedRevision) || 0));
+      if (current && expectedRevision !== currentRevision) {
+        return c.json({ error: "Office state changed on another client", code: "OFFICE_REVISION_CONFLICT", currentRevision }, 409);
+      }
+
+      const sanitized = sanitizeStoredValue(body.state);
+      if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) {
+        return c.json({ error: "Office state must be an object" }, 400);
+      }
+      const next = stampOfficeState(sanitized as JsonRecord, playerId, currentRevision);
+      await persistOfficeStateRecord(next);
+      return c.json({ ok: true, state: next });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post(`${prefix}/office/facility-addition/action`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const action = body?.action === "remove" ? "remove" : body?.action === "install" ? "install" : null;
+      const scopeId = String(body?.scopeId || "").trim();
+      const sectorId = String(body?.sectorId || "").trim();
+      const slotId = String(body?.slotId || "").trim();
+      if (!action || !scopeId || !sectorId || !slotId) {
+        return c.json({ error: "A valid action, map scope, sector, and slot are required" }, 400);
+      }
+
+      const current = await loadOfficeStateRecord();
+      if (!current) return c.json({ error: "Office state is not available" }, 404);
+      const next = JSON.parse(JSON.stringify(current)) as JsonRecord;
+      const map = officeBusinessMapForScope(next, scopeId);
+      if (!map) return c.json({ error: "Business map was not found" }, 404);
+      if (!playerCanModifyBusinessMap(map, playerId, action)) {
+        return c.json({ error: `You do not have permission to ${action} facility additions on this map` }, 403);
+      }
+
+      const { slot } = findBusinessMapSlot(map, sectorId, slotId);
+      if (!slot) return c.json({ error: "Business slot was not found" }, 404);
+
+      if (action === "install") {
+        const additionId = String(body?.additionId || "").trim();
+        const addition = Array.isArray(next.facilityAdditions)
+          ? next.facilityAdditions.find((entry: any) => String(entry?.id || "") === additionId)
+          : null;
+        if (!addition) return c.json({ error: "Facility addition was not found" }, 404);
+        if (slot.installedAdditionId) return c.json({ error: "Remove the installed addition before replacing it" }, 409);
+        if (slot.filled && !slot.installedAdditionId) return c.json({ error: "This slot already has a custom assignment" }, 409);
+        if (!additionFitsBusinessSlot(slot, addition)) {
+          return c.json({ error: "That facility addition is not compatible with this slot" }, 409);
+        }
+        const quantity = Math.max(0, Math.floor(Number(addition.quantity) || 0));
+        if (installedAdditionCount(next, additionId) >= quantity) {
+          return c.json({ error: "No copies of that facility addition are available" }, 409);
+        }
+        slot.filled = true;
+        slot.occupant = String(addition.name || "Facility Addition").slice(0, 100);
+        slot.linkedFacilityId = "";
+        slot.installedAdditionId = additionId;
+        slot.installedBy = playerId;
+        slot.installedAt = new Date().toISOString();
+      } else {
+        if (!slot.installedAdditionId) return c.json({ error: "This slot has no facility addition installed" }, 409);
+        slot.filled = false;
+        slot.occupant = "";
+        slot.installedAdditionId = "";
+        slot.installedBy = "";
+        slot.installedAt = "";
+      }
+
+      const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
+      const stamped = stampOfficeState(next, playerId, currentRevision);
+      await persistOfficeStateRecord(stamped);
+      return c.json({ ok: true, state: stamped });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : 500;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post(`${prefix}/business-map/assets/upload`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+
+      const form = await c.req.formData();
+      const file = form.get("file");
+      const path = String(form.get("path") || "").trim();
+      if (!(file instanceof File)) return c.json({ error: "Image file is required" }, 400);
+      if (!path.startsWith("business-maps/") || path.includes("..")) {
+        return c.json({ error: "Invalid business map storage path" }, 400);
+      }
+      if (file.size <= 0 || file.size > MAX_BUSINESS_MAP_IMAGE_BYTES) {
+        return c.json({ error: "Business map images must be between 1 byte and 10 MB" }, 400);
+      }
+      const contentType = String(file.type || "").toLowerCase();
+      if (!ALLOWED_BUSINESS_MAP_IMAGE_TYPES.has(contentType)) {
+        return c.json({ error: "Use a PNG, JPEG, WebP, or GIF image" }, 400);
+      }
+
+      const storage = admin().storage.from(businessMapAssetBucket);
+      const { error } = await storage.upload(path, file, {
+        cacheControl: "31536000",
+        contentType,
+        upsert: false,
+      });
+      if (error) throw new Error(error.message);
+      const { data } = storage.getPublicUrl(path);
+      return c.json({
+        ok: true,
+        asset: {
+          kind: "supabase-storage",
+          bucket: businessMapAssetBucket,
+          path,
+          publicUrl: data.publicUrl,
+          contentType,
+          size: file.size,
+          originalName: file.name,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post(`${prefix}/business-map/assets/delete`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      const body = await c.req.json();
+      const bucket = String(body?.bucket || "").trim();
+      const path = String(body?.path || "").trim();
+      if (bucket !== businessMapAssetBucket || !path.startsWith("business-maps/") || path.includes("..")) {
+        return c.json({ error: "Invalid business map asset" }, 400);
+      }
+      const { error } = await admin().storage.from(bucket).remove([path]);
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
+      return c.json({ error: message }, status);
+    }
   });
 
   app.post(`${prefix}/auth-codes/set`, async (c) => {

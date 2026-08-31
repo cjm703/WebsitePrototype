@@ -16,7 +16,7 @@ import {
   Crosshair, Waypoints, CircleDot, Hexagon, GripVertical,
   ChevronDown, ImagePlus, Save, FileDown, Activity,
   Wrench, Store, Power, Pin, PinOff, FileText,
-  Archive, DollarSign, RotateCcw, UserPlus, Coins,
+  Archive, DollarSign, RotateCcw, UserPlus, Coins, ArrowUp, ArrowDown,
   type LucideIcon,
 } from "lucide-react";
 
@@ -24,10 +24,23 @@ import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
   OfficeBusinessMap,
+  collectBusinessMapAssets,
+  countInstalledFacilityAdditions,
   createDefaultOfficeBusinessMap,
+  createFacilityBusinessMap,
+  normalizeFacilityAdditions,
   normalizeOfficeBusinessMap,
+  type BusinessMapPlayerOption,
+  type FacilityAddition,
   type OfficeBusinessMapState,
 } from "./office-business-map";
+import { deleteBusinessMapImage } from "@/lib/business-map-storage";
+import {
+  applyFacilityAdditionAction as applyFacilityAdditionServerAction,
+  saveOfficeState,
+  subscribeToOfficeStateSignals,
+  type FacilityAdditionAction,
+} from "@/lib/office-state-api";
 import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
   NS_DARK, NS_SUBDIM, NS_BRIGHT, NS_SOFT, NS_MID, NS_GOLD, NS_BLUE, NS_RED,
@@ -537,6 +550,7 @@ interface Facility {
   revenue?: string;
   expenses?: string;
   employeesOnSite?: string;
+  businessMap?: OfficeBusinessMapState;
 }
 
 interface FacilityCategory {
@@ -634,6 +648,9 @@ function saveContractCats(_cats: ContractCategory[]) {
 interface NexusNomadState {
   id: string;
   version: number;
+  revision: number;
+  updatedAt: string;
+  updatedBy: string;
   officeName: string;
   reputation: number;
   entityReps: ReputationEntity[];
@@ -649,10 +666,11 @@ interface NexusNomadState {
   officeInfo: OfficeInfoData;
   invTabs: InvSubTab[];
   businessMap: OfficeBusinessMapState;
+  facilityAdditions: FacilityAddition[];
 }
 
 const NEXUS_NOMAD_STATE_ID = "default";
-const NEXUS_NOMAD_STATE_VERSION = 2;
+const NEXUS_NOMAD_STATE_VERSION = 4;
 
 function loadLocalOfficeReputation(): number {
   return 25;
@@ -668,6 +686,9 @@ function buildDefaultNexusNomadState(): NexusNomadState {
   return {
     id: NEXUS_NOMAD_STATE_ID,
     version: NEXUS_NOMAD_STATE_VERSION,
+    revision: 0,
+    updatedAt: "",
+    updatedBy: "",
     officeName: DEFAULT_OFFICE_NAME,
     reputation: 25,
     entityReps: [],
@@ -686,6 +707,7 @@ function buildDefaultNexusNomadState(): NexusNomadState {
     officeInfo: clonePlain(DEFAULT_OFFICE_INFO),
     invTabs: clonePlain(DEFAULT_INVENTORY),
     businessMap: createDefaultOfficeBusinessMap(),
+    facilityAdditions: [],
   };
 }
 
@@ -705,7 +727,10 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
   if (!raw || typeof raw !== "object") return fallback;
   return {
     id: typeof raw.id === "string" && raw.id.trim() ? raw.id : fallback.id,
-    version: typeof raw.version === "number" ? raw.version : fallback.version,
+    version: NEXUS_NOMAD_STATE_VERSION,
+    revision: Math.max(0, Math.floor(Number(raw.revision) || 0)),
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
+    updatedBy: typeof raw.updatedBy === "string" ? raw.updatedBy : "",
     officeName: typeof raw.officeName === "string" && raw.officeName.trim()
       ? raw.officeName.trim() === LEGACY_DEFAULT_OFFICE_NAME ? DEFAULT_OFFICE_NAME : raw.officeName
       : fallback.officeName,
@@ -716,13 +741,74 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
     employeeCats: Array.isArray(raw.employeeCats) ? raw.employeeCats : fallback.employeeCats,
     presets: Array.isArray(raw.presets) ? raw.presets : fallback.presets,
     loadouts: Array.isArray(raw.loadouts) ? raw.loadouts : fallback.loadouts,
-    facilities: Array.isArray(raw.facilities) ? raw.facilities : fallback.facilities,
+    facilities: Array.isArray(raw.facilities)
+      ? raw.facilities
+          .map((facility) => {
+            if (!facility || typeof facility !== "object") return null;
+            const source = facility as Facility;
+            return {
+              ...source,
+              businessMap: source.businessMap
+                ? normalizeOfficeBusinessMap(source.businessMap)
+                : undefined,
+            };
+          })
+          .filter((facility): facility is Facility => facility !== null)
+      : fallback.facilities,
     facilityCats: Array.isArray(raw.facilityCats) ? raw.facilityCats : fallback.facilityCats,
     contracts: Array.isArray(raw.contracts) ? raw.contracts : fallback.contracts,
     contractCats: Array.isArray(raw.contractCats) ? raw.contractCats : fallback.contractCats,
     officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo as OfficeInfoData : fallback.officeInfo,
     invTabs: Array.isArray(raw.invTabs) ? raw.invTabs : fallback.invTabs,
     businessMap: normalizeOfficeBusinessMap(raw.businessMap),
+    facilityAdditions: normalizeFacilityAdditions(raw.facilityAdditions),
+  };
+}
+
+function mergeRemoteMapInstallations(local: OfficeBusinessMapState, remote: OfficeBusinessMapState) {
+  const remoteSectors = new Map(remote.sectors.map((sector) => [sector.id, sector]));
+  return {
+    ...local,
+    sectors: local.sectors.map((sector) => {
+      const remoteSector = remoteSectors.get(sector.id);
+      if (!remoteSector) return sector;
+      const remoteSlots = new Map(remoteSector.slots.map((slot) => [slot.id, slot]));
+      return {
+        ...sector,
+        slots: sector.slots.map((slot) => {
+          const remoteSlot = remoteSlots.get(slot.id);
+          if (!remoteSlot) return slot;
+          return {
+            ...slot,
+            filled: remoteSlot.filled,
+            occupant: remoteSlot.occupant,
+            linkedFacilityId: remoteSlot.linkedFacilityId,
+            installedAdditionId: remoteSlot.installedAdditionId,
+            installedBy: remoteSlot.installedBy,
+            installedAt: remoteSlot.installedAt,
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function mergeRemoteInstallationChanges(local: NexusNomadState, remote: NexusNomadState): NexusNomadState {
+  const remoteFacilities = new Map(remote.facilities.map((facility) => [facility.id, facility]));
+  return {
+    ...local,
+    revision: remote.revision,
+    updatedAt: remote.updatedAt,
+    updatedBy: remote.updatedBy,
+    businessMap: mergeRemoteMapInstallations(local.businessMap, remote.businessMap),
+    facilities: local.facilities.map((facility) => {
+      const remoteFacility = remoteFacilities.get(facility.id);
+      if (!facility.businessMap || !remoteFacility?.businessMap) return facility;
+      return {
+        ...facility,
+        businessMap: mergeRemoteMapInstallations(facility.businessMap, remoteFacility.businessMap),
+      };
+    }),
   };
 }
 
@@ -1051,6 +1137,7 @@ function EmployeeCategoryDrop({
 function FacilityCategoryPanel({
   category, facilities, isDM, accent, innerPanelStyle, panelStyle,
   onToggle, onRename, onRemoveCategory, onRemoveFacility, onAddFacility, onSelectFacility,
+  onMoveUp, onMoveDown, canMoveUp, canMoveDown,
 }: {
   category: FacilityCategory;
   facilities: Facility[];
@@ -1064,6 +1151,10 @@ function FacilityCategoryPanel({
   onRemoveFacility: (id: string) => void;
   onAddFacility: (catId: string) => void;
   onSelectFacility: (id: string) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
 }) {
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(category.name);
@@ -1117,6 +1208,24 @@ function FacilityCategoryPanel({
               </div>
             ) : (
               <div style={NS_DISPLAY_CONTENTS}>
+                <button
+                  onClick={onMoveUp}
+                  disabled={!canMoveUp}
+                  className="w-5 h-5 rounded flex items-center justify-center hover:opacity-80 transition-opacity disabled:opacity-25 disabled:cursor-not-allowed"
+                  style={NS_BTN_EDIT}
+                  title="Move category up"
+                >
+                  <ArrowUp size={8} />
+                </button>
+                <button
+                  onClick={onMoveDown}
+                  disabled={!canMoveDown}
+                  className="w-5 h-5 rounded flex items-center justify-center hover:opacity-80 transition-opacity disabled:opacity-25 disabled:cursor-not-allowed"
+                  style={NS_BTN_EDIT}
+                  title="Move category down"
+                >
+                  <ArrowDown size={8} />
+                </button>
                 <button onClick={() => onAddFacility(category.id)} className="w-5 h-5 rounded flex items-center justify-center hover:opacity-80 transition-opacity" style={nsAccentBtn(accent)} title="Add facility">
                   <Plus size={9} />
                 </button>
@@ -1163,6 +1272,11 @@ function FacilityCategoryPanel({
                         </div>
                       )}
                     </div>
+                    {fac.businessMap && (
+                      <span title="Facility map attached" aria-label="Facility map attached" className="flex flex-shrink-0 items-center">
+                        <Waypoints size={10} style={nsAccentHalf(accent)} />
+                      </span>
+                    )}
                     <span className="text-[8px] px-1.5 py-0.5 rounded font-medium flex-shrink-0" style={nsPriBadge(fac.statusColor || "#4ACA6A")}>
                       {fac.status || "Active"}
                     </span>
@@ -1465,6 +1579,11 @@ export function NexusNomad() {
   const [showFinancePanel, setShowFinancePanel] = useState(false);
   const [officeInfo, setOfficeInfo] = useState<OfficeInfoData>(initialStateRef.current.officeInfo);
   const [businessMap, setBusinessMap] = useState<OfficeBusinessMapState>(initialStateRef.current.businessMap);
+  const [facilityAdditions, setFacilityAdditions] = useState<FacilityAddition[]>(initialStateRef.current.facilityAdditions);
+  const [officeRevision, setOfficeRevision] = useState(initialStateRef.current.revision);
+  const [officeUpdatedAt, setOfficeUpdatedAt] = useState(initialStateRef.current.updatedAt);
+  const [officeUpdatedBy, setOfficeUpdatedBy] = useState(initialStateRef.current.updatedBy);
+  const [businessMapPlayers, setBusinessMapPlayers] = useState<BusinessMapPlayerOption[]>([]);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newServiceName, setNewServiceName] = useState("");
@@ -1495,6 +1614,8 @@ export function NexusNomad() {
   const [stateSaveError, setStateSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<{ type: "saving" | "saved" | "error"; message: string } | null>(null);
   const lastSavedStateJsonRef = useRef<string | null>(null);
+  const latestPersistentStateJsonRef = useRef<string>("");
+  const officeStateSignalRef = useRef<ReturnType<typeof subscribeToOfficeStateSignals> | null>(null);
   const saveNoticeTimeoutRef = useRef<number | null>(null);
 
   const showSaveNotice = useCallback((
@@ -1519,6 +1640,9 @@ export function NexusNomad() {
 
   const applyLoadedState = useCallback((state: NexusNomadState) => {
     officeNameCache = state.officeName || DEFAULT_OFFICE_NAME;
+    setOfficeRevision(state.revision);
+    setOfficeUpdatedAt(state.updatedAt);
+    setOfficeUpdatedBy(state.updatedBy);
     setOfficeName(state.officeName);
     setReputation(Math.max(-100, Math.min(100, state.reputation)));
     setEntityReps(state.entityReps);
@@ -1533,6 +1657,7 @@ export function NexusNomad() {
     setContractCats(state.contractCats);
     setOfficeInfo(state.officeInfo);
     setBusinessMap(state.businessMap);
+    setFacilityAdditions(state.facilityAdditions);
     setInvTabs(state.invTabs);
     setActiveInvTab((prev) => {
       if (prev && state.invTabs.some((tab) => tab.id === prev)) return prev;
@@ -1562,15 +1687,21 @@ export function NexusNomad() {
         if (cancelled) return;
         applyLoadedState(legacy);
 
-        try {
-          await appStore.saveNexusNomadState(legacy);
+        if (isDM) {
+          try {
+            const saved = normalizeNexusNomadState(await saveOfficeState(legacy, 0));
+            if (cancelled) return;
+            applyLoadedState(saved);
+            lastSavedStateJsonRef.current = JSON.stringify(saved);
+            setStateSaveError(null);
+          } catch (saveError) {
+            lastSavedStateJsonRef.current = null;
+            const message = saveError instanceof Error ? saveError.message : "Failed to import office state.";
+            setStateSaveError(message);
+            showSaveNotice("error", message, 4500);
+          }
+        } else {
           lastSavedStateJsonRef.current = JSON.stringify(legacy);
-          setStateSaveError(null);
-        } catch (saveError) {
-          lastSavedStateJsonRef.current = null;
-          const message = saveError instanceof Error ? saveError.message : "Failed to import office state.";
-          setStateSaveError(message);
-          showSaveNotice("error", message, 4500);
         }
       } catch (error) {
         if (cancelled) return;
@@ -1588,7 +1719,7 @@ export function NexusNomad() {
     return () => {
       cancelled = true;
     };
-  }, [applyLoadedState, showSaveNotice]);
+  }, [applyLoadedState, isDM, showSaveNotice]);
 
   useEffect(() => {
     return () => {
@@ -1604,6 +1735,9 @@ export function NexusNomad() {
     return {
       id: NEXUS_NOMAD_STATE_ID,
       version: NEXUS_NOMAD_STATE_VERSION,
+      revision: officeRevision,
+      updatedAt: officeUpdatedAt,
+      updatedBy: officeUpdatedBy,
       officeName,
       reputation: Math.max(-100, Math.min(100, reputation)),
       entityReps,
@@ -1619,16 +1753,23 @@ export function NexusNomad() {
       officeInfo,
       invTabs,
       businessMap,
+      facilityAdditions,
     };
   }, [
     officeName, reputation, entityReps, govConfig, employees, employeeCats,
     presets, loadouts, facilities, facilityCats, contracts, contractCats, officeInfo, invTabs, businessMap,
+    facilityAdditions, officeRevision, officeUpdatedAt, officeUpdatedBy,
   ]);
 
   const persistentStateJson = useMemo(() => JSON.stringify(persistentState), [persistentState]);
+  latestPersistentStateJsonRef.current = persistentStateJson;
+  const facilityAdditionUsage = useMemo(
+    () => countInstalledFacilityAdditions([businessMap, ...facilities.map((facility) => facility.businessMap)]),
+    [businessMap, facilities],
+  );
 
   useEffect(() => {
-    if (!isStateHydrated) return;
+    if (!isStateHydrated || !isDM) return;
     if (lastSavedStateJsonRef.current === persistentStateJson) return;
 
     showSaveNotice("saving", "Saving office updates...");
@@ -1636,11 +1777,43 @@ export function NexusNomad() {
     const timeout = window.setTimeout(() => {
       void (async () => {
         try {
-          await appStore.saveNexusNomadState(persistentState);
-          lastSavedStateJsonRef.current = persistentStateJson;
+          const saved = normalizeNexusNomadState(await saveOfficeState(persistentState, persistentState.revision));
+          const savedJson = JSON.stringify(saved);
+          lastSavedStateJsonRef.current = savedJson;
+          if (latestPersistentStateJsonRef.current === persistentStateJson) {
+            applyLoadedState(saved);
+          } else {
+            setOfficeRevision(saved.revision);
+            setOfficeUpdatedAt(saved.updatedAt);
+            setOfficeUpdatedBy(saved.updatedBy);
+          }
           setStateSaveError(null);
           showSaveNotice("saved", "Office updated.", 1800);
+          void officeStateSignalRef.current?.notify();
         } catch (error) {
+          const status = typeof (error as { status?: unknown })?.status === "number" ? (error as { status: number }).status : 0;
+          const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+          if (status === 409 || code === "OFFICE_REVISION_CONFLICT") {
+            try {
+              const remote = normalizeNexusNomadState(await appStore.loadNexusNomadState(NEXUS_NOMAD_STATE_ID, buildDefaultNexusNomadState()));
+              const remoteJson = JSON.stringify(remote);
+              lastSavedStateJsonRef.current = remoteJson;
+              if (remote.updatedBy && remote.updatedBy !== "dm") {
+                const latestLocal = normalizeNexusNomadState(JSON.parse(latestPersistentStateJsonRef.current) as NexusNomadState);
+                applyLoadedState(mergeRemoteInstallationChanges(latestLocal, remote));
+                showSaveNotice("saving", "Merged a live player map update; saving your edits...");
+              } else {
+                applyLoadedState(remote);
+                showSaveNotice("error", "Another DM session changed the office. The newest saved version was loaded.", 5000);
+              }
+              return;
+            } catch (refreshError) {
+              const message = refreshError instanceof Error ? refreshError.message : "Failed to refresh conflicted office state.";
+              setStateSaveError(message);
+              showSaveNotice("error", message, 4500);
+              return;
+            }
+          }
           const message = error instanceof Error ? error.message : "Failed to save office state.";
           setStateSaveError(message);
           showSaveNotice("error", message, 4500);
@@ -1649,7 +1822,69 @@ export function NexusNomad() {
     }, 450);
 
     return () => window.clearTimeout(timeout);
-  }, [isStateHydrated, persistentState, persistentStateJson, showSaveNotice]);
+  }, [applyLoadedState, isDM, isStateHydrated, persistentState, persistentStateJson, showSaveNotice]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let refreshTimeout: number | null = null;
+
+    const refreshRemote = async () => {
+      if (cancelled || !isStateHydrated) return;
+      if (isDM && lastSavedStateJsonRef.current !== latestPersistentStateJsonRef.current) return;
+      try {
+        const remote = normalizeNexusNomadState(await appStore.loadNexusNomadState(NEXUS_NOMAD_STATE_ID, buildDefaultNexusNomadState()));
+        if (cancelled || remote.revision <= officeRevision) return;
+        lastSavedStateJsonRef.current = JSON.stringify(remote);
+        applyLoadedState(remote);
+        if (remote.updatedBy && remote.updatedBy !== currentUserId) {
+          showSaveNotice("saved", `Live office update received from ${remote.updatedBy}.`, 1800);
+        }
+      } catch {
+        // The interval is a fallback for realtime. A later signal retries quietly.
+      }
+    };
+
+    const scheduleRefresh = () => {
+      if (refreshTimeout != null) window.clearTimeout(refreshTimeout);
+      refreshTimeout = window.setTimeout(() => void refreshRemote(), 140);
+    };
+    const signals = subscribeToOfficeStateSignals(scheduleRefresh);
+    officeStateSignalRef.current = signals;
+    const interval = window.setInterval(() => void refreshRemote(), 3000);
+
+    return () => {
+      cancelled = true;
+      if (refreshTimeout != null) window.clearTimeout(refreshTimeout);
+      window.clearInterval(interval);
+      signals.unsubscribe();
+      if (officeStateSignalRef.current === signals) officeStateSignalRef.current = null;
+    };
+  }, [applyLoadedState, currentUserId, isDM, isStateHydrated, officeRevision, showSaveNotice]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void appStore.listPlayers<Record<string, unknown> & { id: string }>()
+      .then((rows) => {
+        if (cancelled) return;
+        setBusinessMapPlayers(rows.map((row) => ({
+          id: String(row.id || ""),
+          name: String(row.name || row.displayName || row.id || "Player"),
+        })).filter((player) => player.id));
+      })
+      .catch(() => {
+        if (!cancelled) setBusinessMapPlayers(currentUserId ? [{ id: currentUserId, name: currentUserId }] : []);
+      });
+    return () => { cancelled = true; };
+  }, [currentUserId]);
+
+  const handleFacilityAdditionAction = useCallback(async (action: FacilityAdditionAction) => {
+    const saved = normalizeNexusNomadState(await applyFacilityAdditionServerAction<NexusNomadState>(action));
+    lastSavedStateJsonRef.current = JSON.stringify(saved);
+    applyLoadedState(saved);
+    setStateSaveError(null);
+    showSaveNotice("saved", "Facility map updated.", 1400);
+    void officeStateSignalRef.current?.notify();
+  }, [applyLoadedState, showSaveNotice]);
 
   const saveRep = useCallback((v: number) => {
     setReputation(Math.max(-100, Math.min(100, v)));
@@ -1837,6 +2072,19 @@ export function NexusNomad() {
     });
   }, []);
 
+  const moveFacCategory = useCallback((catId: string, direction: -1 | 1) => {
+    setFacilityCats(prev => {
+      const index = prev.findIndex(category => category.id === catId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= prev.length) return prev;
+
+      const next = [...prev];
+      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+      saveFacilityCats(next);
+      return next;
+    });
+  }, []);
+
   const addFacCategory = useCallback(() => {
     const trimmed = newFacCatName.trim();
     if (!trimmed) return;
@@ -1887,6 +2135,10 @@ export function NexusNomad() {
 
   const removeFacility = useCallback((facId: string) => {
     setFacilities(prev => {
+      const removed = prev.find(f => f.id === facId);
+      if (removed?.businessMap) {
+        collectBusinessMapAssets(removed.businessMap).forEach((asset) => void deleteBusinessMapImage(asset).catch(() => undefined));
+      }
       const next = prev.filter(f => f.id !== facId);
       saveFacilities(next);
       return next;
@@ -3173,6 +3425,13 @@ export function NexusNomad() {
               onChange={setBusinessMap}
               isDM={isDM}
               facilities={facilities.map((facility) => ({ id: facility.id, name: facility.name }))}
+              additions={facilityAdditions}
+              onAdditionsChange={setFacilityAdditions}
+              additionUsage={facilityAdditionUsage}
+              mapKey="global"
+              currentPlayerId={currentUserId}
+              players={businessMapPlayers}
+              onPlayerAction={handleFacilityAdditionAction}
             />
           )}
 
@@ -3750,7 +4009,7 @@ export function NexusNomad() {
               )}
 
               <div className="space-y-3">
-                {facilityCats.map(cat => {
+                {facilityCats.map((cat, categoryIndex) => {
                   const catFacs = cat.facilityIds.map(id => facilities.find(f => f.id === id)).filter(Boolean) as Facility[];
                   return (
                     <FacilityCategoryPanel
@@ -3767,6 +4026,10 @@ export function NexusNomad() {
                       onRemoveFacility={removeFacility}
                       onAddFacility={(catId) => { setAddingFacilityCatId(catId); setNewFacName(""); setNewFacType("Facility"); }}
                       onSelectFacility={(id) => setSelectedFacilityId(id)}
+                      onMoveUp={() => moveFacCategory(cat.id, -1)}
+                      onMoveDown={() => moveFacCategory(cat.id, 1)}
+                      canMoveUp={categoryIndex > 0}
+                      canMoveDown={categoryIndex < facilityCats.length - 1}
                     />
                   );
                 })}
@@ -4058,6 +4321,75 @@ export function NexusNomad() {
                     </div>
                   </div>
                 </div>
+
+                <section className="space-y-4" aria-label={`${fac.name} business map`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3" style={NS_BORDER_SECTION}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Waypoints size={13} style={nsAccentHalf(accent)} />
+                        <span className="text-[11px] font-semibold uppercase tracking-wider" style={NS_SOFT}>Facility Map</span>
+                      </div>
+                      <p className="mt-1 text-[9px]" style={NS_DIM}>
+                        {fac.businessMap
+                          ? "This layout belongs to this facility and can be edited independently."
+                          : "No business map is attached to this facility."}
+                      </p>
+                    </div>
+                    {isDM && !fac.businessMap && (
+                      <button
+                        type="button"
+                        onClick={() => editFacility(fac.id, { businessMap: createFacilityBusinessMap(fac.name) })}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded text-[10px] font-medium hover:opacity-80 transition-opacity"
+                        style={nsAccentBtn(accent)}
+                      >
+                        <Plus size={11} />
+                        Add Facility Map
+                      </button>
+                    )}
+                    {isDM && fac.businessMap && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Remove the business map from ${fac.name}? This cannot be undone.`)) {
+                            const assets = collectBusinessMapAssets(fac.businessMap!);
+                            editFacility(fac.id, { businessMap: undefined });
+                            assets.forEach((asset) => void deleteBusinessMapImage(asset).catch(() => undefined));
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded text-[9px] hover:opacity-80 transition-opacity"
+                        style={NS_BTN_DELETE}
+                      >
+                        <Trash2 size={10} />
+                        Remove Map
+                      </button>
+                    )}
+                  </div>
+
+                  {fac.businessMap ? (
+                    <OfficeBusinessMap
+                      value={fac.businessMap}
+                      onChange={(next) => editFacility(fac.id, { businessMap: next })}
+                      isDM={isDM}
+                      facilities={facilities.map((facility) => ({ id: facility.id, name: facility.name }))}
+                      additions={facilityAdditions}
+                      onAdditionsChange={setFacilityAdditions}
+                      additionUsage={facilityAdditionUsage}
+                      mapKey={fac.id}
+                      currentPlayerId={currentUserId}
+                      players={businessMapPlayers}
+                      onPlayerAction={handleFacilityAdditionAction}
+                    />
+                  ) : (
+                    <div className="flex min-h-[120px] items-center justify-center border border-dashed p-5 text-center" style={{ borderColor: "#24243A", background: "#06060A" }}>
+                      <div>
+                        <Waypoints size={20} className="mx-auto mb-2" style={NS_DARK} />
+                        <p className="text-[10px]" style={NS_DIM}>
+                          {isDM ? "Add a map to design this facility's interior." : "This facility does not have a map yet."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </section>
               </div>
             );
           })()}
