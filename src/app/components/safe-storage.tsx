@@ -20,6 +20,104 @@ const PRUNABLE_PREFIXES: string[] = [
   "inet-deleted-",
 ];
 
+const RETIRED_STORAGE_KEYS = ["inet-adventure-sessions"];
+
+export function clearRetiredStorage(): number {
+  let removed = 0;
+  try {
+    RETIRED_STORAGE_KEYS.forEach((key) => {
+      if (localStorage.getItem(key) !== null) {
+        localStorage.removeItem(key);
+        removed += 1;
+      }
+    });
+  } catch {
+    return removed;
+  }
+  return removed;
+}
+
+if (typeof window !== "undefined") clearRetiredStorage();
+
+const CRITICAL_KEYS = new Set([
+  "inet-session-token",
+  "inet-user",
+  "inet-user-id",
+  "inet-profiles",
+]);
+
+const CRITICAL_PREFIXES = [
+  "inet-auth",
+  "inet-login",
+  "inet-wiki-draft",
+  "inet-editor-draft",
+  "inet-pending-",
+  "inet-unsaved-",
+];
+
+export type StorageImportance = "critical" | "saved" | "cache";
+
+export interface StorageClassification {
+  importance: StorageImportance;
+  clearable: boolean;
+  description: string;
+}
+
+function isPrunableStorageKey(key: string) {
+  return PRUNABLE_KEYS_ORDERED.includes(key) || PRUNABLE_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+export function classifyStorageKey(key: string): StorageClassification {
+  if (CRITICAL_KEYS.has(key) || CRITICAL_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+    return {
+      importance: "critical",
+      clearable: false,
+      description: "Session, identity, or unsaved editor data",
+    };
+  }
+  if (isPrunableStorageKey(key)) {
+    return {
+      importance: "cache",
+      clearable: true,
+      description: "Disposable cache or diagnostic history",
+    };
+  }
+  return {
+    importance: "saved",
+    clearable: false,
+    description: "Saved application state or a server-synced local mirror",
+  };
+}
+
+export function clearPrunableStorageKey(key: string): boolean {
+  if (!isPrunableStorageKey(key)) return false;
+  try {
+    const existed = localStorage.getItem(key) !== null;
+    localStorage.removeItem(key);
+    return existed;
+  } catch {
+    return false;
+  }
+}
+
+export function clearPrunableStorage(): { keysRemoved: number; bytesFreed: number } {
+  const keys: string[] = [];
+  let bytesFreed = 0;
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || !isPrunableStorageKey(key)) continue;
+      const value = localStorage.getItem(key) || "";
+      bytesFreed += (key.length + value.length) * 2;
+      keys.push(key);
+    }
+    keys.forEach((key) => localStorage.removeItem(key));
+    return { keysRemoved: keys.length, bytesFreed };
+  } catch {
+    return { keysRemoved: 0, bytesFreed: 0 };
+  }
+}
+
 // Rough localStorage quota (browsers typically allow ~5MB)
 const QUOTA_BYTES = 5 * 1024 * 1024;
 const PRUNE_THRESHOLD = 0.85; // start pruning at 85% capacity

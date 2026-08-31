@@ -1,11 +1,9 @@
-import React, { useState, useCallback, Suspense, useMemo, memo, startTransition, useEffect } from "react";
+import React, { useState, useCallback, Suspense, useMemo, memo, startTransition } from "react";
 import { useNavigate, Navigate } from "react-router";
 import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_TEXT, S_ACCENT, S_GREEN, S_RED, S_ACCENT_HDR } from "./shared-styles";
-import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, Compass, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Gamepad2, Cat, Trophy, Trash2, Palette, CircleDot, Skull, ArrowUp, ShoppingBag, type LucideIcon } from "lucide-react";
 import { importWithStaleChunkRecovery } from "@/lib/lazy-module";
-import { useInterfaceSession } from "./session-context";
-import { listPrototypeRooms } from "@/lib/adventure-prototype-api";
 
 const SnakeGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./snake-game")).then((module) => ({ default: module.SnakeGame })));
 const RunnerGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./runner-game")).then((module) => ({ default: module.RunnerGame })));
@@ -13,7 +11,6 @@ const PartyColor = React.lazy(() => importWithStaleChunkRecovery(() => import(".
 const OsuGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./osu-game")).then((module) => ({ default: module.OsuGame })));
 const BossFightLauncher = React.lazy(() => importWithStaleChunkRecovery(() => import("./boss-fight-launcher")).then((module) => ({ default: module.BossFightLauncher })));
 const DoodleJumpGame = React.lazy(() => importWithStaleChunkRecovery(() => import("./doodle-jump-game")).then((module) => ({ default: module.DoodleJumpGame })));
-const AdventurePrototype = React.lazy(() => importWithStaleChunkRecovery(() => import("./adventure-prototype")).then((module) => ({ default: module.AdventurePrototype })));
 const ArcadeStore = React.lazy(() => importWithStaleChunkRecovery(() => import("./arcade-store")).then((module) => ({ default: module.ArcadeStore })));
 import {
   saveScore,
@@ -191,47 +188,14 @@ const LeaderboardRow = memo(function LeaderboardRow({
 
 export function Game() {
   const navigate = useNavigate();
-  const { isDM } = useInterfaceSession();
   const currentUser = safeGetItem("inet-user") || "";
   const [activeGame, setActiveGame] = useState<string | null>(null);
-  const [activeAdventure, setActiveAdventure] = useState(false);
-  const [prototypeInvitationCount, setPrototypeInvitationCount] = useState(0);
   const [activeTab, setActiveTab] = useState<Tab>("games");
   const [leaderboardFilter, setLeaderboardFilter] = useState<string>("all");
   const [leaderboardVersion, setLeaderboardVersion] = useState(0);
 
   const arcadeGameIds = useMemo(() => new Set(GAMES.map((game) => game.id)), []);
   const selectedGame = GAMES.find((g) => g.id === activeGame);
-
-  useEffect(() => {
-    if (isDM) {
-      setPrototypeInvitationCount(0);
-      return;
-    }
-    let cancelled = false;
-    let timer: number | null = null;
-    const refreshInvitations = async () => {
-      try {
-        const rooms = await listPrototypeRooms();
-        if (!cancelled) setPrototypeInvitationCount(rooms.length);
-      } catch {
-        if (!cancelled) setPrototypeInvitationCount(0);
-      }
-    };
-    const poll = () => {
-      void refreshInvitations().finally(() => {
-        if (!cancelled) timer = window.setTimeout(poll, 5000);
-      });
-    };
-    const onFocus = () => { void refreshInvitations(); };
-    poll();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      cancelled = true;
-      if (timer != null) window.clearTimeout(timer);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [isDM]);
 
   const handleScoreSave = useCallback(
     (gameId: string, gameName: string) => (score: number) => {
@@ -296,17 +260,7 @@ export function Game() {
               </span>
             </div>
           )}
-          {activeAdventure && (
-            <div style={DISPLAY_CONTENTS}>
-              <span className="text-[11px]" style={S_DIM}>
-                &gt;
-              </span>
-              <span className="text-[11px]" style={S_MUTED}>
-                Adventure Prototype
-              </span>
-            </div>
-          )}
-          {!selectedGame && !activeAdventure && activeTab === "leaderboard" && (
+          {!selectedGame && activeTab === "leaderboard" && (
             <div style={DISPLAY_CONTENTS}>
               <span className="text-[11px]" style={S_DIM}>
                 &gt;
@@ -316,7 +270,7 @@ export function Game() {
               </span>
             </div>
           )}
-          {!selectedGame && !activeAdventure && activeTab === "store" && (
+          {!selectedGame && activeTab === "store" && (
             <div style={DISPLAY_CONTENTS}>
               <span className="text-[11px]" style={S_DIM}>
                 &gt;
@@ -348,9 +302,7 @@ export function Game() {
         {/* Header */}
         <div className="mb-4">
           <div className="flex items-center gap-3 mb-2">
-            {activeAdventure ? (
-              <Compass size={28} style={{ color: "#64E0FF" }} />
-            ) : activeTab === "leaderboard" && !selectedGame ? (
+            {activeTab === "leaderboard" && !selectedGame ? (
               <Trophy size={28} style={{ color: "#FFD700" }} />
             ) : activeTab === "store" && !selectedGame ? (
               <ShoppingBag size={28} style={{ color: "#FFD700" }} />
@@ -367,8 +319,6 @@ export function Game() {
             >
               {selectedGame
                 ? selectedGame.name
-                : activeAdventure
-                ? "Adventure Prototype"
                 : activeTab === "leaderboard"
                 ? "Leaderboards"
                 : activeTab === "store"
@@ -379,18 +329,16 @@ export function Game() {
           <div className="text-[12px]" style={S_MUTED}>
             {selectedGame
               ? selectedGame.description
-              : activeAdventure
-              ? "A focused shared-turn test for rooms, movement, attacks, and live synchronization."
               : activeTab === "leaderboard"
               ? "All-time high scores across all I-NET arcade games."
               : activeTab === "store"
               ? "Browse and purchase additional I-NET arcade content."
-              : `I-NET Game Module - ${GAMES.length + (isDM || prototypeInvitationCount > 0 ? 1 : 0)} game${GAMES.length + (isDM || prototypeInvitationCount > 0 ? 1 : 0) !== 1 ? "s" : ""} available`}
+              : `I-NET Game Module - ${GAMES.length} game${GAMES.length !== 1 ? "s" : ""} available`}
           </div>
         </div>
 
         {/* Tabs - only show when not in a game */}
-        {!selectedGame && !activeAdventure && (
+        {!selectedGame && (
           <div className="flex mb-4 gap-0" style={{ borderBottom: "2px solid #1A1A4B" }}>
             <button
               onClick={() => setActiveTab("games")}
@@ -467,14 +415,6 @@ export function Game() {
                 onScoreSave={handleScoreSave(selectedGame.id, selectedGame.name)}
               />
             </Suspense>
-          ) : activeAdventure ? (
-            <Suspense fallback={
-              <div className="flex items-center justify-center py-20">
-                <span className="text-[11px] font-mono" style={{ color: "#4A4A7A" }}>Loading Adventure prototype...</span>
-              </div>
-            }>
-              <AdventurePrototype onBack={() => setActiveAdventure(false)} />
-            </Suspense>
           ) : activeTab === "games" ? (
             /* Game Menu */
             <div>
@@ -486,48 +426,6 @@ export function Game() {
                   Choose from the available I-NET arcade titles below.
                 </div>
               </div>
-
-              {(isDM || prototypeInvitationCount > 0) && (
-                <div className="mb-5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      startTransition(() => {
-                        setActiveGame(null);
-                        setActiveAdventure(true);
-                        setActiveTab("games");
-                      });
-                    }}
-                    className={`${retro.raised} w-full p-4 text-left transition-colors hover:bg-[#0D203A]`}
-                    style={{ borderLeft: "4px solid #64E0FF", background: "#08162A" }}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`${retro.sunken} bg-[#061126] p-3`}>
-                        <Compass size={28} style={{ color: "#64E0FF" }} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="mb-1 flex flex-wrap items-center gap-2">
-                          <div className="text-[15px] font-bold" style={{ color: "#64E0FF", fontFamily: "'Courier New', monospace" }}>
-                            ADVENTURE
-                          </div>
-                          <span className="border px-2 py-0.5 text-[9px]" style={{ color: "#FFD37A", borderColor: "#8A682D", background: "#2A210D" }}>
-                            {isDM ? "DM ONLY" : "INVITED"}
-                          </span>
-                          <span className="border px-2 py-0.5 text-[9px]" style={{ color: "#8FF0B8", borderColor: "#285D43", background: "#0B2A1A" }}>
-                            PROTOTYPE
-                          </span>
-                        </div>
-                        <div className="text-[11px]" style={S_MUTED}>
-                          {isDM
-                            ? "Create private rooms, invite player profiles, and test synchronized grid turns."
-                            : `${prototypeInvitationCount} open invitation${prototypeInvitationCount === 1 ? "" : "s"} waiting for this profile.`}
-                        </div>
-                        <div className="mt-2 text-[10px]" style={{ color: "#64E0FF" }}>{isDM ? "OPEN PROTOTYPE" : "OPEN INVITATIONS"}</div>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {GAMES.map((game) => {

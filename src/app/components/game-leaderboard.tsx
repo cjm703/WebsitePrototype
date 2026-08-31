@@ -36,7 +36,6 @@ const CREDIT_RATES: Record<string, number> = {
   osu: 500,
   doodlejump: 200,
   bossfight: 50,
-  adventure: 100,
 };
 
 const profileCache = new Map<string, ArcadeProfile>();

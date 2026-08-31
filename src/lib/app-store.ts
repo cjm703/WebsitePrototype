@@ -184,11 +184,6 @@ export const appStore = {
   savePlayerArcadeProfile: <T>(playerId: string, data: T) =>
     savePlayerDoc<T>("player_arcade_profiles", playerId, data),
 
-  loadAdventureSessionsState: <T>(fallback: T) =>
-    loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "adventure-sessions", fallback),
-  saveAdventureSessionsState: <T>(data: T) =>
-    saveSingletonDataDoc<T>("app_arcade_catalog_state", "adventure-sessions", data),
-
   loadCombatState: <T>(fallback: T) =>
     loadSingletonCollectionDoc<T>("app_arcade_catalog_state", "combat-state", fallback),
   saveCombatState: <T>(data: T) =>

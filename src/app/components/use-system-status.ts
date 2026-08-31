@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "@/lib/supabase-env";
 import { readErrorLog, subscribeErrorLog, type ErrorLogEntry } from "./error-logger";
-import { getStorageUsageBytes, getStorageUsageFraction, safeGetItem } from "./safe-storage";
+import {
+  classifyStorageKey,
+  getStorageUsageBytes,
+  getStorageUsageFraction,
+  safeGetItem,
+  type StorageImportance,
+} from "./safe-storage";
 
 export interface ServerPing {
   status: "ok" | "error" | "checking";
@@ -18,6 +24,9 @@ export interface PingSample {
 export interface StorageKeyMetric {
   key: string;
   bytes: number;
+  importance: StorageImportance;
+  clearable: boolean;
+  description: string;
 }
 
 export function formatBytes(bytes: number): string {
@@ -46,7 +55,7 @@ function readStorageMetrics() {
       if (!key) continue;
       const value = localStorage.getItem(key) || "";
       const bytes = (key.length + value.length) * 2;
-      storageKeys.push({ key, bytes });
+      storageKeys.push({ key, bytes, ...classifyStorageKey(key) });
       if (key.startsWith("inet-")) inetKeys += 1;
     }
   } catch {

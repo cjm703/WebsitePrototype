@@ -5,9 +5,9 @@ import { appStore } from "@/lib/app-store";
 import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Users,
-  Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft, ArrowRight,
+  Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, ArrowLeft, ArrowRight,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp, Dices, Images, BookOpen, Server,
+  Newspaper, Copy, Zap, ChevronUp, Images, BookOpen, Server,
 } from "lucide-react";
 import type { NodeTree } from "./node-trees";
 import {
@@ -38,12 +38,10 @@ import {
   DM_CAT_BADGE, DM_NODE_ICON, DM_FOLLOW_UP_LEFT, DM_FOLLOW_UP_TEXT,
   DM_PANEL_ALT, DM_EFFECT_HDR, DM_EFFECT_LABEL, DM_PURPLE,
   DM_PLAYER_NAME, DM_PLAYER_CLASS, DM_DELETE_NAME, DM_AUTH_HDR,
-  DM_GRAD_LINE, DM_LOG_COPY_BTN, DM_LOG_SOURCE,
   DM_ERR_MSG, DM_BORDER_B_ALT,
   dmHpColor, dmWarnColor, dmTempColor, dmOverColor, dmExhaustColor,
-  dmTabStyle, dmActiveBtn, dmPlayerSelect, dmAssignDim, dmRarityBadge,
-  dmLockColor, dmNotifTarget, dmErrFilterBtn, dmErrLogType,
-  dmErrLogBorder, dmErrLogText, dmErrBorder,
+  dmTabStyle, dmAssignDim, dmRarityBadge,
+  dmLockColor, dmErrBorder,
   S_MUTED, S_DIM, S_TEXT, S_ACCENT, S_GREEN, S_RED, S_SUBTLE, S_WARN, S_GREEN_BTN,
   S_LABEL, S_SECTION_HDR, S_ACCENT_HDR, S_TEXT_BOLD, S_WARN_HDR, S_LINK, S_SAVE_BTN,
   S_BORDER_B, S_BORDER_R,
@@ -84,6 +82,9 @@ const DMImageStorageSection = lazy(() =>
 const DMSystemStatus = lazy(() =>
   import("./dm-system-status").then((module) => ({ default: module.DMSystemStatus })),
 );
+const DMNotificationsManager = lazy(() =>
+  import("./dm-notifications-manager").then((module) => ({ default: module.DMNotificationsManager })),
+);
 const DMInfoManagerSection = lazy(() =>
   import("./dm-area-info-panel").then((module) => ({ default: module.DMInfoManagerSection })),
 );
@@ -92,9 +93,6 @@ const DMCardManagerSection = lazy(() =>
 );
 const DMItemManagerSection = lazy(() =>
   import("./dm-item-manager-section").then((module) => ({ default: module.DMItemManagerSection })),
-);
-const AdventureGame = lazy(() =>
-  import("./adventure-game").then((module) => ({ default: module.AdventureGame })),
 );
 
 function DMSectionFallback() {
@@ -511,12 +509,10 @@ type SectionId =
   | "images"
   | "info"
   | "tags"
-  | "notifs"
   | "news"
   | "customize"
   | "calendar"
   | "arcade"
-  | "adventure"
   | "reactions"
   | "nodetrees";
 
@@ -533,13 +529,11 @@ const DM_SECTIONS = [
   { id: "images" as const, label: "Image Storage", icon: Images },
   { id: "nodetrees" as const, label: "Node Trees", icon: GitBranch },
   { id: "info" as const, label: "Manage Info", icon: FileText },
-  { id: "notifs" as const, label: "Notifications", icon: Bell },
   { id: "news" as const, label: "Manage News", icon: Newspaper },
   { id: "tags" as const, label: "Manage Tags", icon: Tag },
   { id: "customize" as const, label: "Customization Editing", icon: Paintbrush },
   { id: "calendar" as const, label: "Calendar & Weather", icon: CalendarDays },
   { id: "arcade" as const, label: "Arcade Manager", icon: Gamepad2 },
-  { id: "adventure" as const, label: "Adventure Creator", icon: Dices },
   { id: "reactions" as const, label: "Chat Reactions", icon: SmilePlus },
 ] as const;
 
@@ -598,16 +592,8 @@ export function DMArea() {
   const [dmLoading, setDmLoading] = useState(true);
   const [dmError, setDmError] = useState<string | null>(null);
   const [dmNotifications, setDmNotifications] = useState<DMNotification[]>([]);
-  const [editingNotif, setEditingNotif] = useState<DMNotification | null>(null);
-  const [isAddingNewNotif, setIsAddingNewNotif] = useState(false);
   const [reactions, setReactions] = useState<CustomReaction[]>([]);
   const [nodeTrees, setNodeTrees] = useState<NodeTree[]>([]);
-
-
-  // Notifications (DM-created)
-  const [notifPlayerSelection, setNotifPlayerSelection] = useState<Record<string, boolean>>({});
-  const [notifAllPlayers, setNotifAllPlayers] = useState(true);
-
 
 useEffect(() => {
   let cancelled = false;
@@ -976,7 +962,6 @@ async function persistCustomReactions(next: CustomReaction[]) {
 
   // Error & report log (read from localStorage)
   const [errorLog, setErrorLog] = useState<ErrorLogEntry[]>(() => readErrorLog());
-  const [errorLogFilter, setErrorLogFilter] = useState<"all" | "error" | "report">("all");
 
 
   // Reload error log on focus
@@ -1021,11 +1006,6 @@ async function persistCustomReactions(next: CustomReaction[]) {
     [dmNotifications],
   );
 
-  const visibleDmNotifications = useMemo(
-    () => dmNotifications.filter((notif) => !isPlayerReportNotification(notif)),
-    [dmNotifications],
-  );
-
   const combinedErrorLog = useMemo<ErrorLogEntry[]>(() => {
     const remoteReportEntries: ErrorLogEntry[] = reportNotifications.map((notif) => ({
       id: `remote-report:${notif.id}`,
@@ -1043,11 +1023,6 @@ async function persistCustomReactions(next: CustomReaction[]) {
       return bt - at;
     });
   }, [errorLog, reportNotifications]);
-
-  const filteredErrorLog = useMemo(
-    () => combinedErrorLog.filter((e) => errorLogFilter === "all" || e.type === errorLogFilter),
-    [combinedErrorLog, errorLogFilter],
-  );
 
 
   // ---- Style helpers (module-level constants to avoid re-creating each render) ----
@@ -1443,69 +1418,6 @@ const handleSaveItem = async () => {
   };
 
   // ========================
-  // Notification handlers
-  // ========================
-  const handleStartAddNotif = () => {
-    setEditingNotif({
-      id: `notif-${Date.now()}`, subject: "", message: "", assignedTo: [], createdAt: "",
-    });
-    setNotifAllPlayers(true);
-    setNotifPlayerSelection({});
-    setIsAddingNewNotif(true);
-  };
-
-  const handleSaveNotif = async () => {
-    if (!editingNotif || !editingNotif.subject.trim()) return;
-    const assignedTo: string[] = notifAllPlayers
-      ? ["ALL"]
-      : players.filter((p) => notifPlayerSelection[p.id]).map((p) => p.name);
-    if (!notifAllPlayers && assignedTo.length === 0) return;
-
-    const now = new Date();
-    const ts = `${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`;
-
-    const finalNotif: DMNotification = {
-      ...editingNotif,
-      assignedTo,
-      createdAt: isAddingNewNotif ? ts : editingNotif.createdAt,
-    };
-
-    const next = isAddingNewNotif
-      ? [finalNotif, ...dmNotifications]
-      : dmNotifications.map((n) => (n.id === finalNotif.id ? finalNotif : n));
-
-    await persistNotifications(next);
-    setEditingNotif(null);
-    setIsAddingNewNotif(false);
-  };
-
-  const handleDeleteNotif = async (id: string) => {
-    const next = dmNotifications.filter((n) => n.id !== id);
-    await persistNotifications(next);
-
-    if (editingNotif?.id === id) {
-      setEditingNotif(null);
-      setIsAddingNewNotif(false);
-    }
-  };
-
-  const handleCancelNotifEdit = () => { setEditingNotif(null); setIsAddingNewNotif(false); };
-
-  const handleEditNotif = (notif: DMNotification) => {
-    setEditingNotif({ ...notif });
-    const isAll = notif.assignedTo.includes("ALL");
-    setNotifAllPlayers(isAll);
-    if (isAll) {
-      setNotifPlayerSelection({});
-    } else {
-      const sel: Record<string, boolean> = {};
-      players.forEach((p) => { sel[p.id] = notif.assignedTo.includes(p.name); });
-      setNotifPlayerSelection(sel);
-    }
-    setIsAddingNewNotif(false);
-  };
-
-  // ========================
   // Rarity helpers
   // ========================
   const rarities = ["Common", "Uncommon", "Rare", "Very Rare", "Legendary"];
@@ -1585,7 +1497,7 @@ const handleSaveItem = async () => {
             return (
               <button
                 key={s.id}
-                onClick={async () => { setActiveSection(s.id); setEditingPlayer(null); setIsAddingNewPlayer(false); setEditingItem(null); setIsAddingNewItem(false); setEditingInfo(null); setIsAddingNewInfo(false); setEditingNotif(null); setIsAddingNewNotif(false); }}
+                onClick={() => { setActiveSection(s.id); setEditingPlayer(null); setIsAddingNewPlayer(false); setEditingItem(null); setIsAddingNewItem(false); setEditingInfo(null); setIsAddingNewInfo(false); }}
                 className={`${activeSection === s.id ? retro.sunken + " bg-[#0E0E35]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-5 py-2 text-[13px] flex items-center gap-2 transition-colors`}
                 style={dmTabStyle(activeSection === s.id)}
               >
@@ -1620,6 +1532,14 @@ const handleSaveItem = async () => {
               onClearErrors={handleClearErrorLog}
               onRemoveError={handleRemoveLogEntry}
               onRefreshErrors={() => setErrorLog(readErrorLog())}
+              notificationCount={dmNotifications.length - reportNotifications.length}
+              notificationsContent={(
+                <DMNotificationsManager
+                  notifications={dmNotifications}
+                  players={players}
+                  onChange={persistNotifications}
+                />
+              )}
             />
           )}
 
@@ -2104,259 +2024,6 @@ const handleSaveItem = async () => {
           )}
 
           {/* ======================================================= */}
-          {/* NOTIFICATIONS                                            */}
-          {/* ======================================================= */}
-          {activeSection === "notifs" && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Notifications</h2>
-                <button onClick={handleStartAddNotif} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-                  <Plus size={14} /> New Notification
-                </button>
-              </div>
-
-              <p className="text-[11px]" style={S_SUBTLE}>
-                Create notifications that appear in players' I-NET Interface dashboard. Assign to individual players, multiple players, or all players at once.
-              </p>
-
-              {/* Notification Edit Form */}
-              {editingNotif && (
-                <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="text-[12px]" style={S_SECTION_HDR}>
-                      {isAddingNewNotif ? "CREATE NEW NOTIFICATION" : `EDITING: ${editingNotif.subject || "(no subject)"}`}
-                    </div>
-                    <button onClick={handleCancelNotifEdit} className="hover:opacity-80"><X size={16} style={S_RED} /></button>
-                  </div>
-
-                  {/* Subject */}
-                  <div className="mb-4">
-                    <label className="text-[10px] block mb-1" style={labelStyle}>Subject:</label>
-                    <input
-                      type="text"
-                      value={editingNotif.subject}
-                      onChange={(e) => setEditingNotif({ ...editingNotif, subject: e.target.value })}
-                      placeholder="Notification subject line..."
-                      className={inputClass}
-                      style={inputStyle}
-                    />
-                  </div>
-
-                  {/* Assignment */}
-                  <div className="mb-4">
-                    <label className="text-[10px] block mb-2" style={labelStyle}>Send to:</label>
-                    <div className="flex items-center gap-3 mb-3">
-                      <button
-                        onClick={async () => { setNotifAllPlayers(true); setNotifPlayerSelection({}); }}
-                        className="text-[11px] px-3 py-1.5 transition-colors"
-                        style={dmActiveBtn(notifAllPlayers)}
-                      >
-                        All Players
-                      </button>
-                      <button
-                        onClick={() => setNotifAllPlayers(false)}
-                        className="text-[11px] px-3 py-1.5 transition-colors"
-                        style={dmActiveBtn(!notifAllPlayers)}
-                      >
-                        Select Players
-                      </button>
-                    </div>
-
-                    {!notifAllPlayers && (
-                      <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                        <div className="text-[10px] mb-2" style={S_SECTION_HDR}>SELECT RECIPIENTS</div>
-                        <div className="space-y-1.5">
-                          {players.map((p) => (
-                            <label key={p.id} className="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                              <input
-                                type="checkbox"
-                                checked={!!notifPlayerSelection[p.id]}
-                                onChange={(e) => setNotifPlayerSelection({ ...notifPlayerSelection, [p.id]: e.target.checked })}
-                                className="accent-[#4A7BFF]"
-                              />
-                              <span className="text-[11px]" style={dmPlayerSelect(!!notifPlayerSelection[p.id])}>
-                                {p.name}
-                              </span>
-                            </label>
-                          ))}
-                          {players.length === 0 && (
-                            <span className="text-[11px]" style={S_MUTED}>No players defined yet.</span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Message body */}
-                  <div className="mb-4">
-                    <label className="text-[10px] block mb-1" style={labelStyle}>Message:</label>
-                    <textarea
-                      value={editingNotif.message}
-                      onChange={(e) => setEditingNotif({ ...editingNotif, message: e.target.value })}
-                      placeholder="Enter notification message content..."
-                      rows={6}
-                      className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none resize-none`}
-                      style={{ ...inputStyle, fontFamily: "'Courier New', monospace" }}
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button onClick={handleSaveNotif} className={`${retro.button} px-6 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-                      <Send size={14} /> {isAddingNewNotif ? "Send Notification" : "Save Changes"}
-                    </button>
-                    <button onClick={handleCancelNotifEdit} className={`${retro.button} px-6 py-2 text-[12px]`} style={S_TEXT}>Cancel</button>
-                  </div>
-                </div>
-              )}
-
-              {/* Notification List */}
-              <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-                <div className="text-[12px] mb-3" style={S_SECTION_HDR}>SENT NOTIFICATIONS ({visibleDmNotifications.length})</div>
-                {visibleDmNotifications.length === 0 ? (
-                  <div className="text-[12px] text-center py-6" style={S_MUTED}>No notifications sent yet.</div>
-                ) : (
-                  <div className="space-y-2">
-                    {visibleDmNotifications.map((notif) => (
-                      <div key={notif.id} className={`${retro.raised} bg-[#0E0E35] p-3`}>
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[13px] mb-0.5 truncate" style={S_TEXT_BOLD}>{notif.subject}</div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[10px]" style={S_MUTED}>{notif.createdAt}</span>
-                              <span className="text-[9px]" style={S_DIM}>·</span>
-                              <span className="text-[10px]" style={dmNotifTarget(notif.assignedTo.includes("ALL"))}>
-                                {notif.assignedTo.includes("ALL") ? "All Players" : notif.assignedTo.join(", ")}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0 ml-2">
-                            <button onClick={() => handleEditNotif(notif)} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_ACCENT}>
-                              <Edit size={12} className="inline mr-1" />Edit
-                            </button>
-                            <button onClick={() => handleDeleteNotif(notif.id)} className={`${retro.button} px-3 py-1 text-[11px]`} style={S_RED}>
-                              <Trash2 size={12} className="inline mr-1" />Remove
-                            </button>
-                          </div>
-                        </div>
-                        {notif.message && (
-                          <div className="text-[11px] mt-1" style={S_SUBTLE}>
-                            {notif.message.length > 120 ? notif.message.slice(0, 120) + "..." : notif.message}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Error & Report Log */}
-              <div
-                className="h-[2px] w-full my-4"
-                style={DM_GRAD_LINE}
-              />
-              <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle size={14} style={S_WARN} />
-                    <div className="text-[12px]" style={S_WARN_HDR}>
-                      ERROR &amp; REPORT LOG ({filteredErrorLog.length})
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Filter buttons */}
-                    {(["all", "error", "report"] as const).map((f) => (
-                      <button
-                        key={f}
-                        onClick={() => setErrorLogFilter(f)}
-                        className="text-[10px] px-2 py-0.5 transition-colors"
-                        style={dmErrFilterBtn(errorLogFilter === f, f)}
-                      >
-                        {f === "all" ? "All" : f === "error" ? "Errors" : "Reports"}
-                      </button>
-                    ))}
-                    {errorLog.length > 0 && (
-                      <button
-                        onClick={handleClearErrorLog}
-                        className={`${retro.button} px-3 py-1 text-[10px] flex items-center gap-1`}
-                        style={S_RED}
-                      >
-                        <Trash2 size={10} /> Clear All
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <p className="text-[10px] mb-3" style={S_MUTED}>
-                  Auto-captured runtime errors and player-submitted problem reports.
-                </p>
-                {filteredErrorLog.length === 0 ? (
-                  <div className="text-[12px] text-center py-6" style={S_MUTED}>
-                    No {errorLogFilter === "all" ? "entries" : errorLogFilter === "error" ? "errors" : "reports"} logged yet.
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
-                    {filteredErrorLog.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className={`${retro.raised} bg-[#0E0E35] p-3`}
-                        style={dmErrLogBorder(entry.type)}
-                      >
-                        <div className="flex items-start justify-between gap-2 mb-1">
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span
-                              className="text-[9px] px-1.5 py-0.5 shrink-0"
-                              style={dmErrLogType(entry.type)}
-                            >
-                              {entry.type === "error" ? "ERROR" : "REPORT"}
-                            </span>
-                            <span className="text-[10px] shrink-0" style={S_MUTED}>
-                              {entry.timestamp}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => handleRemoveLogEntry(entry.id)}
-                            className="shrink-0 p-0.5 hover:opacity-80"
-                            style={S_MUTED}
-                            title="Remove"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[10px]" style={S_SUBTLE}>
-                            Player:
-                          </span>
-                          <span
-                            className="text-[10px] px-1.5 py-0.5"
-                            style={DM_LOG_COPY_BTN}
-                          >
-                            {entry.player}
-                          </span>
-                          {entry.type === "error" && entry.source && (
-                            <div style={DISPLAY_CONTENTS}>
-                              <span className="text-[10px]" style={S_SUBTLE}>
-                                Source:
-                              </span>
-                              <span className="text-[9px] truncate" style={{ ...S_MUTED, ...DM_LOG_SOURCE }}>
-                                {entry.source}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                        <div
-                          className="text-[11px] whitespace-pre-wrap"
-                          style={dmErrLogText(entry.type)}
-                        >
-                          {entry.message}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ======================================================= */}
           {/* IMAGE STORAGE                                            */}
           {/* ======================================================= */}
           {activeSection === "images" && <DMImageStorageSection />}
@@ -2416,22 +2083,6 @@ const handleSaveItem = async () => {
                   level: p.level,
                 }))}
               />
-            </div>
-          )}
-
-          {/* ======================================================= */}
-          {/* ADVENTURE CREATOR                                        */}
-          {/* ======================================================= */}
-          {activeSection === "adventure" && (
-            <div style={DISPLAY_CONTENTS}>
-              <div className="flex items-center gap-3 mb-6">
-                <Dices size={20} style={DM_GOLD} />
-                <h2 className="text-[18px] font-bold" style={DM_GOLD}>Adventure Creator</h2>
-              </div>
-              <div className="text-[11px] mb-4" style={S_MUTED}>
-                Close old Adventure rooms, seed the clean V2 starter, and build classes, abilities, item sets, events, enemies, bosses, behaviors, and level-up rules.
-              </div>
-              <AdventureGame onBack={() => setActiveSection("arcade")} />
             </div>
           )}
 

@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  Bell,
   Clock,
   Database,
   HardDrive,
+  Loader2,
   RefreshCw,
   Server,
   ShieldCheck,
@@ -16,27 +18,41 @@ import {
 import { retro } from "./retro-styles";
 import type { ErrorLogEntry } from "./error-logger";
 import { formatBytes, formatUptime, useSystemStatus } from "./use-system-status";
+import { clearPrunableStorage, clearPrunableStorageKey, type StorageImportance } from "./safe-storage";
+import { loadSupabaseStorageStatus, type SupabaseStorageStatus } from "@/lib/system-status-api";
 import { S_ACCENT, S_DIM, S_GREEN, S_MUTED, S_RED, S_TEXT, S_WARN } from "./shared-styles";
 
-type StatusView = "overview" | "server" | "storage" | "errors" | "session";
+type StatusView = "overview" | "server" | "storage" | "notifications" | "errors" | "session";
 
 const PANEL = { background: "#090D27", border: "1px solid #23295A" } as const;
 const SUB_PANEL = { background: "#070A20", border: "1px solid #1B214A" } as const;
+const STORAGE_IMPORTANCE_ORDER: Record<StorageImportance, number> = { critical: 0, saved: 1, cache: 2 };
+const STORAGE_IMPORTANCE_LABEL: Record<StorageImportance, string> = { critical: "Critical", saved: "Saved", cache: "Cache" };
 
 export function DMSystemStatus({
   errorEntries,
   onClearErrors,
   onRemoveError,
   onRefreshErrors,
+  notificationCount,
+  notificationsContent,
 }: {
   errorEntries: ErrorLogEntry[];
   onClearErrors: () => void | Promise<void>;
   onRemoveError: (id: string) => void | Promise<void>;
   onRefreshErrors: () => void;
+  notificationCount: number;
+  notificationsContent: React.ReactNode;
 }) {
   const status = useSystemStatus();
   const [view, setView] = useState<StatusView>("overview");
   const [errorFilter, setErrorFilter] = useState<"all" | "error" | "report">("all");
+  const [storageFilter, setStorageFilter] = useState<"all" | StorageImportance>("all");
+  const [storageSort, setStorageSort] = useState<"importance" | "size">("importance");
+  const [cleanupMessage, setCleanupMessage] = useState("");
+  const [supabaseStorage, setSupabaseStorage] = useState<SupabaseStorageStatus | null>(null);
+  const [supabaseStorageLoading, setSupabaseStorageLoading] = useState(true);
+  const [supabaseStorageError, setSupabaseStorageError] = useState("");
   const mergedErrorEntries = useMemo(() => {
     const byId = new Map<string, ErrorLogEntry>();
     [...errorEntries, ...status.errorLog].forEach((entry) => byId.set(entry.id, entry));
@@ -49,16 +65,56 @@ export function DMSystemStatus({
   const errorCount = mergedErrorEntries.filter((entry) => entry.type === "error").length;
   const reportCount = mergedErrorEntries.filter((entry) => entry.type === "report").length;
   const maxPing = Math.max(...status.pingHistory.map((sample) => sample.ms), 1);
+  const visibleStorageKeys = useMemo(() => {
+    const filtered = status.storageKeys.filter((entry) => storageFilter === "all" || entry.importance === storageFilter);
+    return filtered.sort((a, b) => storageSort === "size"
+      ? b.bytes - a.bytes || a.key.localeCompare(b.key)
+      : STORAGE_IMPORTANCE_ORDER[a.importance] - STORAGE_IMPORTANCE_ORDER[b.importance] || b.bytes - a.bytes || a.key.localeCompare(b.key));
+  }, [status.storageKeys, storageFilter, storageSort]);
+
+  const refreshSupabaseStorage = useCallback(async () => {
+    setSupabaseStorageLoading(true);
+    setSupabaseStorageError("");
+    try {
+      setSupabaseStorage(await loadSupabaseStorageStatus());
+    } catch (error) {
+      setSupabaseStorageError(error instanceof Error ? error.message : "Supabase storage telemetry could not be loaded.");
+    } finally {
+      setSupabaseStorageLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSupabaseStorage();
+  }, [refreshSupabaseStorage]);
 
   const refreshAll = () => {
     status.refresh();
     onRefreshErrors();
+    void refreshSupabaseStorage();
+  };
+
+  const clearAllCaches = () => {
+    if (!window.confirm("Clear disposable browser caches and diagnostic history? Saved application data and this login session will be kept.")) return;
+    const result = clearPrunableStorage();
+    setCleanupMessage(`Cleared ${result.keysRemoved} cache key${result.keysRemoved === 1 ? "" : "s"} and freed approximately ${formatBytes(result.bytesFreed)}.`);
+    status.refresh();
+    onRefreshErrors();
+  };
+
+  const clearCacheKey = (key: string) => {
+    if (!window.confirm(`Clear the disposable browser cache \"${key}\"?`)) return;
+    const removed = clearPrunableStorageKey(key);
+    setCleanupMessage(removed ? `Cleared ${key}.` : `${key} was already empty.`);
+    status.refresh();
+    if (key === "inet-error-log") onRefreshErrors();
   };
 
   const views: Array<{ id: StatusView; label: string; icon: React.ComponentType<{ size?: number }> }> = [
     { id: "overview", label: "Overview", icon: Activity },
     { id: "server", label: "Server", icon: Server },
     { id: "storage", label: "Storage", icon: Database },
+    { id: "notifications", label: "Notifications", icon: Bell },
     { id: "errors", label: "Error Log", icon: AlertTriangle },
     { id: "session", label: "Session", icon: Clock },
   ];
@@ -97,7 +153,7 @@ export function DMSystemStatus({
       </div>
 
       {view === "overview" && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
           <StatusSummary
             icon={status.ping.status === "ok" ? Wifi : WifiOff}
             label="Server"
@@ -113,6 +169,14 @@ export function DMSystemStatus({
             detail={`${formatBytes(status.storageBytes)} across ${status.storageKeyCount} keys`}
             color={status.storageBarColor}
             onClick={() => setView("storage")}
+          />
+          <StatusSummary
+            icon={Bell}
+            label="Notifications"
+            value={`${notificationCount} sent`}
+            detail="Compose and manage player dashboard messages"
+            color="#79B8FF"
+            onClick={() => setView("notifications")}
           />
           <StatusSummary
             icon={AlertTriangle}
@@ -180,40 +244,107 @@ export function DMSystemStatus({
       )}
 
       {view === "storage" && (
-        <section className="p-4" style={PANEL}>
-          <div className="mb-4 flex items-center gap-2">
-            <Database size={17} style={{ color: status.storageBarColor }} />
-            <div>
-              <div className="text-[12px] font-bold" style={S_TEXT}>Browser Storage</div>
-              <div className="text-[9px]" style={S_DIM}>Local cache only; Supabase files are managed from their feature pages.</div>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-            <Metric label="Used" value={formatBytes(status.storageBytes)} />
-            <Metric label="Estimated Quota" value="5.00 MB" />
-            <Metric label="Total Keys" value={String(status.storageKeyCount)} />
-            <Metric label="I-NET Keys" value={String(status.inetKeyCount)} />
-          </div>
-          <div className="mt-4">
-            <div className="mb-1 flex justify-between text-[9px]" style={S_MUTED}><span>CAPACITY</span><span>{status.storagePercent}%</span></div>
-            <div className="h-3 overflow-hidden border border-[#242B59] bg-[#050718]">
-              <div className="h-full transition-all" style={{ width: `${status.storagePercent}%`, background: status.storageBarColor }} />
-            </div>
-            {status.storageWarning && <div className="mt-2 text-[9px]" style={status.storageCritical ? S_RED : S_WARN}>{status.storageCritical ? "Critical capacity: automatic pruning may run." : "Storage is approaching browser capacity."}</div>}
-          </div>
-          <div className="mt-5 overflow-hidden border border-[#242B59]">
-            <div className="grid grid-cols-[minmax(0,1fr)_100px] bg-[#11163A] px-3 py-2 text-[9px]" style={S_MUTED}><span>LOCAL STORAGE KEY</span><span className="text-right">SIZE</span></div>
-            <div className="max-h-80 overflow-y-auto">
-              {status.storageKeys.length === 0 ? (
-                <div className="p-5 text-center text-[10px]" style={S_DIM}>No local storage keys are available.</div>
-              ) : status.storageKeys.map((entry) => (
-                <div key={entry.key} className="grid grid-cols-[minmax(0,1fr)_100px] border-t border-[#171D40] px-3 py-2 text-[10px]">
-                  <span className="truncate font-mono" style={S_TEXT}>{entry.key}</span>
-                  <span className="text-right" style={S_DIM}>{formatBytes(entry.bytes)}</span>
+        <div className="space-y-4">
+          <section className="p-4" style={PANEL}>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Database size={17} style={S_ACCENT} />
+                <div>
+                  <div className="text-[12px] font-bold" style={S_TEXT}>Supabase Storage</div>
+                  <div className="text-[9px]" style={S_DIM}>Measured database and object-storage usage. Project plan limits are managed in Supabase.</div>
                 </div>
-              ))}
+              </div>
+              <button type="button" onClick={() => void refreshSupabaseStorage()} disabled={supabaseStorageLoading} className={`${retro.button} flex items-center gap-2 px-3 py-1.5 text-[9px] disabled:opacity-50`} style={S_TEXT}>
+                {supabaseStorageLoading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />} Refresh Supabase
+              </button>
             </div>
-          </div>
+            {supabaseStorageError ? (
+              <div className="border border-[#713447] bg-[#1B0C16] px-3 py-3 text-[10px]" style={S_RED}>{supabaseStorageError}</div>
+            ) : !supabaseStorage ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-[10px]" style={S_MUTED}><Loader2 size={13} className="animate-spin" /> Loading Supabase telemetry...</div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <Metric label="Database Used" value={supabaseStorage.database.bytes == null ? "Unavailable" : formatBytes(supabaseStorage.database.bytes)} />
+                  <Metric label="Object Storage" value={formatBytes(supabaseStorage.objectStorage.bytes)} />
+                  <Metric label="Stored Objects" value={String(supabaseStorage.objectStorage.objects)} />
+                  <Metric label="Active Sessions" value={`${supabaseStorage.sessions.active} / ${supabaseStorage.sessions.total}`} />
+                </div>
+                {supabaseStorage.warnings.map((warning) => <div key={warning} className="border border-[#6A5726] bg-[#191508] px-3 py-2 text-[9px]" style={S_WARN}>{warning}</div>)}
+                <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                  <StorageMetricTable
+                    title={`STORAGE BUCKETS (${supabaseStorage.objectStorage.buckets.length})`}
+                    empty="No Supabase Storage buckets found."
+                    rows={supabaseStorage.objectStorage.buckets.map((bucket) => ({ key: bucket.name, label: bucket.name, detail: `${bucket.objects}${bucket.truncated ? "+" : ""} objects | ${bucket.public ? "public" : "private"}`, bytes: bucket.bytes }))}
+                  />
+                  <StorageMetricTable
+                    title={`DATABASE TABLES (${supabaseStorage.database.tables.length})`}
+                    empty="Database table telemetry is unavailable."
+                    rows={supabaseStorage.database.tables.map((table) => ({ key: table.name, label: table.name, detail: `about ${table.estimatedRows.toLocaleString()} rows`, bytes: table.bytes }))}
+                  />
+                </div>
+                <div className="text-right text-[8px]" style={S_DIM}>Checked {new Date(supabaseStorage.checkedAt).toLocaleString()}</div>
+              </div>
+            )}
+          </section>
+
+          <section className="p-4" style={PANEL}>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <HardDrive size={17} style={{ color: status.storageBarColor }} />
+                <div>
+                  <div className="text-[12px] font-bold" style={S_TEXT}>Browser Storage</div>
+                  <div className="text-[9px]" style={S_DIM}>Critical and saved data are protected. Only known disposable caches can be cleared here.</div>
+                </div>
+              </div>
+              <button type="button" onClick={clearAllCaches} className={`${retro.button} flex items-center gap-2 px-3 py-1.5 text-[9px]`} style={S_WARN}><Trash2 size={11} /> Clear Disposable Cache</button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+              <Metric label="Used" value={formatBytes(status.storageBytes)} />
+              <Metric label="Estimated Quota" value="5.00 MB" />
+              <Metric label="Total Keys" value={String(status.storageKeyCount)} />
+              <Metric label="I-NET Keys" value={String(status.inetKeyCount)} />
+            </div>
+            <div className="mt-4">
+              <div className="mb-1 flex justify-between text-[9px]" style={S_MUTED}><span>CAPACITY</span><span>{status.storagePercent}%</span></div>
+              <div className="h-3 overflow-hidden border border-[#242B59] bg-[#050718]"><div className="h-full transition-all" style={{ width: `${status.storagePercent}%`, background: status.storageBarColor }} /></div>
+              {status.storageWarning && <div className="mt-2 text-[9px]" style={status.storageCritical ? S_RED : S_WARN}>{status.storageCritical ? "Critical capacity: automatic pruning may run." : "Storage is approaching browser capacity."}</div>}
+              {cleanupMessage && <div className="mt-2 text-[9px]" style={S_GREEN}>{cleanupMessage}</div>}
+            </div>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-1">
+                {(["all", "critical", "saved", "cache"] as const).map((filter) => (
+                  <button key={filter} type="button" onClick={() => setStorageFilter(filter)} className="border px-2 py-1 text-[9px]" style={{ color: storageFilter === filter ? "#79B8FF" : "#8E9ABB", borderColor: storageFilter === filter ? "#4F8DFF" : "#28305F", background: storageFilter === filter ? "#101D42" : "#070A20" }}>{filter.toUpperCase()}</button>
+                ))}
+              </div>
+              <div className="flex gap-1">
+                {(["importance", "size"] as const).map((sort) => (
+                  <button key={sort} type="button" onClick={() => setStorageSort(sort)} className="border px-2 py-1 text-[9px]" style={{ color: storageSort === sort ? "#79B8FF" : "#8E9ABB", borderColor: storageSort === sort ? "#4F8DFF" : "#28305F", background: storageSort === sort ? "#101D42" : "#070A20" }}>SORT: {sort.toUpperCase()}</button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-2 overflow-hidden border border-[#242B59]">
+              <div className="grid grid-cols-[minmax(0,1fr)_90px_80px_52px] bg-[#11163A] px-3 py-2 text-[9px]" style={S_MUTED}><span>LOCAL STORAGE KEY</span><span>IMPORTANCE</span><span className="text-right">SIZE</span><span /></div>
+              <div className="max-h-96 overflow-y-auto">
+                {visibleStorageKeys.length === 0 ? (
+                  <div className="p-5 text-center text-[10px]" style={S_DIM}>No matching local storage keys.</div>
+                ) : visibleStorageKeys.map((entry) => (
+                  <div key={entry.key} title={entry.description} className="grid grid-cols-[minmax(0,1fr)_90px_80px_52px] items-center border-t border-[#171D40] px-3 py-2 text-[10px]">
+                    <span className="truncate font-mono" style={S_TEXT}>{entry.key}</span>
+                    <span style={entry.importance === "critical" ? S_RED : entry.importance === "cache" ? S_WARN : S_MUTED}>{STORAGE_IMPORTANCE_LABEL[entry.importance]}</span>
+                    <span className="text-right" style={S_DIM}>{formatBytes(entry.bytes)}</span>
+                    {entry.clearable ? <button type="button" onClick={() => clearCacheKey(entry.key)} title={`Clear ${entry.key}`} className="justify-self-end p-1" style={S_WARN}><Trash2 size={11} /></button> : <span className="text-right text-[8px]" style={S_DIM}>KEEP</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {view === "notifications" && (
+        <section className="p-4" style={PANEL}>
+          {notificationsContent}
         </section>
       )}
 
@@ -284,6 +415,37 @@ export function DMSystemStatus({
             </div>
           </div>
         </section>
+      )}
+    </div>
+  );
+}
+
+function StorageMetricTable({
+  title,
+  empty,
+  rows,
+}: {
+  title: string;
+  empty: string;
+  rows: Array<{ key: string; label: string; detail: string; bytes: number }>;
+}) {
+  return (
+    <div className="overflow-hidden border border-[#242B59]">
+      <div className="bg-[#11163A] px-3 py-2 text-[9px]" style={S_MUTED}>{title}</div>
+      {rows.length === 0 ? (
+        <div className="p-5 text-center text-[9px]" style={S_DIM}>{empty}</div>
+      ) : (
+        <div className="max-h-64 overflow-y-auto">
+          {rows.map((row) => (
+            <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_90px] items-center border-t border-[#171D40] px-3 py-2">
+              <div className="min-w-0">
+                <div className="truncate font-mono text-[10px]" style={S_TEXT}>{row.label}</div>
+                <div className="mt-0.5 truncate text-[8px]" style={S_DIM}>{row.detail}</div>
+              </div>
+              <div className="text-right text-[10px]" style={S_MUTED}>{formatBytes(row.bytes)}</div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
