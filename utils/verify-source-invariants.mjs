@@ -187,6 +187,7 @@ assert.match(nexusNomad, /assignFacilityOwner/);
 assert.match(nexusNomad, /Personal Funds/);
 assert.match(nexusNomad, /facilityAdditions: facilityState\.facilityAdditions/);
 assert.match(nexusNomad, /countInstalledFacilityAdditions/);
+assert.match(nexusNomad, /countInstalledFacilityAdditionSlots\(fac\.businessMap\)/);
 assert.match(nexusNomad, /saveOfficeState\(persistentState, persistentState\.revision\)/);
 assert.match(nexusNomad, /subscribeToOfficeStateSignals/);
 assert.match(nexusNomad, /onPlayerAction=\{handleFacilityAdditionAction\}/);

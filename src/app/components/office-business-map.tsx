@@ -7,6 +7,7 @@ export {
   canPlayerEditBusinessMap,
   cloneOfficeBusinessMap,
   collectBusinessMapAssets,
+  countInstalledFacilityAdditionSlots,
   countInstalledFacilityAdditions,
   createBusinessMapId,
   createDefaultBusinessSlot,

@@ -642,6 +642,10 @@ export function countInstalledFacilityAdditions(maps: Array<OfficeBusinessMapSta
   return counts;
 }
 
+export function countInstalledFacilityAdditionSlots(maps: Array<OfficeBusinessMapState | null | undefined> | OfficeBusinessMapState | null | undefined) {
+  return Object.values(countInstalledFacilityAdditions(maps)).reduce((total, count) => total + count, 0);
+}
+
 export function isBusinessSectorUnlocked(map: OfficeBusinessMapState, sector: OfficeBusinessSector) {
   if (sector.state !== "locked" || !sector.unlockExpansionId) return sector.state !== "locked";
   return map.expansions.some((expansion) => expansion.id === sector.unlockExpansionId && expansion.status === "complete");
