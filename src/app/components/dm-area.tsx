@@ -7,7 +7,7 @@ import {
   ShieldAlert, Package, CreditCard, FileText, Users,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, Bell, Send, ArrowLeft, ArrowRight,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp, Dices, Images, BookOpen,
+  Newspaper, Copy, Zap, ChevronUp, Dices, Images, BookOpen, Server,
 } from "lucide-react";
 import type { NodeTree } from "./node-trees";
 import {
@@ -80,6 +80,9 @@ const DMTagsSection = lazy(() =>
 );
 const DMImageStorageSection = lazy(() =>
   import("./dm-image-storage-section").then((module) => ({ default: module.DMImageStorageSection })),
+);
+const DMSystemStatus = lazy(() =>
+  import("./dm-system-status").then((module) => ({ default: module.DMSystemStatus })),
 );
 const DMInfoManagerSection = lazy(() =>
   import("./dm-area-info-panel").then((module) => ({ default: module.DMInfoManagerSection })),
@@ -502,6 +505,7 @@ function DMReactionManager({
 // ========================
 type SectionId =
   | "players"
+  | "system"
   | "items"
   | "cards"
   | "images"
@@ -523,6 +527,7 @@ const DM_INPUT_STYLE = S_TEXT;
 
 const DM_SECTIONS = [
   { id: "players" as const, label: "Players", icon: Users },
+  { id: "system" as const, label: "System Status", icon: Server },
   { id: "items" as const, label: "Manage Items", icon: Package },
   { id: "cards" as const, label: "Manage Cards", icon: CreditCard },
   { id: "images" as const, label: "Image Storage", icon: Images },
@@ -1606,6 +1611,18 @@ const handleSaveItem = async () => {
           )}
 
           <Suspense fallback={<DMSectionFallback />}>
+          {/* ======================================================= */}
+          {/* SYSTEM STATUS                                            */}
+          {/* ======================================================= */}
+          {activeSection === "system" && (
+            <DMSystemStatus
+              errorEntries={combinedErrorLog}
+              onClearErrors={handleClearErrorLog}
+              onRemoveError={handleRemoveLogEntry}
+              onRefreshErrors={() => setErrorLog(readErrorLog())}
+            />
+          )}
+
           {/* ======================================================= */}
           {/* PLAYERS                                                  */}
           {/* ======================================================= */}

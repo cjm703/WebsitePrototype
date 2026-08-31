@@ -33,8 +33,14 @@ const adventurePrototypeBotMigration = read("supabase/migrations/20260818010000_
 const adventurePrototypeEdge = read("supabase/functions/adventure-prototype/index.ts");
 const supabaseConfig = read("supabase/config.toml");
 const legacyAdventureEntry = read("src/app/components/adventure-game.tsx");
+const dmSystemStatus = read("src/app/components/dm-system-status.tsx");
+const systemStatusHook = read("src/app/components/use-system-status.ts");
+const nexusNomad = read("src/app/components/nexus-nomad.tsx");
+const officeBusinessMap = read("src/app/components/office-business-map.tsx");
+const intelliInterface = read("src/app/components/intelli-interface.tsx");
 parse(adventurePrototypeEdge, { sourceType: "module", plugins: ["typescript"] });
 parse(edge, { sourceType: "module", plugins: ["typescript"] });
+parse(officeBusinessMap, { sourceType: "module", plugins: ["typescript", "jsx"] });
 
 function routeBody(routeMarker, nextMarker) {
   const start = edge.indexOf(routeMarker);
@@ -131,6 +137,20 @@ assert.match(routeErrorPage, /useRouteError\(\)/);
 assert.match(lazyModule, /failed to fetch dynamically imported module/i);
 assert.match(lazyModule, /window\.location\.reload\(\)/);
 assert.match(vercelConfig, /no-cache, no-store, must-revalidate/);
+assert.match(dmArea, /id: "system" as const, label: "System Status"/);
+assert.match(dmArea, /<DMSystemStatus/);
+assert.match(dmSystemStatus, /useSystemStatus\(\)/);
+assert.match(dmSystemStatus, /Error &amp; Report Log/);
+assert.match(systemStatusHook, /buildSupabasePublicHeaders\(false\)/);
+assert.match(systemStatusHook, /subscribeErrorLog\(refreshMetrics\)/);
+assert.match(nexusNomad, /DEFAULT_OFFICE_NAME = "Wasp Office and Business"/);
+assert.match(nexusNomad, /id: "map" as const, label: "Business Map"/);
+assert.match(nexusNomad, /businessMap: normalizeOfficeBusinessMap\(raw\.businessMap\)/);
+assert.match(nexusNomad, /<OfficeBusinessMap/);
+assert.doesNotMatch(nexusNomad, /Central operations hub/);
+assert.doesNotMatch(intelliInterface, /active agent.*cataloged/);
+assert.match(officeBusinessMap, /Link Existing Facility/);
+assert.match(officeBusinessMap, /startPointerOperation/);
 assert.match(intelliMaps, /addEventListener\("wheel", handleWheel, \{ passive: false \}\)/);
 assert.doesNotMatch(intelliMaps, /onWheel=\{handleWheel\}/);
 assert.match(combatPage, /YOUTUBE_EMBED_HOST = "https:\/\/www\.youtube\.com"/);

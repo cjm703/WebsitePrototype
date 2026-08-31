@@ -23,6 +23,12 @@ import {
 import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
+  OfficeBusinessMap,
+  createDefaultOfficeBusinessMap,
+  normalizeOfficeBusinessMap,
+  type OfficeBusinessMapState,
+} from "./office-business-map";
+import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
   NS_DARK, NS_SUBDIM, NS_BRIGHT, NS_SOFT, NS_MID, NS_GOLD, NS_BLUE, NS_RED,
   NS_WARN, NS_PALE, NS_FAINT, NS_MID2, NS_BG_DARK, NS_BG_DARKER,
@@ -57,7 +63,8 @@ import {
 } from "./ns-styles";
 
 const OFFICE_NAME_KEY = "inet-office-name";
-const DEFAULT_OFFICE_NAME = "Nexus Nomad's Office";
+const LEGACY_DEFAULT_OFFICE_NAME = "Nexus Nomad's Office";
+const DEFAULT_OFFICE_NAME = "Wasp Office and Business";
 let officeNameCache = DEFAULT_OFFICE_NAME;
 
 function loadOfficeName(): string {
@@ -641,10 +648,11 @@ interface NexusNomadState {
   contractCats: ContractCategory[];
   officeInfo: OfficeInfoData;
   invTabs: InvSubTab[];
+  businessMap: OfficeBusinessMapState;
 }
 
 const NEXUS_NOMAD_STATE_ID = "default";
-const NEXUS_NOMAD_STATE_VERSION = 1;
+const NEXUS_NOMAD_STATE_VERSION = 2;
 
 function loadLocalOfficeReputation(): number {
   return 25;
@@ -677,6 +685,7 @@ function buildDefaultNexusNomadState(): NexusNomadState {
     contractCats: [{ id: "ccat-default", name: "General", contractIds: DEFAULT_CONTRACTS.map(c => c.id), collapsed: false }],
     officeInfo: clonePlain(DEFAULT_OFFICE_INFO),
     invTabs: clonePlain(DEFAULT_INVENTORY),
+    businessMap: createDefaultOfficeBusinessMap(),
   };
 }
 
@@ -697,7 +706,9 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
   return {
     id: typeof raw.id === "string" && raw.id.trim() ? raw.id : fallback.id,
     version: typeof raw.version === "number" ? raw.version : fallback.version,
-    officeName: typeof raw.officeName === "string" && raw.officeName.trim() ? raw.officeName : fallback.officeName,
+    officeName: typeof raw.officeName === "string" && raw.officeName.trim()
+      ? raw.officeName.trim() === LEGACY_DEFAULT_OFFICE_NAME ? DEFAULT_OFFICE_NAME : raw.officeName
+      : fallback.officeName,
     reputation: typeof raw.reputation === "number" ? Math.max(-100, Math.min(100, raw.reputation)) : fallback.reputation,
     entityReps: Array.isArray(raw.entityReps) ? raw.entityReps : fallback.entityReps,
     govConfig: raw.govConfig && typeof raw.govConfig === "object" ? raw.govConfig as CityGovConfig : fallback.govConfig,
@@ -711,6 +722,7 @@ function normalizeNexusNomadState(raw: Partial<NexusNomadState> | null | undefin
     contractCats: Array.isArray(raw.contractCats) ? raw.contractCats : fallback.contractCats,
     officeInfo: raw.officeInfo && typeof raw.officeInfo === "object" ? raw.officeInfo as OfficeInfoData : fallback.officeInfo,
     invTabs: Array.isArray(raw.invTabs) ? raw.invTabs : fallback.invTabs,
+    businessMap: normalizeOfficeBusinessMap(raw.businessMap),
   };
 }
 
@@ -1387,7 +1399,7 @@ function ContractCategoryPanel({
 
 export function NexusNomad() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "facilities" | "employees" | "contracts" | "info">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "map" | "inventory" | "facilities" | "employees" | "contracts" | "info">("overview");
 
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
@@ -1452,6 +1464,7 @@ export function NexusNomad() {
   const [showArchive, setShowArchive] = useState(false);
   const [showFinancePanel, setShowFinancePanel] = useState(false);
   const [officeInfo, setOfficeInfo] = useState<OfficeInfoData>(initialStateRef.current.officeInfo);
+  const [businessMap, setBusinessMap] = useState<OfficeBusinessMapState>(initialStateRef.current.businessMap);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newServiceName, setNewServiceName] = useState("");
@@ -1519,6 +1532,7 @@ export function NexusNomad() {
     setContracts(state.contracts);
     setContractCats(state.contractCats);
     setOfficeInfo(state.officeInfo);
+    setBusinessMap(state.businessMap);
     setInvTabs(state.invTabs);
     setActiveInvTab((prev) => {
       if (prev && state.invTabs.some((tab) => tab.id === prev)) return prev;
@@ -1539,7 +1553,7 @@ export function NexusNomad() {
           const loaded = normalizeNexusNomadState(remoteOrSentinel);
           if (cancelled) return;
           applyLoadedState(loaded);
-          lastSavedStateJsonRef.current = JSON.stringify(loaded);
+          lastSavedStateJsonRef.current = JSON.stringify(remoteOrSentinel);
           setStateSaveError(null);
           return;
         }
@@ -1554,7 +1568,7 @@ export function NexusNomad() {
           setStateSaveError(null);
         } catch (saveError) {
           lastSavedStateJsonRef.current = null;
-          const message = saveError instanceof Error ? saveError.message : "Failed to import Nexus Nomad state.";
+          const message = saveError instanceof Error ? saveError.message : "Failed to import office state.";
           setStateSaveError(message);
           showSaveNotice("error", message, 4500);
         }
@@ -1563,7 +1577,7 @@ export function NexusNomad() {
         const legacy = normalizeNexusNomadState(buildLegacyNexusNomadState());
         applyLoadedState(legacy);
         lastSavedStateJsonRef.current = null;
-        const message = error instanceof Error ? error.message : "Failed to load Nexus Nomad state.";
+        const message = error instanceof Error ? error.message : "Failed to load office state.";
         setStateSaveError(message);
         showSaveNotice("error", message, 4500);
       } finally {
@@ -1604,10 +1618,11 @@ export function NexusNomad() {
       contractCats,
       officeInfo,
       invTabs,
+      businessMap,
     };
   }, [
     officeName, reputation, entityReps, govConfig, employees, employeeCats,
-    presets, loadouts, facilities, facilityCats, contracts, contractCats, officeInfo, invTabs,
+    presets, loadouts, facilities, facilityCats, contracts, contractCats, officeInfo, invTabs, businessMap,
   ]);
 
   const persistentStateJson = useMemo(() => JSON.stringify(persistentState), [persistentState]);
@@ -1616,7 +1631,7 @@ export function NexusNomad() {
     if (!isStateHydrated) return;
     if (lastSavedStateJsonRef.current === persistentStateJson) return;
 
-    showSaveNotice("saving", "Saving Nexus Nomad updates...");
+    showSaveNotice("saving", "Saving office updates...");
 
     const timeout = window.setTimeout(() => {
       void (async () => {
@@ -1624,9 +1639,9 @@ export function NexusNomad() {
           await appStore.saveNexusNomadState(persistentState);
           lastSavedStateJsonRef.current = persistentStateJson;
           setStateSaveError(null);
-          showSaveNotice("saved", "Nexus Nomad updated.", 1800);
+          showSaveNotice("saved", "Office updated.", 1800);
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Failed to save Nexus Nomad state.";
+          const message = error instanceof Error ? error.message : "Failed to save office state.";
           setStateSaveError(message);
           showSaveNotice("error", message, 4500);
         }
@@ -2334,6 +2349,7 @@ export function NexusNomad() {
 
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Building2 },
+    { id: "map" as const, label: "Business Map", icon: Waypoints },
     { id: "inventory" as const, label: "Inventory", icon: Package },
     { id: "facilities" as const, label: "Facilities", icon: Factory },
     { id: "employees" as const, label: "Employees", icon: Users },
@@ -2722,9 +2738,6 @@ export function NexusNomad() {
                   )}
                 </div>
               )}
-              <p className="text-[12px]" style={NS_DIM}>
-                Central operations hub &middot; Campaign headquarters
-              </p>
             </div>
           </div>
         </div>
@@ -3153,6 +3166,15 @@ export function NexusNomad() {
               </div>
             );
           })()}
+
+          {activeTab === "map" && (
+            <OfficeBusinessMap
+              value={businessMap}
+              onChange={setBusinessMap}
+              isDM={isDM}
+              facilities={facilities.map((facility) => ({ id: facility.id, name: facility.name }))}
+            />
+          )}
 
           {activeTab === "inventory" && (() => {
             const tab = activeInvTabData;

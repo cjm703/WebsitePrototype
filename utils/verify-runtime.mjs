@@ -529,6 +529,50 @@ async function testAdventurePrototypeApi() {
   );
 }
 
+async function testOfficeBusinessMapState() {
+  const officeMap = await bundledModule("src/app/components/office-business-map.tsx");
+  const defaults = officeMap.createDefaultOfficeBusinessMap();
+  assert.equal(defaults.version, 1);
+  assert.equal(defaults.sectors.length, 6);
+  assert.ok(defaults.sectors.every((sector) => Array.isArray(sector.slots)));
+  assert.ok(defaults.sectors.some((sector) => sector.slots.length > 0));
+
+  const normalized = officeMap.normalizeOfficeBusinessMap({
+    name: "Test Business",
+    sectors: [{
+      id: "sector-test",
+      name: "Testing",
+      description: "A test sector",
+      color: "#123456",
+      x: 99,
+      y: -5,
+      width: 99,
+      height: 0,
+      slots: [{
+        id: "slot-test",
+        name: "Test Slot",
+        category: "not-a-category",
+        x: 11,
+        y: 7,
+        width: 4,
+        height: 3,
+        filled: true,
+        occupant: "Workshop",
+      }],
+    }],
+  });
+  assert.equal(normalized.name, "Test Business");
+  assert.deepEqual(
+    { x: normalized.sectors[0].x, y: normalized.sectors[0].y, width: normalized.sectors[0].width, height: normalized.sectors[0].height },
+    { x: 0, y: 0, width: 12, height: 3 },
+  );
+  assert.equal(normalized.sectors[0].slots[0].category, "Unassigned");
+  assert.equal(normalized.sectors[0].slots[0].filled, true);
+  assert.equal(normalized.sectors[0].slots[0].occupant, "Workshop");
+  assert.ok(normalized.sectors[0].slots[0].x + normalized.sectors[0].slots[0].width <= 12);
+  assert.ok(normalized.sectors[0].slots[0].y + normalized.sectors[0].slots[0].height <= 8);
+}
+
 try {
   await testAuthRequests();
   await testSessionValidation();
@@ -537,6 +581,7 @@ try {
   await testStaleChunkDetection();
   await testAdventurePrototypeEngine();
   await testAdventurePrototypeApi();
+  await testOfficeBusinessMapState();
   process.stdout.write("Runtime behavior checks passed.\n");
 } finally {
   await vite.close();

@@ -388,7 +388,7 @@ export function InetSearch({ publicMode = false }: { publicMode?: boolean }) {
     { label: "I-Net Wiki", path: wikiRootPath },
     { label: "I-Net News", path: authenticatedPath("/interface/inet-news") },
     { label: "Personal Files", path: authenticatedPath("/interface/personal-files") },
-    { label: "Nexus Nomad's Office", path: authenticatedPath("/interface/nexus-nomad") },
+    { label: "Wasp Office and Business", path: authenticatedPath("/interface/nexus-nomad") },
     { label: "Intelli Maps", path: authenticatedPath("/interface/intelli-maps") },
   ];
 

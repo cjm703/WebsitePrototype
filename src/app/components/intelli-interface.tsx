@@ -35,7 +35,7 @@ export function IntelliInterface() {
   const DEFAULT_SECTION_DETAILS = {
     personalFiles: "View and manage your character sheet",
     inetSearch: "Browse the I-Net encyclopedia.",
-    nexusNomad: "Company headquarters and operations.",
+    nexusNomad: "",
     intelliMaps: "13 sectors | Hexagonal deep city map with fog of war and path connections.",
     dmArea: "Campaign management tools.",
     community: "Share updates and messages with your party.",
@@ -157,7 +157,7 @@ export function IntelliInterface() {
           ...DEFAULT_SECTION_DETAILS,
           personalFiles: personalFiles + personalSuffix,
           inetSearch: `Browse the I-Net encyclopedia. Currently ${totalPages} article${totalPages !== 1 ? "s" : ""} indexed.`,
-          nexusNomad: `${playerRows.length} active agent${playerRows.length !== 1 ? "s" : ""} | ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} cataloged`,
+          nexusNomad: DEFAULT_SECTION_DETAILS.nexusNomad,
           intelliMaps: DEFAULT_SECTION_DETAILS.intelliMaps,
           dmArea: `${playerRows.length} player${playerRows.length !== 1 ? "s" : ""} | ${itemRows.length} item${itemRows.length !== 1 ? "s" : ""} | ${cardRows.length} card${cardRows.length !== 1 ? "s" : ""} | ${infoRows.length} info entr${infoRows.length !== 1 ? "ies" : "y"} | ${notifRows.length} notification${notifRows.length !== 1 ? "s" : ""}`,
           community: DEFAULT_SECTION_DETAILS.community,
@@ -588,9 +588,11 @@ export function IntelliInterface() {
                         <p className="text-[13px] mb-2" style={S_SUBTLE}>
                           {normalizeInterfaceText(section.description)}
                         </p>
-                        <p className="text-[11px]" style={{ color: theme.labelColor }}>
-                          {normalizeInterfaceText(section.details)}
-                        </p>
+                        {section.details && (
+                          <p className="text-[11px]" style={{ color: theme.labelColor }}>
+                            {normalizeInterfaceText(section.details)}
+                          </p>
+                        )}
                       </div>
                     </div>
 

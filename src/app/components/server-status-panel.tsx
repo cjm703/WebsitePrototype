@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import { retro } from "./retro-styles";
 import { S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
-import { getStorageUsageBytes, getStorageUsageFraction } from "./safe-storage";
-import { readErrorLog, type ErrorLogEntry } from "./error-logger";
-import { buildSupabasePublicHeaders, supabaseFunctionBase } from "@/lib/supabase-env";
+import { formatBytes, formatUptime, useSystemStatus } from "./use-system-status";
 import {
   Activity,
   Database,
@@ -17,29 +15,6 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-const API_BASE = supabaseFunctionBase;
-
-interface ServerPing {
-  status: "ok" | "error" | "checking";
-  latencyMs: number | null;
-  lastChecked: Date | null;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function formatUptime(ms: number): string {
-  const secs = Math.floor(ms / 1000);
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ${secs % 60}s`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ${mins % 60}m`;
-}
-
 export function ServerStatusPanel({
   accentColor,
   labelColor,
@@ -48,122 +23,12 @@ export function ServerStatusPanel({
   labelColor: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [ping, setPing] = useState<ServerPing>({ status: "checking", latencyMs: null, lastChecked: null });
-  const [storageBytes, setStorageBytes] = useState(0);
-  const [storageFraction, setStorageFraction] = useState(0);
-  const [storageKeyCount, setStorageKeyCount] = useState(0);
-  const [inetKeyCount, setInetKeyCount] = useState(0);
-  const [errorLog, setErrorLog] = useState<ErrorLogEntry[]>([]);
-  const [sessionStart] = useState(() => Date.now());
-  const [uptime, setUptime] = useState(0);
-  const [pingHistory, setPingHistory] = useState<Array<{ time: Date; ms: number; ok: boolean }>>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Ping the server
-const checkServer = async () => {
-  const start = performance.now();
-
-  try {
-    const res = await fetch(`${API_BASE}/health`, {
-      method: "GET",
-      headers: buildSupabasePublicHeaders(false),
-    });
-
-    const ms = Math.round(performance.now() - start);
-    const ok = res.ok;
-    const now = new Date();
-
-    setPing({
-      status: ok ? "ok" : "error",
-      latencyMs: ms,
-      lastChecked: now,
-    });
-
-    setPingHistory((prev) => [
-      ...prev.slice(-19),
-      { time: now, ms, ok },
-    ]);
-  } catch {
-    const ms = Math.round(performance.now() - start);
-    const now = new Date();
-
-    setPing({
-      status: "error",
-      latencyMs: ms,
-      lastChecked: now,
-    });
-
-    setPingHistory((prev) => [
-      ...prev.slice(-19),
-      { time: now, ms, ok: false },
-    ]);
-  }
-};
-  // Refresh local metrics
-  const refreshMetrics = () => {
-    setStorageBytes(getStorageUsageBytes());
-    setStorageFraction(getStorageUsageFraction());
-    setErrorLog(readErrorLog());
-    setUptime(Date.now() - sessionStart);
-    try {
-      setStorageKeyCount(localStorage.length);
-      let inet = 0;
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith("inet-")) inet++;
-      }
-      setInetKeyCount(inet);
-    } catch {
-      setStorageKeyCount(0);
-      setInetKeyCount(0);
-    }
-  };
-
-  useEffect(() => {
-    checkServer();
-    refreshMetrics();
-    // Ping server every 60s, refresh metrics every 5s
-    const pingInterval = setInterval(checkServer, 60000);
-    intervalRef.current = setInterval(() => {
-      refreshMetrics();
-      setUptime(Date.now() - sessionStart);
-    }, 5000);
-    return () => {
-      clearInterval(pingInterval);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const recentErrors = errorLog.filter((e) => e.type === "error");
-  const recentReports = errorLog.filter((e) => e.type === "report");
-  const failedPings = pingHistory.filter((p) => !p.ok).length;
-  const storagePercent = Math.min(100, Math.round(storageFraction * 100));
-  const storageWarning = storageFraction > 0.85;
-  const storageCritical = storageFraction > 0.95;
-
-  // Uptime percentage from ping history
-  const uptimePercent =
-    pingHistory.length > 0
-      ? Math.round(((pingHistory.length - failedPings) / pingHistory.length) * 100)
-      : ping.status === "ok"
-        ? 100
-        : ping.status === "error"
-          ? 0
-          : null;
-
-  const avgLatency =
-    pingHistory.length > 0
-      ? Math.round(pingHistory.reduce((a, b) => a + b.ms, 0) / pingHistory.length)
-      : ping.latencyMs;
-
-  const statusColor =
-    ping.status === "ok" ? "#4ADE80" : ping.status === "error" ? "#FF6A6A" : "#FBBF24";
-
-  const storageBarColor = storageCritical
-    ? "#FF6A6A"
-    : storageWarning
-      ? "#FBBF24"
-      : "#4ADE80";
+  const {
+    ping, storageBytes, storageKeyCount, inetKeyCount, errorLog, sessionStart,
+    uptime, pingHistory, recentErrors, recentReports, failedPings, storagePercent,
+    storageWarning, storageCritical, uptimePercent, avgLatency, statusColor,
+    storageBarColor,
+  } = useSystemStatus();
 
   return (
     <div className="w-full max-w-[1600px] mx-auto px-4 pb-4">

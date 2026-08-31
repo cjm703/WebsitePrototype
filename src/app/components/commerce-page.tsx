@@ -780,7 +780,7 @@ export function CommercePage() {
     if (!hasLoadedCommerceRef.current) return;
     const timeout = window.setTimeout(() => {
       appStore.saveNexusNomadState<NexusNomadInventoryState>(nexusNomadState).catch((err) => {
-        console.warn("Failed to save Nexus Nomad inventory state from commerce", err);
+        console.warn("Failed to save office inventory state from commerce", err);
       });
     }, 350);
     return () => window.clearTimeout(timeout);
@@ -1165,7 +1165,7 @@ export function CommercePage() {
         <div className="w-full max-w-md p-5" style={cardStyle}>
           <div className="text-[13px] font-bold mb-2" style={{ color: textColor }}>Loading commerce data...</div>
           <div className="text-[11px]" style={{ color: labelColor }}>
-            {commerceError || "Pulling shops, ledger, cart, and Nexus Nomad inventory from Supabase."}
+            {commerceError || "Pulling shops, ledger, cart, and office inventory from Supabase."}
           </div>
         </div>
       </div>
