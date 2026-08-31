@@ -110,6 +110,8 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
     if (!existingMap) return presetMap.sectors;
     const currentById = new Map(existingMap.sectors.map((sector) => [sector.id, sector]));
     const presetIds = new Set(presetMap.sectors.map((sector) => sector.id));
+    const isGeneratedMainFloor = (sector: (typeof existingMap.sectors)[number]) => sector.name.trim().toLowerCase() === "main floor"
+      && sector.description.trim().toLowerCase().startsWith("primary interior layout for mystic lands park");
     return [
       ...presetMap.sectors.map((presetSector) => {
         const currentSector = currentById.get(presetSector.id);
@@ -126,7 +128,7 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
           slots,
         };
       }),
-      ...existingMap.sectors.filter((sector) => !presetIds.has(sector.id)),
+      ...existingMap.sectors.filter((sector) => !presetIds.has(sector.id) && !isGeneratedMainFloor(sector)),
     ];
   };
   const legacyParkShapeIds = new Set([
