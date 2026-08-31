@@ -237,7 +237,7 @@ function rectStyle(rect: BusinessMapRect, grid: OfficeBusinessMapState["grid"]):
 
 function sectorShapeStyle(sector: OfficeBusinessSector): React.CSSProperties {
   if (sector.visualShape === "ellipse") {
-    return { borderRadius: "50%", padding: "12% 14%" };
+    return { borderRadius: "50%", padding: "10px 14px" };
   }
   if (sector.visualShape === "organic") {
     const alternate = sector.id.split("").reduce((total, character) => total + character.charCodeAt(0), 0) % 2 === 0;
@@ -967,13 +967,12 @@ export function OfficeBusinessMap({
                   );
                 }
                 if (shape.kind === "pathway") {
-                  const roadWidth = Math.max(5, shape.strokeWidth * 4);
+                  const walkwayWidth = Math.max(2.25, shape.strokeWidth * 1.8);
                   const path = shapePath(shape);
                   return (
                     <g key={shape.id} style={{ pointerEvents: interactive ? "all" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? selectedShapeIds.includes(shape.id) ? selectedShapeIds.filter((id) => id !== shape.id) : [...selectedShapeIds, shape.id] : [shape.id]); }}>
-                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#16191E"} strokeOpacity={shape.opacity} strokeWidth={roadWidth + 3} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-                      <path d={path} fill="none" stroke={selected ? "#747A84" : shape.color} strokeOpacity={shape.opacity} strokeWidth={roadWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-                      <path d={path} fill="none" stroke="#F1D06E" strokeOpacity={Math.min(1, shape.opacity + 0.1)} strokeWidth="0.8" strokeDasharray="4 4" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#55614F"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + 1.4} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      <path d={path} fill="none" stroke={selected ? "#EEE7D5" : shape.color} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                     </g>
                   );
                 }
@@ -1012,6 +1011,8 @@ export function OfficeBusinessMap({
               const filled = sector.slots.filter((slot) => slot.filled).length;
               const locked = !isBusinessSectorUnlocked(value, sector);
               const ellipse = sector.visualShape === "ellipse";
+              const shaped = ellipse || sector.visualShape === "organic";
+              const compact = sector.width <= 2 || sector.height <= 1;
               return (
                 <button
                   type="button"
@@ -1028,10 +1029,17 @@ export function OfficeBusinessMap({
                   className="absolute overflow-hidden border p-2 text-left"
                   style={{ ...rectStyle(sector, value.grid), ...sectorShapeStyle(sector), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: locked ? "#101018CC" : `${sector.color}38`, opacity: locked ? 0.55 : 1, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: locked && !editMode ? "not-allowed" : editMode && tool === "select" ? "move" : "pointer" }}
                 >
-                  <div className={`flex h-full min-h-0 flex-col ${ellipse ? "items-center justify-center text-center" : ""}`}>
-                    <div className={ellipse ? "max-w-full whitespace-normal text-center text-[10px] font-bold leading-tight" : "truncate text-[10px] font-bold"}>{sector.name}</div>
-                    <div className="mt-1 truncate text-[8px]" style={{ color: sector.color }}>{sector.width}x{sector.height}</div>
-                    <div className={ellipse ? "mt-1 text-[8px]" : "mt-auto text-[8px]"} style={S_DIM}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>
+                  <div className={`flex h-full min-h-0 flex-col ${shaped ? "items-center text-center" : ""} ${ellipse || compact ? "justify-center" : ""}`}>
+                    <div
+                      className={shaped
+                        ? `${compact ? "text-[7px]" : "text-[9px]"} w-[86%] whitespace-normal break-words text-center font-bold leading-tight`
+                        : "truncate text-[10px] font-bold"}
+                      title={sector.name}
+                    >
+                      {sector.name}
+                    </div>
+                    {!compact && <div className="mt-1 truncate text-[8px]" style={{ color: sector.color }}>{sector.width}x{sector.height}</div>}
+                    {!compact && <div className={ellipse ? "mt-1 text-[8px]" : "mt-auto text-[8px]"} style={S_DIM}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>}
                   </div>
                   {editMode && tool === "select" && <ResizeHandle onPointerDown={(event) => startRectOperation(event, "sector", "resize", sector.id, sector)} />}
                 </button>
