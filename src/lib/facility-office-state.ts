@@ -1,6 +1,7 @@
 import {
   ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID,
   MYSTIC_LANDS_PARK_PRESET_ID,
+  THIRTEENTH_MYSTIC_LANDS_PARK_PRESET_ID,
   TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID,
   createMysticLandsParkFacility,
   ensureMysticLandsAdditions,
@@ -143,15 +144,77 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
     })!;
   }
 
-  if (existing.presetId === TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID) {
+  if (existing.presetId === THIRTEENTH_MYSTIC_LANDS_PARK_PRESET_ID && existingMap) {
+    const retiredDefaultSlotIds = new Set([
+      "entrance-gates", "entrance-security", "entrance-information",
+      "center-food", "center-stage", "center-utility",
+      "whisperwood-kiosk", "dragonspire-support",
+      "carnival-retail", "carnival-food",
+      "starlight-dining", "runebrook-rest",
+    ]);
+    const slotHasSavedContent = (slot: OfficeBusinessMapState["sectors"][number]["slots"][number]) => Boolean(
+      slot.filled || slot.occupant || slot.installedAdditionId || slot.linkedFacilityId || slot.notes,
+    );
+    const upgradedMap = normalizeOfficeBusinessMap({
+      ...existingMap,
+      description: presetMap.description,
+      sectors: existingMap.sectors.map((existingSector) => {
+        const canonical = presetMap.sectors.find((sector) => sector.id === existingSector.id);
+        if (!canonical) return existingSector;
+        const existingSlots = new Map(existingSector.slots.map((slot) => [slot.id, slot]));
+        const canonicalSlotIds = new Set(canonical.slots.map((slot) => slot.id));
+        const upgradedSlots = canonical.slots.map((slot) => {
+          const previous = existingSlots.get(slot.id);
+          if (!previous || slot.tier === "major") return slot;
+          return {
+            ...slot,
+            filled: previous.filled,
+            occupant: previous.occupant,
+            linkedFacilityId: previous.linkedFacilityId,
+            installedAdditionId: previous.installedAdditionId,
+            installedBy: previous.installedBy,
+            installedAt: previous.installedAt,
+            notes: previous.notes || slot.notes,
+          };
+        });
+        const preservedCustomSlots = existingSector.slots.filter((slot) => (
+          !canonicalSlotIds.has(slot.id)
+          && (!retiredDefaultSlotIds.has(slot.id) || slotHasSavedContent(slot))
+        ));
+        return {
+          ...existingSector,
+          name: canonical.name,
+          description: canonical.description,
+          color: canonical.color,
+          zoneType: canonical.zoneType,
+          decorationTheme: canonical.decorationTheme,
+          slots: [...upgradedSlots, ...preservedCustomSlots],
+        };
+      }),
+      expansions: existingMap.expansions.map((expansion) => {
+        const canonical = presetMap.expansions.find((entry) => entry.id === expansion.id);
+        return canonical ? { ...expansion, name: canonical.name, description: canonical.description } : expansion;
+      }),
+    });
     return normalizeFacilityRecord({
       ...preset,
       ...existing,
       presetId: MYSTIC_LANDS_PARK_PRESET_ID,
       description: preset.description,
       baseStats: existing.baseStats || preset.baseStats,
-      businessMap: canonicalizePresentation(existingMap || presetMap),
+      businessMap: upgradedMap,
     })!;
+  }
+
+  if (existing.presetId === TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID) {
+    return mergeMysticPark(normalizeFacilityRecord({
+      ...preset,
+      ...existing,
+      presetId: THIRTEENTH_MYSTIC_LANDS_PARK_PRESET_ID,
+      description: preset.description,
+      baseStats: existing.baseStats || preset.baseStats,
+      businessMap: canonicalizePresentation(existingMap || presetMap),
+    })!);
   }
 
   if (existing.presetId === ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID && existingMap) {
@@ -170,14 +233,14 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
       sectors: existingMap.sectors.map(translateRect),
       expansions: existingMap.expansions.map(translateRect),
     });
-    return normalizeFacilityRecord({
+    return mergeMysticPark(normalizeFacilityRecord({
       ...preset,
       ...existing,
-      presetId: MYSTIC_LANDS_PARK_PRESET_ID,
+      presetId: THIRTEENTH_MYSTIC_LANDS_PARK_PRESET_ID,
       baseStats: existing.baseStats || preset.baseStats,
       description: preset.description,
       businessMap: canonicalizePresentation(translatedMap),
-    })!;
+    })!);
   }
 
   const mergeById = <T extends { id: string }>(defaults: T[], current: T[]) => {

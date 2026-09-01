@@ -917,11 +917,18 @@ function additionFitsBusinessSlot(slot: JsonRecord, addition: JsonRecord) {
   const additionTags = Array.isArray(addition?.tags)
     ? addition.tags.map((entry: any) => String(entry || ""))
     : [];
-  const categoryFits = acceptedCategories.length === 0 || acceptedCategories.includes(String(addition?.category || "Unassigned"));
+  const acceptedAdditionCategories = Array.isArray(slot?.acceptedAdditionCategories)
+    ? slot.acceptedAdditionCategories.map((entry: any) => String(entry || ""))
+    : [];
+  const categoryFits = acceptedAdditionCategories.length > 0
+    || acceptedCategories.length === 0
+    || acceptedCategories.includes(String(addition?.category || "Unassigned"));
+  const additionCategoryFits = acceptedAdditionCategories.length === 0
+    || acceptedAdditionCategories.includes(String(addition?.additionCategory || "Unassigned"));
   const tagsFit = acceptedTags.length === 0 || additionTags.some((tag: string) => acceptedTags.includes(tag));
   const footprintFits = Math.max(1, Number(addition?.width) || 1) <= Math.max(1, Number(slot?.width) || 1)
     && Math.max(1, Number(addition?.height) || 1) <= Math.max(1, Number(slot?.height) || 1);
-  return categoryFits && tagsFit && footprintFits;
+  return String(slot?.tier || "minor") !== "major" && categoryFits && additionCategoryFits && tagsFit && footprintFits;
 }
 
 function installedAdditionCount(state: JsonRecord, additionId: string) {
@@ -1010,6 +1017,9 @@ function registerRoutes(prefix: string) {
 
       const { slot } = findBusinessMapSlot(map, sectorId, slotId);
       if (!slot) return c.json({ error: "Business slot was not found" }, 404);
+      if (String(slot.tier || "minor") === "major") {
+        return c.json({ error: "Major rides and attractions are permanent and cannot be changed through Facility Addition storage" }, 409);
+      }
 
       if (action === "install") {
         const additionId = String(body?.additionId || "").trim();

@@ -46,12 +46,14 @@ import {
 } from "lucide-react";
 import {
   BUSINESS_MAP_LAYER_DEFAULTS,
-  BUSINESS_SLOT_CATEGORIES,
+  FACILITY_ADDITION_CATEGORIES,
+  FACILITY_SLOT_ROLES,
   MAX_BUSINESS_MAP_GRID_HEIGHT,
   MAX_BUSINESS_MAP_GRID_WIDTH,
   MIN_BUSINESS_MAP_GRID_HEIGHT,
   MIN_BUSINESS_MAP_GRID_WIDTH,
-  businessSlotCategoryColor,
+  facilityAdditionCategoryColor,
+  facilitySlotRoleColor,
   canPlayerEditBusinessMap,
   cloneOfficeBusinessMap,
   createBusinessMapId,
@@ -69,8 +71,9 @@ import {
   type BusinessMapRect,
   type BusinessMapShape,
   type BusinessMapShapeKind,
-  type BusinessSlotCategory,
   type FacilityAddition,
+  type FacilityAdditionCategory,
+  type FacilitySlotRole,
   type OfficeBusinessExpansion,
   type OfficeBusinessMapState,
   type OfficeBusinessSector,
@@ -658,6 +661,10 @@ export function OfficeBusinessMap({
     const sector = valueRef.current.sectors.find((entry) => entry.id === sectorId);
     const slot = sector?.slots.find((entry) => entry.id === slotId);
     if (!sector || !slot) return;
+    if (slot.tier === "major") {
+      setActionError("Major slots are permanent. Change it to a minor slot before deleting it.");
+      return;
+    }
     if (slot.installedAdditionId) {
       setActionError("Remove the installed Facility Addition before deleting this slot.");
       return;
@@ -799,6 +806,10 @@ export function OfficeBusinessMap({
 
   const handleInstall = async (sector: OfficeBusinessSector, slot: OfficeBusinessSlot, addition: FacilityAddition) => {
     setActionError("");
+    if (slot.tier === "major") {
+      setActionError("Major rides and attractions are permanent and cannot accept Facility Additions.");
+      return;
+    }
     if (!isFacilityAdditionCompatible(slot, addition)) {
       setActionError("That addition does not match this slot's category, tags, or footprint.");
       return;
@@ -833,6 +844,10 @@ export function OfficeBusinessMap({
   const handleRemove = async (sector: OfficeBusinessSector, slot: OfficeBusinessSlot) => {
     if (!slot.installedAdditionId) return;
     setActionError("");
+    if (slot.tier === "major") {
+      setActionError("Major rides and attractions cannot be removed.");
+      return;
+    }
     if (isDM) {
       emit(removeFacilityAddition(valueRef.current, sector.id, slot.id));
       return;
@@ -853,7 +868,12 @@ export function OfficeBusinessMap({
 
   const addAddition = () => {
     if (!isDM || !onAdditionsChange) return;
-    const addition = createFacilityAddition(additions.length);
+    const addition = {
+      ...createFacilityAddition(additions.length),
+      category: selectedSlot?.acceptedCategories[0] || "Unassigned",
+      additionCategory: selectedSlot?.acceptedAdditionCategories[0] || "Unassigned",
+      tags: selectedSlot?.acceptedTags.slice(0, 1) || [],
+    } as FacilityAddition;
     onAdditionsChange([...additions, addition]);
     setSelectedAdditionId(addition.id);
   };
@@ -901,9 +921,12 @@ export function OfficeBusinessMap({
   const slotCount = useMemo(() => summarySectors.reduce((count, sector) => count + sector.slots.length, 0), [summarySectors]);
   const filteredAdditions = useMemo(() => {
     const query = additionSearch.trim().toLowerCase();
-    if (!query) return additions;
-    return additions.filter((addition) => `${addition.name} ${addition.category} ${addition.tags.join(" ")}`.toLowerCase().includes(query));
-  }, [additionSearch, additions]);
+    return additions.filter((addition) => {
+      if (selectedSlot && !isFacilityAdditionCompatible(selectedSlot, addition)) return false;
+      if (!query) return true;
+      return `${addition.name} ${addition.additionCategory} ${addition.category} ${addition.tags.join(" ")}`.toLowerCase().includes(query);
+    });
+  }, [additionSearch, additions, selectedSlot]);
   const selectedAddition = additions.find((addition) => addition.id === selectedAdditionId) || null;
 
   const runExpansionAction = async (expansionId: string, action: "fund" | "complete") => {
@@ -1173,9 +1196,9 @@ export function OfficeBusinessMap({
 
             {activeSector && slotLayer?.visible !== false && activeSector.slots.map((slot) => {
               const selected = selectedSlotId === slot.id;
-              const color = businessSlotCategoryColor(slot.category);
+              const color = facilitySlotRoleColor(slot.role);
               const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
-              const canDrop = canInstallAdditions && (!slot.filled || Boolean(slot.installedAdditionId));
+              const canDrop = slot.tier === "minor" && canInstallAdditions && (!slot.filled || Boolean(slot.installedAdditionId));
               return (
                 <button
                   type="button"
@@ -1192,10 +1215,11 @@ export function OfficeBusinessMap({
                   className="absolute overflow-hidden border p-2 text-left"
                   style={{ ...rectStyle(slot, value.grid), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : color, background: slot.filled ? `${color}55` : `${color}1E`, boxShadow: selected ? `inset 0 0 0 1px ${color}, 0 0 10px ${color}55` : "none", cursor: editMode && tool === "select" && !slotLayer.locked ? "move" : "pointer" }}
                 >
-                  {installed?.thumbnailUrl && <img src={installed.thumbnailUrl} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-25" />}
-                  <div className="relative flex h-full min-h-0 flex-col">
-                    <div className="truncate text-[9px] font-bold">{slot.name}</div>
-                    <div className="mt-1 truncate text-[7px]" style={{ color }}>{slot.category.toUpperCase()}</div>
+                   {installed?.thumbnailUrl && <img src={installed.thumbnailUrl} alt="" className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-25" />}
+                   {!slot.filled && <EmptySlotIcon className="absolute right-2 top-2" />}
+                   <div className="relative flex h-full min-h-0 flex-col">
+                     <div className="truncate pr-8 text-[9px] font-bold">{slot.name}</div>
+                     <div className="mt-1 flex items-center gap-1 truncate text-[7px]" style={{ color }}>{slot.tier === "major" && <Lock size={7} />}{slot.role.toUpperCase()}</div>
                     <div className="mt-auto truncate text-[8px]" style={slot.filled ? S_TEXT : S_DIM}>{busySlotId === slot.id ? "UPDATING..." : slot.filled ? slot.occupant || "FILLED" : "EMPTY"}</div>
                   </div>
                   {editMode && tool === "select" && !slotLayer.locked && <ResizeHandle onPointerDown={(event) => startRectOperation(event, "slot", "resize", slot.id, slot, activeSector.id)} />}
@@ -1266,8 +1290,8 @@ export function OfficeBusinessMap({
               grid={value.grid}
               isDM={isDM}
               editMode={editMode}
-               canInstall={canInstallAdditions}
-              canRemove={canRemoveAdditions}
+               canInstall={canInstallAdditions && selectedSlot.tier === "minor"}
+               canRemove={canRemoveAdditions && selectedSlot.tier === "minor"}
               busy={busySlotId === selectedSlot.id}
               backLabel={!activeSector ? selectedSlotSector.name : undefined}
               onBack={!activeSector ? () => setSelectedSlotId(null) : undefined}
@@ -1303,7 +1327,7 @@ export function OfficeBusinessMap({
         </aside>
       </div>
 
-      <FacilityAdditionLibrary
+      {selectedSlot && selectedSlot.tier === "minor" && <FacilityAdditionLibrary
         additions={filteredAdditions}
         allAdditions={additions}
         selected={selectedAddition}
@@ -1318,7 +1342,7 @@ export function OfficeBusinessMap({
         onUpdate={updateAddition}
         onDelete={deleteAddition}
         onUploadThumbnail={uploadAdditionThumbnail}
-      />
+      />}
     </div>
   );
 }
@@ -1479,16 +1503,16 @@ function SectorInspector({ sector, isDM, editMode, grid, additions, onUpdate, on
         <div className="mb-2 flex items-center justify-between text-[8px]"><span className="font-semibold" style={S_TEXT}>AREA CONTENTS & SLOTS</span><span style={S_DIM}>{sector.slots.length}</span></div>
         <div className="space-y-2">
           {sector.slots.map((slot) => {
-            const color = businessSlotCategoryColor(slot.category);
+            const color = facilitySlotRoleColor(slot.role);
             const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
             const occupant = installed?.name || slot.occupant || (slot.filled ? "Filled" : "Empty");
-            const accepted = slot.acceptedCategories.length > 0 ? slot.acceptedCategories.join(", ") : "Any category";
-            const requiredTags = slot.acceptedTags.length > 0 ? slot.acceptedTags.join(", ") : "No required tags";
+            const accepted = slot.acceptedAdditionCategories.length > 0 ? slot.acceptedAdditionCategories.join(", ") : "Any addition category";
+            const compatibleTags = slot.acceptedTags.length > 0 ? slot.acceptedTags.join(", ") : "Any compatible tags";
             return (
               <button key={slot.id} type="button" onClick={() => onSelectSlot(slot.id)} className="w-full border bg-[#08080D] p-2.5 text-left transition-colors hover:bg-[#101018]" style={{ borderColor: `${color}88` }}>
-                <div className="flex items-start justify-between gap-2"><span className="text-[9px] font-semibold leading-4" style={S_TEXT}>{slot.name}</span><span className="flex-shrink-0 text-[7px]" style={{ color }}>{slot.category.toUpperCase()}</span></div>
-                <div className="mt-2 border-l-2 pl-2" style={{ borderColor: color }}><div className="text-[7px]" style={S_DIM}>CONTAINS</div><div className="mt-0.5 text-[9px]" style={slot.filled ? S_TEXT : S_MUTED}>{occupant}</div></div>
-                <div className="mt-2 grid gap-1 text-[7px] leading-3"><div><span style={S_DIM}>ACCEPTS </span><span style={S_MUTED}>{accepted}</span></div><div><span style={S_DIM}>REQUIRES </span><span style={S_MUTED}>{requiredTags}</span></div></div>
+                <div className="flex items-start justify-between gap-2"><span className="text-[9px] font-semibold leading-4" style={S_TEXT}>{slot.name}</span><span className="flex flex-shrink-0 items-center gap-1 text-[7px]" style={{ color }}>{slot.tier === "major" && <Lock size={7} />}{slot.role.toUpperCase()}</span></div>
+                <div className="mt-2 flex items-center gap-2 border-l-2 pl-2" style={{ borderColor: color }}>{!slot.filled && <EmptySlotIcon compact />}<div className="min-w-0"><div className="text-[7px]" style={S_DIM}>CONTAINS</div><div className="mt-0.5 truncate text-[9px]" style={slot.filled ? S_TEXT : S_MUTED}>{occupant}</div></div></div>
+                <div className="mt-2 grid gap-1 text-[7px] leading-3"><div><span style={S_DIM}>ACCEPTS </span><span style={S_MUTED}>{accepted}</span></div><div><span style={S_DIM}>COMPATIBLE TAGS </span><span style={S_MUTED}>{compatibleTags}</span></div></div>
                 {slot.notes && <div className="mt-2 line-clamp-2 text-[7px] leading-3" style={S_DIM}>{slot.notes}</div>}
               </button>
             );
@@ -1548,33 +1572,32 @@ function ShapeInspector({ shape, selectedCount, isDM, editMode, onUpdate, onDupl
 }
 
 function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM, editMode, canInstall, canRemove, busy, backLabel, onBack, onUpdate, onInstall, onRemove, onDelete }: { slot: OfficeBusinessSlot; additions: FacilityAddition[]; additionUsage: Record<string, number>; facilities: Array<{ id: string; name: string }>; grid: OfficeBusinessMapState["grid"]; isDM: boolean; editMode: boolean; canInstall: boolean; canRemove: boolean; busy: boolean; backLabel?: string; onBack?: () => void; onUpdate: (updates: Partial<OfficeBusinessSlot>) => void; onInstall: (addition: FacilityAddition) => void; onRemove: () => void; onDelete: () => void }) {
-  const color = businessSlotCategoryColor(slot.category);
+  const color = facilitySlotRoleColor(slot.role);
   const compatible = additions.filter((addition) => isFacilityAdditionCompatible(slot, addition));
   const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
+  const permanent = slot.tier === "major";
   return (
     <div className="space-y-3">
       {onBack && <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-[8px] hover:text-white" style={S_MUTED}><ArrowLeft size={10} /> Back to {backLabel || "area"}</button>}
-      <PanelTitle icon={Factory} text={slot.name} color={color} />
+      <PanelTitle icon={permanent ? Lock : Factory} text={slot.name} color={color} />
       {isDM && editMode ? (
         <>
           <Field label="Slot Name"><input value={slot.name} onChange={(event) => onUpdate({ name: event.target.value.slice(0, 60) })} className="w-full border bg-transparent px-2 py-2 text-[10px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
-          <Field label="Display Type"><select value={slot.category} onChange={(event) => onUpdate({ category: event.target.value as BusinessSlotCategory })} className="w-full border bg-transparent px-2 py-2 text-[10px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{BUSINESS_SLOT_CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}</select></Field>
-          <Field label="Accepted Categories"><div className="grid grid-cols-2 gap-1">{BUSINESS_SLOT_CATEGORIES.filter((category) => category !== "Unassigned").map((category) => <label key={category} className="flex items-center gap-1 border border-[#171724] p-1.5 text-[8px]" style={S_TEXT}><input type="checkbox" checked={slot.acceptedCategories.includes(category)} onChange={(event) => onUpdate({ acceptedCategories: event.target.checked ? [...new Set([...slot.acceptedCategories, category])] : slot.acceptedCategories.filter((entry) => entry !== category) })} />{category}</label>)}</div><div className="mt-1 text-[7px]" style={S_DIM}>No selections accepts every category.</div></Field>
-          <Field label="Required Tags"><input value={slot.acceptedTags.join(", ")} onChange={(event) => onUpdate({ acceptedTags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 30) })} placeholder="power, exterior, staff" className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
-          {!slot.installedAdditionId && <><Toggle label="Custom assignment" checked={slot.filled} onChange={(checked) => onUpdate({ filled: checked, occupant: checked ? slot.occupant : "", linkedFacilityId: checked ? slot.linkedFacilityId : "" })} />{slot.filled && <><Field label="Link Existing Facility"><select value={slot.linkedFacilityId} onChange={(event) => { const facility = facilities.find((entry) => entry.id === event.target.value); onUpdate({ linkedFacilityId: event.target.value, occupant: facility?.name || slot.occupant }); }} className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}><option value="">Custom assignment</option>{facilities.map((facility) => <option key={facility.id} value={facility.id}>{facility.name}</option>)}</select></Field><Field label="Filled With"><input value={slot.occupant} onChange={(event) => onUpdate({ occupant: event.target.value.slice(0, 100), linkedFacilityId: "" })} className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></>}</>}
+          <Field label="Facility Slot Role"><select value={slot.role} onChange={(event) => { const role = event.target.value as FacilitySlotRole; const tier = role === "Ride" || role === "Major Attraction" ? "major" : "minor"; onUpdate({ role, tier, filled: tier === "major" ? true : slot.filled, occupant: tier === "major" ? slot.occupant || slot.name : slot.occupant }); }} className="w-full border bg-transparent px-2 py-2 text-[10px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{FACILITY_SLOT_ROLES.map((role) => <option key={role} value={role} disabled={Boolean(slot.installedAdditionId) && (role === "Ride" || role === "Major Attraction")}>{role}</option>)}</select></Field>
+          <div className="flex items-center justify-between border border-[#1A1A2B] p-2 text-[8px]"><span style={S_DIM}>SLOT CLASS</span><span className="flex items-center gap-1" style={{ color }}>{permanent && <Lock size={8} />}{permanent ? "MAJOR / PERMANENT" : "MINOR / MOVEABLE"}</span></div>
+          <Field label="Accepted Addition Categories"><div className="grid grid-cols-2 gap-1">{FACILITY_ADDITION_CATEGORIES.filter((category) => category !== "Unassigned").map((category) => <label key={category} className="flex items-center gap-1 border border-[#171724] p-1.5 text-[8px]" style={S_TEXT}><input type="checkbox" checked={slot.acceptedAdditionCategories.includes(category)} disabled={permanent} onChange={(event) => onUpdate({ acceptedAdditionCategories: event.target.checked ? [...new Set([...slot.acceptedAdditionCategories, category])] : slot.acceptedAdditionCategories.filter((entry) => entry !== category) })} />{category}</label>)}</div><div className="mt-1 text-[7px]" style={S_DIM}>{permanent ? "Permanent slots do not accept Facility Additions." : "No selections accepts every addition category."}</div></Field>
+          <Field label="Compatible Tags"><input value={slot.acceptedTags.join(", ")} onChange={(event) => onUpdate({ acceptedTags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 30) })} placeholder="family, exterior, food" className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
+          {!slot.installedAdditionId && (permanent ? <Field label="Permanent Feature"><input value={slot.occupant} onChange={(event) => onUpdate({ filled: true, occupant: event.target.value.slice(0, 100), linkedFacilityId: "" })} className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field> : <><Toggle label="Custom assignment" checked={slot.filled} onChange={(checked) => onUpdate({ filled: checked, occupant: checked ? slot.occupant : "", linkedFacilityId: checked ? slot.linkedFacilityId : "" })} />{slot.filled && <><Field label="Link Existing Facility"><select value={slot.linkedFacilityId} onChange={(event) => { const facility = facilities.find((entry) => entry.id === event.target.value); onUpdate({ linkedFacilityId: event.target.value, occupant: facility?.name || slot.occupant }); }} className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}><option value="">Custom assignment</option>{facilities.map((facility) => <option key={facility.id} value={facility.id}>{facility.name}</option>)}</select></Field><Field label="Filled With"><input value={slot.occupant} onChange={(event) => onUpdate({ occupant: event.target.value.slice(0, 100), linkedFacilityId: "" })} className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></>}</>)}
           <Field label="Notes"><textarea value={slot.notes} onChange={(event) => onUpdate({ notes: event.target.value.slice(0, 1200) })} rows={3} className="w-full resize-none border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
           <RectInputs rect={slot} grid={grid} onUpdate={onUpdate} />
-          <button type="button" onClick={onDelete} className={`${retro.button} flex w-full items-center justify-center gap-2 py-2 text-[9px]`} style={S_RED}><Trash2 size={11} /> Delete Slot</button>
+          {!permanent && <button type="button" onClick={onDelete} className={`${retro.button} flex w-full items-center justify-center gap-2 py-2 text-[9px]`} style={S_RED}><Trash2 size={11} /> Delete Slot</button>}
         </>
       ) : (
         <div className="space-y-3">
-          <div className="flex items-center justify-between text-[9px]"><span style={S_DIM}>TYPE</span><span style={{ color }}>{slot.category}</span></div>
-          <div className="border p-3" style={{ borderColor: color, background: `${color}16` }}><div className="text-[8px]" style={S_DIM}>ASSIGNMENT</div><div className="mt-1 text-[11px]" style={slot.filled ? S_TEXT : S_MUTED}>{slot.filled ? slot.occupant || "Filled" : "Empty"}</div>{slot.installedBy && <div className="mt-1 text-[7px]" style={S_DIM}>Installed by {slot.installedBy}</div>}</div>
+          <div className="flex items-center justify-between text-[9px]"><span style={S_DIM}>ROLE</span><span className="flex items-center gap-1" style={{ color }}>{permanent && <Lock size={8} />}{slot.role}</span></div>
+          <div className="border p-3" style={{ borderColor: color, background: `${color}16` }}><div className="text-[8px]" style={S_DIM}>{permanent ? "PERMANENT FEATURE" : "ASSIGNMENT"}</div><div className="mt-1 flex items-center gap-2 text-[11px]" style={slot.filled ? S_TEXT : S_MUTED}>{!slot.filled && <EmptySlotIcon compact />}{slot.filled ? slot.occupant || "Filled" : "Empty slot"}</div>{slot.installedBy && <div className="mt-1 text-[7px]" style={S_DIM}>Installed by {slot.installedBy}</div>}</div>
           {slot.notes && <div className="whitespace-pre-wrap text-[9px] leading-5" style={S_MUTED}>{slot.notes}</div>}
-          <div className="border border-[#1A1A2B] p-3">
-            <div className="mb-2 text-[8px] font-semibold" style={S_TEXT}>SLOT REQUIREMENTS</div>
-            <div className="space-y-2 text-[8px] leading-4"><div><div style={S_DIM}>ACCEPTED CATEGORIES</div><div style={S_MUTED}>{slot.acceptedCategories.length > 0 ? slot.acceptedCategories.join(", ") : "Any category"}</div></div><div><div style={S_DIM}>REQUIRED TAGS</div><div style={S_MUTED}>{slot.acceptedTags.length > 0 ? slot.acceptedTags.join(", ") : "No required tags"}</div></div></div>
-          </div>
+          {!permanent && <div className="border border-[#1A1A2B] p-3"><div className="mb-2 text-[8px] font-semibold" style={S_TEXT}>SLOT COMPATIBILITY</div><div className="space-y-2 text-[8px] leading-4"><div><div style={S_DIM}>ACCEPTED ADDITION CATEGORIES</div><div style={S_MUTED}>{slot.acceptedAdditionCategories.length > 0 ? slot.acceptedAdditionCategories.join(", ") : "Any addition category"}</div></div><div><div style={S_DIM}>COMPATIBLE TAGS</div><div style={S_MUTED}>{slot.acceptedTags.length > 0 ? slot.acceptedTags.join(", ") : "Any compatible tags"}</div></div></div></div>}
         </div>
       )}
 
@@ -1583,30 +1606,10 @@ function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM,
           <div className="text-[8px]" style={S_DIM}>INSTALLED ADDITION</div>
           <div className="mt-1 text-[11px]" style={S_TEXT}>{installed?.name || slot.occupant}</div>
           {canRemove && <button type="button" onClick={onRemove} disabled={busy} className={`${retro.button} mt-2 flex w-full items-center justify-center gap-2 py-2 text-[9px] disabled:opacity-40`} style={S_RED}>{busy ? <LoaderCircle size={10} className="animate-spin" /> : <Trash2 size={10} />} Remove</button>}
-          {canInstall && (
-            <div className="mt-3 border-t border-[#294A39] pt-3">
-              <div className="mb-2 text-[8px]" style={S_DIM}>SWITCH TO</div>
-              <div className="max-h-36 space-y-1 overflow-y-auto">
-                {compatible.filter((addition) => addition.id !== slot.installedAdditionId).map((addition) => {
-                  const available = Math.max(0, addition.quantity - (additionUsage[addition.id] || 0));
-                  return <button type="button" key={addition.id} onClick={() => onInstall(addition)} disabled={available <= 0 || busy} className="flex w-full items-center gap-2 border border-[#1A1A2B] p-2 text-left disabled:opacity-35"><AdditionThumb addition={addition} /><span className="min-w-0 flex-1 truncate text-[9px]" style={S_TEXT}>{addition.name}</span><span className="text-[8px]" style={S_DIM}>{available}</span></button>;
-                })}
-                {compatible.filter((addition) => addition.id !== slot.installedAdditionId).length === 0 && <div className="py-2 text-center text-[8px]" style={S_DIM}>No alternate additions.</div>}
-              </div>
-            </div>
-          )}
+          {canInstall && <div className="mt-3 border-t border-[#294A39] pt-3"><div className="mb-2 text-[8px]" style={S_DIM}>SWITCH TO</div><div className="max-h-36 space-y-1 overflow-y-auto">{compatible.filter((addition) => addition.id !== slot.installedAdditionId).map((addition) => { const available = Math.max(0, addition.quantity - (additionUsage[addition.id] || 0)); return <button type="button" key={addition.id} onClick={() => onInstall(addition)} disabled={available <= 0 || busy} className="flex w-full items-center gap-2 border border-[#1A1A2B] p-2 text-left disabled:opacity-35"><AdditionThumb addition={addition} /><span className="min-w-0 flex-1 truncate text-[9px]" style={S_TEXT}>{addition.name}</span><span className="text-[8px]" style={S_DIM}>{available}</span></button>; })}{compatible.filter((addition) => addition.id !== slot.installedAdditionId).length === 0 && <div className="py-2 text-center text-[8px]" style={S_DIM}>No alternate additions.</div>}</div></div>}
         </div>
       ) : !slot.filled && canInstall ? (
-        <div className="border border-[#1A1A2B] p-3">
-          <div className="mb-2 text-[8px]" style={S_DIM}>COMPATIBLE ADDITIONS</div>
-          <div className="max-h-52 space-y-1 overflow-y-auto">
-            {compatible.map((addition) => {
-              const available = Math.max(0, addition.quantity - (additionUsage[addition.id] || 0));
-              return <button type="button" key={addition.id} onClick={() => onInstall(addition)} disabled={available <= 0 || busy} className="flex w-full items-center gap-2 border border-[#1A1A2B] p-2 text-left disabled:opacity-35"><AdditionThumb addition={addition} /><span className="min-w-0 flex-1 truncate text-[9px]" style={S_TEXT}>{addition.name}</span><span className="text-[8px]" style={S_DIM}>{available}</span></button>;
-            })}
-            {compatible.length === 0 && <div className="py-3 text-center text-[8px]" style={S_DIM}>No compatible additions.</div>}
-          </div>
-        </div>
+        <div className="border border-[#1A1A2B] p-3"><div className="mb-2 text-[8px]" style={S_DIM}>COMPATIBLE ADDITIONS</div><div className="max-h-52 space-y-1 overflow-y-auto">{compatible.map((addition) => { const available = Math.max(0, addition.quantity - (additionUsage[addition.id] || 0)); return <button type="button" key={addition.id} onClick={() => onInstall(addition)} disabled={available <= 0 || busy} className="flex w-full items-center gap-2 border border-[#1A1A2B] p-2 text-left disabled:opacity-35"><AdditionThumb addition={addition} /><span className="min-w-0 flex-1 truncate text-[9px]" style={S_TEXT}>{addition.name}</span><span className="text-[8px]" style={S_DIM}>{available}</span></button>; })}{compatible.length === 0 && <div className="py-3 text-center text-[8px]" style={S_DIM}>No compatible additions.</div>}</div></div>
       ) : null}
     </div>
   );
@@ -1631,14 +1634,14 @@ function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isD
               onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData("application/x-facility-addition", addition.id); }}
               onClick={() => onSelect(addition.id)}
               className="relative h-[70px] w-[132px] flex-shrink-0 overflow-hidden border p-1.5 text-left"
-              style={{ borderColor: selected?.id === addition.id ? "#FFFFFF" : businessSlotCategoryColor(addition.category), background: "#08080D" }}
+              style={{ borderColor: selected?.id === addition.id ? "#FFFFFF" : facilityAdditionCategoryColor(addition.additionCategory), background: "#08080D" }}
             >
               {addition.thumbnailUrl && <img src={addition.thumbnailUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-20" />}
-              <div className="relative flex h-full flex-col"><div className="truncate text-[9px] font-semibold" style={S_TEXT}>{addition.name}</div><div className="mt-1 text-[7px]" style={{ color: businessSlotCategoryColor(addition.category) }}>{addition.category.toUpperCase()}</div><div className="mt-auto flex items-center justify-between text-[8px]" style={S_DIM}><span>{addition.width}x{addition.height}</span><span>{available}/{addition.quantity}</span></div></div>
+              <div className="relative flex h-full flex-col"><div className="truncate text-[9px] font-semibold" style={S_TEXT}>{addition.name}</div><div className="mt-1 text-[7px]" style={{ color: facilityAdditionCategoryColor(addition.additionCategory) }}>{addition.additionCategory.toUpperCase()}</div><div className="mt-auto flex items-center justify-between text-[8px]" style={S_DIM}><span>{addition.width}x{addition.height}</span><span>{available}/{addition.quantity}</span></div></div>
             </button>
           );
         })}
-        {additions.length === 0 && <div className="flex w-full items-center justify-center text-[9px]" style={S_DIM}>{allAdditions.length === 0 ? "No Facility Additions stored." : "No additions match the search."}</div>}
+        {additions.length === 0 && <div className="flex w-full items-center justify-center text-[9px]" style={S_DIM}>{allAdditions.length === 0 ? "No Facility Additions stored." : query.trim() ? "No additions match the search." : "No compatible additions for this slot."}</div>}
       </div>
 
       {selected && (
@@ -1650,7 +1653,7 @@ function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isD
             {isDM ? <><input value={selected.name} onChange={(event) => onUpdate(selected.id, { name: event.target.value.slice(0, 80) })} className="w-full border bg-transparent px-2 py-1.5 text-[10px] font-semibold" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><textarea value={selected.description} onChange={(event) => onUpdate(selected.id, { description: event.target.value.slice(0, 1200) })} rows={2} placeholder="Description" className="w-full resize-none border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><input value={selected.tags.join(", ")} onChange={(event) => onUpdate(selected.id, { tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 30) })} placeholder="Compatibility tags" className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></> : <><div className="text-[11px] font-semibold" style={S_TEXT}>{selected.name}</div><div className="text-[9px] leading-5" style={S_MUTED}>{selected.description || "No description."}</div><div className="text-[8px]" style={S_DIM}>{selected.tags.join(", ") || "No tags"}</div></>}
           </div>
           <div className="space-y-2">
-            {isDM ? <><Field label="Category"><select value={selected.category} onChange={(event) => onUpdate(selected.id, { category: event.target.value as BusinessSlotCategory })} className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{BUSINESS_SLOT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></Field><div className="grid grid-cols-3 gap-2"><Field label="Quantity"><input type="number" min="0" max="999" value={selected.quantity} onChange={(event) => onUpdate(selected.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Width"><input type="number" min="1" max="32" value={selected.width} onChange={(event) => onUpdate(selected.id, { width: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Height"><input type="number" min="1" max="24" value={selected.height} onChange={(event) => onUpdate(selected.id, { height: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-2"><Field label="Purchase Cost"><input type="number" min="0" value={selected.cost} onChange={(event) => onUpdate(selected.id, { cost: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Monthly Upkeep"><input type="number" min="0" value={selected.monthlyUpkeep} onChange={(event) => onUpdate(selected.id, { monthlyUpkeep: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-1">{FACILITY_STAT_KEYS.map((stat) => <Field key={stat} label={FACILITY_STAT_META[stat].label}><input type="number" value={selected.statModifiers.find((modifier) => modifier.stat === stat)?.amount || 0} onChange={(event) => { const amount = Number(event.target.value) || 0; onUpdate(selected.id, { statModifiers: [...selected.statModifiers.filter((modifier) => modifier.stat !== stat), ...(amount ? [{ stat, amount }] : [])] }); }} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>)}</div><label className={`${retro.button} flex cursor-pointer items-center justify-center gap-1 py-2 text-[8px]`} style={S_TEXT}><Upload size={9} /> Thumbnail<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadThumbnail(selected, file); event.currentTarget.value = ""; }} /></label>{uploadProgress != null && <ProgressBar value={uploadProgress} />}<button type="button" onClick={() => onDelete(selected)} disabled={(usage[selected.id] || 0) > 0} className={`${retro.button} flex w-full items-center justify-center gap-1 py-2 text-[8px] disabled:opacity-30`} style={S_RED}><Trash2 size={9} /> Delete</button></> : <><div className="text-[9px]" style={S_DIM}>{Math.max(0, selected.quantity - (usage[selected.id] || 0))} available of {selected.quantity}</div><div className="text-[8px]" style={S_DIM}>{selected.cost.toLocaleString()} CR · {selected.monthlyUpkeep.toLocaleString()} CR upkeep</div><div className="space-y-1">{selected.statModifiers.map((modifier) => <div key={modifier.stat} className="flex justify-between text-[8px]"><span style={S_DIM}>{FACILITY_STAT_META[modifier.stat].label}</span><span style={modifier.amount >= 0 ? S_GREEN : S_RED}>{modifier.amount >= 0 ? "+" : ""}{modifier.amount}</span></div>)}</div></>}
+            {isDM ? <><Field label="Addition Category"><select value={selected.additionCategory} onChange={(event) => onUpdate(selected.id, { additionCategory: event.target.value as FacilityAdditionCategory })} className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{FACILITY_ADDITION_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></Field><div className="grid grid-cols-3 gap-2"><Field label="Quantity"><input type="number" min="0" max="999" value={selected.quantity} onChange={(event) => onUpdate(selected.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Width"><input type="number" min="1" max="32" value={selected.width} onChange={(event) => onUpdate(selected.id, { width: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Height"><input type="number" min="1" max="24" value={selected.height} onChange={(event) => onUpdate(selected.id, { height: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-2"><Field label="Purchase Cost"><input type="number" min="0" value={selected.cost} onChange={(event) => onUpdate(selected.id, { cost: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Monthly Upkeep"><input type="number" min="0" value={selected.monthlyUpkeep} onChange={(event) => onUpdate(selected.id, { monthlyUpkeep: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-1">{FACILITY_STAT_KEYS.map((stat) => <Field key={stat} label={FACILITY_STAT_META[stat].label}><input type="number" value={selected.statModifiers.find((modifier) => modifier.stat === stat)?.amount || 0} onChange={(event) => { const amount = Number(event.target.value) || 0; onUpdate(selected.id, { statModifiers: [...selected.statModifiers.filter((modifier) => modifier.stat !== stat), ...(amount ? [{ stat, amount }] : [])] }); }} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>)}</div><label className={`${retro.button} flex cursor-pointer items-center justify-center gap-1 py-2 text-[8px]`} style={S_TEXT}><Upload size={9} /> Thumbnail<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadThumbnail(selected, file); event.currentTarget.value = ""; }} /></label>{uploadProgress != null && <ProgressBar value={uploadProgress} />}<button type="button" onClick={() => onDelete(selected)} disabled={(usage[selected.id] || 0) > 0} className={`${retro.button} flex w-full items-center justify-center gap-1 py-2 text-[8px] disabled:opacity-30`} style={S_RED}><Trash2 size={9} /> Delete</button></> : <><div className="text-[9px]" style={S_DIM}>{Math.max(0, selected.quantity - (usage[selected.id] || 0))} available of {selected.quantity}</div><div className="text-[8px]" style={S_DIM}>{selected.additionCategory} · {selected.cost.toLocaleString()} CR · {selected.monthlyUpkeep.toLocaleString()} CR upkeep</div><div className="space-y-1">{selected.statModifiers.map((modifier) => <div key={modifier.stat} className="flex justify-between text-[8px]"><span style={S_DIM}>{FACILITY_STAT_META[modifier.stat].label}</span><span style={modifier.amount >= 0 ? S_GREEN : S_RED}>{modifier.amount >= 0 ? "+" : ""}{modifier.amount}</span></div>)}</div></>}
             <div className="text-[7px]" style={S_DIM}>Thumbnail: recommended 1200x900 (4:3), PNG or WebP.</div>
           </div>
         </div>
@@ -1663,6 +1666,10 @@ function AdditionThumb({ addition }: { addition: FacilityAddition }) {
   return addition.thumbnailUrl
     ? <img src={addition.thumbnailUrl} alt="" className="h-8 w-10 flex-shrink-0 object-cover" />
     : <span className="flex h-8 w-10 flex-shrink-0 items-center justify-center border border-[#25253B]"><Package size={11} style={S_DIM} /></span>;
+}
+
+function EmptySlotIcon({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
+  return <span aria-hidden="true" className={`pointer-events-none flex flex-shrink-0 items-center justify-center border border-dashed border-[#8FA2BE99] bg-[#0B111BCC] text-[#AFC3DE] ${compact ? "h-5 w-5" : "h-7 w-7"} ${className}`}><Plus size={compact ? 10 : 13} /></span>;
 }
 
 function RectInputs({ rect, grid, onUpdate }: { rect: BusinessMapRect; grid: OfficeBusinessMapState["grid"]; onUpdate: (updates: Partial<BusinessMapRect>) => void }) {

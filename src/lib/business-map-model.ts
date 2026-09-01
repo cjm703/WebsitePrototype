@@ -18,6 +18,33 @@ export const BUSINESS_SLOT_CATEGORIES = [
 ] as const;
 
 export type BusinessSlotCategory = typeof BUSINESS_SLOT_CATEGORIES[number];
+
+export const FACILITY_SLOT_ROLES = [
+  "Ride",
+  "Major Attraction",
+  "Minor Ride",
+  "Minor Attraction",
+  "Shop",
+  "Reception",
+  "Flexible",
+] as const;
+
+export const FACILITY_ADDITION_CATEGORIES = [
+  "Unassigned",
+  "Minor Ride",
+  "Minor Attraction",
+  "Shop",
+  "Dining",
+  "Guest Service",
+  "Security",
+  "Recreation",
+  "Operations",
+  "Flexible",
+] as const;
+
+export type FacilitySlotRole = typeof FACILITY_SLOT_ROLES[number];
+export type FacilitySlotTier = "major" | "minor";
+export type FacilityAdditionCategory = typeof FACILITY_ADDITION_CATEGORIES[number];
 export type BusinessMapShapeKind = "wall" | "pathway" | "area" | "label";
 export type BusinessMapBackgroundFit = "cover" | "contain" | "stretch";
 export type FacilityStatKey = "capacity" | "appeal" | "revenue" | "expenses" | "security" | "maintenance" | "staff" | "condition";
@@ -99,7 +126,10 @@ export interface OfficeBusinessSlot {
   id: string;
   name: string;
   category: BusinessSlotCategory;
+  role: FacilitySlotRole;
+  tier: FacilitySlotTier;
   acceptedCategories: BusinessSlotCategory[];
+  acceptedAdditionCategories: FacilityAdditionCategory[];
   acceptedTags: string[];
   x: number;
   y: number;
@@ -176,6 +206,7 @@ export interface FacilityAddition {
   name: string;
   description: string;
   category: BusinessSlotCategory;
+  additionCategory: FacilityAdditionCategory;
   tags: string[];
   quantity: number;
   width: number;
@@ -233,8 +264,39 @@ const CATEGORY_COLORS: Record<BusinessSlotCategory, string> = {
   Utility: "#E18A5B",
 };
 
+const FACILITY_ROLE_COLORS: Record<FacilitySlotRole, string> = {
+  Ride: "#F4C95D",
+  "Major Attraction": "#E879A9",
+  "Minor Ride": "#73C9A8",
+  "Minor Attraction": "#7EB6F2",
+  Shop: "#C99AF2",
+  Reception: "#F29E74",
+  Flexible: "#9AA8C7",
+};
+
+const FACILITY_ADDITION_CATEGORY_COLORS: Record<FacilityAdditionCategory, string> = {
+  Unassigned: "#6B7280",
+  "Minor Ride": "#73C9A8",
+  "Minor Attraction": "#7EB6F2",
+  Shop: "#C99AF2",
+  Dining: "#F2B56B",
+  "Guest Service": "#F29E74",
+  Security: "#F47A91",
+  Recreation: "#65C7C2",
+  Operations: "#54C7A0",
+  Flexible: "#9AA8C7",
+};
+
 export function businessSlotCategoryColor(category: BusinessSlotCategory) {
   return CATEGORY_COLORS[category];
+}
+
+export function facilitySlotRoleColor(role: FacilitySlotRole) {
+  return FACILITY_ROLE_COLORS[role];
+}
+
+export function facilityAdditionCategoryColor(category: FacilityAdditionCategory) {
+  return FACILITY_ADDITION_CATEGORY_COLORS[category];
 }
 
 export function createBusinessMapId(prefix: string) {
@@ -394,7 +456,10 @@ export function createDefaultBusinessSlot(
     id,
     name,
     category,
+    role: "Flexible",
+    tier: "minor",
     acceptedCategories: defaultAcceptedCategories(category),
+    acceptedAdditionCategories: [],
     acceptedTags: [],
     x,
     y,
@@ -419,6 +484,13 @@ function normalizeSlot(raw: unknown, index: number, grid: BusinessMapGrid): Offi
   const acceptedCategories = Array.isArray(source.acceptedCategories)
     ? source.acceptedCategories.filter((entry): entry is BusinessSlotCategory => BUSINESS_SLOT_CATEGORIES.includes(entry as BusinessSlotCategory))
     : defaultAcceptedCategories(category);
+  const role = FACILITY_SLOT_ROLES.includes(source.role as FacilitySlotRole)
+    ? source.role as FacilitySlotRole
+    : "Flexible";
+  const tier: FacilitySlotTier = role === "Ride" || role === "Major Attraction" ? "major" : "minor";
+  const acceptedAdditionCategories = Array.isArray(source.acceptedAdditionCategories)
+    ? source.acceptedAdditionCategories.filter((entry): entry is FacilityAdditionCategory => FACILITY_ADDITION_CATEGORIES.includes(entry as FacilityAdditionCategory))
+    : [];
   const installedAdditionId = cleanText(source.installedAdditionId, "", 100).trim();
   return {
     ...fallback,
@@ -426,7 +498,10 @@ function normalizeSlot(raw: unknown, index: number, grid: BusinessMapGrid): Offi
     id: cleanId(source.id, fallback.id),
     name: cleanText(source.name, fallback.name, 60).trim() || fallback.name,
     category,
+    role,
+    tier,
     acceptedCategories: Array.from(new Set(acceptedCategories)),
+    acceptedAdditionCategories: Array.from(new Set(acceptedAdditionCategories)),
     acceptedTags: cleanStringList(source.acceptedTags),
     filled: Boolean(source.filled || installedAdditionId),
     occupant: cleanText(source.occupant, "", 100),
@@ -602,12 +677,16 @@ export function normalizeFacilityAdditions(raw: unknown): FacilityAddition[] {
     const category = BUSINESS_SLOT_CATEGORIES.includes(source.category as BusinessSlotCategory)
       ? source.category as BusinessSlotCategory
       : "Unassigned";
+    const additionCategory = FACILITY_ADDITION_CATEGORIES.includes(source.additionCategory as FacilityAdditionCategory)
+      ? source.additionCategory as FacilityAdditionCategory
+      : "Unassigned";
     const createdAt = cleanText(source.createdAt, new Date().toISOString(), 80);
     return {
       id: cleanId(source.id, `addition-${index + 1}`),
       name: cleanText(source.name, `Facility Addition ${index + 1}`, 80).trim() || `Facility Addition ${index + 1}`,
       description: cleanText(source.description, "", 1200),
       category,
+      additionCategory,
       tags: cleanStringList(source.tags),
       quantity: clamp(Math.floor(finiteNumber(source.quantity, 1)), 0, 999),
       width: clamp(Math.floor(finiteNumber(source.width, 1)), 1, MAX_BUSINESS_MAP_GRID_WIDTH),
@@ -631,6 +710,7 @@ export function createFacilityAddition(index = 0): FacilityAddition {
     name: `Facility Addition ${index + 1}`,
     description: "",
     category: "Unassigned",
+    additionCategory: "Unassigned",
     tags: [],
     quantity: 1,
     width: 1,
@@ -646,10 +726,14 @@ export function createFacilityAddition(index = 0): FacilityAddition {
 }
 
 export function isFacilityAdditionCompatible(slot: OfficeBusinessSlot, addition: FacilityAddition) {
-  const categoryCompatible = slot.acceptedCategories.length === 0 || slot.acceptedCategories.includes(addition.category);
+  const categoryCompatible = slot.acceptedAdditionCategories.length > 0
+    || slot.acceptedCategories.length === 0
+    || slot.acceptedCategories.includes(addition.category);
+  const additionCategoryCompatible = slot.acceptedAdditionCategories.length === 0
+    || slot.acceptedAdditionCategories.includes(addition.additionCategory);
   const tagsCompatible = slot.acceptedTags.length === 0 || addition.tags.some((tag) => slot.acceptedTags.includes(tag));
   const footprintCompatible = addition.width <= slot.width && addition.height <= slot.height;
-  return categoryCompatible && tagsCompatible && footprintCompatible;
+  return slot.tier !== "major" && categoryCompatible && additionCategoryCompatible && tagsCompatible && footprintCompatible;
 }
 
 export function countInstalledFacilityAdditions(maps: Array<OfficeBusinessMapState | null | undefined> | OfficeBusinessMapState | null | undefined) {
@@ -684,6 +768,8 @@ export function installFacilityAddition(
   addition: FacilityAddition,
   playerId: string,
 ): OfficeBusinessMapState {
+  const target = map.sectors.find((sector) => sector.id === sectorId)?.slots.find((slot) => slot.id === slotId);
+  if (!target || target.tier === "major") return map;
   return {
     ...map,
     sectors: map.sectors.map((sector) => sector.id !== sectorId ? sector : {
@@ -702,6 +788,8 @@ export function installFacilityAddition(
 }
 
 export function removeFacilityAddition(map: OfficeBusinessMapState, sectorId: string, slotId: string): OfficeBusinessMapState {
+  const target = map.sectors.find((sector) => sector.id === sectorId)?.slots.find((slot) => slot.id === slotId);
+  if (!target || target.tier === "major") return map;
   return {
     ...map,
     sectors: map.sectors.map((sector) => sector.id !== sectorId ? sector : {

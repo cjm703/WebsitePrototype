@@ -4,8 +4,11 @@ import {
   normalizeFacilityAdditions,
   normalizeOfficeBusinessMap,
   type BusinessMapShape,
+  type FacilityAdditionCategory,
   type BusinessSlotCategory,
   type FacilityAddition,
+  type FacilitySlotRole,
+  type FacilitySlotTier,
   type FacilityStatKey,
   type FacilityStatModifier,
   type OfficeBusinessMapState,
@@ -62,7 +65,7 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   condition: 100,
 };
 
-export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v13";
+export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v14";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
 export const PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v2";
 export const RECENT_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
@@ -75,6 +78,7 @@ export const NINTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v9";
 export const TENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v10";
 export const ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v11";
 export const TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v12";
+export const THIRTEENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v13";
 
 const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
@@ -168,13 +172,57 @@ export function facilityStatDelta(addition: FacilityAddition | null | undefined)
   return addFacilityStatModifiers(emptyFacilityStats(), addition?.statModifiers || []);
 }
 
-function parkSlot(id: string, name: string, category: BusinessSlotCategory, x: number, y: number, width: number, height: number, tags: string[]) {
-  return {
-    ...createDefaultBusinessSlot(id, name, category, x, y),
-    width,
-    height,
-    acceptedTags: tags,
-  };
+type ParkSlotSeed = {
+  id: string;
+  name: string;
+  role: FacilitySlotRole;
+  tier?: FacilitySlotTier;
+  tags?: string[];
+  acceptedAdditionCategories?: FacilityAdditionCategory[];
+  notes?: string;
+};
+
+const PARK_SLOT_POSITIONS = [
+  { x: 1, y: 1 }, { x: 9, y: 1 }, { x: 17, y: 1 },
+  { x: 1, y: 6 }, { x: 9, y: 6 }, { x: 17, y: 6 },
+  { x: 1, y: 11 }, { x: 9, y: 11 }, { x: 17, y: 11 },
+  { x: 1, y: 16 },
+];
+
+function businessCategoryForParkRole(role: FacilitySlotRole): BusinessSlotCategory {
+  if (role === "Reception") return "Office";
+  if (role === "Flexible") return "Unassigned";
+  return "Commercial";
+}
+
+function additionCategoriesForParkRole(role: FacilitySlotRole): FacilityAdditionCategory[] {
+  if (role === "Minor Ride") return ["Minor Ride"];
+  if (role === "Minor Attraction") return ["Minor Attraction", "Recreation"];
+  if (role === "Shop") return ["Shop", "Dining"];
+  if (role === "Reception") return ["Guest Service"];
+  if (role === "Flexible") return ["Minor Ride", "Minor Attraction", "Shop", "Dining", "Guest Service", "Security", "Recreation", "Operations", "Flexible"];
+  return [];
+}
+
+function parkSlots(seeds: ParkSlotSeed[]) {
+  return seeds.map((seed, index) => {
+    const position = PARK_SLOT_POSITIONS[index] || PARK_SLOT_POSITIONS[PARK_SLOT_POSITIONS.length - 1];
+    const tier = seed.tier || "minor";
+    const slot = createDefaultBusinessSlot(seed.id, seed.name, businessCategoryForParkRole(seed.role), position.x, position.y);
+    return {
+      ...slot,
+      role: seed.role,
+      tier,
+      width: 7,
+      height: 4,
+      acceptedCategories: [],
+      acceptedAdditionCategories: seed.acceptedAdditionCategories || additionCategoriesForParkRole(seed.role),
+      acceptedTags: seed.tags || [],
+      filled: tier === "major",
+      occupant: tier === "major" ? seed.name : "",
+      notes: seed.notes || "",
+    };
+  });
 }
 
 const surface = () => ({
@@ -258,16 +306,98 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       perimeterWalkway("mystic-annex", 4, 6, 1, 1),
     ],
     sectors: [
-      sector({ id: "mystic-entrance", name: "Enchanted Gardens", description: "The park entrance beneath cherry-blossom trees, with family rides, a kiddie coaster, and a boat journey through the gardens into indoor show scenes.", color: "#F08FB5", zoneType: "Entrance & Family", decorationTheme: "enchanted-gardens", visualShape: "organic", x: 13, y: 19, width: 6, height: 4, slots: [parkSlot("entrance-gates", "Blossom Gatehouse", "Commercial", 1, 1, 5, 3, ["entrance", "guest-service"]), parkSlot("entrance-security", "Enchanted Gardens Security", "Security", 7, 1, 4, 3, ["security", "entrance"]), parkSlot("entrance-information", "Garden Guest Services", "Office", 13, 1, 4, 3, ["guest-service"])] }),
-      sector({ id: "mystic-center", name: "Magic Mountain", description: "A giant snow-capped hollow mountain containing an indoor story coaster about tracking the original fairy, becoming lost in a magical forest, and finding the way home.", color: "#8FBDE8", zoneType: "Landmark & Indoor Coaster", decorationTheme: "magic-mountain", visualShape: "ellipse", x: 11, y: 9, width: 10, height: 10, slots: [parkSlot("center-landmark", "Original Fairy Expedition", "Commercial", 2, 2, 6, 5, ["landmark", "attraction"]), parkSlot("center-food", "Mountain Concourse", "Commercial", 10, 2, 6, 4, ["food", "guest-service"]), parkSlot("center-stage", "Fairy Story Theater", "Operations", 2, 9, 6, 4, ["entertainment", "event"]), parkSlot("center-utility", "Mountain Operations", "Utility", 11, 9, 4, 3, ["power", "maintenance"])] }),
-      sector({ id: "mystic-northwest", name: "World Tree", description: "A natural land with serious undertones, dominated by a colossal tree and a 110-foot wooden coaster twisting through airtime hills around the trunk before ending inside it.", color: "#6EAD72", zoneType: "Nature & Wooden Coaster", decorationTheme: "world-tree", visualShape: "organic", x: 5, y: 6, width: 6, height: 7, slots: [parkSlot("whisperwood-attraction", "World Tree Coaster", "Commercial", 1, 1, 7, 5, ["nature", "attraction"]), parkSlot("whisperwood-kiosk", "Rootwood Kiosk", "Commercial", 10, 2, 4, 3, ["retail", "food"])] }),
-      sector({ id: "mystic-northeast", name: "Stormlands", description: "A rugged land of jagged cliffs, narrow-feeling paths, fog machines, and misters, anchored by a multi-launch coaster with inversions and a drop track.", color: "#7889A2", zoneType: "Cliffs & Launch Coaster", decorationTheme: "stormlands", visualShape: "organic", x: 11, y: 5, width: 10, height: 4, slots: [parkSlot("dragonspire-anchor", "Tempest Launch Coaster", "Commercial", 1, 1, 9, 6, ["thrill", "attraction"]), parkSlot("dragonspire-support", "Stormlands Operations", "Operations", 12, 2, 4, 4, ["ride-support", "staff"])] }),
-      sector({ id: "mystic-east", name: "Mushroom Forest", description: "An eerie forest defined by dimly glowing giant mushrooms and a steel hypercoaster over 200 feet tall, focused on airtime and sweeping hills.", color: "#9A79D2", zoneType: "Bioluminescent Forest", decorationTheme: "mushroom-forest", visualShape: "organic", x: 21, y: 6, width: 6, height: 7, slots: [parkSlot("carnival-games", "Giant Mushroom Hypercoaster", "Commercial", 1, 1, 7, 4, ["thrill", "attraction"]), parkSlot("carnival-retail", "Sporelight Market", "Commercial", 10, 1, 6, 4, ["retail", "prizes"]), parkSlot("carnival-food", "Mushroom Forest Food Stall", "Commercial", 3, 8, 5, 3, ["food"])] }),
-      sector({ id: "mystic-southeast", name: "Whispering Woods", description: "A dim, foggy forest of towering trees where a two-mile wooden coaster is under construction, planned around three lift hills rising to 150, 170, and 200 feet.", color: "#4F806A", zoneType: "Forest & Construction", decorationTheme: "whispering-woods", visualShape: "organic", x: 21, y: 13, width: 6, height: 7, slots: [parkSlot("starlight-theater", "Whispering Woods Coaster", "Commercial", 1, 1, 8, 5, ["entertainment", "attraction"]), parkSlot("starlight-dining", "Woods Construction Operations", "Operations", 11, 1, 6, 4, ["construction", "staff"])] }),
-      sector({ id: "mystic-southwest", name: "Dream Land", description: "A whimsical land of colorful trees, bright bushes, tiny singing animatronics, playful shops, and a family steel coaster, entered to the left of Enchanted Gardens.", color: "#E28FD0", zoneType: "Whimsical Family", decorationTheme: "dream-land", visualShape: "organic", x: 5, y: 13, width: 6, height: 7, slots: [parkSlot("runebrook-family", "Dream Land Family Coaster", "Commercial", 1, 1, 8, 5, ["family", "attraction"]), parkSlot("runebrook-rest", "Dream Land Rest Area", "Utility", 11, 1, 5, 4, ["guest-service", "rest"])] }),
-      sector({ id: "mystic-annex", name: "World Tree Service Access", description: "A compact backstage service access attached to World Tree. It supports supplies and security without counting as a public themed zone.", color: "#55745D", zoneType: "Backstage Service", visualShape: "organic", x: 4, y: 6, width: 1, height: 1, slots: [parkSlot("annex-storage", "World Tree Service Storage", "Storage", 2, 2, 6, 4, ["storage", "supplies"]), parkSlot("annex-security", "World Tree Service Gate", "Security", 10, 2, 4, 4, ["security", "service"])] }),
-      sector({ id: "mystic-expansion-west", name: "Future Parkland West", description: "The western half of the reserved northern park expansion, awaiting a future themed land.", color: "#766AA8", zoneType: "Future Expansion", x: 11, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("celestial-anchor", "Future Attraction Pad West", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("celestial-support", "Future Utility Pad West", "Utility", 13, 3, 4, 4, ["utility", "expansion"])] }),
-      sector({ id: "mystic-expansion-east", name: "Future Parkland East", description: "The eastern half of the reserved northern park expansion, awaiting a future themed land.", color: "#8175B6", zoneType: "Future Expansion", x: 17, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("astral-anchor", "Future Attraction Pad East", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("astral-support", "Future Operations Pad East", "Operations", 13, 3, 4, 4, ["operations", "expansion"])] }),
+      sector({
+        id: "mystic-entrance", name: "Enchanted Gardens", description: "The park entrance beneath cherry-blossom trees, with family rides, a kiddie coaster, and a boat journey through the gardens into indoor show scenes.", color: "#F08FB5", zoneType: "Entrance & Family", decorationTheme: "enchanted-gardens", visualShape: "organic", x: 13, y: 19, width: 6, height: 4,
+        slots: parkSlots([
+          { id: "entrance-river-journey", name: "Blossom River Journey", role: "Ride", tier: "major", tags: ["family", "boat", "show"] },
+          { id: "entrance-kiddie-coaster", name: "Petal Dash Kiddie Coaster", role: "Ride", tier: "major", tags: ["family", "kiddie-coaster"] },
+          { id: "entrance-minor-ride-1", name: "Minor Ride Slot 1", role: "Minor Ride", tags: ["family", "outdoor"] },
+          { id: "entrance-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["garden", "family"] },
+          { id: "entrance-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["garden", "family"] },
+          { id: "entrance-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["entrance", "retail"] },
+          { id: "entrance-shop-2", name: "Shop Slot 2", role: "Shop", tags: ["entrance", "food"] },
+          { id: "entrance-reception", name: "Reception Slot", role: "Reception", tags: ["entrance", "guest-service"] },
+          { id: "entrance-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["entrance", "family"] },
+        ]),
+      }),
+      sector({
+        id: "mystic-center", name: "Magic Mountain", description: "A giant snow-capped hollow mountain containing an indoor story coaster about tracking the original fairy, becoming lost in a magical forest, and finding the way home.", color: "#8FBDE8", zoneType: "Landmark & Indoor Coaster", decorationTheme: "magic-mountain", visualShape: "ellipse", x: 11, y: 9, width: 10, height: 10,
+        slots: parkSlots([
+          { id: "center-landmark", name: "Original Fairy Expedition", role: "Ride", tier: "major", tags: ["indoor", "story", "thrill"] },
+          { id: "center-minor-ride-1", name: "Minor Ride Slot 1", role: "Minor Ride", tags: ["mountain", "indoor"] },
+          { id: "center-minor-ride-2", name: "Minor Ride Slot 2", role: "Minor Ride", tags: ["mountain", "family"] },
+          { id: "center-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["story", "indoor"] },
+          { id: "center-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["mountain", "view"] },
+          { id: "center-minor-attraction-3", name: "Minor Attraction Slot 3", role: "Minor Attraction", tags: ["fairy", "archive"] },
+          { id: "center-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["mountain", "food"] },
+          { id: "center-shop-2", name: "Shop Slot 2", role: "Shop", tags: ["mountain", "retail"] },
+          { id: "center-shop-3", name: "Shop Slot 3", role: "Shop", tags: ["fairy", "retail"] },
+          { id: "center-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["mountain", "operations"] },
+        ]),
+      }),
+      sector({
+        id: "mystic-northwest", name: "World Tree", description: "A natural land with serious undertones, dominated by a colossal tree and a 110-foot wooden coaster twisting through airtime hills around the trunk before ending inside it.", color: "#6EAD72", zoneType: "Nature & Wooden Coaster", decorationTheme: "world-tree", visualShape: "organic", x: 5, y: 6, width: 6, height: 7,
+        slots: parkSlots([
+          { id: "whisperwood-attraction", name: "World Tree Coaster", role: "Ride", tier: "major", tags: ["wooden-coaster", "family-thrill", "nature"] },
+          { id: "world-tree-minor-ride-1", name: "Minor Ride Slot 1", role: "Minor Ride", tags: ["nature", "family"] },
+          { id: "world-tree-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["tree", "view"] },
+          { id: "world-tree-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["roots", "walkthrough"] },
+          { id: "world-tree-minor-attraction-3", name: "Minor Attraction Slot 3", role: "Minor Attraction", tags: ["nature", "trail"] },
+          { id: "world-tree-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["nature", "retail"] },
+          { id: "world-tree-shop-2", name: "Shop Slot 2", role: "Shop", tags: ["nature", "food"] },
+          { id: "world-tree-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["nature", "grove"] },
+        ]),
+      }),
+      sector({
+        id: "mystic-northeast", name: "Stormlands", description: "A rugged land of jagged cliffs, narrow-feeling paths, fog machines, and misters, anchored by a multi-launch coaster with inversions and a drop track.", color: "#7889A2", zoneType: "Cliffs & Launch Coaster", decorationTheme: "stormlands", visualShape: "organic", x: 11, y: 5, width: 10, height: 4,
+        slots: parkSlots([
+          { id: "dragonspire-anchor", name: "Tempest Launch Coaster", role: "Ride", tier: "major", tags: ["launch-coaster", "thrill", "inversions"] },
+          { id: "stormlands-minor-ride-1", name: "Minor Ride Slot 1", role: "Minor Ride", tags: ["thrill", "storm"] },
+          { id: "stormlands-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["fog", "cliff"] },
+          { id: "stormlands-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["storm", "indoor"] },
+          { id: "stormlands-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["storm", "supplies"] },
+          { id: "stormlands-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["storm", "operations"] },
+        ]),
+      }),
+      sector({
+        id: "mystic-east", name: "Mushroom Forest", description: "An eerie forest defined by dimly glowing giant mushrooms and a steel hypercoaster over 200 feet tall, focused on airtime and sweeping hills.", color: "#9A79D2", zoneType: "Bioluminescent Forest", decorationTheme: "mushroom-forest", visualShape: "organic", x: 21, y: 6, width: 6, height: 7,
+        slots: parkSlots([
+          { id: "carnival-games", name: "Giant Mushroom Hypercoaster", role: "Ride", tier: "major", tags: ["hypercoaster", "thrill", "airtime"] },
+          { id: "mushroom-minor-ride-1", name: "Minor Ride Slot 1", role: "Minor Ride", tags: ["mushroom", "family"] },
+          { id: "mushroom-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["glowing", "trail"] },
+          { id: "mushroom-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["mushroom", "games"] },
+          { id: "mushroom-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["mushroom", "retail"] },
+          { id: "mushroom-shop-2", name: "Shop Slot 2", role: "Shop", tags: ["mushroom", "food"] },
+          { id: "mushroom-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["mushroom", "services"] },
+        ]),
+      }),
+      sector({
+        id: "mystic-southeast", name: "Whispering Woods", description: "A dim, foggy forest of towering trees where a two-mile wooden coaster is under construction, planned around three lift hills rising to 150, 170, and 200 feet.", color: "#4F806A", zoneType: "Forest & Construction", decorationTheme: "whispering-woods", visualShape: "organic", x: 21, y: 13, width: 6, height: 7,
+        slots: parkSlots([
+          { id: "starlight-theater", name: "Whispering Woods Coaster", role: "Ride", tier: "major", tags: ["wooden-coaster", "construction", "thrill"] },
+          { id: "whispering-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["woods", "trail"] },
+          { id: "whispering-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["coaster", "view"] },
+          { id: "whispering-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["woods", "retail"] },
+          { id: "whispering-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["woods", "operations"] },
+        ]),
+      }),
+      sector({
+        id: "mystic-southwest", name: "Dream Land", description: "A whimsical land of colorful trees, bright bushes, tiny singing animatronics, playful shops, and a family steel coaster, entered to the left of Enchanted Gardens.", color: "#E28FD0", zoneType: "Whimsical Family", decorationTheme: "dream-land", visualShape: "organic", x: 5, y: 13, width: 6, height: 7,
+        slots: parkSlots([
+          { id: "runebrook-family", name: "Dream Land Family Coaster", role: "Ride", tier: "major", tags: ["family-coaster", "whimsical"] },
+          { id: "dream-pizzeria", name: "Dream Land Pizzeria", role: "Major Attraction", tier: "major", tags: ["pizzeria", "dining", "landmark"] },
+          { id: "dream-minor-attraction-1", name: "Minor Attraction Slot 1", role: "Minor Attraction", tags: ["animatronic", "music"] },
+          { id: "dream-minor-attraction-2", name: "Minor Attraction Slot 2", role: "Minor Attraction", tags: ["whimsical", "garden"] },
+          { id: "dream-minor-attraction-3", name: "Minor Attraction Slot 3", role: "Minor Attraction", tags: ["family", "play"] },
+          { id: "dream-shop-1", name: "Shop Slot 1", role: "Shop", tags: ["whimsical", "retail"] },
+          { id: "dream-shop-2", name: "Shop Slot 2", role: "Shop", tags: ["toy", "retail"] },
+          { id: "dream-shop-3", name: "Shop Slot 3", role: "Shop", tags: ["sweets", "food"] },
+          { id: "dream-flexible", name: "Flexible Addition Slot", role: "Flexible", tags: ["family", "services"] },
+        ]),
+      }),
+      sector({ id: "mystic-annex", name: "World Tree Service Access", description: "A compact backstage service access attached to World Tree. It supports supplies and security without counting as a public themed zone.", color: "#55745D", zoneType: "Backstage Service", visualShape: "organic", x: 4, y: 6, width: 1, height: 1, slots: parkSlots([{ id: "annex-storage", name: "Service Addition Slot", role: "Flexible", tags: ["storage", "supplies"] }, { id: "annex-security", name: "Security Addition Slot", role: "Flexible", acceptedAdditionCategories: ["Security"], tags: ["security", "service"] }]) }),
+      sector({ id: "mystic-expansion-west", name: "Future Parkland West", description: "The western half of the reserved northern park expansion, awaiting a future themed land.", color: "#766AA8", zoneType: "Future Expansion", x: 11, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: parkSlots([{ id: "celestial-anchor", name: "Future Attraction Slot", role: "Flexible", tags: ["attraction", "expansion"] }, { id: "celestial-support", name: "Future Support Slot", role: "Flexible", tags: ["utility", "expansion"] }]) }),
+      sector({ id: "mystic-expansion-east", name: "Future Parkland East", description: "The eastern half of the reserved northern park expansion, awaiting a future themed land.", color: "#8175B6", zoneType: "Future Expansion", x: 17, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: parkSlots([{ id: "astral-anchor", name: "Future Attraction Slot", role: "Flexible", tags: ["attraction", "expansion"] }, { id: "astral-support", name: "Future Support Slot", role: "Flexible", tags: ["operations", "expansion"] }]) }),
     ],
     expansions: [{ id: expansionId, name: "Northern Future Parkland", description: "A funded development beyond the northern fence unlocks two future parkland plots immediately after DM completion.", x: parkX(11), y: 0, width: 10, height: 4, cost: 15000, currency: "CR", status: "available", unlockSectorIds: ["mystic-expansion-west", "mystic-expansion-east"], fundedBy: "", fundedAt: "", completedBy: "", completedAt: "" }],
   });
@@ -330,5 +460,6 @@ export function isMysticLandsPark(candidate: unknown) {
     || source.presetId === TENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID
+    || source.presetId === THIRTEENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.name === "Mystic Lands Park";
 }
