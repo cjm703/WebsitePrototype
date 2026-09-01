@@ -62,7 +62,7 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   condition: 100,
 };
 
-export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v10";
+export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v11";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
 export const PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v2";
 export const RECENT_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
@@ -72,6 +72,7 @@ export const SIXTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v6";
 export const SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v7";
 export const EIGHTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v8";
 export const NINTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v9";
+export const TENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v10";
 
 const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
@@ -228,13 +229,13 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
     layers: BUSINESS_MAP_LAYER_DEFAULTS,
     permissions: { playerCanInstall: true, playerCanRemove: true, allowedPlayerIds: [] },
     shapes: [
-      { id: "park-boundary", kind: "area", layerId: "areas", name: "Park Grounds", points: [{ x: 1, y: 5 }, { x: 31, y: 5 }, { x: 31, y: 23 }, { x: 1, y: 23 }], color: "#77B993", fillColor: "#0E3B29", opacity: 0.52, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
+      { id: "park-boundary", kind: "area", layerId: "areas", name: "Park Grounds", points: [{ x: 4, y: 5 }, { x: 28, y: 5 }, { x: 28, y: 23 }, { x: 4, y: 23 }], color: "#77B993", fillColor: "#0E3B29", opacity: 0.52, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
       { id: "north-expansion-ground", kind: "area", layerId: "areas", name: "Northern Expansion Grounds", points: [{ x: 11, y: 0 }, { x: 21, y: 0 }, { x: 21, y: 4 }, { x: 11, y: 4 }], color: "#7D6BCD", fillColor: "#211B3B", opacity: 0.42, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
-      fence("fence-north", [{ x: 1, y: 5 }, { x: 31, y: 5 }]),
-      fence("fence-west", [{ x: 1, y: 5 }, { x: 1, y: 23 }]),
-      fence("fence-east", [{ x: 31, y: 5 }, { x: 31, y: 23 }]),
-      fence("fence-southwest", [{ x: 1, y: 23 }, { x: 13, y: 23 }]),
-      fence("fence-southeast", [{ x: 19, y: 23 }, { x: 31, y: 23 }]),
+      fence("fence-north", [{ x: 4, y: 5 }, { x: 28, y: 5 }]),
+      fence("fence-west", [{ x: 4, y: 5 }, { x: 4, y: 23 }]),
+      fence("fence-east", [{ x: 28, y: 5 }, { x: 28, y: 23 }]),
+      fence("fence-southwest", [{ x: 4, y: 23 }, { x: 13, y: 23 }]),
+      fence("fence-southeast", [{ x: 19, y: 23 }, { x: 28, y: 23 }]),
       fence("entrance-gate-west", [{ x: 13, y: 22.2 }, { x: 13, y: 23.8 }]),
       fence("entrance-gate-east", [{ x: 19, y: 22.2 }, { x: 19, y: 23.8 }]),
       walkway("park-ring", [{ x: 16, y: 9 }, { x: 17.75, y: 9.25 }, { x: 19.5, y: 10.5 }, { x: 20.75, y: 12.25 }, { x: 21, y: 14 }, { x: 20.75, y: 15.75 }, { x: 19.5, y: 17.5 }, { x: 17.75, y: 18.75 }, { x: 16, y: 19 }, { x: 14.25, y: 18.75 }, { x: 12.5, y: 17.5 }, { x: 11.25, y: 15.75 }, { x: 11, y: 14 }, { x: 11.25, y: 12.25 }, { x: 12.5, y: 10.5 }, { x: 14.25, y: 9.25 }, { x: 16, y: 9 }]),
@@ -249,7 +250,7 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       perimeterWalkway("mystic-east", 21, 6, 6, 7),
       perimeterWalkway("mystic-southeast", 21, 13, 6, 7),
       perimeterWalkway("mystic-southwest", 5, 13, 6, 7),
-      perimeterWalkway("mystic-annex", 3, 6, 2, 1),
+      perimeterWalkway("mystic-annex", 4, 6, 1, 1),
     ],
     sectors: [
       sector({ id: "mystic-entrance", name: "Moonstone Entrance", description: "The park's only public entrance, extending directly from Aetherheart Commons to the southern gate for ticketing, guest services, and security.", color: "#79B8FF", zoneType: "Entrance", visualShape: "organic", x: 13, y: 19, width: 6, height: 4, slots: [parkSlot("entrance-gates", "Enchanted Gatehouse", "Commercial", 1, 1, 5, 3, ["entrance", "guest-service"]), parkSlot("entrance-security", "Arrival Security", "Security", 7, 1, 4, 3, ["security", "entrance"]), parkSlot("entrance-information", "Guest Information", "Office", 13, 1, 4, 3, ["guest-service"])] }),
@@ -259,7 +260,7 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       sector({ id: "mystic-east", name: "Crystal Carnival", description: "Games, midway entertainment, colorful stalls, and quick-service attractions northeast of the Commons.", color: "#5CC8D7", zoneType: "Midway", visualShape: "organic", x: 21, y: 6, width: 6, height: 7, slots: [parkSlot("carnival-games", "Midway Games", "Commercial", 1, 1, 7, 4, ["games", "attraction"]), parkSlot("carnival-retail", "Prize and Retail Hall", "Commercial", 10, 1, 6, 4, ["retail", "prizes"]), parkSlot("carnival-food", "Carnival Food Stall", "Commercial", 3, 8, 5, 3, ["food"])] }),
       sector({ id: "mystic-southeast", name: "Starlight Promenade", description: "An eastern entertainment district with performances and premium dining.", color: "#D7A24A", zoneType: "Entertainment", visualShape: "organic", x: 21, y: 13, width: 6, height: 7, slots: [parkSlot("starlight-theater", "Promenade Theater", "Commercial", 1, 1, 8, 5, ["entertainment", "theater"]), parkSlot("starlight-dining", "Premium Dining", "Commercial", 11, 1, 6, 4, ["food", "premium"])] }),
       sector({ id: "mystic-southwest", name: "Runebrook Hollow", description: "A western family district organized around water, quiet rides, and sheltered rest areas.", color: "#79B8FF", zoneType: "Family", visualShape: "organic", x: 5, y: 13, width: 6, height: 7, slots: [parkSlot("runebrook-family", "Family Attraction", "Commercial", 1, 1, 8, 5, ["family", "attraction"]), parkSlot("runebrook-rest", "Sheltered Rest Area", "Utility", 11, 1, 5, 4, ["guest-service", "rest"])] }),
-      sector({ id: "mystic-annex", name: "Wayfarer Alley", description: "A tiny northwest service alley attached directly to Whisperwood Gardens and the park's edge walkway.", color: "#E18A5B", zoneType: "Alley", visualShape: "organic", x: 3, y: 6, width: 2, height: 1, slots: [parkSlot("annex-storage", "Alley Storage", "Storage", 2, 2, 6, 4, ["storage", "supplies"]), parkSlot("annex-security", "Alley Service Gate", "Security", 10, 2, 4, 4, ["security", "service"])] }),
+      sector({ id: "mystic-annex", name: "Wayfarer Alley", description: "A tiny northwest service alley attached directly to Whisperwood Gardens and the park's edge walkway.", color: "#E18A5B", zoneType: "Alley", visualShape: "organic", x: 4, y: 6, width: 1, height: 1, slots: [parkSlot("annex-storage", "Alley Storage", "Storage", 2, 2, 6, 4, ["storage", "supplies"]), parkSlot("annex-security", "Alley Service Gate", "Security", 10, 2, 4, 4, ["security", "service"])] }),
       sector({ id: "mystic-expansion-west", name: "Celestial Wilds", description: "The western half of the northern expansion, ready for a new themed district.", color: "#8B7BE8", zoneType: "Expansion", x: 11, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("celestial-anchor", "Expansion Anchor A", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("celestial-support", "Expansion Support A", "Utility", 13, 3, 4, 4, ["utility", "expansion"])] }),
       sector({ id: "mystic-expansion-east", name: "Astral Frontier", description: "The eastern half of the northern expansion, built for another major park experience.", color: "#9B8CFF", zoneType: "Expansion", x: 17, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("astral-anchor", "Expansion Anchor B", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("astral-support", "Expansion Support B", "Operations", 13, 3, 4, 4, ["operations", "expansion"])] }),
     ],
@@ -321,5 +322,6 @@ export function isMysticLandsPark(candidate: unknown) {
     || source.presetId === SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === EIGHTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === NINTH_MYSTIC_LANDS_PARK_PRESET_ID
+    || source.presetId === TENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.name === "Mystic Lands Park";
 }
