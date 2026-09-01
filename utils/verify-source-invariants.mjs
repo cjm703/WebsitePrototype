@@ -233,7 +233,8 @@ assert.match(businessMapEditor, /\(viewport\.scrollHeight - viewport\.clientHeig
 assert.match(businessMapEditor, /MysticParkZoneDecoration/);
 assert.match(businessMapEditor, /value\.name === "Mystic Lands Park"/);
 assert.match(businessMapEditor, /path-light-/);
-assert.match(businessMapEditor, /strokeDasharray="0\.16 0\.2"/);
+assert.match(businessMapEditor, /strokeDasharray="0\.1 0\.12"/);
+assert.match(businessMapEditor, /strokeDasharray="0\.12 0\.18"/);
 [
   "enchanted-gardens",
   "magic-mountain",
