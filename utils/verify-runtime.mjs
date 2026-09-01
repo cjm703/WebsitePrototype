@@ -377,7 +377,7 @@ async function testFacilityDepthState() {
   assert.equal(park.businessMap.expansions.length, 1);
   assert.equal(park.businessMap.expansions[0].status, "available");
   assert.deepEqual(park.businessMap.expansions[0].unlockSectorIds, ["mystic-expansion-west", "mystic-expansion-east"]);
-  assert.equal(park.presetId, "mystic-lands-park-v8");
+  assert.equal(park.presetId, "mystic-lands-park-v9");
   assert.deepEqual(park.businessMap.grid, { width: 32, height: 24, showGrid: true, snapToGrid: false });
   const entrance = park.businessMap.sectors.find((sector) => sector.id === "mystic-entrance");
   const center = park.businessMap.sectors.find((sector) => sector.id === "mystic-center");
@@ -401,12 +401,12 @@ async function testFacilityDepthState() {
   const ringHeight = Math.max(...parkRing.points.map((point) => point.y)) - Math.min(...parkRing.points.map((point) => point.y));
   assert.equal(ringWidth, center.width);
   assert.equal(ringHeight, center.height);
-  const northwestWalkway = park.businessMap.shapes.find((shape) => shape.id === "path-northwest");
-  assert.deepEqual(northwestWalkway.points.at(-1), {
+  const alleyWalkway = park.businessMap.shapes.find((shape) => shape.id === "path-alley");
+  assert.deepEqual(alleyWalkway.points.at(-1), {
     x: alley.x + alley.width,
     y: alley.y + alley.height / 2,
   });
-  assert.ok(!park.businessMap.shapes.some((shape) => shape.id === "path-entrance" || shape.id === "path-north" || shape.id === "alley-road"));
+  assert.ok(!park.businessMap.shapes.some((shape) => shape.id === "path-entrance" || shape.id === "alley-road"));
   const parkGrounds = park.businessMap.shapes.find((shape) => shape.id === "park-boundary");
   assert.ok(Math.min(...parkGrounds.points.map((point) => point.x)) <= entrance.x);
   assert.ok(Math.max(...parkGrounds.points.map((point) => point.x)) >= entrance.x + entrance.width);
@@ -434,15 +434,16 @@ async function testFacilityDepthState() {
   assert.equal(starlight.y, carnival.y + carnival.height);
   const feederWalkways = park.businessMap.shapes.filter((shape) => shape.kind === "pathway" && shape.id !== "park-ring");
   assert.ok(feederWalkways.every((shape) => shape.curved === false));
-  const feederStarts = new Map(feederWalkways.map((shape) => [shape.id, shape.points[0]]));
-  assert.deepEqual(feederStarts.get("path-northwest"), { x: 16, y: 9 });
-  assert.deepEqual(feederStarts.get("path-northeast"), { x: 16, y: 9 });
-  assert.deepEqual(feederStarts.get("path-west"), { x: 11, y: 14 });
-  assert.deepEqual(feederStarts.get("path-east"), { x: 21, y: 14 });
-  feederStarts.forEach((point) => {
-    const radiusSquared = (point.x - 16) ** 2 + (point.y - 14) ** 2;
-    assert.equal(radiusSquared, 25);
-  });
+  const walkwayById = new Map(feederWalkways.map((shape) => [shape.id, shape]));
+  const hasPoint = (shapeId, point) => walkwayById.get(shapeId).points.some((candidate) => candidate.x === point.x && candidate.y === point.y);
+  assert.ok(hasPoint("path-north", { x: 16, y: 9 }));
+  assert.ok(hasPoint("path-north", { x: 11, y: 9 }) && hasPoint("path-northwest", { x: 11, y: 9 }));
+  assert.ok(hasPoint("path-north", { x: 21, y: 9 }) && hasPoint("path-northeast", { x: 21, y: 9 }));
+  assert.ok(hasPoint("path-northwest", { x: 11, y: 14 }));
+  assert.ok(hasPoint("path-northwest", { x: 11, y: 13 }) && hasPoint("path-west", { x: 11, y: 13 }));
+  assert.ok(hasPoint("path-northwest", { x: 11, y: 6 }) && hasPoint("path-alley", { x: 11, y: 6 }));
+  assert.ok(hasPoint("path-northeast", { x: 21, y: 14 }));
+  assert.ok(hasPoint("path-northeast", { x: 21, y: 13 }) && hasPoint("path-east", { x: 21, y: 13 }));
   const parkAreas = [entrance, whisperwood, dragonspire, carnival, starlight, runebrook, alley];
   feederWalkways.forEach((shape) => {
     shape.points.slice(1).forEach((point, index) => {
@@ -523,7 +524,7 @@ async function testFacilityDepthState() {
   v1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x = 4;
   v1Park.businessMap.shapes.push({ ...v1Park.businessMap.shapes[0], id: "custom-park-shape" });
   const migratedV1Park = stateModel.normalizeFacilityOfficeState({ facilities: [v1Park] }).facilities.find((facility) => facility.id === park.id);
-  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v8");
+  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v9");
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 11);
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").visualShape, "ellipse");
   assert.ok(migratedV1Park.businessMap.shapes.some((shape) => shape.id === "custom-park-shape"));

@@ -232,7 +232,7 @@ assert.match(facilityDepthModel, /Mystic Lands Park/);
 assert.match(facilityDepthModel, /Northern Expansion Grounds/);
 assert.match(facilityDepthModel, /Celestial Wilds/);
 assert.match(facilityDepthModel, /Astral Frontier/);
-assert.match(facilityDepthModel, /mystic-lands-park-v8/);
+assert.match(facilityDepthModel, /mystic-lands-park-v9/);
 assert.match(facilityDepthModel, /Guest Walkway/);
 assert.match(facilityDepthModel, /const walkway =/);
 assert.match(facilityDepthModel, /fence-north/);
