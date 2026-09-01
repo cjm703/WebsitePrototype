@@ -23,6 +23,16 @@ export type BusinessMapBackgroundFit = "cover" | "contain" | "stretch";
 export type FacilityStatKey = "capacity" | "appeal" | "revenue" | "expenses" | "security" | "maintenance" | "staff" | "condition";
 export type BusinessSectorState = "active" | "locked";
 export type BusinessSectorVisualShape = "rectangle" | "ellipse" | "organic";
+export const BUSINESS_SECTOR_DECORATION_THEMES = [
+  "enchanted-gardens",
+  "magic-mountain",
+  "dream-land",
+  "world-tree",
+  "stormlands",
+  "mushroom-forest",
+  "whispering-woods",
+] as const;
+export type BusinessSectorDecorationTheme = typeof BUSINESS_SECTOR_DECORATION_THEMES[number];
 export type BusinessExpansionStatus = "available" | "funded" | "complete";
 
 export interface FacilityStatModifier {
@@ -121,6 +131,7 @@ export interface OfficeBusinessSector {
   unlockExpansionId: string;
   zoneType: string;
   visualShape?: BusinessSectorVisualShape;
+  decorationTheme?: BusinessSectorDecorationTheme;
 }
 
 export interface OfficeBusinessExpansion {
@@ -463,6 +474,9 @@ function normalizeSector(raw: unknown, index: number, grid: BusinessMapGrid, fal
     unlockExpansionId: cleanText(source.unlockExpansionId, "", 100).trim(),
     zoneType: cleanText(source.zoneType, "General", 60).trim() || "General",
     visualShape: source.visualShape === "ellipse" || source.visualShape === "organic" ? source.visualShape : "rectangle",
+    decorationTheme: BUSINESS_SECTOR_DECORATION_THEMES.includes(source.decorationTheme as BusinessSectorDecorationTheme)
+      ? source.decorationTheme as BusinessSectorDecorationTheme
+      : undefined,
   };
 }
 

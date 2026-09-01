@@ -377,7 +377,7 @@ async function testFacilityDepthState() {
   assert.equal(park.businessMap.expansions.length, 1);
   assert.equal(park.businessMap.expansions[0].status, "available");
   assert.deepEqual(park.businessMap.expansions[0].unlockSectorIds, ["mystic-expansion-west", "mystic-expansion-east"]);
-  assert.equal(park.presetId, "mystic-lands-park-v12");
+  assert.equal(park.presetId, "mystic-lands-park-v13");
   assert.deepEqual(park.businessMap.grid, { width: 26, height: 24, showGrid: true, snapToGrid: false });
   const entrance = park.businessMap.sectors.find((sector) => sector.id === "mystic-entrance");
   const center = park.businessMap.sectors.find((sector) => sector.id === "mystic-center");
@@ -388,7 +388,7 @@ async function testFacilityDepthState() {
   assert.equal(center.width, 10);
   assert.equal(center.height, 10);
   assert.equal(center.visualShape, "ellipse");
-  assert.equal(alley.name, "Wayfarer Alley");
+  assert.equal(alley.name, "World Tree Service Access");
   assert.ok(alley.y < center.y);
   assert.ok(alley.width * alley.height <= 2);
   assert.equal(alley.visualShape, "organic");
@@ -422,6 +422,24 @@ async function testFacilityDepthState() {
     const surrounding = park.businessMap.sectors.find((sector) => sector.id === id);
     assert.equal(surrounding.visualShape, "organic");
   });
+  const canonicalZones = {
+    "mystic-entrance": ["Enchanted Gardens", "enchanted-gardens"],
+    "mystic-center": ["Magic Mountain", "magic-mountain"],
+    "mystic-southwest": ["Dream Land", "dream-land"],
+    "mystic-northwest": ["World Tree", "world-tree"],
+    "mystic-northeast": ["Stormlands", "stormlands"],
+    "mystic-east": ["Mushroom Forest", "mushroom-forest"],
+    "mystic-southeast": ["Whispering Woods", "whispering-woods"],
+  };
+  Object.entries(canonicalZones).forEach(([id, [name, theme]]) => {
+    const zone = park.businessMap.sectors.find((sector) => sector.id === id);
+    assert.equal(zone.name, name);
+    assert.equal(zone.decorationTheme, theme);
+  });
+  assert.equal(park.businessMap.sectors.filter((sector) => sector.decorationTheme).length, 7);
+  assert.equal(park.businessMap.sectors.find((sector) => sector.id === "mystic-expansion-west").name, "Future Parkland West");
+  assert.equal(park.businessMap.sectors.find((sector) => sector.id === "mystic-expansion-east").name, "Future Parkland East");
+  assert.equal(park.businessMap.expansions[0].name, "Northern Future Parkland");
   const whisperwood = park.businessMap.sectors.find((sector) => sector.id === "mystic-northwest");
   const dragonspire = park.businessMap.sectors.find((sector) => sector.id === "mystic-northeast");
   const carnival = park.businessMap.sectors.find((sector) => sector.id === "mystic-east");
@@ -542,7 +560,7 @@ async function testFacilityDepthState() {
   v1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x = 4;
   v1Park.businessMap.shapes.push({ ...v1Park.businessMap.shapes[0], id: "custom-park-shape" });
   const migratedV1Park = stateModel.normalizeFacilityOfficeState({ facilities: [v1Park] }).facilities.find((facility) => facility.id === park.id);
-  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v12");
+  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v13");
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 8);
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").visualShape, "ellipse");
   assert.ok(migratedV1Park.businessMap.shapes.some((shape) => shape.id === "custom-park-shape"));
@@ -555,7 +573,7 @@ async function testFacilityDepthState() {
   const migratedV10Park = stateModel.normalizeFacilityOfficeState({ facilities: [v10Park] })
     .facilities.find((facility) => facility.id === park.id);
   const migratedV10Grounds = migratedV10Park.businessMap.shapes.find((shape) => shape.id === "park-boundary");
-  assert.equal(migratedV10Park.presetId, "mystic-lands-park-v12");
+  assert.equal(migratedV10Park.presetId, "mystic-lands-park-v13");
   assert.equal(Math.min(...migratedV10Grounds.points.map((point) => point.x)), 1);
   assert.equal(Math.max(...migratedV10Grounds.points.map((point) => point.x)), 25);
 
@@ -569,12 +587,36 @@ async function testFacilityDepthState() {
   v11Park.businessMap.expansions[0].width = 12;
   const migratedV11Park = stateModel.normalizeFacilityOfficeState({ facilities: [v11Park] })
     .facilities.find((facility) => facility.id === park.id);
-  assert.equal(migratedV11Park.presetId, "mystic-lands-park-v12");
+  assert.equal(migratedV11Park.presetId, "mystic-lands-park-v13");
   assert.equal(migratedV11Park.businessMap.grid.width, 26);
   assert.equal(migratedV11Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, center.x);
   assert.equal(migratedV11Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").width, 11);
   assert.equal(migratedV11Park.businessMap.expansions[0].x, expansion.x);
   assert.equal(migratedV11Park.businessMap.expansions[0].width, 12);
+
+  const v12Park = structuredClone(park);
+  v12Park.presetId = "mystic-lands-park-v12";
+  v12Park.description = "Old park description";
+  v12Park.businessMap.description = "Old map description";
+  const v12Center = v12Park.businessMap.sectors.find((sector) => sector.id === "mystic-center");
+  v12Center.name = "Aetherheart Commons";
+  v12Center.decorationTheme = undefined;
+  v12Center.x = 9;
+  v12Center.width = 11;
+  v12Center.slots[0].name = "Grand Landmark";
+  v12Center.slots[0].installedAdditionId = "kept-addition";
+  v12Center.slots[0].filled = true;
+  const migratedV12Park = stateModel.normalizeFacilityOfficeState({ facilities: [v12Park] })
+    .facilities.find((facility) => facility.id === park.id);
+  const migratedV12Center = migratedV12Park.businessMap.sectors.find((sector) => sector.id === "mystic-center");
+  assert.equal(migratedV12Park.presetId, "mystic-lands-park-v13");
+  assert.equal(migratedV12Center.name, "Magic Mountain");
+  assert.equal(migratedV12Center.decorationTheme, "magic-mountain");
+  assert.deepEqual({ x: migratedV12Center.x, width: migratedV12Center.width }, { x: 9, width: 11 });
+  assert.equal(migratedV12Center.slots[0].name, "Original Fairy Expedition");
+  assert.equal(migratedV12Center.slots[0].installedAdditionId, "kept-addition");
+  assert.match(migratedV12Park.description, /seven-zone destination park/);
+  assert.match(migratedV12Park.businessMap.description, /Magic Mountain/);
 
   const editedCurrentPark = structuredClone(park);
   const editedCurrentCenter = editedCurrentPark.businessMap.sectors.find((sector) => sector.id === "mystic-center");

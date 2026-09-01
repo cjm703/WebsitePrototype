@@ -79,6 +79,7 @@ import {
 import { FACILITY_STAT_KEYS, FACILITY_STAT_META } from "@/lib/facility-depth-model";
 import { deleteBusinessMapImage, uploadBusinessMapImage } from "@/lib/business-map-storage";
 import type { FacilityAdditionAction } from "@/lib/office-state-api";
+import { MysticParkZoneDecoration } from "./mystic-park-zone-decoration";
 import { retro } from "./retro-styles";
 import { S_DIM, S_GREEN, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 
@@ -890,18 +891,20 @@ export function OfficeBusinessMap({
     }
   };
 
+  const unlockedSectors = useMemo(() => value.sectors.filter((sector) => isBusinessSectorUnlocked(value, sector)), [value]);
+  const themedSectors = useMemo(() => unlockedSectors.filter((sector) => sector.decorationTheme), [unlockedSectors]);
+  const summarySectors = themedSectors.length > 0 ? themedSectors : unlockedSectors;
   const occupiedCount = useMemo(
-    () => value.sectors.reduce((count, sector) => count + sector.slots.filter((slot) => slot.filled).length, 0),
-    [value.sectors],
+    () => summarySectors.reduce((count, sector) => count + sector.slots.filter((slot) => slot.filled).length, 0),
+    [summarySectors],
   );
-  const slotCount = useMemo(() => value.sectors.reduce((count, sector) => count + sector.slots.length, 0), [value.sectors]);
+  const slotCount = useMemo(() => summarySectors.reduce((count, sector) => count + sector.slots.length, 0), [summarySectors]);
   const filteredAdditions = useMemo(() => {
     const query = additionSearch.trim().toLowerCase();
     if (!query) return additions;
     return additions.filter((addition) => `${addition.name} ${addition.category} ${addition.tags.join(" ")}`.toLowerCase().includes(query));
   }, [additionSearch, additions]);
   const selectedAddition = additions.find((addition) => addition.id === selectedAdditionId) || null;
-  const unlockedSectors = useMemo(() => value.sectors.filter((sector) => isBusinessSectorUnlocked(value, sector)), [value]);
 
   const runExpansionAction = async (expansionId: string, action: "fund" | "complete") => {
     if (!onExpansionAction || busyExpansionId) return;
@@ -944,7 +947,7 @@ export function OfficeBusinessMap({
             <span className="truncate">{activeSector ? activeSector.name : value.name}</span>
           </div>
           <div className="mt-0.5 text-[8px]" style={S_DIM}>
-            {activeSector ? activeSector.description || "Sector interior" : `${unlockedSectors.length} active sectors | ${occupiedCount}/${slotCount} slots filled`}
+            {activeSector ? activeSector.description || "Sector interior" : `${summarySectors.length} active ${themedSectors.length > 0 ? "zones" : "sectors"} | ${occupiedCount}/${slotCount} slots filled`}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -1109,6 +1112,7 @@ export function OfficeBusinessMap({
               const ellipse = sector.visualShape === "ellipse";
               const shaped = ellipse || sector.visualShape === "organic";
               const compact = sector.width <= 2 || sector.height <= 1;
+              const centerLabel = ellipse || sector.decorationTheme === "stormlands";
               return (
                 <button
                   type="button"
@@ -1126,17 +1130,19 @@ export function OfficeBusinessMap({
                   className="absolute overflow-hidden border p-2 text-left"
                   style={{ ...rectStyle(sector, value.grid), ...sectorShapeStyle(sector), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: locked ? "#101018CC" : `${sector.color}38`, opacity: locked ? 0.55 : 1, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: locked && !editMode ? "not-allowed" : editMode && tool === "select" ? "move" : "pointer" }}
                 >
-                  <div className={`flex h-full min-h-0 flex-col ${shaped ? "items-center text-center" : ""} ${ellipse || compact ? "justify-center" : ""}`}>
+                  <MysticParkZoneDecoration theme={sector.decorationTheme} subdued={editMode || locked} />
+                  <div className={`relative z-10 flex h-full min-h-0 flex-col ${shaped ? "items-center text-center" : ""} ${centerLabel || compact ? "justify-center" : ""}`}>
                     <div
                       className={shaped
                         ? `${compact ? "text-[7px]" : "text-[9px]"} w-[86%] whitespace-normal break-words text-center font-bold leading-tight`
                         : "truncate text-[10px] font-bold"}
                       title={sector.name}
+                      style={sector.decorationTheme ? { background: "#020509C7", border: "1px solid #FFFFFF1A", padding: "2px 4px", textShadow: "0 1px 3px #000000" } : undefined}
                     >
                       {sector.name}
                     </div>
-                    {!compact && <div className="mt-1 truncate text-[8px]" style={{ color: sector.color }}>{sector.width}x{sector.height}</div>}
-                    {!compact && <div className={ellipse ? "mt-1 text-[8px]" : "mt-auto text-[8px]"} style={S_DIM}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>}
+                    {!compact && <div className="mt-1 truncate text-[8px]" style={{ color: sector.color, textShadow: "0 1px 2px #000000" }}>{sector.width}x{sector.height}</div>}
+                    {!compact && <div className={centerLabel ? "mt-1 text-[8px]" : "mt-auto text-[8px]"} style={{ ...S_DIM, textShadow: "0 1px 2px #000000" }}>{locked ? "LOCKED BY EXPANSION" : `${filled}/${sector.slots.length} slots`}</div>}
                   </div>
                   {editMode && tool === "select" && <ResizeHandle onPointerDown={(event) => startRectOperation(event, "sector", "resize", sector.id, sector)} />}
                 </button>

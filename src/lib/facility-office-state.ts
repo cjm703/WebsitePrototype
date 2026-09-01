@@ -1,6 +1,7 @@
 import {
   ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID,
   MYSTIC_LANDS_PARK_PRESET_ID,
+  TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID,
   createMysticLandsParkFacility,
   ensureMysticLandsAdditions,
   ensurePersonalFund,
@@ -99,6 +100,35 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
   if (!existing) return normalizeFacilityRecord(preset)!;
   const existingMap = existing.businessMap;
   const presetMap = preset.businessMap;
+  const canonicalizePresentation = (map: OfficeBusinessMapState) => {
+    const presetSectors = new Map(presetMap.sectors.map((sector) => [sector.id, sector]));
+    const presetExpansions = new Map(presetMap.expansions.map((expansion) => [expansion.id, expansion]));
+    return normalizeOfficeBusinessMap({
+      ...map,
+      description: presetMap.description,
+      sectors: map.sectors.map((sector) => {
+        const canonical = presetSectors.get(sector.id);
+        if (!canonical) return sector;
+        const canonicalSlots = new Map(canonical.slots.map((slot) => [slot.id, slot]));
+        return {
+          ...sector,
+          name: canonical.name,
+          description: canonical.description,
+          color: canonical.color,
+          zoneType: canonical.zoneType,
+          decorationTheme: canonical.decorationTheme,
+          slots: sector.slots.map((slot) => {
+            const canonicalSlot = canonicalSlots.get(slot.id);
+            return canonicalSlot ? { ...slot, name: canonicalSlot.name } : slot;
+          }),
+        };
+      }),
+      expansions: map.expansions.map((expansion) => {
+        const canonical = presetExpansions.get(expansion.id);
+        return canonical ? { ...expansion, name: canonical.name, description: canonical.description } : expansion;
+      }),
+    });
+  };
 
   // Preset geometry is authoritative only while upgrading an older park. Once
   // the current preset has been applied, the saved map is the editable source
@@ -110,6 +140,17 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
       presetId: MYSTIC_LANDS_PARK_PRESET_ID,
       baseStats: existing.baseStats || preset.baseStats,
       businessMap: existingMap || presetMap,
+    })!;
+  }
+
+  if (existing.presetId === TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID) {
+    return normalizeFacilityRecord({
+      ...preset,
+      ...existing,
+      presetId: MYSTIC_LANDS_PARK_PRESET_ID,
+      description: preset.description,
+      baseStats: existing.baseStats || preset.baseStats,
+      businessMap: canonicalizePresentation(existingMap || presetMap),
     })!;
   }
 
@@ -134,7 +175,8 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
       ...existing,
       presetId: MYSTIC_LANDS_PARK_PRESET_ID,
       baseStats: existing.baseStats || preset.baseStats,
-      businessMap: translatedMap,
+      description: preset.description,
+      businessMap: canonicalizePresentation(translatedMap),
     })!;
   }
 
@@ -231,7 +273,8 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
     ...existing,
     presetId: MYSTIC_LANDS_PARK_PRESET_ID,
     baseStats: existing.baseStats || preset.baseStats,
-    businessMap: mergedMap,
+    description: preset.description,
+    businessMap: canonicalizePresentation(mergedMap),
   })!;
 }
 

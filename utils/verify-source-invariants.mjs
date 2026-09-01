@@ -38,6 +38,7 @@ const adventureRemovalMigration = read("supabase/migrations/20260830010000_remov
 const nexusNomad = read("src/app/components/nexus-nomad.tsx");
 const officeBusinessMap = read("src/app/components/office-business-map.tsx");
 const businessMapEditor = read("src/app/components/business-map-editor.tsx");
+const mysticParkDecoration = read("src/app/components/mystic-park-zone-decoration.tsx");
 const businessMapModel = read("src/lib/business-map-model.ts");
 const businessMapStorage = read("src/lib/business-map-storage.ts");
 const officeStateApi = read("src/lib/office-state-api.ts");
@@ -50,6 +51,7 @@ parse(edge, { sourceType: "module", plugins: ["typescript"] });
 parse(storageStatusEdge, { sourceType: "module", plugins: ["typescript"] });
 parse(officeBusinessMap, { sourceType: "module", plugins: ["typescript", "jsx"] });
 parse(businessMapEditor, { sourceType: "module", plugins: ["typescript", "jsx"] });
+parse(mysticParkDecoration, { sourceType: "module", plugins: ["typescript", "jsx"] });
 parse(businessMapModel, { sourceType: "module", plugins: ["typescript"] });
 parse(businessMapStorage, { sourceType: "module", plugins: ["typescript"] });
 parse(officeStateApi, { sourceType: "module", plugins: ["typescript"] });
@@ -199,6 +201,7 @@ assert.match(businessMapModel, /version: 3/);
 assert.match(businessMapModel, /isFacilityAdditionCompatible/);
 assert.match(businessMapModel, /isBusinessSectorUnlocked/);
 assert.match(businessMapModel, /BusinessSectorVisualShape/);
+assert.match(businessMapModel, /BUSINESS_SECTOR_DECORATION_THEMES/);
 assert.match(businessMapEditor, /Facility Addition Storage/);
 assert.match(businessMapEditor, /SWITCH TO/);
 assert.match(businessMapEditor, /onExpansionAction/);
@@ -227,6 +230,19 @@ assert.match(businessMapEditor, /viewport\.scrollTop = Math\.max/);
 assert.match(businessMapEditor, /overflow-x-hidden overflow-y-auto/);
 assert.match(businessMapEditor, /aria-label="Recenter map"/);
 assert.match(businessMapEditor, /\(viewport\.scrollHeight - viewport\.clientHeight\) \/ 2/);
+assert.match(businessMapEditor, /MysticParkZoneDecoration/);
+[
+  "enchanted-gardens",
+  "magic-mountain",
+  "dream-land",
+  "world-tree",
+  "stormlands",
+  "mushroom-forest",
+  "whispering-woods",
+].forEach((theme) => assert.match(mysticParkDecoration, new RegExp(theme)));
+assert.match(mysticParkDecoration, /function BlossomTree/);
+assert.match(mysticParkDecoration, /function GiantMushroom/);
+assert.match(mysticParkDecoration, /attributeName="opacity"/);
 assert.match(businessMapStorage, /business-map\/assets\/upload/);
 assert.match(officeStateApi, /office\/facility-addition\/action/);
 assert.match(officeStateApi, /office\/facility-expansion\/action/);
@@ -242,16 +258,37 @@ assert.match(facilityMapPage, /saveLoopPromiseRef/);
 assert.match(facilityMapPage, /const flushDMSave/);
 assert.match(facilityMapPage, /onSave=\{saveNow\}/);
 assert.match(facilityDepthModel, /Mystic Lands Park/);
-assert.match(facilityDepthModel, /Northern Expansion Grounds/);
-assert.match(facilityDepthModel, /Celestial Wilds/);
-assert.match(facilityDepthModel, /Astral Frontier/);
-assert.match(facilityDepthModel, /mystic-lands-park-v12/);
+assert.match(facilityDepthModel, /Northern Future Parkland/);
+assert.match(facilityDepthModel, /Future Parkland West/);
+assert.match(facilityDepthModel, /Future Parkland East/);
+assert.match(facilityDepthModel, /mystic-lands-park-v13/);
 assert.match(facilityDepthModel, /Guest Walkway/);
 assert.match(facilityDepthModel, /Area Perimeter Walkway/);
 assert.match(facilityDepthModel, /const walkway =/);
 assert.match(facilityDepthModel, /fence-north/);
 assert.match(facilityDepthModel, /park-ring/);
-assert.match(facilityDepthModel, /Wayfarer Alley/);
+[
+  "Enchanted Gardens",
+  "Magic Mountain",
+  "Dream Land",
+  "World Tree",
+  "Stormlands",
+  "Mushroom Forest",
+  "Whispering Woods",
+].forEach((name) => assert.match(facilityDepthModel, new RegExp(name)));
+assert.match(facilityDepthModel, /World Tree Service Access/);
+[
+  "Moonstone Entrance",
+  "Aetherheart Commons",
+  "Whisperwood Gardens",
+  "Dragonspire Heights",
+  "Crystal Carnival",
+  "Starlight Promenade",
+  "Runebrook Hollow",
+  "Wayfarer Alley",
+  "Celestial Wilds",
+  "Astral Frontier",
+].forEach((name) => assert.doesNotMatch(facilityDepthModel, new RegExp(name)));
 assert.match(facilityDepthModel, /LEGACY_MYSTIC_ADDITION_IDS/);
 assert.doesNotMatch(facilityDepthModel, /MYSTIC_ADDITION_SEEDS/);
 assert.match(facilityOfficeState, /version: Math\.max\(5/);
@@ -259,6 +296,8 @@ assert.match(facilityOfficeState, /isGeneratedMainFloor/);
 assert.match(facilityOfficeState, /existing\.presetId === MYSTIC_LANDS_PARK_PRESET_ID/);
 assert.match(facilityOfficeState, /businessMap: existingMap \|\| presetMap/);
 assert.match(facilityOfficeState, /existing\.presetId === ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID/);
+assert.match(facilityOfficeState, /existing\.presetId === TWELFTH_MYSTIC_LANDS_PARK_PRESET_ID/);
+assert.match(facilityOfficeState, /canonicalizePresentation/);
 assert.match(facilityOfficeState, /point\.x - 3/);
 assert.match(edge, /app_nexus_nomad_state: \{ write: "dm" \}/);
 assert.match(edge, /office\/state\/save/);
