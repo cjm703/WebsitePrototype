@@ -114,18 +114,20 @@ function GardenEntrance() {
 
 function DreamPizzeria() {
   return (
-    <g transform="translate(50 57)">
-      <rect x="-14" y="-8" width="28" height="17" rx="1.5" fill="#D96E62" stroke="#FFE5BD" strokeWidth="0.9" />
-      <path d="M -16 -8 L -11 -15 H 11 L 16 -8 Z" fill="#4E7D63" stroke="#FFE5BD" strokeWidth="0.9" />
-      <path d="M -14 -7 H 14 V -2 H -14 Z" fill="#F6E0B8" />
-      <path d="M -14 -7 H 14" stroke="#B84845" strokeWidth="4" strokeDasharray="5 5" />
-      <rect x="-10" y="1" width="7" height="6" rx="1" fill="#BDEBFF" opacity="0.9" />
-      <rect x="4" y="-1" width="6" height="10" rx="1" fill="#49394C" />
-      <circle cx="0" cy="-14" r="5" fill="#F5D17A" stroke="#FFF0C9" strokeWidth="0.8">
+    <g transform="translate(50 58)">
+      <rect x="-17" y="-10" width="34" height="20" rx="1.5" fill="#E5C69D" stroke="#FFF0D1" strokeWidth="1" />
+      <rect x="-14" y="-18" width="28" height="8" rx="1.5" fill="#7E2F32" stroke="#FFE4B8" strokeWidth="0.9" />
+      <text x="0" y="-12.2" textAnchor="middle" fill="#FFF0C9" fontSize="4.2" fontWeight="800" style={{ letterSpacing: 0 }}>PIZZERIA</text>
+      <path d="M -18 -9 H 18 V -3 H -18 Z" fill="#F7E5C4" stroke="#FFF0D1" strokeWidth="0.6" />
+      <path d="M -15 -9 V -3 M -9 -9 V -3 M -3 -9 V -3 M 3 -9 V -3 M 9 -9 V -3 M 15 -9 V -3" stroke="#B84643" strokeWidth="3" />
+      <rect x="-13" y="0" width="11" height="7" rx="1" fill="#BDEBFF" stroke="#FFF0D1" strokeWidth="0.6" opacity="0.92" />
+      <path d="M -9.5 5 L -5 -0.5 L -3 5 Z" fill="#F4C767" stroke="#A75442" strokeWidth="0.55" />
+      <circle cx="-6.3" cy="2.4" r="0.65" fill="#B94643" />
+      <rect x="5" y="-1" width="7" height="11" rx="1" fill="#49394C" stroke="#FFF0D1" strokeWidth="0.6" />
+      <rect x="6.5" y="1" width="4" height="4" rx="0.5" fill="#F5D17A">
         <animate attributeName="opacity" values="0.72;1;0.72" dur="4s" repeatCount="indefinite" />
-      </circle>
-      <path d="M -2.5 -16.5 L 3 -13 L -3 -11 Z" fill="#C84E4E" />
-      <circle cx="0" cy="-14" r="0.7" fill="#6A9C55" />
+      </rect>
+      <circle cx="10.3" cy="5.8" r="0.5" fill="#FFE7A0" />
     </g>
   );
 }
@@ -194,15 +196,10 @@ function MagicMountain({ ids }: { ids: Record<string, string> }) {
   return (
     <g>
       <path d="M 7 82 L 22 62 L 31 66 L 50 10 L 67 53 L 76 43 L 94 82 Z" fill={`url(#${ids.mountain})`} stroke="#BBD8EA" strokeWidth="1.2" />
-      <path d="M 31 65 L 50 10 L 67 53 L 59 46 L 53 52 L 47 37 L 40 51 Z" fill="#EDF7FA" opacity="0.94">
-        <animate attributeName="opacity" values="0.82;1;0.82" dur="6s" repeatCount="indefinite" />
-      </path>
+      <path d="M 31 65 L 50 10 L 67 53 L 59 46 L 53 52 L 47 37 L 40 51 Z" fill="#EDF7FA" opacity="0.9" />
       <path d="M 50 10 L 53 52 L 67 53 L 61 66 L 51 78 L 43 69 L 31 65 Z" fill="#66829B" opacity="0.3" />
       <path d="M 22 62 L 31 66 L 39 53 M 76 43 L 69 61 L 61 68 M 37 75 L 43 62 M 70 72 L 78 57" fill="none" stroke="#B0C7D5" strokeWidth="1.2" opacity="0.48" />
-      <path d="M 37 42 L 43 30 L 48 37" fill="none" stroke="#FFFFFF" strokeWidth="1.5" strokeLinecap="round" opacity="0.2">
-        <animate attributeName="opacity" values="0.08;0.72;0.08" dur="4.8s" repeatCount="indefinite" />
-      </path>
-      <path d="M 18 80 Q 50 75 84 80" fill="none" stroke="#8DA6B6" strokeWidth="1.2" opacity="0.38">
+      <path d="M 18 80 Q 50 75 84 80" fill="none" stroke="#8DA6B6" strokeWidth="1.2" strokeDasharray="2 3" opacity="0.38">
         <animate attributeName="stroke-dashoffset" values="0;18" dur="9s" repeatCount="indefinite" />
       </path>
     </g>
