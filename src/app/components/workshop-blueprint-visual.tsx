@@ -202,7 +202,7 @@ function FirearmSchematic({ prefix, powered, frameType }: { prefix: string; powe
       <circle cx="57" cy="43" r="1.05" fill="#A998FF" opacity="0.78" />
       <circle cx="57" cy="39.2" r="0.82" fill="#2C455A" /><circle cx="60.6" cy="41.8" r="0.82" fill="#2C455A" /><circle cx="59.2" cy="46" r="0.82" fill="#2C455A" /><circle cx="54.8" cy="46" r="0.82" fill="#2C455A" /><circle cx="53.4" cy="41.8" r="0.82" fill="#2C455A" />
       <path d="M42 49 C46 50 51 50 54 49 L52 55 C49 61 44 65 38 64 L34 60 C38 56 39 52 39 49 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.86" />
-      <path d="M63 49 C69 48 72 50 71 53 C70 56 66 57 60 56 M64 50 L62 54" fill="none" stroke="#A7BECD" strokeWidth="0.66" />
+      <path d="M63 49 C69 48 72 50 71 53 C70 56 66 57 60 56" fill="none" stroke="#A7BECD" strokeWidth="0.66" />
       <path d="M40 37 L44 31 L50 35 L48 38" fill="#17283A" stroke="#F1D47A" strokeWidth="0.66" />
       <path d="M90 33.8 V35 M42 56 L49 58 M39 60 L46 62" stroke="#A9EEFF" strokeWidth="0.38" opacity="0.78" />
     </g>}
