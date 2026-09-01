@@ -62,7 +62,7 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   condition: 100,
 };
 
-export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v9";
+export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v10";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
 export const PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v2";
 export const RECENT_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
@@ -71,6 +71,7 @@ export const LAST_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v5";
 export const SIXTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v6";
 export const SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v7";
 export const EIGHTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v8";
+export const NINTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v9";
 
 const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
@@ -195,6 +196,11 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
     visible: true,
     locked: true,
   });
+  const perimeterWalkway = (sectorId: string, x: number, y: number, width: number, height: number): BusinessMapShape => ({
+    ...walkway(`perimeter-${sectorId}`, [{ x, y }, { x: x + width, y: y + height }], false),
+    name: "Area Perimeter Walkway",
+    strokeWidth: 1,
+  });
   const fence = (id: string, points: Array<{ x: number; y: number }>): BusinessMapShape => ({
     id,
     kind: "wall",
@@ -238,6 +244,12 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       walkway("path-west", [{ x: 11, y: 13 }, { x: 5, y: 13 }], false),
       walkway("path-east", [{ x: 21, y: 13 }, { x: 27, y: 13 }], false),
       walkway("path-alley", [{ x: 11, y: 6 }, { x: 5, y: 6 }, { x: 5, y: 6.5 }], false),
+      perimeterWalkway("mystic-northwest", 5, 6, 6, 7),
+      perimeterWalkway("mystic-northeast", 11, 5, 10, 4),
+      perimeterWalkway("mystic-east", 21, 6, 6, 7),
+      perimeterWalkway("mystic-southeast", 21, 13, 6, 7),
+      perimeterWalkway("mystic-southwest", 5, 13, 6, 7),
+      perimeterWalkway("mystic-annex", 3, 6, 2, 1),
     ],
     sectors: [
       sector({ id: "mystic-entrance", name: "Moonstone Entrance", description: "The park's only public entrance, extending directly from Aetherheart Commons to the southern gate for ticketing, guest services, and security.", color: "#79B8FF", zoneType: "Entrance", visualShape: "organic", x: 13, y: 19, width: 6, height: 4, slots: [parkSlot("entrance-gates", "Enchanted Gatehouse", "Commercial", 1, 1, 5, 3, ["entrance", "guest-service"]), parkSlot("entrance-security", "Arrival Security", "Security", 7, 1, 4, 3, ["security", "entrance"]), parkSlot("entrance-information", "Guest Information", "Office", 13, 1, 4, 3, ["guest-service"])] }),
@@ -308,5 +320,6 @@ export function isMysticLandsPark(candidate: unknown) {
     || source.presetId === SIXTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === EIGHTH_MYSTIC_LANDS_PARK_PRESET_ID
+    || source.presetId === NINTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.name === "Mystic Lands Park";
 }

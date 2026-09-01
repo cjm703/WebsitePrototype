@@ -377,7 +377,7 @@ async function testFacilityDepthState() {
   assert.equal(park.businessMap.expansions.length, 1);
   assert.equal(park.businessMap.expansions[0].status, "available");
   assert.deepEqual(park.businessMap.expansions[0].unlockSectorIds, ["mystic-expansion-west", "mystic-expansion-east"]);
-  assert.equal(park.presetId, "mystic-lands-park-v9");
+  assert.equal(park.presetId, "mystic-lands-park-v10");
   assert.deepEqual(park.businessMap.grid, { width: 32, height: 24, showGrid: true, snapToGrid: false });
   const entrance = park.businessMap.sectors.find((sector) => sector.id === "mystic-entrance");
   const center = park.businessMap.sectors.find((sector) => sector.id === "mystic-center");
@@ -432,7 +432,19 @@ async function testFacilityDepthState() {
   assert.equal(starlight.y, 13);
   assert.equal(runebrook.y, whisperwood.y + whisperwood.height);
   assert.equal(starlight.y, carnival.y + carnival.height);
-  const feederWalkways = park.businessMap.shapes.filter((shape) => shape.kind === "pathway" && shape.id !== "park-ring");
+  const perimeterWalkways = park.businessMap.shapes.filter((shape) => shape.kind === "pathway" && shape.id.startsWith("perimeter-"));
+  const perimeterSectorIds = ["mystic-northwest", "mystic-northeast", "mystic-east", "mystic-southeast", "mystic-southwest", "mystic-annex"];
+  assert.deepEqual(perimeterWalkways.map((shape) => shape.id.slice("perimeter-".length)).sort(), perimeterSectorIds.slice().sort());
+  assert.ok(!perimeterWalkways.some((shape) => shape.id.includes("mystic-center") || shape.id.includes("mystic-entrance")));
+  perimeterWalkways.forEach((shape) => {
+    const sectorId = shape.id.slice("perimeter-".length);
+    const sector = park.businessMap.sectors.find((candidate) => candidate.id === sectorId);
+    assert.deepEqual(shape.points, [
+      { x: sector.x, y: sector.y },
+      { x: sector.x + sector.width, y: sector.y + sector.height },
+    ]);
+  });
+  const feederWalkways = park.businessMap.shapes.filter((shape) => shape.kind === "pathway" && shape.id !== "park-ring" && !shape.id.startsWith("perimeter-"));
   assert.ok(feederWalkways.every((shape) => shape.curved === false));
   const walkwayById = new Map(feederWalkways.map((shape) => [shape.id, shape]));
   const hasPoint = (shapeId, point) => walkwayById.get(shapeId).points.some((candidate) => candidate.x === point.x && candidate.y === point.y);
@@ -524,7 +536,7 @@ async function testFacilityDepthState() {
   v1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x = 4;
   v1Park.businessMap.shapes.push({ ...v1Park.businessMap.shapes[0], id: "custom-park-shape" });
   const migratedV1Park = stateModel.normalizeFacilityOfficeState({ facilities: [v1Park] }).facilities.find((facility) => facility.id === park.id);
-  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v9");
+  assert.equal(migratedV1Park.presetId, "mystic-lands-park-v10");
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 11);
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").visualShape, "ellipse");
   assert.ok(migratedV1Park.businessMap.shapes.some((shape) => shape.id === "custom-park-shape"));

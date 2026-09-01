@@ -170,6 +170,21 @@ function shapeDefaults(kind: BusinessMapShapeKind, points: BusinessMapPoint[], i
   };
 }
 
+function organicShapeProfile(id: string) {
+  const alternate = id.split("").reduce((total, character) => total + character.charCodeAt(0), 0) % 2 === 0;
+  return alternate
+    ? {
+        borderRadius: "34% 22% 30% 20% / 24% 32% 22% 30%",
+        horizontal: [0.34, 0.22, 0.3, 0.2],
+        vertical: [0.24, 0.32, 0.22, 0.3],
+      }
+    : {
+        borderRadius: "22% 34% 20% 30% / 32% 22% 30% 24%",
+        horizontal: [0.22, 0.34, 0.2, 0.3],
+        vertical: [0.32, 0.22, 0.3, 0.24],
+      };
+}
+
 function shapePath(shape: Pick<BusinessMapShape, "id" | "points" | "curved">) {
   const points = shape.points;
   if (points.length === 0) return "";
@@ -185,6 +200,32 @@ function shapePath(shape: Pick<BusinessMapShape, "id" | "points" | "curved">) {
     const radiusX = (maxX - minX) / 2;
     const radiusY = (maxY - minY) / 2;
     return `M ${minX} ${centerY} A ${radiusX} ${radiusY} 0 1 0 ${maxX} ${centerY} A ${radiusX} ${radiusY} 0 1 0 ${minX} ${centerY} Z`;
+  }
+  if (shape.id.startsWith("perimeter-") && points.length >= 2) {
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const sectorId = shape.id.slice("perimeter-".length);
+    const profile = organicShapeProfile(sectorId);
+    const [topLeftX, topRightX, bottomRightX, bottomLeftX] = profile.horizontal.map((ratio) => ratio * width);
+    const [topLeftY, topRightY, bottomRightY, bottomLeftY] = profile.vertical.map((ratio) => ratio * height);
+    return [
+      `M ${minX + topLeftX} ${minY}`,
+      `H ${maxX - topRightX}`,
+      `A ${topRightX} ${topRightY} 0 0 1 ${maxX} ${minY + topRightY}`,
+      `V ${maxY - bottomRightY}`,
+      `A ${bottomRightX} ${bottomRightY} 0 0 1 ${maxX - bottomRightX} ${maxY}`,
+      `H ${minX + bottomLeftX}`,
+      `A ${bottomLeftX} ${bottomLeftY} 0 0 1 ${minX} ${maxY - bottomLeftY}`,
+      `V ${minY + topLeftY}`,
+      `A ${topLeftX} ${topLeftY} 0 0 1 ${minX + topLeftX} ${minY}`,
+      "Z",
+    ].join(" ");
   }
   if (!shape.curved || points.length < 3) {
     return `M ${points.map((point) => `${point.x} ${point.y}`).join(" L ")}`;
@@ -253,12 +294,7 @@ function sectorShapeStyle(sector: OfficeBusinessSector): React.CSSProperties {
     return { borderRadius: "50%", padding: "10px 14px" };
   }
   if (sector.visualShape === "organic") {
-    const alternate = sector.id.split("").reduce((total, character) => total + character.charCodeAt(0), 0) % 2 === 0;
-    return {
-      borderRadius: alternate
-        ? "34% 22% 30% 20% / 24% 32% 22% 30%"
-        : "22% 34% 20% 30% / 32% 22% 30% 24%",
-    };
+    return { borderRadius: organicShapeProfile(sector.id).borderRadius };
   }
   return { borderRadius: 0 };
 }
