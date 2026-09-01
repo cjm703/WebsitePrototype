@@ -232,9 +232,15 @@ assert.match(businessMapEditor, /aria-label="Recenter map"/);
 assert.match(businessMapEditor, /\(viewport\.scrollHeight - viewport\.clientHeight\) \/ 2/);
 assert.match(businessMapEditor, /MysticParkZoneDecoration/);
 assert.match(businessMapEditor, /value\.name === "Mystic Lands Park"/);
+assert.match(businessMapEditor, /Math\.max\(10\.4, shape\.strokeWidth \* 5\.6\)/);
 assert.match(businessMapEditor, /path-light-/);
 assert.match(businessMapEditor, /strokeDasharray="0\.1 0\.12"/);
 assert.match(businessMapEditor, /strokeDasharray="0\.12 0\.18"/);
+assert.match(businessMapEditor, /AREA CONTENTS & SLOTS/);
+assert.match(businessMapEditor, /SLOT REQUIREMENTS/);
+assert.match(businessMapEditor, /Edit Interior Layout/);
+assert.doesNotMatch(businessMapEditor, /Open Sector/);
+assert.doesNotMatch(businessMapEditor, /if \(!editMode && !locked\) setActiveSectorId/);
 [
   "enchanted-gardens",
   "magic-mountain",

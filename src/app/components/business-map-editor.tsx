@@ -378,7 +378,8 @@ export function OfficeBusinessMap({
 
   const activeSector = value.sectors.find((sector) => sector.id === activeSectorId) || null;
   const selectedSector = value.sectors.find((sector) => sector.id === selectedSectorId) || null;
-  const selectedSlot = activeSector?.slots.find((slot) => slot.id === selectedSlotId) || null;
+  const selectedSlotSector = activeSector || selectedSector;
+  const selectedSlot = selectedSlotSector?.slots.find((slot) => slot.id === selectedSlotId) || null;
   const selectedExpansion = !activeSector ? value.expansions.find((expansion) => expansion.id === selectedExpansionId) || null : null;
   const surface = surfaceFor(value, activeSectorId) || value;
   const selectedShapes = surface.shapes.filter((shape) => selectedShapeIds.includes(shape.id));
@@ -796,9 +797,8 @@ export function OfficeBusinessMap({
 
   const updateLayers = (layers: BusinessMapLayer[]) => updateCurrentSurface({ layers });
 
-  const handleInstall = async (slot: OfficeBusinessSlot, addition: FacilityAddition) => {
+  const handleInstall = async (sector: OfficeBusinessSector, slot: OfficeBusinessSlot, addition: FacilityAddition) => {
     setActionError("");
-    if (!activeSector) return;
     if (!isFacilityAdditionCompatible(slot, addition)) {
       setActionError("That addition does not match this slot's category, tags, or footprint.");
       return;
@@ -813,7 +813,7 @@ export function OfficeBusinessMap({
       return;
     }
     if (isDM) {
-      emit(installFacilityAddition(valueRef.current, activeSector.id, slot.id, addition, currentPlayerId || "dm"));
+      emit(installFacilityAddition(valueRef.current, sector.id, slot.id, addition, currentPlayerId || "dm"));
       return;
     }
     if (!canInstallAdditions || !onPlayerAction) {
@@ -822,7 +822,7 @@ export function OfficeBusinessMap({
     }
     setBusySlotId(slot.id);
     try {
-      await onPlayerAction({ action: "install", scopeId: mapKey, sectorId: activeSector.id, slotId: slot.id, additionId: addition.id });
+      await onPlayerAction({ action: "install", scopeId: mapKey, sectorId: sector.id, slotId: slot.id, additionId: addition.id });
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Installation failed.");
     } finally {
@@ -830,11 +830,11 @@ export function OfficeBusinessMap({
     }
   };
 
-  const handleRemove = async (slot: OfficeBusinessSlot) => {
-    if (!activeSector || !slot.installedAdditionId) return;
+  const handleRemove = async (sector: OfficeBusinessSector, slot: OfficeBusinessSlot) => {
+    if (!slot.installedAdditionId) return;
     setActionError("");
     if (isDM) {
-      emit(removeFacilityAddition(valueRef.current, activeSector.id, slot.id));
+      emit(removeFacilityAddition(valueRef.current, sector.id, slot.id));
       return;
     }
     if (!canRemoveAdditions || !onPlayerAction) {
@@ -843,7 +843,7 @@ export function OfficeBusinessMap({
     }
     setBusySlotId(slot.id);
     try {
-      await onPlayerAction({ action: "remove", scopeId: mapKey, sectorId: activeSector.id, slotId: slot.id });
+      await onPlayerAction({ action: "remove", scopeId: mapKey, sectorId: sector.id, slotId: slot.id });
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Removal failed.");
     } finally {
@@ -1066,7 +1066,7 @@ export function OfficeBusinessMap({
                 if (shape.kind === "pathway") {
                   const parkWalkway = value.name === "Mystic Lands Park";
                   const walkwayWidth = parkWalkway
-                    ? Math.max(5.2, shape.strokeWidth * 2.8)
+                    ? Math.max(10.4, shape.strokeWidth * 5.6)
                     : Math.max(2.25, shape.strokeWidth * 1.8);
                   const path = shapePath(shape);
                   const lightPoints = parkWalkway && shape.name === "Guest Walkway"
@@ -1074,11 +1074,11 @@ export function OfficeBusinessMap({
                     : [];
                   return (
                     <g key={shape.id} style={{ pointerEvents: interactive ? "all" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? selectedShapeIds.includes(shape.id) ? selectedShapeIds.filter((id) => id !== shape.id) : [...selectedShapeIds, shape.id] : [shape.id]); }}>
-                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : parkWalkway ? "#26382F" : "#55614F"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + (parkWalkway ? 3.8 : 1.4)} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : parkWalkway ? "#26382F" : "#55614F"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + (parkWalkway ? 7.6 : 1.4)} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                       {parkWalkway && (
                         <>
-                          <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#DED4BA"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + 2.4} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-                          <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#A99D80"} strokeOpacity={shape.opacity * 0.72} strokeWidth={walkwayWidth + 2.4} strokeDasharray="0.1 0.12" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                          <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#DED4BA"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + 4.8} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                          <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#A99D80"} strokeOpacity={shape.opacity * 0.72} strokeWidth={walkwayWidth + 4.8} strokeDasharray="0.1 0.12" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                         </>
                       )}
                       <path d={path} fill="none" stroke={selected ? "#EEE7D5" : shape.color} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
@@ -1146,8 +1146,8 @@ export function OfficeBusinessMap({
                     setSelectedSectorId(sector.id);
                     setSelectedExpansionId(null);
                     setSelectedShapeIds([]);
+                    setSelectedSlotId(null);
                     setInspectorMode("selection");
-                    if (!editMode && !locked) setActiveSectorId(sector.id);
                   }}
                   className="absolute overflow-hidden border p-2 text-left"
                   style={{ ...rectStyle(sector, value.grid), ...sectorShapeStyle(sector), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : sector.color, background: locked ? "#101018CC" : `${sector.color}38`, opacity: locked ? 0.55 : 1, boxShadow: selected ? `inset 0 0 0 1px ${sector.color}, 0 0 10px ${sector.color}55` : "none", cursor: locked && !editMode ? "not-allowed" : editMode && tool === "select" ? "move" : "pointer" }}
@@ -1187,7 +1187,7 @@ export function OfficeBusinessMap({
                     event.preventDefault();
                     const additionId = event.dataTransfer.getData("application/x-facility-addition");
                     const addition = additions.find((entry) => entry.id === additionId);
-                    if (addition) void handleInstall(slot, addition);
+                    if (addition) void handleInstall(activeSector, slot, addition);
                   }}
                   className="absolute overflow-hidden border p-2 text-left"
                   style={{ ...rectStyle(slot, value.grid), color: "#E5ECFF", borderColor: selected ? "#FFFFFF" : color, background: slot.filled ? `${color}55` : `${color}1E`, boxShadow: selected ? `inset 0 0 0 1px ${color}, 0 0 10px ${color}55` : "none", cursor: editMode && tool === "select" && !slotLayer.locked ? "move" : "pointer" }}
@@ -1257,7 +1257,7 @@ export function OfficeBusinessMap({
               onDelete={deleteSelectedShapes}
               onAlign={alignSelectedShapes}
             />
-          ) : activeSector && selectedSlot ? (
+          ) : selectedSlot && selectedSlotSector ? (
             <SlotInspector
               slot={selectedSlot}
               additions={additions}
@@ -1267,12 +1267,14 @@ export function OfficeBusinessMap({
               isDM={isDM}
               editMode={editMode}
                canInstall={canInstallAdditions}
-               canRemove={canRemoveAdditions}
+              canRemove={canRemoveAdditions}
               busy={busySlotId === selectedSlot.id}
-              onUpdate={(updates) => updateSlot(activeSector.id, selectedSlot.id, updates)}
-              onInstall={(addition) => void handleInstall(selectedSlot, addition)}
-              onRemove={() => void handleRemove(selectedSlot)}
-              onDelete={() => deleteSlot(activeSector.id, selectedSlot.id)}
+              backLabel={!activeSector ? selectedSlotSector.name : undefined}
+              onBack={!activeSector ? () => setSelectedSlotId(null) : undefined}
+              onUpdate={(updates) => updateSlot(selectedSlotSector.id, selectedSlot.id, updates)}
+              onInstall={(addition) => void handleInstall(selectedSlotSector, selectedSlot, addition)}
+              onRemove={() => void handleRemove(selectedSlotSector, selectedSlot)}
+              onDelete={() => deleteSlot(selectedSlotSector.id, selectedSlot.id)}
             />
           ) : !activeSector && selectedExpansion ? (
             <ExpansionInspector
@@ -1288,8 +1290,10 @@ export function OfficeBusinessMap({
               isDM={isDM}
               editMode={editMode}
               grid={value.grid}
+              additions={additions}
               onUpdate={(updates) => updateSector(selectedSector.id, updates)}
-              onOpen={() => { setActiveSectorId(selectedSector.id); setSelectedSlotId(null); setSelectedShapeIds([]); setInspectorMode("selection"); }}
+              onSelectSlot={(slotId) => { setSelectedSlotId(slotId); setSelectedShapeIds([]); setSelectedExpansionId(null); setInspectorMode("selection"); }}
+              onEditLayout={isDM && editMode ? () => { setActiveSectorId(selectedSector.id); setSelectedSlotId(null); setSelectedShapeIds([]); setInspectorMode("selection"); } : undefined}
               onDelete={() => deleteSector(selectedSector.id)}
             />
           ) : (
@@ -1444,10 +1448,22 @@ function MapSettingsInspector({
   );
 }
 
-function SectorInspector({ sector, isDM, editMode, grid, onUpdate, onOpen, onDelete }: { sector: OfficeBusinessSector; isDM: boolean; editMode: boolean; grid: OfficeBusinessMapState["grid"]; onUpdate: (updates: Partial<OfficeBusinessSector>) => void; onOpen: () => void; onDelete: () => void }) {
+function SectorInspector({ sector, isDM, editMode, grid, additions, onUpdate, onSelectSlot, onEditLayout, onDelete }: {
+  sector: OfficeBusinessSector;
+  isDM: boolean;
+  editMode: boolean;
+  grid: OfficeBusinessMapState["grid"];
+  additions: FacilityAddition[];
+  onUpdate: (updates: Partial<OfficeBusinessSector>) => void;
+  onSelectSlot: (slotId: string) => void;
+  onEditLayout?: () => void;
+  onDelete: () => void;
+}) {
+  const filledSlots = sector.slots.filter((slot) => slot.filled).length;
   return (
     <div className="space-y-3">
       <PanelTitle icon={Building2} text={sector.name} color={sector.color} />
+      <div className="flex items-center justify-between border border-[#1A1A2B] px-2 py-1.5 text-[8px]"><span style={S_DIM}>AREA TYPE</span><span style={{ color: sector.color }}>{sector.zoneType || "General"}</span></div>
       {isDM && editMode ? (
         <>
           <Field label="Sector Name"><input value={sector.name} onChange={(event) => onUpdate({ name: event.target.value.slice(0, 60) })} className="w-full border bg-transparent px-2 py-2 text-[10px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
@@ -1457,8 +1473,31 @@ function SectorInspector({ sector, isDM, editMode, grid, onUpdate, onOpen, onDel
           <RectInputs rect={sector} grid={grid} onUpdate={onUpdate} />
         </>
       ) : <div className="text-[10px] leading-5" style={S_MUTED}>{sector.description || "No sector description."}</div>}
-      <div className="grid grid-cols-2 gap-2 text-[9px]"><div className="border border-[#1A1A2B] p-2" style={S_DIM}>{sector.slots.length} slots</div><div className="border border-[#1A1A2B] p-2" style={S_DIM}>{sector.shapes.length} elements</div></div>
-      <button type="button" onClick={onOpen} className={`${retro.button} flex w-full items-center justify-center gap-2 py-2 text-[10px]`} style={S_TEXT}><MapIcon size={12} /> Open Sector</button>
+      <div className="grid grid-cols-2 gap-2 text-[9px]"><div className="border border-[#1A1A2B] p-2" style={S_DIM}>{filledSlots}/{sector.slots.length} slots filled</div><div className="border border-[#1A1A2B] p-2" style={S_DIM}>{sector.shapes.length} map elements</div></div>
+
+      <div className="border-t border-[#1A1A2B] pt-3">
+        <div className="mb-2 flex items-center justify-between text-[8px]"><span className="font-semibold" style={S_TEXT}>AREA CONTENTS & SLOTS</span><span style={S_DIM}>{sector.slots.length}</span></div>
+        <div className="space-y-2">
+          {sector.slots.map((slot) => {
+            const color = businessSlotCategoryColor(slot.category);
+            const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
+            const occupant = installed?.name || slot.occupant || (slot.filled ? "Filled" : "Empty");
+            const accepted = slot.acceptedCategories.length > 0 ? slot.acceptedCategories.join(", ") : "Any category";
+            const requiredTags = slot.acceptedTags.length > 0 ? slot.acceptedTags.join(", ") : "No required tags";
+            return (
+              <button key={slot.id} type="button" onClick={() => onSelectSlot(slot.id)} className="w-full border bg-[#08080D] p-2.5 text-left transition-colors hover:bg-[#101018]" style={{ borderColor: `${color}88` }}>
+                <div className="flex items-start justify-between gap-2"><span className="text-[9px] font-semibold leading-4" style={S_TEXT}>{slot.name}</span><span className="flex-shrink-0 text-[7px]" style={{ color }}>{slot.category.toUpperCase()}</span></div>
+                <div className="mt-2 border-l-2 pl-2" style={{ borderColor: color }}><div className="text-[7px]" style={S_DIM}>CONTAINS</div><div className="mt-0.5 text-[9px]" style={slot.filled ? S_TEXT : S_MUTED}>{occupant}</div></div>
+                <div className="mt-2 grid gap-1 text-[7px] leading-3"><div><span style={S_DIM}>ACCEPTS </span><span style={S_MUTED}>{accepted}</span></div><div><span style={S_DIM}>REQUIRES </span><span style={S_MUTED}>{requiredTags}</span></div></div>
+                {slot.notes && <div className="mt-2 line-clamp-2 text-[7px] leading-3" style={S_DIM}>{slot.notes}</div>}
+              </button>
+            );
+          })}
+          {sector.slots.length === 0 && <div className="border border-[#1A1A2B] p-3 text-center text-[8px]" style={S_DIM}>This area has no configured slots.</div>}
+        </div>
+      </div>
+
+      {onEditLayout && <button type="button" onClick={onEditLayout} className={`${retro.button} flex w-full items-center justify-center gap-2 py-2 text-[10px]`} style={S_TEXT}><Pencil size={12} /> Edit Interior Layout</button>}
       {isDM && editMode && <button type="button" onClick={onDelete} className={`${retro.button} flex w-full items-center justify-center gap-2 py-2 text-[9px]`} style={S_RED}><Trash2 size={11} /> Delete Sector</button>}
     </div>
   );
@@ -1508,12 +1547,13 @@ function ShapeInspector({ shape, selectedCount, isDM, editMode, onUpdate, onDupl
   );
 }
 
-function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM, editMode, canInstall, canRemove, busy, onUpdate, onInstall, onRemove, onDelete }: { slot: OfficeBusinessSlot; additions: FacilityAddition[]; additionUsage: Record<string, number>; facilities: Array<{ id: string; name: string }>; grid: OfficeBusinessMapState["grid"]; isDM: boolean; editMode: boolean; canInstall: boolean; canRemove: boolean; busy: boolean; onUpdate: (updates: Partial<OfficeBusinessSlot>) => void; onInstall: (addition: FacilityAddition) => void; onRemove: () => void; onDelete: () => void }) {
+function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM, editMode, canInstall, canRemove, busy, backLabel, onBack, onUpdate, onInstall, onRemove, onDelete }: { slot: OfficeBusinessSlot; additions: FacilityAddition[]; additionUsage: Record<string, number>; facilities: Array<{ id: string; name: string }>; grid: OfficeBusinessMapState["grid"]; isDM: boolean; editMode: boolean; canInstall: boolean; canRemove: boolean; busy: boolean; backLabel?: string; onBack?: () => void; onUpdate: (updates: Partial<OfficeBusinessSlot>) => void; onInstall: (addition: FacilityAddition) => void; onRemove: () => void; onDelete: () => void }) {
   const color = businessSlotCategoryColor(slot.category);
   const compatible = additions.filter((addition) => isFacilityAdditionCompatible(slot, addition));
   const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
   return (
     <div className="space-y-3">
+      {onBack && <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-[8px] hover:text-white" style={S_MUTED}><ArrowLeft size={10} /> Back to {backLabel || "area"}</button>}
       <PanelTitle icon={Factory} text={slot.name} color={color} />
       {isDM && editMode ? (
         <>
@@ -1531,6 +1571,10 @@ function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM,
           <div className="flex items-center justify-between text-[9px]"><span style={S_DIM}>TYPE</span><span style={{ color }}>{slot.category}</span></div>
           <div className="border p-3" style={{ borderColor: color, background: `${color}16` }}><div className="text-[8px]" style={S_DIM}>ASSIGNMENT</div><div className="mt-1 text-[11px]" style={slot.filled ? S_TEXT : S_MUTED}>{slot.filled ? slot.occupant || "Filled" : "Empty"}</div>{slot.installedBy && <div className="mt-1 text-[7px]" style={S_DIM}>Installed by {slot.installedBy}</div>}</div>
           {slot.notes && <div className="whitespace-pre-wrap text-[9px] leading-5" style={S_MUTED}>{slot.notes}</div>}
+          <div className="border border-[#1A1A2B] p-3">
+            <div className="mb-2 text-[8px] font-semibold" style={S_TEXT}>SLOT REQUIREMENTS</div>
+            <div className="space-y-2 text-[8px] leading-4"><div><div style={S_DIM}>ACCEPTED CATEGORIES</div><div style={S_MUTED}>{slot.acceptedCategories.length > 0 ? slot.acceptedCategories.join(", ") : "Any category"}</div></div><div><div style={S_DIM}>REQUIRED TAGS</div><div style={S_MUTED}>{slot.acceptedTags.length > 0 ? slot.acceptedTags.join(", ") : "No required tags"}</div></div></div>
+          </div>
         </div>
       )}
 
