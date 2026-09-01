@@ -64,35 +64,39 @@ function PineTree({ x, y, scale = 1, color = "#244F3B", variant = 0, delay = 0 }
   );
 }
 
-function DreamHouse({ x, y, color, roof, scale = 1, variant = 0, delay = 0 }: {
+function DreamStorefront({ x, y, color, accent, label, width = 18, height = 14, variant = 0, delay = 0 }: {
   x: number;
   y: number;
   color: string;
-  roof: string;
-  scale?: number;
+  accent: string;
+  label: string;
+  width?: number;
+  height?: number;
   variant?: number;
   delay?: number;
 }) {
-  const tall = variant % 3 === 1;
-  const roundRoof = variant % 3 === 2;
-  const top = tall ? -9 : -7;
-  const halfWidth = tall ? 9 : 8.5;
-  const roofHalfWidth = halfWidth + 2;
-  const roofRise = roundRoof ? 10 : tall ? 6.5 : 7;
+  const halfWidth = width / 2;
+  const top = -height;
+  const doorOnLeft = variant % 2 === 0;
+  const doorX = doorOnLeft ? -halfWidth + 2 : halfWidth - 6;
+  const windowX = doorOnLeft ? -halfWidth + 7 : -halfWidth + 2;
+  const windowWidth = Math.max(5, width - 10);
   return (
-    <g transform={`translate(${x} ${y}) scale(${scale})`}>
-      {variant % 2 === 1 && <rect x={halfWidth - 4} y={top - 7} width="3" height="7" fill="#70506D" stroke="#FFE6B3" strokeWidth="0.6" />}
-      <rect x={-halfWidth} y={top} width={halfWidth * 2} height={7 - top} rx={roundRoof ? 2.5 : 0.8} fill={color} stroke="#F8E9C8" strokeWidth="0.8" />
-      {roundRoof
-        ? <path d={`M ${-roofHalfWidth} ${top} Q 0 ${top - roofRise} ${roofHalfWidth} ${top} Z`} fill={roof} stroke="#FFE6B3" strokeWidth="0.8" />
-        : <path d={`M ${-roofHalfWidth} ${top} L 0 ${top - roofRise} L ${roofHalfWidth} ${top} Z`} fill={roof} stroke="#FFE6B3" strokeWidth="0.8" />}
-      <rect x="-5.5" y={top + 3.5} width="4" height="4" rx="0.7" fill="#FFE9A3">
-        <animate attributeName="opacity" values="0.55;1;0.7;1;0.55" dur={`${4.2 + variant * 0.35}s`} begin={`${delay}s`} repeatCount="indefinite" />
+    <g transform={`translate(${x} ${y})`}>
+      <rect x={-halfWidth - 1} y={top + 2} width={width + 2} height={height + 3} fill="#171523" opacity="0.3" />
+      <rect x={-halfWidth} y={top} width={width} height={height} rx="0.8" fill={color} stroke="#F7E7C8" strokeWidth="0.7" />
+      <rect x={-halfWidth - 1} y={top - 2} width={width + 2} height="3" rx="0.6" fill={accent} stroke="#FFE5B1" strokeWidth="0.6" />
+      {variant % 3 === 1 && <path d={`M ${-halfWidth + 2} ${top - 2} V ${top - 6} H ${halfWidth - 2} V ${top - 2}`} fill={accent} stroke="#FFE5B1" strokeWidth="0.55" />}
+      <rect x={-halfWidth + 2} y={top + 2} width={width - 4} height="4" rx="0.5" fill="#342944" stroke="#FFE5B1" strokeWidth="0.5" />
+      <text x="0" y={top + 5.1} textAnchor="middle" fill="#FFF0C9" fontSize="2.9" fontWeight="800" style={{ letterSpacing: 0 }}>{label}</text>
+      <path d={`M ${-halfWidth + 1} ${top + 7} H ${halfWidth - 1} L ${halfWidth - 2} ${top + 10} H ${-halfWidth + 2} Z`} fill={accent} stroke="#FFE2AE" strokeWidth="0.5" />
+      <path d={`M ${-halfWidth + 4} ${top + 7} V ${top + 9.7} M ${-halfWidth + 8} ${top + 7} V ${top + 9.7} M ${-halfWidth + 12} ${top + 7} V ${top + 9.7}`} stroke="#FFF1D5" strokeWidth="1.15" opacity="0.75" />
+      <rect x={windowX} y={top + 10} width={windowWidth} height={height - 11} rx="0.45" fill="#AEE4F2" stroke="#FFF1D5" strokeWidth="0.5">
+        <animate attributeName="opacity" values="0.72;0.95;0.78;0.95;0.72" dur={`${4.5 + variant * 0.5}s`} begin={`${delay}s`} repeatCount="indefinite" />
       </rect>
-      <rect x="1.5" y={top + 3.5} width="4" height="4" rx="0.7" fill="#BDEBFF" opacity="0.9" />
-      <rect x="-2" y="0" width="4" height="7" rx="1" fill="#40345D" />
-      <circle cx="0.8" cy="3.5" r="0.45" fill="#FFE9A3" />
-      <path d={`M ${-halfWidth} ${top + 1} H ${halfWidth}`} stroke="#FFFFFF" strokeWidth="2.1" strokeDasharray={roundRoof ? "2 2" : "4 3"} opacity="0.65" />
+      <path d={`M ${windowX + windowWidth / 2} ${top + 10} V -1`} stroke="#FFF1D5" strokeWidth="0.45" opacity="0.8" />
+      <rect x={doorX} y={top + 9} width="4" height={height - 9} rx="0.45" fill="#393044" stroke="#FFF1D5" strokeWidth="0.5" />
+      <circle cx={doorX + (doorOnLeft ? 3.1 : 0.9)} cy="-2" r="0.35" fill="#FFE196" />
     </g>
   );
 }
@@ -118,19 +122,37 @@ function GardenEntrance() {
 function DreamPizzeria() {
   return (
     <g transform="translate(50 58)">
-      <rect x="-17" y="-10" width="34" height="20" rx="1.5" fill="#E5C69D" stroke="#FFF0D1" strokeWidth="1" />
-      <rect x="-14" y="-18" width="28" height="8" rx="1.5" fill="#7E2F32" stroke="#FFE4B8" strokeWidth="0.9" />
-      <text x="0" y="-12.2" textAnchor="middle" fill="#FFF0C9" fontSize="4.2" fontWeight="800" style={{ letterSpacing: 0 }}>PIZZERIA</text>
-      <path d="M -18 -9 H 18 V -3 H -18 Z" fill="#F7E5C4" stroke="#FFF0D1" strokeWidth="0.6" />
-      <path d="M -15 -9 V -3 M -9 -9 V -3 M -3 -9 V -3 M 3 -9 V -3 M 9 -9 V -3 M 15 -9 V -3" stroke="#B84643" strokeWidth="3" />
-      <rect x="-13" y="0" width="11" height="7" rx="1" fill="#BDEBFF" stroke="#FFF0D1" strokeWidth="0.6" opacity="0.92" />
-      <path d="M -9.5 5 L -5 -0.5 L -3 5 Z" fill="#F4C767" stroke="#A75442" strokeWidth="0.55" />
-      <circle cx="-6.3" cy="2.4" r="0.65" fill="#B94643" />
-      <rect x="5" y="-1" width="7" height="11" rx="1" fill="#49394C" stroke="#FFF0D1" strokeWidth="0.6" />
-      <rect x="6.5" y="1" width="4" height="4" rx="0.5" fill="#F5D17A">
-        <animate attributeName="opacity" values="0.72;1;0.72" dur="4s" repeatCount="indefinite" />
-      </rect>
-      <circle cx="10.3" cy="5.8" r="0.5" fill="#FFE7A0" />
+      <ellipse cx="0" cy="17" rx="32" ry="5" fill="#17121D" opacity="0.32" />
+      <rect x="-30" y="-5" width="60" height="20" rx="1" fill="#8B4B3F" stroke="#F1C99A" strokeWidth="1" />
+      <path d="M -29 -3 H 29 M -29 2 H 29 M -29 7 H 29 M -29 12 H 29 M -20 -5 V 15 M -10 -5 V 15 M 10 -5 V 15 M 20 -5 V 15" fill="none" stroke="#5D302E" strokeWidth="0.45" opacity="0.68" />
+      <rect x="-31" y="-8" width="62" height="5" fill="#241E2C" stroke="#F4D2A3" strokeWidth="0.7" />
+      <path d="M -29 -7 H 29" stroke="#F5E8D0" strokeWidth="2.7" strokeDasharray="3 3" />
+      <path d="M -28 -7 H 28" stroke="#6D3C83" strokeWidth="2.7" strokeDasharray="3 3" strokeDashoffset="3" />
+
+      <path d="M -16 -8 V -20 L -11 -26 H 11 L 16 -20 V -8 Z" fill="#35283E" stroke="#F1C68E" strokeWidth="1" />
+      <rect x="-12.5" y="-22.5" width="25" height="10.5" rx="1" fill="#6F2F3D" stroke="#FFE0A8" strokeWidth="0.8" />
+      <path d="M -9 -19 H 9" stroke="#F1BD61" strokeWidth="1" opacity="0.75">
+        <animate attributeName="opacity" values="0.45;1;0.65;1;0.45" dur="4.6s" repeatCount="indefinite" />
+      </path>
+      <text x="0" y="-18.2" textAnchor="middle" fill="#FFF1CB" fontSize="3.35" fontWeight="900" style={{ letterSpacing: 0 }}>DREAMLAND</text>
+      <text x="0" y="-14.1" textAnchor="middle" fill="#F5C86D" fontSize="2.75" fontWeight="800" style={{ letterSpacing: 0 }}>PIZZA · ARCADE</text>
+
+      <rect x="-26" y="0" width="13" height="10" rx="0.7" fill="#8DD2E2" stroke="#FFE4B8" strokeWidth="0.65" />
+      <rect x="13" y="0" width="13" height="10" rx="0.7" fill="#8DD2E2" stroke="#FFE4B8" strokeWidth="0.65" />
+      <path d="M -19.5 0 V 10 M 19.5 0 V 10" stroke="#FCE6C5" strokeWidth="0.55" />
+      <g fill="#F4CE6B">
+        <circle cx="-23" cy="3" r="0.65"><animate attributeName="opacity" values="0.4;1;0.4" dur="2.7s" repeatCount="indefinite" /></circle>
+        <circle cx="-17" cy="6" r="0.65"><animate attributeName="opacity" values="1;0.4;1" dur="3.2s" repeatCount="indefinite" /></circle>
+        <circle cx="17" cy="3.5" r="0.65"><animate attributeName="opacity" values="0.45;1;0.45" dur="3.5s" repeatCount="indefinite" /></circle>
+        <circle cx="23" cy="6.5" r="0.65"><animate attributeName="opacity" values="1;0.45;1" dur="2.9s" repeatCount="indefinite" /></circle>
+      </g>
+      <path d="M -12 -1 H 12 L 10 4 H -10 Z" fill="#A33D45" stroke="#FFD9A0" strokeWidth="0.65" />
+      <path d="M -8.5 -1 V 3.5 M -3 -1 V 3.5 M 3 -1 V 3.5 M 8.5 -1 V 3.5" stroke="#F5E7CF" strokeWidth="2" opacity="0.88" />
+      <rect x="-8" y="4" width="7.5" height="11" rx="0.7" fill="#302B38" stroke="#F3D4A8" strokeWidth="0.7" />
+      <rect x="0.5" y="4" width="7.5" height="11" rx="0.7" fill="#302B38" stroke="#F3D4A8" strokeWidth="0.7" />
+      <path d="M 0 4 V 15" stroke="#F3D4A8" strokeWidth="0.7" />
+      <circle cx="-2" cy="10" r="0.45" fill="#F6C960" /><circle cx="2" cy="10" r="0.45" fill="#F6C960" />
+      <g fill="#D9B46D" stroke="#FFF0C9" strokeWidth="0.35"><circle cx="-27" cy="15" r="1" /><circle cx="-22" cy="15" r="1" /><circle cx="22" cy="15" r="1" /><circle cx="27" cy="15" r="1" /></g>
     </g>
   );
 }
@@ -209,12 +231,16 @@ function MagicMountain({ ids }: { ids: Record<string, string> }) {
 function DreamLand() {
   return (
     <g>
-      <DreamHouse x={15} y={30} color="#8FC9E8" roof="#EA7AAE" scale={0.74} variant={0} />
-      <DreamHouse x={42} y={27} color="#E9A66E" roof="#8E72D2" scale={0.8} variant={1} delay={-1.2} />
-      <DreamHouse x={75} y={31} color="#7FC7A3" roof="#E87B91" scale={0.74} variant={2} delay={-2.4} />
-      <DreamHouse x={19} y={75} color="#CB9AE2" roof="#E8C668" scale={0.78} variant={2} delay={-3.2} />
-      <DreamHouse x={80} y={75} color="#8CCB9B" roof="#B483D8" scale={0.72} variant={1} delay={-4} />
+      <path d="M 4 35 H 96 M 4 76 H 96" stroke="#E8C8DC" strokeWidth="2.2" opacity="0.34" />
+      <DreamStorefront x={12} y={30} width={17} height={13} color="#7FAFCA" accent="#D76497" label="GIFTS" variant={0} />
+      <DreamStorefront x={33} y={30} width={19} height={15} color="#D58D61" accent="#765CAD" label="SWEETS" variant={1} delay={-1.2} />
+      <DreamStorefront x={56} y={30} width={19} height={13} color="#69A88A" accent="#CC617B" label="TOYS" variant={2} delay={-2.4} />
+      <DreamStorefront x={84} y={30} width={20} height={14} color="#A77BC1" accent="#D1A844" label="MUSIC" variant={1} delay={-3.1} />
       <DreamPizzeria />
+      <DreamStorefront x={11} y={94} width={18} height={14} color="#B27DBD" accent="#D3AA4E" label="TREATS" variant={2} delay={-3.2} />
+      <DreamStorefront x={33} y={94} width={20} height={16} color="#70A980" accent="#8D66B2" label="BOOKS" variant={1} delay={-4} />
+      <DreamStorefront x={67} y={94} width={20} height={15} color="#D08372" accent="#547FA8" label="GAMES" variant={0} delay={-2.1} />
+      <DreamStorefront x={90} y={94} width={16} height={13} color="#739DBB" accent="#B85370" label="PHOTO" variant={2} delay={-1.7} />
     </g>
   );
 }

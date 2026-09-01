@@ -264,7 +264,7 @@ assert.doesNotMatch(businessMapEditor, /if \(!editMode && !locked\) setActiveSec
   "whispering-woods",
 ].forEach((theme) => assert.match(mysticParkDecoration, new RegExp(theme)));
 assert.match(mysticParkDecoration, /function BlossomTree/);
-assert.match(mysticParkDecoration, /function DreamHouse/);
+assert.match(mysticParkDecoration, /function DreamStorefront/);
 assert.match(mysticParkDecoration, /function GardenEntrance/);
 assert.match(mysticParkDecoration, /function DreamPizzeria/);
 assert.match(mysticParkDecoration, /function GiantMushroom/);
