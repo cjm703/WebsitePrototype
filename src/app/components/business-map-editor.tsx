@@ -20,6 +20,7 @@ import {
   ImagePlus,
   Layers3,
   LoaderCircle,
+  LocateFixed,
   Lock,
   Map as MapIcon,
   Maximize2,
@@ -366,6 +367,13 @@ export function OfficeBusinessMap({
   const draggedRef = useRef(false);
   valueRef.current = value;
   onChangeRef.current = onChange;
+
+  const recenterViewport = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2);
+    viewport.scrollTop = Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2);
+  }, []);
 
   const activeSector = value.sectors.find((sector) => sector.id === activeSectorId) || null;
   const selectedSector = value.sectors.find((sector) => sector.id === selectedSectorId) || null;
@@ -991,29 +999,30 @@ export function OfficeBusinessMap({
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_310px]">
-        <div
-          ref={viewportRef}
-          className="relative min-w-0 max-h-[680px] min-h-[380px] overflow-auto border"
-          style={{ borderColor: SURFACE_BORDER, background: "#020204", cursor: canvasCursor }}
-          onPointerDown={startPan}
-        >
+        <div className="relative min-w-0">
           <div
-            ref={canvasRef}
-            role="application"
-            aria-label={activeSector ? `${activeSector.name} facility editor` : "General business map editor"}
-            className="relative touch-none overflow-hidden"
-            onClick={handleCanvasClick}
-            style={{
-              width: `${zoom * 100}%`,
-              minWidth: `${Math.round(560 * zoom)}px`,
-              aspectRatio: `${value.grid.width} / ${value.grid.height}`,
-              backgroundColor: mapBackground.color,
-              backgroundImage: value.grid.showGrid
-                ? "linear-gradient(#151522 1px, transparent 1px), linear-gradient(90deg, #151522 1px, transparent 1px)"
-                : "none",
-              backgroundSize: `${100 / value.grid.width}% ${100 / value.grid.height}%`,
-            }}
+            ref={viewportRef}
+            className="min-w-0 max-h-[680px] min-h-[380px] overflow-x-hidden overflow-y-auto border"
+            style={{ borderColor: SURFACE_BORDER, background: "#020204", cursor: canvasCursor }}
+            onPointerDown={startPan}
           >
+            <div
+              ref={canvasRef}
+              role="application"
+              aria-label={activeSector ? `${activeSector.name} facility editor` : "General business map editor"}
+              className="relative touch-none overflow-hidden"
+              onClick={handleCanvasClick}
+              style={{
+                width: `${zoom * 100}%`,
+                minWidth: `${Math.round(560 * zoom)}px`,
+                aspectRatio: `${value.grid.width} / ${value.grid.height}`,
+                backgroundColor: mapBackground.color,
+                backgroundImage: value.grid.showGrid
+                  ? "linear-gradient(#151522 1px, transparent 1px), linear-gradient(90deg, #151522 1px, transparent 1px)"
+                  : "none",
+                backgroundSize: `${100 / value.grid.width}% ${100 / value.grid.height}%`,
+              }}
+            >
             {mapBackground.mode === "image" && mapBackground.imageUrl && !brokenBackground && (
               <img
                 src={mapBackground.imageUrl}
@@ -1169,7 +1178,18 @@ export function OfficeBusinessMap({
             {activeSector && activeSector.slots.length === 0 && surface.shapes.length === 0 && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px]" style={S_DIM}>Empty floor layout</div>
             )}
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={recenterViewport}
+            className="absolute right-2 top-2 z-30 flex h-8 w-8 items-center justify-center border shadow-md transition-colors hover:bg-[#151B28]"
+            style={{ borderColor: CONTROL_BORDER, color: "#C8D4EA", background: "#08080DEE" }}
+            title="Recenter map"
+            aria-label="Recenter map"
+          >
+            <LocateFixed size={13} />
+          </button>
         </div>
 
         <aside className="min-h-[380px] max-h-[680px] overflow-y-auto border border-[#1A1A2B] bg-[#050508]">
