@@ -75,21 +75,24 @@ function DreamHouse({ x, y, color, roof, scale = 1, variant = 0, delay = 0 }: {
 }) {
   const tall = variant % 3 === 1;
   const roundRoof = variant % 3 === 2;
-  const top = tall ? -11 : -7;
+  const top = tall ? -9 : -7;
+  const halfWidth = tall ? 9 : 8.5;
+  const roofHalfWidth = halfWidth + 2;
+  const roofRise = roundRoof ? 10 : tall ? 6.5 : 7;
   return (
     <g transform={`translate(${x} ${y}) scale(${scale})`}>
-      {variant % 2 === 1 && <rect x="4" y={top - 8} width="3" height="8" fill="#70506D" stroke="#FFE6B3" strokeWidth="0.6" />}
-      <rect x="-8" y={top} width="16" height={7 - top} rx={roundRoof ? 2.5 : 0.8} fill={color} stroke="#F8E9C8" strokeWidth="0.8" />
+      {variant % 2 === 1 && <rect x={halfWidth - 4} y={top - 7} width="3" height="7" fill="#70506D" stroke="#FFE6B3" strokeWidth="0.6" />}
+      <rect x={-halfWidth} y={top} width={halfWidth * 2} height={7 - top} rx={roundRoof ? 2.5 : 0.8} fill={color} stroke="#F8E9C8" strokeWidth="0.8" />
       {roundRoof
-        ? <path d={`M -10 ${top} Q 0 ${top - 13} 10 ${top} Z`} fill={roof} stroke="#FFE6B3" strokeWidth="0.8" />
-        : <path d={`M -10 ${top} L 0 ${top - 8} L 10 ${top} Z`} fill={roof} stroke="#FFE6B3" strokeWidth="0.8" />}
+        ? <path d={`M ${-roofHalfWidth} ${top} Q 0 ${top - roofRise} ${roofHalfWidth} ${top} Z`} fill={roof} stroke="#FFE6B3" strokeWidth="0.8" />
+        : <path d={`M ${-roofHalfWidth} ${top} L 0 ${top - roofRise} L ${roofHalfWidth} ${top} Z`} fill={roof} stroke="#FFE6B3" strokeWidth="0.8" />}
       <rect x="-5.5" y={top + 3.5} width="4" height="4" rx="0.7" fill="#FFE9A3">
         <animate attributeName="opacity" values="0.55;1;0.7;1;0.55" dur={`${4.2 + variant * 0.35}s`} begin={`${delay}s`} repeatCount="indefinite" />
       </rect>
       <rect x="1.5" y={top + 3.5} width="4" height="4" rx="0.7" fill="#BDEBFF" opacity="0.9" />
       <rect x="-2" y="0" width="4" height="7" rx="1" fill="#40345D" />
       <circle cx="0.8" cy="3.5" r="0.45" fill="#FFE9A3" />
-      <path d={`M -8 ${top + 1} H 8`} stroke="#FFFFFF" strokeWidth="2.1" strokeDasharray={roundRoof ? "2 2" : "4 3"} opacity="0.65" />
+      <path d={`M ${-halfWidth} ${top + 1} H ${halfWidth}`} stroke="#FFFFFF" strokeWidth="2.1" strokeDasharray={roundRoof ? "2 2" : "4 3"} opacity="0.65" />
     </g>
   );
 }
@@ -199,9 +202,6 @@ function MagicMountain({ ids }: { ids: Record<string, string> }) {
       <path d="M 31 65 L 50 10 L 67 53 L 59 46 L 53 52 L 47 37 L 40 51 Z" fill="#EDF7FA" opacity="0.9" />
       <path d="M 50 10 L 53 52 L 67 53 L 61 66 L 51 78 L 43 69 L 31 65 Z" fill="#66829B" opacity="0.3" />
       <path d="M 22 62 L 31 66 L 39 53 M 76 43 L 69 61 L 61 68 M 37 75 L 43 62 M 70 72 L 78 57" fill="none" stroke="#B0C7D5" strokeWidth="1.2" opacity="0.48" />
-      <path d="M 18 80 Q 50 75 84 80" fill="none" stroke="#8DA6B6" strokeWidth="1.2" strokeDasharray="2 3" opacity="0.38">
-        <animate attributeName="stroke-dashoffset" values="0;18" dur="9s" repeatCount="indefinite" />
-      </path>
     </g>
   );
 }
