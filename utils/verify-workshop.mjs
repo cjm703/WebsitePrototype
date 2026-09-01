@@ -47,11 +47,12 @@ assert.deepEqual(unavailableQuote.unavailable, ["Standard 9mm Barrel"], "A missi
 const rebuildQuote = model.calculateWorkshopQuote({ ...firearmBuild, isRebuild: true }, firearm, model.STARTER_WORKSHOP_COMPONENTS, storage);
 assert.equal(rebuildQuote.baseCost, 75, "Rebuilds should use the blueprint rebuild fee rather than its base construction price");
 
-const [migration, edge, dmUi, playerUi, personalFiles] = await Promise.all([
+const [migration, edge, dmUi, playerUi, blueprintVisual, personalFiles] = await Promise.all([
   fs.readFile(path.join(root, "supabase", "migrations", "20260901000000_workshop_system.sql"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "index.ts"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "dm-workshop-manager.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "personal-files-workshop.tsx"), "utf8"),
+  fs.readFile(path.join(root, "src", "app", "components", "workshop-blueprint-visual.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "personal-files.tsx"), "utf8"),
 ]);
 const salvageSafetyMigration = await fs.readFile(path.join(root, "supabase", "migrations", "20260901010000_workshop_salvage_assignment_safety.sql"), "utf8");
@@ -68,6 +69,10 @@ assert.match(edge, /workshop\/item\/scrap/, "Existing-item salvage endpoint must
 assert.match(dmUi, /Blueprint access/, "DM manager must expose individual blueprint grants");
 assert.match(dmUi, /Complete Construction/, "DM manager must expose explicit completion");
 assert.match(playerUi, /Construction is awaiting DM completion/, "Player UI must explain the Building lifecycle");
+assert.match(playerUi, /WorkshopBlueprintVisual/, "Player Workshop must mount the visual assembly editor");
+assert.match(blueprintVisual, /Assembly projection/, "Visual editor must expose the central blueprint projection");
+assert.match(blueprintVisual, /Parts Bay/, "Visual editor must keep compatible owned and orderable parts in the bottom bay");
+assert.match(blueprintVisual, /isWorkshopComponentCompatible/, "Visual part choices must use the canonical compatibility rules");
 assert.match(personalFiles, /workshopBootstrap\?\.enabled/, "Personal Files must hide Workshop unless server-granted access is enabled");
 
-console.log("Workshop verification passed: catalog, quotes, access, transactions, and UI contracts are intact.");
+console.log("Workshop verification passed: catalog, quotes, access, transactions, visual assembly, and UI contracts are intact.");

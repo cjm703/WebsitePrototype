@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArchiveRestore,
@@ -12,13 +12,13 @@ import {
   Plus,
   RefreshCw,
   Save,
-  ShieldCheck,
   Trash2,
   Wrench,
 } from "lucide-react";
 import { retro } from "./retro-styles";
 import type { PlayerTheme } from "./player-theme";
 import type { ManagedItem } from "./types";
+import { WorkshopBlueprintVisual } from "./workshop-blueprint-visual";
 import {
   loadWorkshopBootstrap,
   rebuildWorkshopBuild,
@@ -30,7 +30,6 @@ import {
 import {
   calculateWorkshopQuote,
   createWorkshopId,
-  isWorkshopComponentCompatible,
   normalizeWorkshopBuild,
   workshopBuildReadiness,
   type WorkshopBlueprint,
@@ -48,6 +47,7 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
   const [section, setSection] = useState<Section>("builds");
   const [selectedBuildId, setSelectedBuildId] = useState(initialBootstrap.builds[0]?.id || "");
   const [editor, setEditor] = useState<WorkshopBuild | null>(initialBootstrap.builds[0] ? structuredClone(initialBootstrap.builds[0]) : null);
+  const [selectedSlotId, setSelectedSlotId] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -93,11 +93,20 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
   const canEdit = editor?.status === "draft" || editor?.status === "building";
   const externalScrappable = items.filter((item) => item.assignedTo.includes(playerId) && item.tags.includes("Scrappable") && !item.tags.includes("Workshop Built"));
 
+  useEffect(() => {
+    if (!selectedBlueprint) {
+      setSelectedSlotId("");
+      return;
+    }
+    setSelectedSlotId((current) => selectedBlueprint.slots.some((slot) => slot.id === current) ? current : selectedBlueprint.slots[0]?.id || "");
+  }, [editor?.id, selectedBlueprint?.id]);
+
   const createBuild = (blueprint: WorkshopBlueprint) => {
     const now = new Date().toISOString();
     const build = normalizeWorkshopBuild({ id: createWorkshopId("build"), playerId, blueprintId: blueprint.id, blueprintVersion: blueprint.version, name: `New ${blueprint.name}`, designation: "", notes: "", status: "draft", outputItemId: createWorkshopId("workshop-item"), revision: 0, createdAt: now, updatedAt: now, assignments: [] });
     setEditor(build);
     setSelectedBuildId(build.id);
+    setSelectedSlotId(blueprint.slots[0]?.id || "");
     setSection("builds");
   };
 
@@ -140,18 +149,13 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
         <div className="space-y-1">{data.blueprints.map((blueprint) => <button key={blueprint.id} className="flex w-full items-center gap-2 px-2 py-2 text-left hover:brightness-125" style={subPanel} onClick={() => createBuild(blueprint)}><Plus size={13} style={{ color: theme.accentColor }} /><span><span className="block text-[10px] font-bold">{blueprint.name}</span><span className="text-[8px]" style={{ color: theme.labelColor }}>{blueprint.category} · {blueprint.basePrice.toLocaleString()} CR base</span></span></button>)}</div>
       </aside>
 
-      <section className="p-4" style={panel}>
+      <section className="min-w-0 p-3" style={panel}>
         {!editor || !selectedBlueprint ? <div className="flex h-full items-center justify-center text-center text-[11px]" style={{ color: theme.labelColor }}>Choose a granted blueprint or an existing work order.</div> : <>
           <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3" style={{ borderColor: theme.dividerColor }}><div><div className="flex flex-wrap items-center gap-2"><span className="text-[15px] font-bold">{editor.name}</span><span className="px-2 py-0.5 text-[9px] uppercase" style={{ background: `${STATUS_COLOR[editor.status]}22`, color: STATUS_COLOR[editor.status] }}>{editor.status}</span>{editor.isRebuild && <span className="px-2 py-0.5 text-[9px] uppercase text-[#8AC8FF]" style={{ background: "#14334B" }}>Rebuild</span>}</div><div className="mt-1 text-[9px]" style={{ color: theme.labelColor }}>{selectedBlueprint.name} · design v{editor.blueprintVersion} · revision {editor.revision}</div></div><div className="text-right"><div className="text-[15px] font-bold" style={{ color: theme.accentColor }}>{quote?.totalCost.toLocaleString()} CR</div><div className="text-[8px]" style={{ color: theme.labelColor }}>{quote?.baseCost.toLocaleString()} base + {quote?.componentCost.toLocaleString()} ordered parts</div></div></div>
 
-          <div className="mt-3 grid gap-3 md:grid-cols-2"><label><span className="mb-1 block text-[9px] uppercase" style={{ color: theme.labelColor }}>Name</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label><label><span className="mb-1 block text-[9px] uppercase" style={{ color: theme.labelColor }}>Designation</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.designation} onChange={(event) => setEditor({ ...editor, designation: event.target.value })} /></label><label className="md:col-span-2"><span className="mb-1 block text-[9px] uppercase" style={{ color: theme.labelColor }}>Build notes</span><textarea className={`${input} min-h-16`} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.notes} onChange={(event) => setEditor({ ...editor, notes: event.target.value })} /></label></div>
+          <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,1.35fr)]"><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Name</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Designation</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.designation} onChange={(event) => setEditor({ ...editor, designation: event.target.value })} /></label><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Build notes</span><textarea className={`${input} min-h-[36px] resize-y`} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.notes} onChange={(event) => setEditor({ ...editor, notes: event.target.value })} placeholder="Assembly notes" /></label></div>
 
-          <div className="mt-5 space-y-3">{Array.from(new Set(selectedBlueprint.slots.map((slot) => slot.group))).map((group) => <div key={group}><div className="mb-1 text-[10px] font-bold" style={{ color: theme.accentColor }}>{group}</div><div className="grid gap-2 md:grid-cols-2">{selectedBlueprint.slots.filter((slot) => slot.group === group).map((slot) => {
-            const assignment = editor.assignments.find((entry) => entry.slotId === slot.id);
-            const compatible = data.components.filter((component) => isWorkshopComponentCompatible(slot, component));
-            const manifest = quote?.manifest.find((entry) => entry.slotId === slot.id);
-            return <label key={slot.id} className="p-2" style={subPanel}><span className="mb-1 flex items-center justify-between gap-2"><span className="text-[10px] font-bold">{slot.label}{slot.required && <span className="ml-1 text-[#FF8998]">*</span>}</span>{manifest && <span className="text-[8px] uppercase" style={{ color: manifest.source === "owned" ? "#76D6A4" : "#F1D47A" }}>{manifest.source === "owned" ? "Owned part" : `${manifest.pricePaid.toLocaleString()} CR order`}</span>}</span><select className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={assignment?.componentId || ""} onChange={(event) => assign(slot.id, event.target.value)}><option value="">{slot.required ? "Select required component..." : "Empty optional slot"}</option>{compatible.map((component) => <option key={component.id} value={component.id}>{component.name} · {data.storage.quantities[component.id] || 0} owned{component.orderable ? ` · ${component.price} CR` : " · storage only"}</option>)}</select>{slot.acceptedTags.length > 0 && <span className="mt-1 block text-[8px]" style={{ color: theme.labelColor }}>Compatible tags: {slot.acceptedTags.join(", ")}</span>}</label>;
-          })}</div></div>)}</div>
+          {quote && <WorkshopBlueprintVisual blueprint={selectedBlueprint} build={editor} components={data.components} storage={data.storage} quote={quote} canEdit={Boolean(canEdit)} selectedSlotId={selectedSlotId} onSelectSlot={setSelectedSlotId} onAssign={assign} theme={theme} />}
 
           <div className="mt-4 grid gap-2 md:grid-cols-3"><div className="px-3 py-2 text-[10px]" style={subPanel}><span className="block text-[8px] uppercase" style={{ color: theme.labelColor }}>Readiness</span><span style={{ color: readiness?.ready && quote?.unavailable.length === 0 ? "#76D6A4" : "#FF9B87" }}>{readiness?.ready && quote?.unavailable.length === 0 ? "Ready for construction" : "Needs attention"}</span></div><div className="px-3 py-2 text-[10px]" style={subPanel}><span className="block text-[8px] uppercase" style={{ color: theme.labelColor }}>Parts</span>{quote?.ownedParts || 0} owned · {quote?.orderedParts || 0} ordered</div><div className="px-3 py-2 text-[10px]" style={subPanel}><span className="block text-[8px] uppercase" style={{ color: theme.labelColor }}>Funds after completion</span>{Math.max(0, data.personalFunds - (quote?.totalCost || 0)).toLocaleString()} CR</div></div>
           {((readiness && !readiness.ready) || (quote?.unavailable.length || 0) > 0) && <div className="mt-2 flex gap-2 px-3 py-2 text-[10px] text-[#FFAD96]" style={subPanel}><AlertTriangle size={14} className="shrink-0" /><span>{readiness?.missing.length ? `Required: ${readiness.missing.join(", ")}. ` : ""}{readiness?.incompatible.length ? `Incompatible: ${readiness.incompatible.join(", ")}. ` : ""}{quote?.unavailable.length ? `Missing unorderable parts: ${quote.unavailable.join(", ")}.` : ""}</span></div>}
