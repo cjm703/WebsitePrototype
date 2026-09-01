@@ -366,6 +366,7 @@ export function OfficeBusinessMap({
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const additionLibraryRef = useRef<HTMLDivElement>(null);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const draggedRef = useRef(false);
@@ -876,6 +877,7 @@ export function OfficeBusinessMap({
     } as FacilityAddition;
     onAdditionsChange([...additions, addition]);
     setSelectedAdditionId(addition.id);
+    window.setTimeout(() => additionLibraryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   };
 
   const updateAddition = (additionId: string, updates: Partial<FacilityAddition>) => {
@@ -1296,9 +1298,10 @@ export function OfficeBusinessMap({
               backLabel={!activeSector ? selectedSlotSector.name : undefined}
               onBack={!activeSector ? () => setSelectedSlotId(null) : undefined}
               onUpdate={(updates) => updateSlot(selectedSlotSector.id, selectedSlot.id, updates)}
-              onInstall={(addition) => void handleInstall(selectedSlotSector, selectedSlot, addition)}
-              onRemove={() => void handleRemove(selectedSlotSector, selectedSlot)}
-              onDelete={() => deleteSlot(selectedSlotSector.id, selectedSlot.id)}
+               onInstall={(addition) => void handleInstall(selectedSlotSector, selectedSlot, addition)}
+               onRemove={() => void handleRemove(selectedSlotSector, selectedSlot)}
+               onCreateAddition={isDM && selectedSlot.tier === "minor" ? addAddition : undefined}
+               onDelete={() => deleteSlot(selectedSlotSector.id, selectedSlot.id)}
             />
           ) : !activeSector && selectedExpansion ? (
             <ExpansionInspector
@@ -1327,7 +1330,7 @@ export function OfficeBusinessMap({
         </aside>
       </div>
 
-      {selectedSlot && selectedSlot.tier === "minor" && <FacilityAdditionLibrary
+      {selectedSlot && selectedSlot.tier === "minor" && <div ref={additionLibraryRef}><FacilityAdditionLibrary
         additions={filteredAdditions}
         allAdditions={additions}
         selected={selectedAddition}
@@ -1342,7 +1345,7 @@ export function OfficeBusinessMap({
         onUpdate={updateAddition}
         onDelete={deleteAddition}
         onUploadThumbnail={uploadAdditionThumbnail}
-      />}
+      /></div>}
     </div>
   );
 }
@@ -1571,7 +1574,7 @@ function ShapeInspector({ shape, selectedCount, isDM, editMode, onUpdate, onDupl
   );
 }
 
-function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM, editMode, canInstall, canRemove, busy, backLabel, onBack, onUpdate, onInstall, onRemove, onDelete }: { slot: OfficeBusinessSlot; additions: FacilityAddition[]; additionUsage: Record<string, number>; facilities: Array<{ id: string; name: string }>; grid: OfficeBusinessMapState["grid"]; isDM: boolean; editMode: boolean; canInstall: boolean; canRemove: boolean; busy: boolean; backLabel?: string; onBack?: () => void; onUpdate: (updates: Partial<OfficeBusinessSlot>) => void; onInstall: (addition: FacilityAddition) => void; onRemove: () => void; onDelete: () => void }) {
+function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM, editMode, canInstall, canRemove, busy, backLabel, onBack, onUpdate, onInstall, onRemove, onCreateAddition, onDelete }: { slot: OfficeBusinessSlot; additions: FacilityAddition[]; additionUsage: Record<string, number>; facilities: Array<{ id: string; name: string }>; grid: OfficeBusinessMapState["grid"]; isDM: boolean; editMode: boolean; canInstall: boolean; canRemove: boolean; busy: boolean; backLabel?: string; onBack?: () => void; onUpdate: (updates: Partial<OfficeBusinessSlot>) => void; onInstall: (addition: FacilityAddition) => void; onRemove: () => void; onCreateAddition?: () => void; onDelete: () => void }) {
   const color = facilitySlotRoleColor(slot.role);
   const compatible = additions.filter((addition) => isFacilityAdditionCompatible(slot, addition));
   const installed = additions.find((addition) => addition.id === slot.installedAdditionId);
@@ -1601,6 +1604,8 @@ function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM,
         </div>
       )}
 
+      {onCreateAddition && <button type="button" onClick={onCreateAddition} className={`${retro.button} flex w-full items-center justify-center gap-2 py-2 text-[9px]`} style={S_GREEN}><Plus size={11} /> Create Facility Addition</button>}
+
       {slot.installedAdditionId ? (
         <div className="border border-[#294A39] bg-[#07120C] p-3">
           <div className="text-[8px]" style={S_DIM}>INSTALLED ADDITION</div>
@@ -1620,7 +1625,7 @@ function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isD
     <section className="border-t border-[#1A1A2B] pt-2" aria-label="Facility Addition storage">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2"><Package size={13} style={{ color: "#79B8FF" }} /><span className="text-[11px] font-semibold" style={S_TEXT}>Facility Addition Storage</span><span className="border border-[#25253B] px-1.5 py-0.5 text-[8px]" style={S_DIM}>{allAdditions.length}</span></div>
-        <div className="flex items-center gap-2"><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search additions..." className="w-44 border bg-transparent px-2 py-1 text-[9px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} />{isDM && <button type="button" onClick={onAdd} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[9px]`} style={S_GREEN}><Plus size={10} /> Add</button>}</div>
+        <div className="flex items-center gap-2"><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search additions..." className="w-44 border bg-transparent px-2 py-1 text-[9px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} />{isDM && <button type="button" onClick={onAdd} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[9px]`} style={S_GREEN}><Plus size={10} /> Create</button>}</div>
       </div>
       <div className="flex min-h-[88px] gap-2 overflow-x-auto border border-[#1A1A2B] bg-[#030306] p-2">
         {additions.map((addition) => {
