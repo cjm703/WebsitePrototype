@@ -231,6 +231,9 @@ assert.match(businessMapEditor, /overflow-x-hidden overflow-y-auto/);
 assert.match(businessMapEditor, /aria-label="Recenter map"/);
 assert.match(businessMapEditor, /\(viewport\.scrollHeight - viewport\.clientHeight\) \/ 2/);
 assert.match(businessMapEditor, /MysticParkZoneDecoration/);
+assert.match(businessMapEditor, /value\.name === "Mystic Lands Park"/);
+assert.match(businessMapEditor, /path-light-/);
+assert.match(businessMapEditor, /strokeDasharray="0\.16 0\.2"/);
 [
   "enchanted-gardens",
   "magic-mountain",
@@ -242,10 +245,12 @@ assert.match(businessMapEditor, /MysticParkZoneDecoration/);
 ].forEach((theme) => assert.match(mysticParkDecoration, new RegExp(theme)));
 assert.match(mysticParkDecoration, /function BlossomTree/);
 assert.match(mysticParkDecoration, /function DreamHouse/);
+assert.match(mysticParkDecoration, /function GardenEntrance/);
+assert.match(mysticParkDecoration, /function DreamPizzeria/);
 assert.match(mysticParkDecoration, /function GiantMushroom/);
 assert.match(mysticParkDecoration, /attributeName="cx"/);
 assert.doesNotMatch(mysticParkDecoration, /function WhimsyTree/);
-assert.doesNotMatch(mysticParkDecoration, /fairyGlow|greenGround|cliff|woods:/);
+assert.doesNotMatch(mysticParkDecoration, /fairyGlow|greenGround|woods:/);
 assert.match(businessMapStorage, /business-map\/assets\/upload/);
 assert.match(officeStateApi, /office\/facility-addition\/action/);
 assert.match(officeStateApi, /office\/facility-expansion\/action/);

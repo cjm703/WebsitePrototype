@@ -1064,12 +1064,27 @@ export function OfficeBusinessMap({
                   );
                 }
                 if (shape.kind === "pathway") {
-                  const walkwayWidth = Math.max(2.25, shape.strokeWidth * 1.8);
+                  const parkWalkway = value.name === "Mystic Lands Park";
+                  const walkwayWidth = parkWalkway
+                    ? Math.max(3.4, shape.strokeWidth * 2.25)
+                    : Math.max(2.25, shape.strokeWidth * 1.8);
                   const path = shapePath(shape);
+                  const lightPoints = parkWalkway && shape.name === "Guest Walkway"
+                    ? shape.points.filter((_, index) => shape.id === "park-ring" ? index % 2 === 0 && index < shape.points.length - 1 : true)
+                    : [];
                   return (
                     <g key={shape.id} style={{ pointerEvents: interactive ? "all" : "none", cursor: "pointer" }} onClick={(event) => { event.stopPropagation(); setInspectorMode("selection"); setSelectedShapeIds(event.shiftKey ? selectedShapeIds.includes(shape.id) ? selectedShapeIds.filter((id) => id !== shape.id) : [...selectedShapeIds, shape.id] : [shape.id]); }}>
-                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#55614F"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + 1.4} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      <path d={path} fill="none" stroke={selected ? "#FFFFFF" : parkWalkway ? "#34483C" : "#55614F"} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth + (parkWalkway ? 2.4 : 1.4)} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                       <path d={path} fill="none" stroke={selected ? "#EEE7D5" : shape.color} strokeOpacity={shape.opacity} strokeWidth={walkwayWidth} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      {parkWalkway && (
+                        <path d={path} fill="none" stroke={selected ? "#FFFFFF" : "#F6E6B8"} strokeOpacity={shape.opacity * 0.82} strokeWidth="0.72" strokeDasharray="0.16 0.2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                      )}
+                      {lightPoints.map((point, index) => (
+                        <g key={`${shape.id}-path-light-${index}`}>
+                          <circle cx={point.x} cy={point.y} r="0.14" fill="#25352D" stroke="#B9A983" strokeWidth="0.045" vectorEffect="non-scaling-stroke" />
+                          <circle cx={point.x} cy={point.y} r="0.055" fill="#FFE5A1" opacity="0.92" />
+                        </g>
+                      ))}
                     </g>
                   );
                 }

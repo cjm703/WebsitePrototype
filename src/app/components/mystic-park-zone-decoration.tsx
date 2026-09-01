@@ -94,6 +94,42 @@ function DreamHouse({ x, y, color, roof, scale = 1, variant = 0, delay = 0 }: {
   );
 }
 
+function GardenEntrance() {
+  return (
+    <g transform="translate(50 85)">
+      <rect x="-11" y="-9" width="22" height="15" rx="2" fill="#E7B5C9" stroke="#FFE7EF" strokeWidth="0.9" />
+      <path d="M -14 -9 L 0 -17 L 14 -9 Z" fill="#874F78" stroke="#FFD8E8" strokeWidth="0.9" />
+      <rect x="-8" y="-6" width="4" height="12" fill="#F6D5DF" />
+      <rect x="4" y="-6" width="4" height="12" fill="#F6D5DF" />
+      <path d="M -4 6 V -1 A 4 4 0 0 1 4 -1 V 6 Z" fill="#332836" stroke="#F9D8A5" strokeWidth="0.8" />
+      <circle cx="-9" cy="-5" r="1.3" fill="#FFE39A">
+        <animate attributeName="opacity" values="0.45;1;0.45" dur="3.8s" repeatCount="indefinite" />
+      </circle>
+      <circle cx="9" cy="-5" r="1.3" fill="#FFE39A">
+        <animate attributeName="opacity" values="1;0.45;1" dur="3.8s" repeatCount="indefinite" />
+      </circle>
+    </g>
+  );
+}
+
+function DreamPizzeria() {
+  return (
+    <g transform="translate(50 57)">
+      <rect x="-14" y="-8" width="28" height="17" rx="1.5" fill="#D96E62" stroke="#FFE5BD" strokeWidth="0.9" />
+      <path d="M -16 -8 L -11 -15 H 11 L 16 -8 Z" fill="#4E7D63" stroke="#FFE5BD" strokeWidth="0.9" />
+      <path d="M -14 -7 H 14 V -2 H -14 Z" fill="#F6E0B8" />
+      <path d="M -14 -7 H 14" stroke="#B84845" strokeWidth="4" strokeDasharray="5 5" />
+      <rect x="-10" y="1" width="7" height="6" rx="1" fill="#BDEBFF" opacity="0.9" />
+      <rect x="4" y="-1" width="6" height="10" rx="1" fill="#49394C" />
+      <circle cx="0" cy="-14" r="5" fill="#F5D17A" stroke="#FFF0C9" strokeWidth="0.8">
+        <animate attributeName="opacity" values="0.72;1;0.72" dur="4s" repeatCount="indefinite" />
+      </circle>
+      <path d="M -2.5 -16.5 L 3 -13 L -3 -11 Z" fill="#C84E4E" />
+      <circle cx="0" cy="-14" r="0.7" fill="#6A9C55" />
+    </g>
+  );
+}
+
 function GiantMushroom({ x, y, scale, cap, glowId, stemId, variant = 0, delay = 0 }: {
   x: number;
   y: number;
@@ -105,10 +141,10 @@ function GiantMushroom({ x, y, scale, cap, glowId, stemId, variant = 0, delay = 
   delay?: number;
 }) {
   const capPath = variant % 3 === 1
-    ? "M -14 -5 Q -8 -16 0 -14 Q 9 -16 14 -5 Q 7 0 0 -1 Q -7 0 -14 -5 Z"
+    ? "M -14 -5 C -13 -14 -7 -18 0 -18 C 7 -18 13 -14 14 -5 C 8 0 -8 0 -14 -5 Z"
     : variant % 3 === 2
-      ? "M -10 -4 Q -8 -18 0 -20 Q 8 -18 10 -4 Q 4 1 0 -2 Q -4 1 -10 -4 Z"
-      : "M -12 -5 C -10 -17 10 -17 12 -5 C 6 0 -6 0 -12 -5 Z";
+      ? "M -11 -5 C -10 -15 -5 -18 0 -18 C 5 -18 10 -15 11 -5 C 6 1 -6 1 -11 -5 Z"
+      : "M -12 -5 C -11 -15 -6 -17 0 -17 C 6 -17 11 -15 12 -5 C 6 0 -6 0 -12 -5 Z";
   return (
     <g transform={`translate(${x} ${y}) scale(${scale})`}>
       <ellipse cx="0" cy="11" rx="11" ry="4" fill={`url(#${glowId})`} opacity="0.65">
@@ -133,8 +169,8 @@ function EnchantedGardens() {
     { x: 14, y: 31, s: 0.72, c: "#F39ABB", v: 0 }, { x: 34, y: 24, s: 0.6, c: "#FFD0DF", v: 1 },
     { x: 57, y: 29, s: 0.8, c: "#E986B2", v: 2 }, { x: 82, y: 32, s: 0.66, c: "#F7B2CF", v: 1 },
     { x: 22, y: 61, s: 0.76, c: "#F5A2C4", v: 2 }, { x: 48, y: 56, s: 0.64, c: "#FFD0DF", v: 0 },
-    { x: 77, y: 64, s: 0.8, c: "#EB8AB5", v: 1 }, { x: 37, y: 83, s: 0.6, c: "#F7B2CF", v: 2 },
-    { x: 67, y: 84, s: 0.68, c: "#F39ABB", v: 0 },
+    { x: 77, y: 64, s: 0.8, c: "#EB8AB5", v: 1 }, { x: 25, y: 84, s: 0.58, c: "#F7B2CF", v: 2 },
+    { x: 76, y: 85, s: 0.62, c: "#F39ABB", v: 0 },
   ];
   return (
     <g>
@@ -149,6 +185,7 @@ function EnchantedGardens() {
           </ellipse>
         ))}
       </g>
+      <GardenEntrance />
     </g>
   );
 }
@@ -175,19 +212,19 @@ function MagicMountain({ ids }: { ids: Record<string, string> }) {
 function DreamLand() {
   return (
     <g>
-      <DreamHouse x={16} y={33} color="#8FC9E8" roof="#EA7AAE" scale={0.78} variant={0} />
-      <DreamHouse x={40} y={30} color="#E9A66E" roof="#8E72D2" scale={0.86} variant={1} delay={-1.2} />
-      <DreamHouse x={69} y={33} color="#7FC7A3" roof="#E87B91" scale={0.78} variant={2} delay={-2.4} />
-      <DreamHouse x={27} y={65} color="#CB9AE2" roof="#E8C668" scale={0.86} variant={2} delay={-3.2} />
-      <DreamHouse x={57} y={65} color="#E98A9E" roof="#65A7C8" scale={0.94} variant={0} delay={-1.8} />
-      <DreamHouse x={84} y={62} color="#8CCB9B" roof="#B483D8" scale={0.74} variant={1} delay={-4} />
+      <DreamHouse x={15} y={30} color="#8FC9E8" roof="#EA7AAE" scale={0.74} variant={0} />
+      <DreamHouse x={42} y={27} color="#E9A66E" roof="#8E72D2" scale={0.8} variant={1} delay={-1.2} />
+      <DreamHouse x={75} y={31} color="#7FC7A3" roof="#E87B91" scale={0.74} variant={2} delay={-2.4} />
+      <DreamHouse x={19} y={75} color="#CB9AE2" roof="#E8C668" scale={0.78} variant={2} delay={-3.2} />
+      <DreamHouse x={80} y={75} color="#8CCB9B" roof="#B483D8" scale={0.72} variant={1} delay={-4} />
+      <DreamPizzeria />
     </g>
   );
 }
 
 function WorldTree({ ids }: { ids: Record<string, string> }) {
   return (
-    <g>
+    <g transform="translate(50 52) scale(0.76) translate(-50 -52)">
       <path d="M 39 87 C 43 72 41 60 45 48 C 40 53 34 57 27 60 L 24 54 C 35 48 38 40 42 32 L 49 38 L 52 20 L 58 37 L 65 29 C 66 40 69 48 80 52 L 77 59 C 68 56 62 52 58 48 C 62 62 57 74 62 87 Z" fill={`url(#${ids.bark})`} stroke="#8B6740" strokeWidth="1.2" />
       <path d="M 43 85 C 36 87 29 91 19 93 M 48 86 C 42 92 36 94 29 96 M 57 85 C 65 88 73 92 83 94 M 54 87 C 59 93 65 95 71 97" fill="none" stroke="#785737" strokeWidth="4" strokeLinecap="round" />
       <path d="M 47 81 C 50 64 46 54 52 40 M 51 76 C 55 62 53 52 57 44" fill="none" stroke="#B48B55" strokeWidth="1.3" opacity="0.6" />
@@ -220,23 +257,30 @@ function WorldTree({ ids }: { ids: Record<string, string> }) {
 
 function Stormlands({ ids }: { ids: Record<string, string> }) {
   return (
-    <g filter={`url(#${ids.fogBlur})`}>
-      <g fill={`url(#${ids.fog})`} opacity="0.42">
-        <ellipse cx="20" cy="20" rx="44" ry="13"><animate attributeName="cx" values="5;37;5" dur="18s" repeatCount="indefinite" /></ellipse>
-        <ellipse cx="78" cy="36" rx="46" ry="16"><animate attributeName="cx" values="94;61;94" dur="22s" repeatCount="indefinite" /></ellipse>
+    <g>
+      <g fill={`url(#${ids.cliff})`} stroke="#82929C" strokeWidth="0.8" opacity="0.8">
+        <path d="M 0 96 L 0 75 L 8 69 L 12 53 L 17 68 L 24 61 L 30 78 L 35 84 L 35 96 Z" />
+        <path d="M 67 96 L 67 84 L 73 75 L 78 80 L 84 58 L 89 72 L 94 65 L 100 78 L 100 96 Z" />
+        <path d="M 39 96 L 42 83 L 48 76 L 52 84 L 57 72 L 62 86 L 65 96 Z" opacity="0.65" />
       </g>
-      <g fill="#DCE8EA" opacity="0.36">
-        <path d="M -22 55 C -6 41 8 45 18 53 C 30 62 39 45 52 48 C 63 50 69 61 83 53 C 95 46 109 49 122 60 V 73 H -22 Z">
-          <animateTransform attributeName="transform" type="translate" values="-10 0;9 0;-10 0" dur="20s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.28;0.58;0.28" dur="8s" repeatCount="indefinite" />
-        </path>
-        <path d="M -20 79 C -5 66 10 68 22 76 C 36 85 46 68 61 71 C 73 74 81 85 96 76 C 107 70 116 72 123 79 V 96 H -20 Z">
-          <animateTransform attributeName="transform" type="translate" values="8 0;-8 0;8 0" dur="24s" repeatCount="indefinite" />
-        </path>
-      </g>
-      <g fill="#F0F5F4" opacity="0.24">
-        <ellipse cx="30" cy="48" rx="24" ry="7"><animate attributeName="cx" values="17;45;17" dur="16s" repeatCount="indefinite" /></ellipse>
-        <ellipse cx="72" cy="69" rx="29" ry="8"><animate attributeName="cx" values="84;58;84" dur="19s" repeatCount="indefinite" /></ellipse>
+      <g filter={`url(#${ids.fogBlur})`}>
+        <g fill={`url(#${ids.fog})`} opacity="0.42">
+          <ellipse cx="20" cy="20" rx="44" ry="13"><animate attributeName="cx" values="5;37;5" dur="18s" repeatCount="indefinite" /></ellipse>
+          <ellipse cx="78" cy="36" rx="46" ry="16"><animate attributeName="cx" values="94;61;94" dur="22s" repeatCount="indefinite" /></ellipse>
+        </g>
+        <g fill="#DCE8EA" opacity="0.36">
+          <path d="M -22 55 C -6 41 8 45 18 53 C 30 62 39 45 52 48 C 63 50 69 61 83 53 C 95 46 109 49 122 60 V 73 H -22 Z">
+            <animateTransform attributeName="transform" type="translate" values="-10 0;9 0;-10 0" dur="20s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0.28;0.58;0.28" dur="8s" repeatCount="indefinite" />
+          </path>
+          <path d="M -20 79 C -5 66 10 68 22 76 C 36 85 46 68 61 71 C 73 74 81 85 96 76 C 107 70 116 72 123 79 V 96 H -20 Z">
+            <animateTransform attributeName="transform" type="translate" values="8 0;-8 0;8 0" dur="24s" repeatCount="indefinite" />
+          </path>
+        </g>
+        <g fill="#F0F5F4" opacity="0.24">
+          <ellipse cx="30" cy="48" rx="24" ry="7"><animate attributeName="cx" values="17;45;17" dur="16s" repeatCount="indefinite" /></ellipse>
+          <ellipse cx="72" cy="69" rx="29" ry="8"><animate attributeName="cx" values="84;58;84" dur="19s" repeatCount="indefinite" /></ellipse>
+        </g>
       </g>
     </g>
   );
@@ -289,6 +333,7 @@ export function MysticParkZoneDecoration({ theme, subdued = false }: MysticParkZ
     bark: `${rawId}-bark`,
     treeCanopy: `${rawId}-tree-canopy`,
     treeCanopyDeep: `${rawId}-tree-canopy-deep`,
+    cliff: `${rawId}-cliff`,
     fog: `${rawId}-fog`,
     fogBlur: `${rawId}-fog-blur`,
     mushroomGlow: `${rawId}-mushroom-glow`,
@@ -310,6 +355,7 @@ export function MysticParkZoneDecoration({ theme, subdued = false }: MysticParkZ
         <linearGradient id={ids.bark} x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#4D3825" /><stop offset="0.48" stopColor="#8B6740" /><stop offset="1" stopColor="#38291D" /></linearGradient>
         <radialGradient id={ids.treeCanopy}><stop offset="0" stopColor="#84B46C" /><stop offset="0.65" stopColor="#467843" /><stop offset="1" stopColor="#1E4A31" /></radialGradient>
         <radialGradient id={ids.treeCanopyDeep}><stop offset="0" stopColor="#5F914F" /><stop offset="1" stopColor="#173D29" /></radialGradient>
+        <linearGradient id={ids.cliff} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#53636D" /><stop offset="1" stopColor="#202A31" /></linearGradient>
         <radialGradient id={ids.fog}><stop offset="0" stopColor="#D8E3E7" stopOpacity="0.75" /><stop offset="1" stopColor="#AFC1C8" stopOpacity="0" /></radialGradient>
         <filter id={ids.fogBlur} x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.4" /></filter>
         <radialGradient id={ids.mushroomGlow}><stop offset="0" stopColor="#D6A6FF" stopOpacity="0.8" /><stop offset="1" stopColor="#8B4EC6" stopOpacity="0" /></radialGradient>
