@@ -16,17 +16,36 @@ assert.ok(firearm, "Modular Firearm starter blueprint is required");
 assert.ok(model.STARTER_WORKSHOP_COMPONENTS.length >= 24, "Starter component catalog should cover both designs, firearm families, and Abyss ammunition");
 
 const frameCases = [
-  ["component-pistol-frame", "pistol"],
-  ["component-revolver-frame", "revolver"],
-  ["component-shotgun-frame", "shotgun"],
-  ["component-rifle-frame", "rifle"],
-  ["component-automatic-frame", "automatic"],
+  ["component-pistol-frame", "pistol", "Standard Pistol Frame"],
+  ["component-revolver-frame", "revolver", "Standard Revolver Frame"],
+  ["component-shotgun-frame", "shotgun", "Standard Shotgun Frame"],
+  ["component-rifle-frame", "rifle", "Standard Rifle Frame"],
+  ["component-automatic-frame", "automatic", "Standard Automatic Frame"],
 ];
-for (const [componentId, expectedType] of frameCases) {
+for (const [componentId, expectedType, expectedName] of frameCases) {
   const frame = model.STARTER_WORKSHOP_COMPONENTS.find((entry) => entry.id === componentId);
   assert.ok(frame, `${componentId} starter frame is required`);
+  assert.equal(frame.name, expectedName, `${componentId} must use the plain standard naming scheme`);
   assert.equal(model.workshopFirearmFrameType(frame), expectedType, `${componentId} must control the firearm silhouette and output type`);
 }
+
+const componentById = (id) => model.STARTER_WORKSHOP_COMPONENTS.find((entry) => entry.id === id);
+const robotSlot = (id) => robot.slots.find((entry) => entry.id === id);
+const firearmSlot = (id) => firearm.slots.find((entry) => entry.id === id);
+assert.equal(componentById("component-basic-chest")?.name, "Standard Robot Frame", "Robot chassis naming must identify the part as a frame");
+assert.equal(componentById("component-steel-plating")?.name, "Standard Steel Armor", "Robot plating naming must identify the part as armor");
+assert.deepEqual(robotSlot("robot-chest")?.acceptedCategories, ["Robot Frame"], "Robot frame must have its own slot category");
+assert.deepEqual(robotSlot("robot-plating")?.acceptedCategories, ["Robot Armor"], "Robot armor must have its own slot category");
+assert.deepEqual(robotSlot("robot-aux-chest")?.acceptedCategories, ["Robot Chest Auxiliary"], "Chest auxiliaries must be position-locked");
+assert.equal(model.isWorkshopComponentCompatible(robotSlot("robot-aux-chest"), componentById("component-heavy-chest-mount")), true, "Large firearm mount must fit the chest auxiliary bay");
+assert.equal(model.isWorkshopComponentCompatible(robotSlot("robot-back"), componentById("component-heavy-chest-mount")), false, "Large firearm mount must not fit the back bay");
+
+const suppressor = componentById("component-suppressor");
+assert.deepEqual(firearmSlot("gun-muzzle")?.acceptedCategories, ["Muzzle Attachment"], "Muzzle attachments need a distinct compatibility category");
+assert.deepEqual(firearmSlot("gun-underbarrel")?.acceptedCategories, ["Underbarrel Attachment"], "Underbarrel attachments need a distinct compatibility category");
+assert.deepEqual(firearmSlot("gun-side")?.acceptedCategories, ["Side Attachment"], "Side attachments need a distinct compatibility category");
+assert.equal(model.isWorkshopComponentCompatible(firearmSlot("gun-muzzle"), suppressor), true, "Suppressor must fit the muzzle bay");
+assert.equal(model.isWorkshopComponentCompatible(firearmSlot("gun-underbarrel"), suppressor), false, "Suppressor must not fit the underbarrel bay");
 
 const abyssAmmo = model.STARTER_WORKSHOP_COMPONENTS.filter((entry) => entry.tags.includes("abyss-fabricator"));
 assert.equal(abyssAmmo.length, 6, "All six Abyss Fabricator ammunition settings must be available");
@@ -64,7 +83,7 @@ assert.deepEqual(unavailableQuote.unavailable, ["Standard 9mm Barrel"], "A missi
 const rebuildQuote = model.calculateWorkshopQuote({ ...firearmBuild, isRebuild: true }, firearm, model.STARTER_WORKSHOP_COMPONENTS, storage);
 assert.equal(rebuildQuote.baseCost, 75, "Rebuilds should use the blueprint rebuild fee rather than its base construction price");
 
-const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles] = await Promise.all([
+const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles, interfaceUi, catalogAlignmentMigration] = await Promise.all([
   fs.readFile(path.join(root, "supabase", "migrations", "20260901000000_workshop_system.sql"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "index.ts"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "workshop.ts"), "utf8"),
@@ -72,6 +91,8 @@ const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, persona
   fs.readFile(path.join(root, "src", "app", "components", "personal-files-workshop.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "workshop-blueprint-visual.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "personal-files.tsx"), "utf8"),
+  fs.readFile(path.join(root, "src", "app", "components", "intelli-interface.tsx"), "utf8"),
+  fs.readFile(path.join(root, "supabase", "migrations", "20260901020000_workshop_catalog_alignment.sql"), "utf8"),
 ]);
 const salvageSafetyMigration = await fs.readFile(path.join(root, "supabase", "migrations", "20260901010000_workshop_salvage_assignment_safety.sql"), "utf8");
 
@@ -94,6 +115,12 @@ assert.match(blueprintVisual, /Assembly projection/, "Visual editor must expose 
 assert.match(blueprintVisual, /Parts Bay/, "Visual editor must keep compatible owned and orderable parts in the bottom bay");
 assert.match(blueprintVisual, /isWorkshopComponentCompatible/, "Visual part choices must use the canonical compatibility rules");
 assert.match(blueprintVisual, /Automatic configuration/, "Firearm projection must expose frame-driven visual families");
+assert.match(blueprintVisual, /<g pointerEvents="none">/, "Connector lines must stay outside the interactive marker layer");
+assert.match(blueprintVisual, /textLength=/, "Long module-bay labels must fit inside the compact selected label box");
+assert.doesNotMatch(blueprintVisual, /stroke="transparent" strokeWidth="7"/, "Connector hit strokes must not cover module-bay buttons");
+assert.doesNotMatch(interfaceUi, /Personal Files now sits ahead of Commerce/, "The temporary System Modules notice must be removed");
+assert.match(catalogAlignmentMigration, /component-heavy-chest-mount.*Robot Chest Auxiliary/, "Existing chest-mount catalog data must migrate without deleting builds");
+assert.match(catalogAlignmentMigration, /gun-underbarrel.*Underbarrel Attachment/, "Existing firearm slots must migrate to distinct attachment categories");
 assert.match(serverWorkshop, /Workshop::Firearm Type/, "Completed firearm items must retain their frame-defined type");
 assert.match(personalFiles, /workshopBootstrap\?\.enabled/, "Personal Files must hide Workshop unless server-granted access is enabled");
 

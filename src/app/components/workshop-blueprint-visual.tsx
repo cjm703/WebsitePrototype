@@ -77,6 +77,32 @@ const FIREARM_POSITIONS: Record<string, SlotPosition> = {
 
 const GROUP_COLORS = ["#72D7FF", "#A998FF", "#F1D47A", "#76D6A4", "#FF9A8C", "#E6A7FF"];
 
+const SLOT_COLORS: Record<string, string> = {
+  "robot-head": "#72D7FF",
+  "robot-ai": "#72D7FF",
+  "robot-core": "#F1D47A",
+  "robot-chest": "#8AA8FF",
+  "robot-left-arm": "#76D6A4",
+  "robot-right-arm": "#76D6A4",
+  "robot-left-leg": "#A998FF",
+  "robot-right-leg": "#A998FF",
+  "robot-back": "#6FE7D8",
+  "robot-shoulder-left": "#FFB76B",
+  "robot-shoulder-right": "#FFB76B",
+  "robot-aux-chest": "#FF8095",
+  "robot-hip-left": "#FF9A8C",
+  "robot-hip-right": "#FF9A8C",
+  "robot-plating": "#C8A7FF",
+  "gun-frame": "#72D7FF",
+  "gun-ammo": "#F1D47A",
+  "gun-barrel": "#A998FF",
+  "gun-stock": "#76D6A4",
+  "gun-sight": "#E6A7FF",
+  "gun-muzzle": "#FF9A8C",
+  "gun-underbarrel": "#6FE7D8",
+  "gun-side": "#8AA8FF",
+};
+
 function blueprintKind(blueprint: WorkshopBlueprint): BlueprintKind {
   const identity = `${blueprint.id} ${blueprint.name} ${blueprint.category} ${blueprint.outputType}`.toLowerCase();
   if (identity.includes("robot") || identity.includes("construct") || identity.includes("android")) return "robot";
@@ -97,6 +123,10 @@ function groupColor(group: string) {
   let hash = 0;
   for (let index = 0; index < group.length; index += 1) hash = ((hash << 5) - hash + group.charCodeAt(index)) | 0;
   return GROUP_COLORS[Math.abs(hash) % GROUP_COLORS.length];
+}
+
+function slotColor(slot: Pick<WorkshopSlotDefinition, "id" | "group"> | null | undefined) {
+  return slot ? SLOT_COLORS[slot.id] || groupColor(slot.group) : GROUP_COLORS[0];
 }
 
 function genericPosition(index: number, total: number): SlotPosition {
@@ -126,7 +156,7 @@ function componentInitials(name: string) {
 }
 
 function RobotSchematic({ prefix, powered }: { prefix: string; powered: boolean }) {
-  return <g><g transform="translate(60 39) scale(1.1) translate(-60 -39)">
+  return <g><g transform="translate(60 39) scale(1.16) translate(-60 -39)">
     <ellipse cx="60" cy="70" rx="25" ry="2.5" fill="#070B18" stroke="#456178" strokeWidth="0.35" opacity="0.85" />
     <path d="M49 28 L52 23 L68 23 L71 28 L68 48 L64 53 L56 53 L52 48 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.75" />
     <path d="M54 14 L57 11 H63 L66 14 V22 L63 25 H57 L54 22 Z" fill={`url(#${prefix}-metal)`} stroke="#72D7FF" strokeWidth="0.7" />
@@ -163,21 +193,29 @@ function FirearmSchematic({ prefix, powered, frameType }: { prefix: string; powe
       <path d="M43 42 H66 M49 39 H62" stroke="#91AEC2" strokeWidth="0.35" opacity="0.75" />
     </g>}
     {frameType === "pistol" && <g>
-      <path d="M38 36 H69 L74 41 L66 48 H41 L37 44 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
-      <path d="M64 37 H91 V43 H66 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.7" />
-      <path d="M91 36 H98 V44 H91 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
-      <path d="M48 48 H59 L57 63 H49 L45 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.75" />
-      <circle cx="57" cy="48" r="3.5" fill="none" stroke="#829EB3" strokeWidth="0.55" />
-      <path d="M44 40 H67 M48 44 H65" stroke="#91AEC2" strokeWidth="0.38" opacity="0.78" />
+      <path d="M39 34 H83 L91 37 V43 H39 L36 40 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
+      <path d="M89 35 H98 V44 H89 Z" fill="#15263A" stroke="#72D7FF" strokeWidth="0.7" />
+      <path d="M43 43 H70 L66 49 H48 L41 46 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.7" />
+      <path d="M48 48 H61 L58 63 H49 Q45 61 44 55 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.8" />
+      <path d="M59 47 Q69 47 67 54 H60" fill="none" stroke="#91AEC2" strokeWidth="0.65" />
+      <path d="M62 48 L59 53 M75 35 V42 M79 35 V42 M83 36 V42" fill="none" stroke="#A9EEFF" strokeWidth="0.38" opacity="0.8" />
+      <path d="M48 53 L57 54 M47 57 L56 58" stroke="#7896AB" strokeWidth="0.34" opacity="0.75" />
     </g>}
     {frameType === "revolver" && <g>
-      <path d="M38 37 H62 L70 42 L64 49 H41 L36 44 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
-      <path d="M61 38 H92 V44 H62 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.72" />
-      <path d="M92 37 H98 V45 H92 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
-      <circle cx="55" cy="45" r="6.1" fill="#111D2E" stroke="#A998FF" strokeWidth="0.8" />
-      <circle cx="55" cy="45" r="3.5" fill="none" stroke="#718EA4" strokeWidth="0.45" strokeDasharray="0.8 0.7" />
-      <path d="M43 49 H53 L50 63 H42 L38 55 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.75" />
-      <path d="M39 37 L44 32 L49 38" fill="#17283A" stroke="#F1D47A" strokeWidth="0.55" />
+      <path d="M64 35 H95 V42 H64 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
+      <path d="M94 34 H100 V43 H94 Z" fill="#15263A" stroke="#72D7FF" strokeWidth="0.7" />
+      <path d="M42 36 H65 L72 42 L65 50 H43 L37 44 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.8" />
+      <circle cx="58" cy="44" r="7" fill="#111D2E" stroke="#A998FF" strokeWidth="0.9" />
+      <circle cx="58" cy="44" r="1.2" fill="#A998FF" opacity="0.65" />
+      <circle cx="58" cy="39.6" r="1.05" fill="#263C50" stroke="#7596AE" strokeWidth="0.28" />
+      <circle cx="61.8" cy="42.1" r="1.05" fill="#263C50" stroke="#7596AE" strokeWidth="0.28" />
+      <circle cx="60.4" cy="47.8" r="1.05" fill="#263C50" stroke="#7596AE" strokeWidth="0.28" />
+      <circle cx="54.2" cy="46.2" r="1.05" fill="#263C50" stroke="#7596AE" strokeWidth="0.28" />
+      <circle cx="54.3" cy="41.7" r="1.05" fill="#263C50" stroke="#7596AE" strokeWidth="0.28" />
+      <path d="M43 49 H54 L52 55 Q49 61 43 65 L37 62 Q40 55 40 50 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.8" />
+      <path d="M62 49 Q69 49 67 55 H58 M63 50 L60 54" fill="none" stroke="#91AEC2" strokeWidth="0.6" />
+      <path d="M41 37 L45 31 L52 37" fill="#17283A" stroke="#F1D47A" strokeWidth="0.65" />
+      <path d="M42 55 L49 57 M40 59 L47 61" stroke="#7896AB" strokeWidth="0.34" opacity="0.75" />
     </g>}
     {frameType === "shotgun" && <g>
       <path d="M18 47 L36 37 L47 39 L46 49 L33 55 L17 54 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.8" />
@@ -260,6 +298,14 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
   }, [components, partFilter, partQuery, selectedSlot, storage.quantities]);
   const selectedManifest = selectedSlot ? quote.manifest.find((entry) => entry.slotId === selectedSlot.id) : null;
   const installedCount = blueprint.slots.filter((slot) => assignments.has(slot.id)).length;
+  const slotRenderData = blueprint.slots.map((slot, index) => ({
+    slot,
+    index,
+    position: slotPosition(kind, slot, index, blueprint.slots.length),
+    assignedComponent: componentsById.get(assignments.get(slot.id) || ""),
+    selected: slot.id === selectedSlot?.id,
+    color: slotColor(slot),
+  }));
 
   return <div className="mt-3 space-y-2.5">
     <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1fr)_245px]">
@@ -292,13 +338,23 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
             <animate attributeName="y" values="-12;88" dur="9s" repeatCount="indefinite" />
           </rect>
           {kind === "robot" ? <RobotSchematic prefix={prefix} powered={assignments.has("robot-core")} /> : kind === "firearm" ? <FirearmSchematic prefix={prefix} powered={installedCount >= 3} frameType={frameType} /> : <GenericSchematic prefix={prefix} powered={installedCount > 0} slotCount={blueprint.slots.length} />}
-          {blueprint.slots.map((slot, index) => {
-            const position = slotPosition(kind, slot, index, blueprint.slots.length);
-            const assignedComponent = componentsById.get(assignments.get(slot.id) || "");
-            const selected = slot.id === selectedSlot?.id;
-            const color = groupColor(slot.group);
+          <g pointerEvents="none">
+            {slotRenderData.map(({ slot, position, assignedComponent, selected, color }) => <path
+              key={`connector-${slot.id}`}
+              d={`M${position.targetX} ${position.targetY} L${position.x} ${position.y}`}
+              fill="none"
+              stroke={selected ? "#FFFFFF" : color}
+              strokeWidth={selected ? 0.75 : 0.38}
+              strokeDasharray={assignedComponent ? "none" : "1.1 0.85"}
+              opacity={selected ? 0.95 : 0.62}
+            />)}
+          </g>
+          {slotRenderData.map(({ slot, index, position, assignedComponent, selected, color }) => {
             const labelX = position.x > 83 ? position.x - 4 : position.x + 4;
             const labelAnchor = position.x > 83 ? "end" : "start";
+            const estimatedLabelWidth = slot.label.length * 1.12;
+            const labelTextWidth = Math.min(21, Math.max(8, estimatedLabelWidth));
+            const labelWidth = labelTextWidth + 2;
             return <g
               key={slot.id}
               role="button"
@@ -309,16 +365,15 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
               onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectSlot(slot.id); } }}
             >
               <title>{slot.label}: {assignedComponent?.name || (slot.required ? "required component missing" : "empty optional slot")}</title>
-              <path d={`M${position.targetX} ${position.targetY} L${position.x} ${position.y}`} fill="none" stroke="transparent" strokeWidth="7" pointerEvents="stroke" />
-              <path d={`M${position.targetX} ${position.targetY} L${position.x} ${position.y}`} fill="none" stroke={selected ? "#FFFFFF" : color} strokeWidth={selected ? 0.75 : 0.38} strokeDasharray={assignedComponent ? "none" : "1.1 0.85"} opacity={selected ? 0.95 : 0.62} />
+              <circle cx={position.x} cy={position.y} r="5.4" fill="transparent" pointerEvents="all" />
               {selected && <circle cx={position.x} cy={position.y} r="4.7" fill="none" stroke="#FFFFFF" strokeWidth="0.45" strokeDasharray="1.1 0.8" filter={`url(#${prefix}-glow)`}>
                 <animateTransform attributeName="transform" type="rotate" from={`0 ${position.x} ${position.y}`} to={`360 ${position.x} ${position.y}`} dur="6s" repeatCount="indefinite" />
               </circle>}
               <circle cx={position.x} cy={position.y} r="3.25" fill={assignedComponent ? "#132E3C" : "#090F1D"} stroke={selected ? "#FFFFFF" : color} strokeWidth={selected ? 0.8 : 0.55} />
-              <text x={position.x} y={position.y + 0.95} textAnchor="middle" fill={assignedComponent ? "#DDFBFF" : color} fontSize="2.8" fontWeight="800">{index + 1}</text>
+              <text pointerEvents="none" x={position.x} y={position.y + 0.95} textAnchor="middle" fill={assignedComponent ? "#DDFBFF" : color} fontSize="2.8" fontWeight="800">{index + 1}</text>
               {selected && <g pointerEvents="none">
-                <rect x={labelAnchor === "end" ? labelX - Math.min(28, slot.label.length * 1.45) : labelX - 1} y={position.y - 3.2} width={Math.min(30, slot.label.length * 1.45) + 2} height="6.4" fill="#07101EEE" stroke={color} strokeWidth="0.3" />
-                <text x={labelX} y={position.y + 0.8} textAnchor={labelAnchor} fill="#E5F6FF" fontSize="2.7" fontWeight="700">{slot.label.slice(0, 20)}</text>
+                <rect x={labelAnchor === "end" ? labelX - labelWidth + 1 : labelX - 1} y={position.y - 2.6} width={labelWidth} height="5.2" fill="#07101EEE" stroke={color} strokeWidth="0.28" />
+                <text x={labelX} y={position.y + 0.65} textAnchor={labelAnchor} fill="#E5F6FF" fontSize="2.2" fontWeight="700" textLength={estimatedLabelWidth > labelTextWidth ? labelTextWidth : undefined} lengthAdjust={estimatedLabelWidth > labelTextWidth ? "spacingAndGlyphs" : undefined}>{slot.label}</text>
               </g>}
             </g>;
           })}
@@ -330,7 +385,7 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
         <div className="shrink-0 border-b pb-2" style={{ borderColor: theme.dividerColor }}>
           <div className="text-[8px] uppercase tracking-[0.16em]" style={{ color: theme.labelColor }}>Selected module bay</div>
           <div className="mt-1 flex items-start justify-between gap-2">
-            <div><div className="text-[11px] font-bold">{selectedSlot?.label || "No slots"}{selectedSlot?.required && <span className="ml-1 text-[#FF8998]">*</span>}</div><div className="mt-0.5 text-[8px]" style={{ color: groupColor(selectedSlot?.group || "") }}>{selectedSlot?.group || "GENERAL"}</div></div>
+            <div><div className="text-[11px] font-bold">{selectedSlot?.label || "No slots"}{selectedSlot?.required && <span className="ml-1 text-[#FF8998]">*</span>}</div><div className="mt-0.5 text-[8px]" style={{ color: slotColor(selectedSlot) }}>{selectedSlot?.group || "GENERAL"}</div></div>
             <Cpu size={17} style={{ color: theme.accentColor }} />
           </div>
           {selectedSlot?.description && <p className="mt-2 text-[9px] leading-relaxed" style={{ color: theme.labelColor }}>{selectedSlot.description}</p>}
@@ -342,7 +397,7 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
         <div className="shrink-0 border-b py-2" style={{ borderColor: theme.dividerColor }}>
           <div className="text-[8px] uppercase tracking-[0.14em]" style={{ color: theme.labelColor }}>Installed component</div>
           {selectedComponent ? <div className="mt-1.5">
-            <div className="flex items-start gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center border text-[10px] font-bold" style={{ borderColor: groupColor(selectedSlot?.group || ""), color: groupColor(selectedSlot?.group || "") }}>{componentInitials(selectedComponent.name)}</div><div className="min-w-0"><div className="text-[9px] font-bold leading-tight">{selectedComponent.name}</div><div className="mt-1 text-[7px] uppercase" style={{ color: selectedManifest?.source === "owned" ? "#76D6A4" : "#F1D47A" }}>{selectedManifest?.source === "owned" ? "Using owned part" : selectedManifest ? `${selectedManifest.pricePaid.toLocaleString()} CR order` : "Pending quote"}</div></div></div>
+            <div className="flex items-start gap-2"><div className="flex h-8 w-8 shrink-0 items-center justify-center border text-[10px] font-bold" style={{ borderColor: slotColor(selectedSlot), color: slotColor(selectedSlot) }}>{componentInitials(selectedComponent.name)}</div><div className="min-w-0"><div className="text-[9px] font-bold leading-tight">{selectedComponent.name}</div><div className="mt-1 text-[7px] uppercase" style={{ color: selectedManifest?.source === "owned" ? "#76D6A4" : "#F1D47A" }}>{selectedManifest?.source === "owned" ? "Using owned part" : selectedManifest ? `${selectedManifest.pricePaid.toLocaleString()} CR order` : "Pending quote"}</div></div></div>
             {selectedComponent.effects.slice(0, 3).map((effect) => <div key={effect.id} className="mt-1.5 text-[8px] leading-relaxed" style={{ color: theme.labelColor }}><span style={{ color: theme.textColor }}>{effect.label}:</span> {effect.text || `${effect.mode} ${effect.value} ${effect.key}`}</div>)}
           </div> : <div className="mt-1.5 text-[9px]" style={{ color: selectedSlot?.required ? "#FF9B87" : theme.labelColor }}>{selectedSlot?.required ? "A component is required here." : "This optional bay is empty."}</div>}
         </div>
@@ -352,8 +407,8 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
           <div className="h-full space-y-1 overflow-y-auto pr-1">{blueprint.slots.map((slot, index) => {
             const assigned = assignments.has(slot.id);
             const selected = slot.id === selectedSlot?.id;
-            return <button key={slot.id} type="button" className="flex w-full items-center gap-2 px-2 py-1.5 text-left" style={{ background: selected ? theme.cardBg : "transparent", borderLeft: `2px solid ${selected ? groupColor(slot.group) : "transparent"}` }} onClick={() => onSelectSlot(slot.id)}>
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center border text-[7px] font-bold" style={{ borderColor: groupColor(slot.group), color: assigned ? "#DDFBFF" : groupColor(slot.group), background: assigned ? "#153344" : "transparent" }}>{index + 1}</span>
+            return <button key={slot.id} type="button" className="flex w-full items-center gap-2 px-2 py-1.5 text-left" style={{ background: selected ? theme.cardBg : "transparent", borderLeft: `2px solid ${selected ? slotColor(slot) : "transparent"}` }} onClick={() => onSelectSlot(slot.id)}>
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center border text-[7px] font-bold" style={{ borderColor: slotColor(slot), color: assigned ? "#DDFBFF" : slotColor(slot), background: assigned ? "#153344" : "transparent" }}>{index + 1}</span>
               <span className="min-w-0 flex-1 truncate text-[8px]">{slot.label}</span>
               {assigned ? <Check size={10} className="shrink-0 text-[#76D6A4]" /> : slot.required ? <span className="text-[9px] text-[#FF8998]">*</span> : null}
             </button>;
@@ -369,15 +424,15 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
         <div className="flex items-center border" style={{ borderColor: theme.dividerColor }}>{(["all", "owned", "orderable"] as PartFilter[]).map((filter) => <button key={filter} type="button" className="px-2 py-1 text-[8px] uppercase" style={{ background: partFilter === filter ? theme.cardBg : "transparent", color: partFilter === filter ? theme.accentColor : theme.labelColor }} onClick={() => setPartFilter(filter)}>{filter}</button>)}</div>
       </div>
       <div className="flex min-h-[132px] gap-2 overflow-x-auto p-2.5">
-        {selectedSlot && <button type="button" disabled={!canEdit} onClick={() => onAssign(selectedSlot.id, "")} className="flex w-[150px] shrink-0 flex-col items-center justify-center border border-dashed p-2 text-center disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: selectedComponent ? theme.dividerColor : groupColor(selectedSlot.group), background: selectedComponent ? "transparent" : theme.cardBg }}>
-          <X size={17} style={{ color: selectedComponent ? theme.labelColor : groupColor(selectedSlot.group) }} /><span className="mt-1.5 text-[9px] font-bold">Leave Empty</span><span className="mt-1 text-[7px]" style={{ color: selectedSlot.required ? "#FF9B87" : theme.labelColor }}>{selectedSlot.required ? "Required slot" : "Optional slot"}</span>
+        {selectedSlot && <button type="button" disabled={!canEdit} onClick={() => onAssign(selectedSlot.id, "")} className="flex w-[150px] shrink-0 flex-col items-center justify-center border border-dashed p-2 text-center disabled:cursor-not-allowed disabled:opacity-40" style={{ borderColor: selectedComponent ? theme.dividerColor : slotColor(selectedSlot), background: selectedComponent ? "transparent" : theme.cardBg }}>
+          <X size={17} style={{ color: selectedComponent ? theme.labelColor : slotColor(selectedSlot) }} /><span className="mt-1.5 text-[9px] font-bold">Leave Empty</span><span className="mt-1 text-[7px]" style={{ color: selectedSlot.required ? "#FF9B87" : theme.labelColor }}>{selectedSlot.required ? "Required slot" : "Optional slot"}</span>
         </button>}
         {compatibleComponents.map((component) => {
           const owned = storage.quantities[component.id] || 0;
           const installed = component.id === selectedComponentId;
           const unavailable = owned <= 0 && !component.orderable && !installed;
-          return <button key={component.id} type="button" disabled={!canEdit || unavailable} onClick={() => selectedSlot && onAssign(selectedSlot.id, component.id)} className="flex w-[210px] shrink-0 flex-col border p-2.5 text-left disabled:cursor-not-allowed disabled:opacity-45" style={{ borderColor: installed ? groupColor(selectedSlot?.group || "") : theme.dividerColor, background: installed ? theme.cardBg : theme.panelBg, boxShadow: installed ? `inset 0 0 0 1px ${groupColor(selectedSlot?.group || "")}55` : "none" }}>
-            <span className="flex w-full items-start gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center border text-[9px] font-bold" style={{ borderColor: installed ? groupColor(selectedSlot?.group || "") : theme.dividerColor, color: installed ? groupColor(selectedSlot?.group || "") : theme.labelColor }}>{componentInitials(component.name)}</span><span className="min-w-0 flex-1"><span className="block text-[9px] font-bold leading-tight">{component.name}</span><span className="mt-1 block text-[7px] uppercase" style={{ color: theme.labelColor }}>{component.category}</span></span>{installed && <Check size={12} className="shrink-0 text-[#76D6A4]" />}</span>
+          return <button key={component.id} type="button" disabled={!canEdit || unavailable} onClick={() => selectedSlot && onAssign(selectedSlot.id, component.id)} className="flex w-[210px] shrink-0 flex-col border p-2.5 text-left disabled:cursor-not-allowed disabled:opacity-45" style={{ borderColor: installed ? slotColor(selectedSlot) : theme.dividerColor, background: installed ? theme.cardBg : theme.panelBg, boxShadow: installed ? `inset 0 0 0 1px ${slotColor(selectedSlot)}55` : "none" }}>
+            <span className="flex w-full items-start gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center border text-[9px] font-bold" style={{ borderColor: installed ? slotColor(selectedSlot) : theme.dividerColor, color: installed ? slotColor(selectedSlot) : theme.labelColor }}>{componentInitials(component.name)}</span><span className="min-w-0 flex-1"><span className="block text-[9px] font-bold leading-tight">{component.name}</span><span className="mt-1 block text-[7px] uppercase" style={{ color: theme.labelColor }}>{component.category}</span></span>{installed && <Check size={12} className="shrink-0 text-[#76D6A4]" />}</span>
             <span className="mt-2 line-clamp-2 text-[7px] leading-relaxed" style={{ color: theme.labelColor }}>{component.description || component.effects[0]?.text || "Modular Workshop component"}</span>
             <span className="mt-auto flex w-full items-center justify-between gap-2 pt-2 text-[8px] font-bold">
               <span className="inline-flex items-center gap-1" style={{ color: owned > 0 ? "#76D6A4" : component.orderable ? "#F1D47A" : "#FF9B87" }}>{owned > 0 ? <><Warehouse size={10} /> {owned} owned</> : component.orderable ? <><ShoppingCart size={10} /> {component.price.toLocaleString()} CR</> : <><LockKeyhole size={10} /> Storage only</>}</span>

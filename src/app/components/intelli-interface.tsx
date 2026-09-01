@@ -509,17 +509,6 @@ export function IntelliInterface() {
             >
               I-NET INTERFACE
             </h1>
-            <div
-              className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3 flex flex-wrap items-center gap-3 max-w-[960px]`}
-              style={{ borderLeft: `3px solid ${firstColor(theme.accentColor)}66` }}
-            >
-              <span className="text-[10px] uppercase tracking-[0.08em]" style={{ color: firstColor(theme.accentColor), fontWeight: 700 }}>
-                System Modules
-              </span>
-              <span className="text-[11px] leading-relaxed" style={{ color: theme.labelColor }}>
-                Personal Files now sits ahead of Commerce so character, inventory, and progression tools are quicker to reach.
-              </span>
-            </div>
           </div>
 
           {/* Global Search */}
