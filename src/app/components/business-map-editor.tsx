@@ -32,6 +32,7 @@ import {
   Plus,
   Redo2,
   Route,
+  Save,
   Settings2,
   Trash2,
   Type,
@@ -69,6 +70,7 @@ import {
   type BusinessMapShapeKind,
   type BusinessSlotCategory,
   type FacilityAddition,
+  type OfficeBusinessExpansion,
   type OfficeBusinessMapState,
   type OfficeBusinessSector,
   type OfficeBusinessSlot,
@@ -84,7 +86,7 @@ type InspectorMode = "selection" | "settings";
 
 type RectOperation = {
   type: "rect";
-  layer: "sector" | "slot";
+  layer: "sector" | "slot" | "expansion";
   kind: "move" | "resize";
   id: string;
   sectorId?: string;
@@ -133,6 +135,8 @@ export interface OfficeBusinessMapProps {
   canFundExpansions?: boolean;
   personalFundBalance?: number;
   operationsPanel?: React.ReactNode;
+  onSave?: () => Promise<boolean>;
+  saveState?: "idle" | "saving" | "saved" | "error";
 }
 
 const TOOL_META: Array<{ id: EditorTool; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -289,6 +293,15 @@ function rectStyle(rect: BusinessMapRect, grid: OfficeBusinessMapState["grid"]):
   };
 }
 
+function overviewZoom(map: OfficeBusinessMapState) {
+  const grounds = map.shapes.find((shape) => shape.id === "park-boundary" && shape.points.length >= 2);
+  if (!grounds) return 1;
+  const xs = grounds.points.map((point) => point.x);
+  const width = Math.max(...xs) - Math.min(...xs);
+  if (width <= 0 || width >= map.grid.width) return 1;
+  return Math.max(1, Math.min(1.6, Number((map.grid.width / width).toFixed(2))));
+}
+
 function sectorShapeStyle(sector: OfficeBusinessSector): React.CSSProperties {
   if (sector.visualShape === "ellipse") {
     return { borderRadius: "50%", padding: "10px 14px" };
@@ -321,11 +334,14 @@ export function OfficeBusinessMap({
   canFundExpansions = false,
   personalFundBalance = 0,
   operationsPanel,
+  onSave,
+  saveState = "idle",
 }: OfficeBusinessMapProps) {
   const [activeSectorId, setActiveSectorId] = useState<string | null>(null);
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(value.sectors[0]?.id || null);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [selectedShapeIds, setSelectedShapeIds] = useState<string[]>([]);
+  const [selectedExpansionId, setSelectedExpansionId] = useState<string | null>(null);
   const [selectedAdditionId, setSelectedAdditionId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [tool, setTool] = useState<EditorTool>("select");
@@ -333,7 +349,7 @@ export function OfficeBusinessMap({
   const [rightPanelTab, setRightPanelTab] = useState<"inspect" | "operations">("inspect");
   const [pendingPoints, setPendingPoints] = useState<BusinessMapPoint[]>([]);
   const [operation, setOperation] = useState<PointerOperation | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() => overviewZoom(value));
   const [history, setHistory] = useState<{ past: OfficeBusinessMapState[]; future: OfficeBusinessMapState[] }>({ past: [], future: [] });
   const [assetProgress, setAssetProgress] = useState<number | null>(null);
   const [assetError, setAssetError] = useState("");
@@ -354,6 +370,7 @@ export function OfficeBusinessMap({
   const activeSector = value.sectors.find((sector) => sector.id === activeSectorId) || null;
   const selectedSector = value.sectors.find((sector) => sector.id === selectedSectorId) || null;
   const selectedSlot = activeSector?.slots.find((slot) => slot.id === selectedSlotId) || null;
+  const selectedExpansion = !activeSector ? value.expansions.find((expansion) => expansion.id === selectedExpansionId) || null : null;
   const surface = surfaceFor(value, activeSectorId) || value;
   const selectedShapes = surface.shapes.filter((shape) => selectedShapeIds.includes(shape.id));
   const selectedShape = selectedShapes[0] || null;
@@ -365,8 +382,13 @@ export function OfficeBusinessMap({
     setHistory({ past: [], future: [] });
     setPendingPoints([]);
     setSelectedShapeIds([]);
+    setSelectedExpansionId(null);
     setBrokenBackground(false);
   }, [mapKey]);
+
+  useEffect(() => {
+    setZoom(activeSectorId ? 1 : overviewZoom(valueRef.current));
+  }, [activeSectorId, mapKey]);
 
   useEffect(() => {
     const positionAtEntrance = () => {
@@ -396,6 +418,10 @@ export function OfficeBusinessMap({
       setSelectedSlotId(null);
     }
   }, [activeSectorId, value.sectors]);
+
+  useEffect(() => {
+    if (selectedShapeIds.length > 0) setSelectedExpansionId(null);
+  }, [selectedShapeIds]);
 
   useEffect(() => {
     setBrokenBackground(false);
@@ -444,6 +470,11 @@ export function OfficeBusinessMap({
   const updateSector = useCallback((sectorId: string, updates: Partial<OfficeBusinessSector>, record = true) => {
     const current = valueRef.current;
     emit({ ...current, sectors: current.sectors.map((sector) => sector.id === sectorId ? { ...sector, ...updates } : sector) }, record);
+  }, [emit]);
+
+  const updateExpansion = useCallback((expansionId: string, updates: Partial<OfficeBusinessExpansion>, record = true) => {
+    const current = valueRef.current;
+    emit({ ...current, expansions: current.expansions.map((expansion) => expansion.id === expansionId ? { ...expansion, ...updates } : expansion) }, record);
   }, [emit]);
 
   const updateSlot = useCallback((sectorId: string, slotId: string, updates: Partial<OfficeBusinessSlot>, record = true) => {
@@ -510,6 +541,8 @@ export function OfficeBusinessMap({
       const current = valueRef.current;
       const next = operation.layer === "sector"
         ? { ...current, sectors: current.sectors.map((sector) => sector.id === operation.id ? { ...sector, ...nextRect } : sector) }
+        : operation.layer === "expansion"
+          ? { ...current, expansions: current.expansions.map((expansion) => expansion.id === operation.id ? { ...expansion, ...nextRect } : expansion) }
         : {
             ...current,
             sectors: current.sectors.map((sector) => sector.id === operation.sectorId
@@ -529,7 +562,7 @@ export function OfficeBusinessMap({
 
   const startRectOperation = (
     event: React.PointerEvent,
-    layer: "sector" | "slot",
+    layer: "sector" | "slot" | "expansion",
     kind: "move" | "resize",
     id: string,
     rect: BusinessMapRect,
@@ -632,6 +665,7 @@ export function OfficeBusinessMap({
     if (!isDM || !editMode || tool === "hand") return;
     if (tool === "select") {
       setSelectedShapeIds([]);
+      setSelectedExpansionId(null);
       if (activeSector) setSelectedSlotId(null);
       else setSelectedSectorId(null);
       setInspectorMode("selection");
@@ -889,60 +923,62 @@ export function OfficeBusinessMap({
   const canvasCursor = tool === "hand" ? "grab" : drawingTool || tool === "label" ? "crosshair" : "default";
 
   return (
-    <div className="space-y-4 outline-none" tabIndex={0} onKeyDown={handleKeyDown} data-business-map-key={mapKey}>
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-[#1A1A2B] pb-4">
+    <div className="space-y-3 outline-none" tabIndex={0} onKeyDown={handleKeyDown} data-business-map-key={mapKey}>
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1A1A2B] pb-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[14px] font-bold" style={S_TEXT}>
+          <div className="flex items-center gap-1.5 text-[12px] font-bold" style={S_TEXT}>
             {activeSector && (
-              <button type="button" onClick={() => { setActiveSectorId(null); setSelectedSlotId(null); setSelectedShapeIds([]); }} className="p-1" title="Back to business map" style={S_MUTED}>
-                <ArrowLeft size={14} />
+              <button type="button" onClick={() => { setActiveSectorId(null); setSelectedSlotId(null); setSelectedShapeIds([]); setSelectedExpansionId(null); }} className="p-0.5" title="Back to business map" style={S_MUTED}>
+                <ArrowLeft size={12} />
               </button>
             )}
-            <MapIcon size={16} style={{ color: activeSector?.color || "#79B8FF" }} />
+            <MapIcon size={14} style={{ color: activeSector?.color || "#79B8FF" }} />
             <span className="truncate">{activeSector ? activeSector.name : value.name}</span>
           </div>
-          <div className="mt-1 text-[9px]" style={S_DIM}>
+          <div className="mt-0.5 text-[8px]" style={S_DIM}>
             {activeSector ? activeSector.description || "Sector interior" : `${unlockedSectors.length} active sectors | ${occupiedCount}/${slotCount} slots filled`}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <div className="flex items-center border border-[#25253B] bg-[#08080D]">
-            <IconButton label="Zoom out" onClick={() => setZoom((current) => Math.max(0.6, Number((current - 0.15).toFixed(2))))} disabled={zoom <= 0.6}><ZoomOut size={11} /></IconButton>
-            <span className="w-12 text-center text-[8px]" style={S_DIM}>{Math.round(zoom * 100)}%</span>
-            <IconButton label="Zoom in" onClick={() => setZoom((current) => Math.min(2.5, Number((current + 0.15).toFixed(2))))} disabled={zoom >= 2.5}><ZoomIn size={11} /></IconButton>
-            <IconButton label="Reset zoom" onClick={() => { setZoom(1); if (viewportRef.current) { viewportRef.current.scrollLeft = Math.max(0, (viewportRef.current.scrollWidth - viewportRef.current.clientWidth) / 2); viewportRef.current.scrollTop = viewportRef.current.scrollHeight; } }}><Maximize2 size={11} /></IconButton>
+            <IconButton compact label="Zoom out" onClick={() => setZoom((current) => Math.max(0.6, Number((current - 0.15).toFixed(2))))} disabled={zoom <= 0.6}><ZoomOut size={10} /></IconButton>
+            <span className="w-10 text-center text-[8px]" style={S_DIM}>{Math.round(zoom * 100)}%</span>
+            <IconButton compact label="Zoom in" onClick={() => setZoom((current) => Math.min(2.5, Number((current + 0.15).toFixed(2))))} disabled={zoom >= 2.5}><ZoomIn size={10} /></IconButton>
+            <IconButton compact label="Reset zoom" onClick={() => { setZoom(activeSectorId ? 1 : overviewZoom(valueRef.current)); window.requestAnimationFrame(() => { if (viewportRef.current) { viewportRef.current.scrollLeft = Math.max(0, (viewportRef.current.scrollWidth - viewportRef.current.clientWidth) / 2); viewportRef.current.scrollTop = viewportRef.current.scrollHeight; } }); }}><Maximize2 size={10} /></IconButton>
           </div>
           {isDM && (
             <>
-              <button type="button" onClick={() => { setEditMode((current) => !current); setTool("select"); setPendingPoints([]); }} className={`${editMode ? retro.sunken : retro.raised} flex items-center gap-2 px-3 py-2 text-[10px]`} style={{ color: editMode ? "#FFD56A" : "#9AA8C7", background: editMode ? "#2B210E" : "#0B0B14" }}>
-                {editMode ? <Check size={12} /> : <Pencil size={12} />} {editMode ? "Finish Editing" : "Edit Layout"}
+              {onSave && <button type="button" onClick={() => void onSave()} disabled={saveState === "saving"} className={`${retro.button} flex items-center gap-1.5 px-2 py-1.5 text-[9px] disabled:opacity-45`} style={S_TEXT}><Save size={11} /> Save Map</button>}
+              <button type="button" onClick={() => { setEditMode((current) => !current); setTool("select"); setPendingPoints([]); }} className={`${editMode ? retro.sunken : retro.raised} flex items-center gap-1.5 px-2 py-1.5 text-[9px]`} style={{ color: editMode ? "#FFD56A" : "#9AA8C7", background: editMode ? "#2B210E" : "#0B0B14" }}>
+                {editMode ? <Check size={11} /> : <Pencil size={11} />} {editMode ? "Finish Editing" : "Edit Layout"}
               </button>
-              <button type="button" onClick={() => activeSector ? addSlot(activeSector) : addSector()} className={`${retro.button} flex items-center gap-2 px-3 py-2 text-[10px]`} style={S_GREEN}>
-                <Plus size={12} /> {activeSector ? "Add Slot" : "Add Sector"}
+              <button type="button" onClick={() => activeSector ? addSlot(activeSector) : addSector()} className={`${retro.button} flex items-center gap-1.5 px-2 py-1.5 text-[9px]`} style={S_GREEN}>
+                <Plus size={11} /> {activeSector ? "Add Slot" : "Add Sector"}
               </button>
             </>
           )}
+          {saveState !== "idle" && <span className="flex items-center gap-1 px-1 text-[8px]" style={saveState === "error" ? S_RED : saveState === "saved" ? S_GREEN : S_DIM}>{saveState === "saving" && <LoaderCircle size={9} className="animate-spin" />}{saveState === "saved" && <Check size={9} />}{saveState === "saving" ? "Saving..." : saveState === "saved" ? "Save successful." : "Save failed."}</span>}
         </div>
       </header>
 
       {isDM && editMode && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border border-[#1A1A2B] bg-[#050508] p-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border border-[#1A1A2B] bg-[#050508] p-1.5">
           <div className="flex flex-wrap items-center gap-1">
             {TOOL_META.map(({ id, label, icon: Icon }) => (
-              <IconButton key={id} label={label} active={tool === id} onClick={() => { setTool(id); setPendingPoints([]); }}><Icon size={12} /></IconButton>
+              <IconButton compact key={id} label={label} active={tool === id} onClick={() => { setTool(id); setPendingPoints([]); }}><Icon size={11} /></IconButton>
             ))}
             {drawingTool && pendingPoints.length > 0 && (
               <>
                 <button type="button" onClick={finishDrawing} className={`${retro.button} flex items-center gap-1 px-2 py-1.5 text-[9px]`} style={S_GREEN}><Check size={10} /> Finish</button>
-                <IconButton label="Cancel drawing" onClick={cancelDrawing}><X size={11} /></IconButton>
+                <IconButton compact label="Cancel drawing" onClick={cancelDrawing}><X size={10} /></IconButton>
                 <span className="px-1 text-[8px]" style={S_DIM}>{pendingPoints.length} points</span>
               </>
             )}
           </div>
           <div className="flex items-center gap-1">
-            <IconButton label="Undo" onClick={undo} disabled={history.past.length === 0}><Undo2 size={12} /></IconButton>
-            <IconButton label="Redo" onClick={redo} disabled={history.future.length === 0}><Redo2 size={12} /></IconButton>
-            <IconButton label="Map settings" active={inspectorMode === "settings"} onClick={() => { setInspectorMode("settings"); setSelectedShapeIds([]); setSelectedSlotId(null); setSelectedSectorId(null); }}><Settings2 size={12} /></IconButton>
+            <IconButton compact label="Undo" onClick={undo} disabled={history.past.length === 0}><Undo2 size={11} /></IconButton>
+            <IconButton compact label="Redo" onClick={redo} disabled={history.future.length === 0}><Redo2 size={11} /></IconButton>
+            <IconButton compact label="Map settings" active={inspectorMode === "settings"} onClick={() => { setInspectorMode("settings"); setSelectedShapeIds([]); setSelectedSlotId(null); setSelectedSectorId(null); setSelectedExpansionId(null); }}><Settings2 size={11} /></IconButton>
           </div>
         </div>
       )}
@@ -1047,10 +1083,12 @@ export function OfficeBusinessMap({
             {!activeSector && value.expansions.filter((expansion) => expansion.status !== "complete").map((expansion) => {
               const funded = expansion.status === "funded";
               const canAfford = personalFundBalance >= expansion.cost;
+              const selected = selectedExpansionId === expansion.id;
               return (
-                <div key={expansion.id} className="absolute z-10 flex flex-col justify-between overflow-hidden border border-dashed p-2 text-left" style={{ ...rectStyle(expansion, value.grid), borderColor: funded ? "#FFD56A" : "#8B7BE8", background: funded ? "#3A2B0CBB" : "#17102DBB", color: "#E5ECFF" }}>
+                <div key={expansion.id} onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button")) return; startRectOperation(event, "expansion", "move", expansion.id, expansion); }} onClick={(event) => { event.stopPropagation(); if (draggedRef.current) { draggedRef.current = false; return; } if (isDM && editMode) { setSelectedExpansionId(expansion.id); setSelectedSectorId(null); setSelectedShapeIds([]); setInspectorMode("selection"); } }} className="absolute z-10 flex flex-col justify-between overflow-hidden border border-dashed p-2 text-left" style={{ ...rectStyle(expansion, value.grid), borderColor: selected ? "#FFFFFF" : funded ? "#FFD56A" : "#8B7BE8", background: funded ? "#3A2B0CBB" : "#17102DBB", color: "#E5ECFF", boxShadow: selected ? "inset 0 0 0 1px #8B7BE8, 0 0 10px #8B7BE866" : "none", cursor: isDM && editMode && tool === "select" ? "move" : "default" }}>
                   <div><div className="flex items-center gap-1 text-[9px] font-bold"><Hammer size={10} />{expansion.name}</div><div className="mt-1 text-[7px]" style={S_DIM}>{funded ? "EXPANSION UNDERWAY" : `${expansion.cost.toLocaleString()} ${expansion.currency}`}</div></div>
-                  {funded && isDM && onExpansionAction ? <button type="button" onClick={(event) => { event.stopPropagation(); void runExpansionAction(expansion.id, "complete"); }} disabled={busyExpansionId === expansion.id} className={`${retro.button} mt-2 px-2 py-1 text-[8px] disabled:opacity-40`} style={S_GREEN}>{busyExpansionId === expansion.id ? "Completing..." : "Complete Expansion"}</button> : !funded && canFundExpansions && onExpansionAction ? <button type="button" onClick={(event) => { event.stopPropagation(); void runExpansionAction(expansion.id, "fund"); }} disabled={!canAfford || busyExpansionId === expansion.id} className={`${retro.button} mt-2 px-2 py-1 text-[8px] disabled:opacity-35`} style={S_GREEN}>{canAfford ? "Fund Expansion" : "Insufficient Personal Funds"}</button> : <div className="mt-2 text-[7px]" style={S_DIM}>{funded ? "Awaiting DM completion" : "Development plot locked"}</div>}
+                  {funded && isDM && onExpansionAction ? <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); void runExpansionAction(expansion.id, "complete"); }} disabled={busyExpansionId === expansion.id} className={`${retro.button} mt-2 px-2 py-1 text-[8px] disabled:opacity-40`} style={S_GREEN}>{busyExpansionId === expansion.id ? "Completing..." : "Complete Expansion"}</button> : !funded && canFundExpansions && onExpansionAction ? <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); void runExpansionAction(expansion.id, "fund"); }} disabled={!canAfford || busyExpansionId === expansion.id} className={`${retro.button} mt-2 px-2 py-1 text-[8px] disabled:opacity-35`} style={S_GREEN}>{canAfford ? "Fund Expansion" : "Insufficient Personal Funds"}</button> : <div className="mt-2 text-[7px]" style={S_DIM}>{funded ? "Awaiting DM completion" : "Development plot locked"}</div>}
+                  {isDM && editMode && tool === "select" && <ResizeHandle onPointerDown={(event) => startRectOperation(event, "expansion", "resize", expansion.id, expansion)} />}
                 </div>
               );
             })}
@@ -1071,6 +1109,7 @@ export function OfficeBusinessMap({
                     event.stopPropagation();
                     if (draggedRef.current) { draggedRef.current = false; return; }
                     setSelectedSectorId(sector.id);
+                    setSelectedExpansionId(null);
                     setSelectedShapeIds([]);
                     setInspectorMode("selection");
                     if (!editMode && !locked) setActiveSectorId(sector.id);
@@ -1105,7 +1144,7 @@ export function OfficeBusinessMap({
                   type="button"
                   key={slot.id}
                   onPointerDown={(event) => startRectOperation(event, "slot", "move", slot.id, slot, activeSector.id)}
-                  onClick={(event) => { event.stopPropagation(); if (draggedRef.current) { draggedRef.current = false; return; } setSelectedSlotId(slot.id); setSelectedShapeIds([]); setInspectorMode("selection"); }}
+                  onClick={(event) => { event.stopPropagation(); if (draggedRef.current) { draggedRef.current = false; return; } setSelectedSlotId(slot.id); setSelectedShapeIds([]); setSelectedExpansionId(null); setInspectorMode("selection"); }}
                   onDragOver={(event) => { if (canDrop) event.preventDefault(); }}
                   onDrop={(event) => {
                     event.preventDefault();
@@ -1187,6 +1226,14 @@ export function OfficeBusinessMap({
               onRemove={() => void handleRemove(selectedSlot)}
               onDelete={() => deleteSlot(activeSector.id, selectedSlot.id)}
             />
+          ) : !activeSector && selectedExpansion ? (
+            <ExpansionInspector
+              expansion={selectedExpansion}
+              isDM={isDM}
+              editMode={editMode}
+              grid={value.grid}
+              onUpdate={(updates) => updateExpansion(selectedExpansion.id, updates)}
+            />
           ) : !activeSector && selectedSector ? (
             <SectorInspector
               sector={selectedSector}
@@ -1224,9 +1271,9 @@ export function OfficeBusinessMap({
   );
 }
 
-function IconButton({ label, onClick, children, active = false, disabled = false }: { label: string; onClick: () => void; children: React.ReactNode; active?: boolean; disabled?: boolean }) {
+function IconButton({ label, onClick, children, active = false, disabled = false, compact = false }: { label: string; onClick: () => void; children: React.ReactNode; active?: boolean; disabled?: boolean; compact?: boolean }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label} className="flex h-8 w-8 items-center justify-center border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25" style={{ borderColor: active ? "#FFD56A" : CONTROL_BORDER, color: active ? "#FFD56A" : "#9AA8C7", background: active ? "#2B210E" : CONTROL_BG }}>
+    <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label} className={`flex ${compact ? "h-7 w-7" : "h-8 w-8"} items-center justify-center border transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-25`} style={{ borderColor: active ? "#FFD56A" : CONTROL_BORDER, color: active ? "#FFD56A" : "#9AA8C7", background: active ? "#2B210E" : CONTROL_BG }}>
       {children}
     </button>
   );
@@ -1369,6 +1416,23 @@ function SectorInspector({ sector, isDM, editMode, grid, onUpdate, onOpen, onDel
   );
 }
 
+function ExpansionInspector({ expansion, isDM, editMode, grid, onUpdate }: { expansion: OfficeBusinessExpansion; isDM: boolean; editMode: boolean; grid: OfficeBusinessMapState["grid"]; onUpdate: (updates: Partial<OfficeBusinessExpansion>) => void }) {
+  return (
+    <div className="space-y-3">
+      <PanelTitle icon={Hammer} text={expansion.name} color="#8B7BE8" />
+      <div className="flex items-center justify-between border border-[#1A1A2B] p-2 text-[8px]"><span style={S_DIM}>STATUS</span><span style={expansion.status === "funded" ? { color: "#FFD56A" } : expansion.status === "complete" ? S_GREEN : S_MUTED}>{expansion.status.toUpperCase()}</span></div>
+      {isDM && editMode ? (
+        <>
+          <Field label="Expansion Name"><input value={expansion.name} onChange={(event) => onUpdate({ name: event.target.value.slice(0, 80) })} className="w-full border bg-transparent px-2 py-1.5 text-[10px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
+          <Field label="Description"><textarea value={expansion.description} onChange={(event) => onUpdate({ description: event.target.value.slice(0, 600) })} rows={3} className="w-full resize-none border bg-transparent px-2 py-1.5 text-[9px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>
+          <RectInputs rect={expansion} grid={grid} onUpdate={onUpdate} />
+          <div className="text-[8px] leading-4" style={S_DIM}>Drag the plot or use width and height to resize the Northern Expansion Grounds.</div>
+        </>
+      ) : <div className="text-[9px] leading-5" style={S_MUTED}>{expansion.description}</div>}
+    </div>
+  );
+}
+
 function ShapeInspector({ shape, selectedCount, isDM, editMode, onUpdate, onDuplicate, onDelete, onAlign }: { shape: BusinessMapShape; selectedCount: number; isDM: boolean; editMode: boolean; onUpdate: (updates: Partial<BusinessMapShape>) => void; onDuplicate: () => void; onDelete: () => void; onAlign: (mode: "left" | "center" | "top") => void }) {
   return (
     <div className="space-y-3">
@@ -1458,12 +1522,12 @@ function SlotInspector({ slot, additions, additionUsage, facilities, grid, isDM,
 
 function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isDM, canDrag, query, uploadProgress, onQuery, onSelect, onAdd, onUpdate, onDelete, onUploadThumbnail }: { additions: FacilityAddition[]; allAdditions: FacilityAddition[]; selected: FacilityAddition | null; usage: Record<string, number>; isDM: boolean; canDrag: boolean; query: string; uploadProgress: number | null; onQuery: (value: string) => void; onSelect: (id: string) => void; onAdd: () => void; onUpdate: (id: string, updates: Partial<FacilityAddition>) => void; onDelete: (addition: FacilityAddition) => void; onUploadThumbnail: (addition: FacilityAddition, file: File) => void }) {
   return (
-    <section className="border-t border-[#1A1A2B] pt-4" aria-label="Facility Addition storage">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <section className="border-t border-[#1A1A2B] pt-2" aria-label="Facility Addition storage">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2"><Package size={13} style={{ color: "#79B8FF" }} /><span className="text-[11px] font-semibold" style={S_TEXT}>Facility Addition Storage</span><span className="border border-[#25253B] px-1.5 py-0.5 text-[8px]" style={S_DIM}>{allAdditions.length}</span></div>
-        <div className="flex items-center gap-2"><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search additions..." className="w-48 border bg-transparent px-2 py-1.5 text-[9px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} />{isDM && <button type="button" onClick={onAdd} className={`${retro.button} flex items-center gap-1 px-2 py-1.5 text-[9px]`} style={S_GREEN}><Plus size={10} /> Add</button>}</div>
+        <div className="flex items-center gap-2"><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search additions..." className="w-44 border bg-transparent px-2 py-1 text-[9px] outline-none" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} />{isDM && <button type="button" onClick={onAdd} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[9px]`} style={S_GREEN}><Plus size={10} /> Add</button>}</div>
       </div>
-      <div className="flex min-h-[132px] gap-2 overflow-x-auto border border-[#1A1A2B] bg-[#030306] p-3">
+      <div className="flex min-h-[88px] gap-2 overflow-x-auto border border-[#1A1A2B] bg-[#030306] p-2">
         {additions.map((addition) => {
           const used = usage[addition.id] || 0;
           const available = Math.max(0, addition.quantity - used);
@@ -1474,7 +1538,7 @@ function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isD
               draggable={canDrag && available > 0}
               onDragStart={(event) => { event.dataTransfer.effectAllowed = "copy"; event.dataTransfer.setData("application/x-facility-addition", addition.id); }}
               onClick={() => onSelect(addition.id)}
-              className="relative h-[108px] w-[150px] flex-shrink-0 overflow-hidden border p-2 text-left"
+              className="relative h-[70px] w-[132px] flex-shrink-0 overflow-hidden border p-1.5 text-left"
               style={{ borderColor: selected?.id === addition.id ? "#FFFFFF" : businessSlotCategoryColor(addition.category), background: "#08080D" }}
             >
               {addition.thumbnailUrl && <img src={addition.thumbnailUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-20" />}
@@ -1486,12 +1550,12 @@ function FacilityAdditionLibrary({ additions, allAdditions, selected, usage, isD
       </div>
 
       {selected && (
-        <div className="mt-3 grid grid-cols-1 gap-3 border border-[#1A1A2B] bg-[#050508] p-3 lg:grid-cols-[140px_minmax(0,1fr)_220px]">
+        <div className="mt-2 grid grid-cols-1 gap-2 border border-[#1A1A2B] bg-[#050508] p-2 lg:grid-cols-[110px_minmax(0,1fr)_210px]">
           <div className="aspect-[4/3] overflow-hidden border border-[#25253B] bg-[#08080D]">
             {selected.thumbnailUrl ? <img src={selected.thumbnailUrl} alt={`${selected.name} thumbnail`} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center"><ImagePlus size={20} style={S_DIM} /></div>}
           </div>
           <div className="min-w-0 space-y-2">
-            {isDM ? <><input value={selected.name} onChange={(event) => onUpdate(selected.id, { name: event.target.value.slice(0, 80) })} className="w-full border bg-transparent px-2 py-2 text-[11px] font-semibold" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><textarea value={selected.description} onChange={(event) => onUpdate(selected.id, { description: event.target.value.slice(0, 1200) })} rows={3} placeholder="Description" className="w-full resize-none border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><input value={selected.tags.join(", ")} onChange={(event) => onUpdate(selected.id, { tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 30) })} placeholder="Compatibility tags" className="w-full border bg-transparent px-2 py-2 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></> : <><div className="text-[11px] font-semibold" style={S_TEXT}>{selected.name}</div><div className="text-[9px] leading-5" style={S_MUTED}>{selected.description || "No description."}</div><div className="text-[8px]" style={S_DIM}>{selected.tags.join(", ") || "No tags"}</div></>}
+            {isDM ? <><input value={selected.name} onChange={(event) => onUpdate(selected.id, { name: event.target.value.slice(0, 80) })} className="w-full border bg-transparent px-2 py-1.5 text-[10px] font-semibold" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><textarea value={selected.description} onChange={(event) => onUpdate(selected.id, { description: event.target.value.slice(0, 1200) })} rows={2} placeholder="Description" className="w-full resize-none border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /><input value={selected.tags.join(", ")} onChange={(event) => onUpdate(selected.id, { tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 30) })} placeholder="Compatibility tags" className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></> : <><div className="text-[11px] font-semibold" style={S_TEXT}>{selected.name}</div><div className="text-[9px] leading-5" style={S_MUTED}>{selected.description || "No description."}</div><div className="text-[8px]" style={S_DIM}>{selected.tags.join(", ") || "No tags"}</div></>}
           </div>
           <div className="space-y-2">
             {isDM ? <><Field label="Category"><select value={selected.category} onChange={(event) => onUpdate(selected.id, { category: event.target.value as BusinessSlotCategory })} className="w-full border bg-transparent px-2 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }}>{BUSINESS_SLOT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}</select></Field><div className="grid grid-cols-3 gap-2"><Field label="Quantity"><input type="number" min="0" max="999" value={selected.quantity} onChange={(event) => onUpdate(selected.id, { quantity: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Width"><input type="number" min="1" max="32" value={selected.width} onChange={(event) => onUpdate(selected.id, { width: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Height"><input type="number" min="1" max="24" value={selected.height} onChange={(event) => onUpdate(selected.id, { height: Math.max(1, Number(event.target.value) || 1) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-2"><Field label="Purchase Cost"><input type="number" min="0" value={selected.cost} onChange={(event) => onUpdate(selected.id, { cost: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field><Field label="Monthly Upkeep"><input type="number" min="0" value={selected.monthlyUpkeep} onChange={(event) => onUpdate(selected.id, { monthlyUpkeep: Math.max(0, Number(event.target.value) || 0) })} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field></div><div className="grid grid-cols-2 gap-1">{FACILITY_STAT_KEYS.map((stat) => <Field key={stat} label={FACILITY_STAT_META[stat].label}><input type="number" value={selected.statModifiers.find((modifier) => modifier.stat === stat)?.amount || 0} onChange={(event) => { const amount = Number(event.target.value) || 0; onUpdate(selected.id, { statModifiers: [...selected.statModifiers.filter((modifier) => modifier.stat !== stat), ...(amount ? [{ stat, amount }] : [])] }); }} className="w-full border bg-transparent px-1 py-1.5 text-[9px]" style={{ color: "#E5ECFF", borderColor: CONTROL_BORDER }} /></Field>)}</div><label className={`${retro.button} flex cursor-pointer items-center justify-center gap-1 py-2 text-[8px]`} style={S_TEXT}><Upload size={9} /> Thumbnail<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUploadThumbnail(selected, file); event.currentTarget.value = ""; }} /></label>{uploadProgress != null && <ProgressBar value={uploadProgress} />}<button type="button" onClick={() => onDelete(selected)} disabled={(usage[selected.id] || 0) > 0} className={`${retro.button} flex w-full items-center justify-center gap-1 py-2 text-[8px] disabled:opacity-30`} style={S_RED}><Trash2 size={9} /> Delete</button></> : <><div className="text-[9px]" style={S_DIM}>{Math.max(0, selected.quantity - (usage[selected.id] || 0))} available of {selected.quantity}</div><div className="text-[8px]" style={S_DIM}>{selected.cost.toLocaleString()} CR · {selected.monthlyUpkeep.toLocaleString()} CR upkeep</div><div className="space-y-1">{selected.statModifiers.map((modifier) => <div key={modifier.stat} className="flex justify-between text-[8px]"><span style={S_DIM}>{FACILITY_STAT_META[modifier.stat].label}</span><span style={modifier.amount >= 0 ? S_GREEN : S_RED}>{modifier.amount >= 0 ? "+" : ""}{modifier.amount}</span></div>)}</div></>}

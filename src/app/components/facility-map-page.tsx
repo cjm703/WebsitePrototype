@@ -113,6 +113,8 @@ export function FacilityMapPage() {
   const saveTimerRef = useRef<number | null>(null);
   const saveInFlightRef = useRef(false);
   const pendingSaveRef = useRef(false);
+  const saveLoopPromiseRef = useRef<Promise<boolean> | null>(null);
+  const saveStatusTimerRef = useRef<number | null>(null);
   const editSequenceRef = useRef(0);
   const latestRef = useRef<FacilityOfficeState | null>(null);
   const signalRef = useRef<ReturnType<typeof subscribeToOfficeStateSignals> | null>(null);
@@ -153,40 +155,60 @@ export function FacilityMapPage() {
 
   useEffect(() => () => {
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
+    if (saveStatusTimerRef.current != null) window.clearTimeout(saveStatusTimerRef.current);
   }, []);
 
-  const queueDMSave = useCallback((next: FacilityOfficeState) => {
-    latestRef.current = next;
-    setOffice(next);
-    if (!session.isDM) return;
-    editSequenceRef.current += 1;
-    pendingSaveRef.current = true;
+  const flushDMSave = useCallback((): Promise<boolean> => {
+    if (!session.isDM) return Promise.resolve(false);
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
-    setSaveState("saving");
-    saveTimerRef.current = window.setTimeout(() => {
-      saveTimerRef.current = null;
-      if (saveInFlightRef.current || !pendingSaveRef.current) return;
-      const pending = latestRef.current;
-      if (!pending) return;
-      const sequence = editSequenceRef.current;
-      let failed = false;
-      pendingSaveRef.current = false;
-      saveInFlightRef.current = true;
-      void saveOfficeState<FacilityOfficeState>(pending, pending.revision).then((saved) => {
-        if (sequence === editSequenceRef.current && !pendingSaveRef.current) applyState(saved);
-        else {
-          const latest = latestRef.current;
-          if (latest) {
-            const rebased = normalizeFacilityOfficeState({ ...latest, revision: saved.revision, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy });
-            latestRef.current = rebased;
-            setOffice(rebased);
+    saveTimerRef.current = null;
+    if (saveLoopPromiseRef.current) return saveLoopPromiseRef.current;
+
+    const run = async () => {
+      setSaveState("saving");
+      if (saveStatusTimerRef.current != null) {
+        window.clearTimeout(saveStatusTimerRef.current);
+        saveStatusTimerRef.current = null;
+      }
+      let conflictAttempts = 0;
+
+      while (pendingSaveRef.current) {
+        const pending = latestRef.current;
+        if (!pending) break;
+        const sequence = editSequenceRef.current;
+        pendingSaveRef.current = false;
+        saveInFlightRef.current = true;
+
+        try {
+          const saved = normalizeFacilityOfficeState(await saveOfficeState<FacilityOfficeState>(pending, pending.revision));
+          conflictAttempts = 0;
+          if (sequence === editSequenceRef.current && !pendingSaveRef.current) applyState(saved);
+          else {
+            const latest = latestRef.current;
+            if (latest) {
+              const rebased = normalizeFacilityOfficeState({ ...latest, revision: saved.revision, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy });
+              latestRef.current = rebased;
+              setOffice(rebased);
+            }
           }
-        }
-        setError("");
-        void signalRef.current?.notify();
-      }).catch(async (saveError) => {
-        const message = saveError instanceof Error ? saveError.message : "Facility map could not be saved.";
-        if (/another client|revision conflict|OFFICE_REVISION_CONFLICT/i.test(message)) {
+          setError("");
+          void signalRef.current?.notify();
+        } catch (saveError) {
+          const message = saveError instanceof Error ? saveError.message : "Facility map could not be saved.";
+          if (!/another client|revision conflict|OFFICE_REVISION_CONFLICT/i.test(message)) {
+            setError(message);
+            setSaveState("error");
+            return false;
+          }
+
+          conflictAttempts += 1;
+          if (conflictAttempts > 3) {
+            pendingSaveRef.current = true;
+            setError("The map changed in another session too many times. Save again after those changes settle.");
+            setSaveState("error");
+            return false;
+          }
+
           try {
             const local = latestRef.current;
             const remoteRaw = await appStore.loadNexusNomadState("default", buildFacilityOfficeStateFallback());
@@ -197,28 +219,55 @@ export function FacilityMapPage() {
               setOffice(rebased);
               pendingSaveRef.current = true;
             }
-          } catch {
-            failed = true;
-            setError(message);
+          } catch (refreshError) {
+            setError(refreshError instanceof Error ? refreshError.message : message);
+            setSaveState("error");
+            return false;
           }
-        } else {
-          failed = true;
-          setError(message);
+        } finally {
+          saveInFlightRef.current = false;
         }
-      }).finally(() => {
-        saveInFlightRef.current = false;
-        if (pendingSaveRef.current) {
-          const retry = latestRef.current;
-          if (retry) queueDMSave(retry);
-        } else if (failed) {
-          setSaveState("error");
-        } else {
-          setSaveState("saved");
-          window.setTimeout(() => setSaveState("idle"), 1400);
-        }
-      });
-    }, 500);
+      }
+
+      setSaveState("saved");
+      saveStatusTimerRef.current = window.setTimeout(() => {
+        setSaveState("idle");
+        saveStatusTimerRef.current = null;
+      }, 2400);
+      return true;
+    };
+
+    const promise = run().finally(() => {
+      saveLoopPromiseRef.current = null;
+    });
+    saveLoopPromiseRef.current = promise;
+    return promise;
   }, [applyState, facilityId, session.isDM]);
+
+  const queueDMSave = useCallback((next: FacilityOfficeState) => {
+    latestRef.current = next;
+    setOffice(next);
+    if (!session.isDM) return;
+    editSequenceRef.current += 1;
+    pendingSaveRef.current = true;
+    if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current);
+    if (saveStatusTimerRef.current != null) {
+      window.clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = null;
+    }
+    setSaveState("saving");
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void flushDMSave();
+    }, 500);
+  }, [flushDMSave, session.isDM]);
+
+  const saveNow = useCallback(() => {
+    if (!session.isDM || !latestRef.current) return Promise.resolve(false);
+    editSequenceRef.current += 1;
+    pendingSaveRef.current = true;
+    return flushDMSave();
+  }, [flushDMSave, session.isDM]);
 
   const facility = office?.facilities.find((entry) => entry.id === facilityId) || null;
   const isOwner = Boolean(facility?.ownerPlayerId && facility.ownerPlayerId === session.playerId);
@@ -263,7 +312,6 @@ export function FacilityMapPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="flex items-center gap-1 border border-[#273146] bg-[#090E17] px-2 py-1.5 text-[8px]" style={isOwner ? { color: "#73D5A8" } : MUTED}>{session.isDM ? <Shield size={10} /> : <UserRound size={10} />}{session.isDM ? "DM" : isOwner ? "Owner" : "Viewer"}</span>
-            {saveState !== "idle" && <span className="flex items-center gap-1 text-[8px]" style={saveState === "error" ? { color: "#F27D87" } : MUTED}>{saveState === "saving" && <LoaderCircle size={10} className="animate-spin" />}{saveState === "saved" && <CheckCircle2 size={10} color="#62D6A6" />}{saveState === "saving" ? "Saving" : saveState === "saved" ? "Saved" : "Save failed"}</span>}
           </div>
         </div>
       </header>
@@ -290,6 +338,8 @@ export function FacilityMapPage() {
             canFundExpansions={isOwner}
             personalFundBalance={fundBalance}
             operationsPanel={currentStats ? <FacilityOperationsPanel facility={facility} current={currentStats} preview={previewStats} fundBalance={fundBalance} ownerName={ownerName} isOwner={isOwner} isDM={session.isDM} /> : undefined}
+            onSave={saveNow}
+            saveState={saveState}
           />
         </section>
       </div>

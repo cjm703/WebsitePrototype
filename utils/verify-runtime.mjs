@@ -567,6 +567,9 @@ async function testFacilityDepthState() {
   editedCurrentCenter.height = 8;
   const editedCurrentPath = editedCurrentPark.businessMap.shapes.find((shape) => shape.id === "path-north");
   editedCurrentPath.points = [{ x: 9, y: 10 }, { x: 15, y: 8 }, { x: 21, y: 10 }];
+  const editedCurrentExpansion = editedCurrentPark.businessMap.expansions.find((expansion) => expansion.id === "mystic-north-expansion");
+  editedCurrentExpansion.width = 12;
+  editedCurrentExpansion.height = 5;
   const normalizedCurrentPark = stateModel.normalizeFacilityOfficeState({ facilities: [editedCurrentPark] })
     .facilities.find((facility) => facility.id === park.id);
   const normalizedCurrentCenter = normalizedCurrentPark.businessMap.sectors.find((sector) => sector.id === "mystic-center");
@@ -577,6 +580,13 @@ async function testFacilityDepthState() {
   assert.deepEqual(
     normalizedCurrentPark.businessMap.shapes.find((shape) => shape.id === "path-north").points,
     editedCurrentPath.points,
+  );
+  assert.deepEqual(
+    {
+      width: normalizedCurrentPark.businessMap.expansions.find((expansion) => expansion.id === "mystic-north-expansion").width,
+      height: normalizedCurrentPark.businessMap.expansions.find((expansion) => expansion.id === "mystic-north-expansion").height,
+    },
+    { width: 12, height: 5 },
   );
 
   const owned = stateModel.normalizeFacilityOfficeState({
