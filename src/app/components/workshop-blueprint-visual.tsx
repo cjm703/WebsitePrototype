@@ -195,15 +195,16 @@ function FirearmSchematic({ prefix, powered, frameType }: { prefix: string; powe
       <path d="M47 33 V34 M85 33 V34 M87 36 V41 M91 36 V41 M50 55 H58 M49 59 H57" fill="none" stroke="#A9EEFF" strokeWidth="0.38" opacity="0.8" />
     </g>}
     {frameType === "revolver" && <g>
-      <path d="M63 35 H92 L96 38 V42 H63 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
-      <path d="M42 36 H65 L72 42 L66 50 H44 L38 44 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.82" />
-      <circle cx="58" cy="44" r="7.2" fill="#111D2E" stroke="#A998FF" strokeWidth="0.96" />
-      <circle cx="58" cy="44" r="1.1" fill="#A998FF" opacity="0.75" />
-      <circle cx="58" cy="40.2" r="0.85" fill="#2C455A" /><circle cx="61.6" cy="42.8" r="0.85" fill="#2C455A" /><circle cx="60.2" cy="47" r="0.85" fill="#2C455A" /><circle cx="55.8" cy="47" r="0.85" fill="#2C455A" /><circle cx="54.4" cy="42.8" r="0.85" fill="#2C455A" />
-      <path d="M43 49 H54 L52 55 Q49 62 42 65 L36 61 Q40 54 40 50 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.84" />
-      <path d="M63 49 H70 V55 H59 M64 50 L61 54" fill="none" stroke="#A7BECD" strokeWidth="0.64" />
-      <path d="M41 37 L45 31 L51 37" fill="#17283A" stroke="#F1D47A" strokeWidth="0.65" />
-      <path d="M42 56 L49 58 M40 60 L47 62" stroke="#7896AB" strokeWidth="0.36" opacity="0.75" />
+      <path d="M63 35 H96 V41 H63 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
+      <path d="M64 41 H84 L81 45 H65 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.62" />
+      <path d="M40 36 H64 L70 40 V47 L65 50 H44 L38 45 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.84" />
+      <circle cx="57" cy="43" r="7.3" fill="#111D2E" stroke="#A998FF" strokeWidth="0.98" />
+      <circle cx="57" cy="43" r="1.05" fill="#A998FF" opacity="0.78" />
+      <circle cx="57" cy="39.2" r="0.82" fill="#2C455A" /><circle cx="60.6" cy="41.8" r="0.82" fill="#2C455A" /><circle cx="59.2" cy="46" r="0.82" fill="#2C455A" /><circle cx="54.8" cy="46" r="0.82" fill="#2C455A" /><circle cx="53.4" cy="41.8" r="0.82" fill="#2C455A" />
+      <path d="M42 49 C46 50 51 50 54 49 L52 55 C49 61 44 65 38 64 L34 60 C38 56 39 52 39 49 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.86" />
+      <path d="M63 49 C69 48 72 50 71 53 C70 56 66 57 60 56 M64 50 L62 54" fill="none" stroke="#A7BECD" strokeWidth="0.66" />
+      <path d="M40 37 L44 31 L50 35 L48 38" fill="#17283A" stroke="#F1D47A" strokeWidth="0.66" />
+      <path d="M90 33.8 V35 M42 56 L49 58 M39 60 L46 62" stroke="#A9EEFF" strokeWidth="0.38" opacity="0.78" />
     </g>}
     {frameType === "shotgun" && <g>
       <path d="M18 47 L36 37 L47 39 L46 49 L33 55 L17 54 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.8" />
