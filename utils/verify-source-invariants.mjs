@@ -245,6 +245,8 @@ assert.match(facilityDepthModel, /LEGACY_MYSTIC_ADDITION_IDS/);
 assert.doesNotMatch(facilityDepthModel, /MYSTIC_ADDITION_SEEDS/);
 assert.match(facilityOfficeState, /version: Math\.max\(5/);
 assert.match(facilityOfficeState, /isGeneratedMainFloor/);
+assert.match(facilityOfficeState, /existing\.presetId === MYSTIC_LANDS_PARK_PRESET_ID/);
+assert.match(facilityOfficeState, /businessMap: existingMap \|\| presetMap/);
 assert.match(edge, /app_nexus_nomad_state: \{ write: "dm" \}/);
 assert.match(edge, /office\/state\/save/);
 assert.match(edge, /office\/facility-addition\/action/);

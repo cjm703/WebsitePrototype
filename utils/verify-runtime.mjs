@@ -520,7 +520,7 @@ async function testFacilityDepthState() {
   const legacyParkMap = officeMap.createFacilityBusinessMap("Mystic Lands Park");
   legacyParkMap.sectors.push({ ...legacyParkMap.sectors[0], id: "custom-park-sector", name: "Custom Plaza", description: "A hand-built custom park sector.", x: 0, y: 0, width: 1, height: 1 });
   const mergedParkState = stateModel.normalizeFacilityOfficeState({
-    facilities: [{ ...park, businessMap: legacyParkMap }],
+    facilities: [{ ...park, presetId: "mystic-lands-park-v1", businessMap: legacyParkMap }],
     facilityCats: [],
     facilityAdditions: [],
   });
@@ -540,6 +540,26 @@ async function testFacilityDepthState() {
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").x, 11);
   assert.equal(migratedV1Park.businessMap.sectors.find((sector) => sector.id === "mystic-center").visualShape, "ellipse");
   assert.ok(migratedV1Park.businessMap.shapes.some((shape) => shape.id === "custom-park-shape"));
+
+  const editedCurrentPark = structuredClone(park);
+  const editedCurrentCenter = editedCurrentPark.businessMap.sectors.find((sector) => sector.id === "mystic-center");
+  editedCurrentCenter.x = 9;
+  editedCurrentCenter.y = 10;
+  editedCurrentCenter.width = 12;
+  editedCurrentCenter.height = 8;
+  const editedCurrentPath = editedCurrentPark.businessMap.shapes.find((shape) => shape.id === "path-north");
+  editedCurrentPath.points = [{ x: 9, y: 10 }, { x: 15, y: 8 }, { x: 21, y: 10 }];
+  const normalizedCurrentPark = stateModel.normalizeFacilityOfficeState({ facilities: [editedCurrentPark] })
+    .facilities.find((facility) => facility.id === park.id);
+  const normalizedCurrentCenter = normalizedCurrentPark.businessMap.sectors.find((sector) => sector.id === "mystic-center");
+  assert.deepEqual(
+    { x: normalizedCurrentCenter.x, y: normalizedCurrentCenter.y, width: normalizedCurrentCenter.width, height: normalizedCurrentCenter.height },
+    { x: 9, y: 10, width: 12, height: 8 },
+  );
+  assert.deepEqual(
+    normalizedCurrentPark.businessMap.shapes.find((shape) => shape.id === "path-north").points,
+    editedCurrentPath.points,
+  );
 
   const owned = stateModel.normalizeFacilityOfficeState({
     ...migrated,

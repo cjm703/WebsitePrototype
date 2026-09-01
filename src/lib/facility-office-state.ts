@@ -98,6 +98,20 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
   if (!existing) return normalizeFacilityRecord(preset)!;
   const existingMap = existing.businessMap;
   const presetMap = preset.businessMap;
+
+  // Preset geometry is authoritative only while upgrading an older park. Once
+  // the current preset has been applied, the saved map is the editable source
+  // of truth and must survive subsequent normalize/save/load passes unchanged.
+  if (existing.presetId === MYSTIC_LANDS_PARK_PRESET_ID) {
+    return normalizeFacilityRecord({
+      ...preset,
+      ...existing,
+      presetId: MYSTIC_LANDS_PARK_PRESET_ID,
+      baseStats: existing.baseStats || preset.baseStats,
+      businessMap: existingMap || presetMap,
+    })!;
+  }
+
   const mergeById = <T extends { id: string }>(defaults: T[], current: T[]) => {
     const currentById = new Map(current.map((entry) => [entry.id, entry]));
     const defaultIds = new Set(defaults.map((entry) => entry.id));
