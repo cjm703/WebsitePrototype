@@ -44,8 +44,11 @@ import {
 } from "@/lib/office-state-api";
 import {
   createMysticLandsParkFacility,
+  calculateFacilityEconomy,
+  calculateFacilityStats,
   ensureMysticLandsAdditions,
   ensurePersonalFund,
+  type FacilityMonthlyReport,
   type FacilityStats,
   type PersonalFund,
 } from "@/lib/facility-depth-model";
@@ -563,6 +566,9 @@ interface Facility {
   ownerPlayerId?: string;
   presetId?: string;
   baseStats?: FacilityStats;
+  staffCostPerPerson?: number;
+  currentMonth?: number;
+  monthlyReports?: FacilityMonthlyReport[];
   revenueDestination?: "owner-personal-fund";
 }
 
@@ -685,7 +691,7 @@ interface NexusNomadState {
 }
 
 const NEXUS_NOMAD_STATE_ID = "default";
-const NEXUS_NOMAD_STATE_VERSION = 5;
+const NEXUS_NOMAD_STATE_VERSION = 6;
 
 function loadLocalOfficeReputation(): number {
   return 25;
@@ -823,10 +829,19 @@ function mergeRemoteInstallationChanges(local: NexusNomadState, remote: NexusNom
     businessMap: mergeRemoteMapInstallations(local.businessMap, remote.businessMap),
     facilities: local.facilities.map((facility) => {
       const remoteFacility = remoteFacilities.get(facility.id);
-      if (!facility.businessMap || !remoteFacility?.businessMap) return facility;
+      if (!remoteFacility) return facility;
       return {
         ...facility,
-        businessMap: mergeRemoteMapInstallations(facility.businessMap, remoteFacility.businessMap),
+        baseStats: remoteFacility.baseStats,
+        staffCostPerPerson: remoteFacility.staffCostPerPerson,
+        currentMonth: remoteFacility.currentMonth,
+        monthlyReports: remoteFacility.monthlyReports,
+        revenue: remoteFacility.revenue,
+        expenses: remoteFacility.expenses,
+        employeesOnSite: remoteFacility.employeesOnSite,
+        businessMap: facility.businessMap && remoteFacility.businessMap
+          ? mergeRemoteMapInstallations(facility.businessMap, remoteFacility.businessMap)
+          : facility.businessMap,
       };
     }),
   };
@@ -3359,10 +3374,14 @@ export function NexusNomad() {
 
           {/* Finance Panel */}
           {activeTab === "overview" && showFinancePanel && (() => {
-            const facilityFinances = facilities.filter(f => f.revenue || f.expenses);
-            const parseNum = (s?: string) => { if (!s) return 0; const n = parseFloat(s.replace(/[^0-9.-]/g, "")); return isNaN(n) ? 0 : n; };
-            const totalRevenue = facilities.reduce((sum, f) => sum + parseNum(f.revenue), 0);
-            const totalExpenses = facilities.reduce((sum, f) => sum + parseNum(f.expenses), 0);
+            const facilityEconomies = new Map(facilities.flatMap((facility) => {
+              if (!facility.baseStats) return [];
+              const stats = facility.businessMap ? calculateFacilityStats(facility.baseStats, facility.businessMap, facilityAdditions) : facility.baseStats;
+              return [[facility.id, calculateFacilityEconomy(stats, facility.staffCostPerPerson ?? 50)] as const];
+            }));
+            const facilityFinances = facilities.filter((facility) => facilityEconomies.has(facility.id));
+            const totalRevenue = Array.from(facilityEconomies.values()).reduce((sum, economy) => sum + economy.adjustedRevenue, 0);
+            const totalExpenses = Array.from(facilityEconomies.values()).reduce((sum, economy) => sum + economy.totalMonthlyCosts, 0);
             const netIncome = totalRevenue - totalExpenses;
             const visibleFundPlayers = isDM ? businessMapPlayers : businessMapPlayers.filter((player) => player.id === currentUserId);
 
@@ -3387,7 +3406,7 @@ export function NexusNomad() {
                   <div style={innerPanelStyle} className="p-4">
                     <div className="flex items-center gap-1.5 mb-2">
                       <TrendingUp size={10} style={NS_ICON_GREEN_SOFT} />
-                      <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Monthly Revenue</span>
+                      <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Adjusted Revenue</span>
                     </div>
                     <div className="text-[18px] font-bold font-mono" style={NS_ACCENT_GREEN}>
                       {totalRevenue > 0 ? `${totalRevenue.toLocaleString()} CR` : "—"}
@@ -3396,7 +3415,7 @@ export function NexusNomad() {
                   <div style={innerPanelStyle} className="p-4">
                     <div className="flex items-center gap-1.5 mb-2">
                       <TrendingDown size={10} style={NS_ICON_RED_SOFT} />
-                      <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Monthly Expenses</span>
+                      <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Upkeep + Payroll</span>
                     </div>
                     <div className="text-[18px] font-bold font-mono" style={NS_RED}>
                       {totalExpenses > 0 ? `${totalExpenses.toLocaleString()} CR` : "—"}
@@ -3444,21 +3463,22 @@ export function NexusNomad() {
                 {facilityFinances.length === 0 ? (
                   <div style={innerPanelStyle} className="p-6 text-center">
                     <Factory size={20} style={NS_EMPTY_ICON} />
-                    <p className="text-[10px]" style={NS_SUBDIM}>No facilities have revenue or expenses set.</p>
-                    <p className="text-[9px] mt-1" style={NS_DARK}>Set revenue/expenses on individual facilities to track them here.</p>
+                    <p className="text-[10px]" style={NS_SUBDIM}>No facilities have economy settings yet.</p>
+                    <p className="text-[9px] mt-1" style={NS_DARK}>Open a facility's monthly ledger to configure its economy.</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     {/* Table header */}
                     <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-2" style={NS_BORDER_SUBSECTION}>
                       <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Facility</span>
-                      <span className="text-[9px] uppercase tracking-wider font-semibold text-right w-[100px]" style={NS_DIM}>Revenue/mo</span>
-                      <span className="text-[9px] uppercase tracking-wider font-semibold text-right w-[100px]" style={NS_DIM}>Expenses/mo</span>
+                      <span className="text-[9px] uppercase tracking-wider font-semibold text-right w-[100px]" style={NS_DIM}>Adjusted/mo</span>
+                      <span className="text-[9px] uppercase tracking-wider font-semibold text-right w-[100px]" style={NS_DIM}>Costs/mo</span>
                       <span className="text-[9px] uppercase tracking-wider font-semibold text-right w-[80px]" style={NS_DIM}>Net</span>
                     </div>
                     {facilityFinances.map(fac => {
-                      const rev = parseNum(fac.revenue);
-                      const exp = parseNum(fac.expenses);
+                      const economy = facilityEconomies.get(fac.id)!;
+                      const rev = economy.adjustedRevenue;
+                      const exp = economy.totalMonthlyCosts;
                       const net = rev - exp;
                       const meta = FACILITY_TYPE_META[fac.type] || FACILITY_TYPE_META.Facility;
                       return (
@@ -4122,6 +4142,8 @@ export function NexusNomad() {
             const meta = FACILITY_TYPE_META[fac.type] || FACILITY_TYPE_META.Facility;
             const owner = businessMapPlayers.find((player) => player.id === fac.ownerPlayerId);
             const ownerFund = personalFunds.find((fund) => fund.playerId === fac.ownerPlayerId);
+            const liveFacilityStats = fac.baseStats ? (fac.businessMap ? calculateFacilityStats(fac.baseStats, fac.businessMap, facilityAdditions) : fac.baseStats) : null;
+            const liveFacilityEconomy = liveFacilityStats ? calculateFacilityEconomy(liveFacilityStats, fac.staffCostPerPerson ?? 50) : null;
 
             const STATUS_OPTIONS = [
               { label: "Active", color: "#4ACA6A" },
@@ -4307,66 +4329,12 @@ export function NexusNomad() {
                     </div>
                   </div>
 
-                  {/* Row 3: Revenue, Expenses, Employees on Site (optional) */}
-                  {(isDM || fac.revenue || fac.expenses || fac.employeesOnSite) && (
+                  {/* Row 3: Economy summary */}
+                  {liveFacilityStats && liveFacilityEconomy && (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {(isDM || fac.revenue) && (
-                        <div style={innerPanelStyle} className="p-3">
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <TrendingUp size={10} style={NS_ICON_GREEN_SOFT} />
-                            <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Revenue / Month</span>
-                          </div>
-                          {isDM ? (
-                            <input
-                              value={fac.revenue || ""}
-                              onChange={e => editFacility(fac.id, { revenue: e.target.value })}
-                              placeholder="e.g. 5000"
-                              className="w-full text-[11px] bg-transparent outline-none px-2 py-1.5 rounded"
-                              style={nsColorInput("#4ACA6A")}
-                            />
-                          ) : (
-                            <p className="text-[11px] font-mono px-0.5" style={NS_ACCENT_GREEN}>{fac.revenue} CR</p>
-                          )}
-                        </div>
-                      )}
-                      {(isDM || fac.expenses) && (
-                        <div style={innerPanelStyle} className="p-3">
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <TrendingDown size={10} style={NS_ICON_RED_SOFT} />
-                            <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Expenses / Month</span>
-                          </div>
-                          {isDM ? (
-                            <input
-                              value={fac.expenses || ""}
-                              onChange={e => editFacility(fac.id, { expenses: e.target.value })}
-                              placeholder="e.g. 2000"
-                              className="w-full text-[11px] bg-transparent outline-none px-2 py-1.5 rounded"
-                              style={nsColorInput("#FF5A5A")}
-                            />
-                          ) : (
-                            <p className="text-[11px] font-mono px-0.5" style={NS_RED}>{fac.expenses} CR</p>
-                          )}
-                        </div>
-                      )}
-                      {(isDM || fac.employeesOnSite) && (
-                        <div style={innerPanelStyle} className="p-3">
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <Users size={10} style={NS_ICON_BLUE_SOFT} />
-                            <span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Employees on Site</span>
-                          </div>
-                          {isDM ? (
-                            <input
-                              value={fac.employeesOnSite || ""}
-                              onChange={e => editFacility(fac.id, { employeesOnSite: e.target.value })}
-                              placeholder="e.g. 12"
-                              className="w-full text-[11px] bg-transparent outline-none px-2 py-1.5 rounded"
-                              style={nsColorInput("#5A9ACA")}
-                            />
-                          ) : (
-                            <p className="text-[11px] font-mono px-0.5" style={NS_BLUE}>{fac.employeesOnSite}</p>
-                          )}
-                        </div>
-                      )}
+                      <div style={innerPanelStyle} className="p-3"><div className="flex items-center gap-1.5 mb-2"><TrendingUp size={10} style={NS_ICON_GREEN_SOFT} /><span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Adjusted Revenue</span></div><p className="text-[11px] font-mono px-0.5" style={NS_ACCENT_GREEN}>{liveFacilityEconomy.adjustedRevenue.toLocaleString()} CR</p></div>
+                      <div style={innerPanelStyle} className="p-3"><div className="flex items-center gap-1.5 mb-2"><TrendingDown size={10} style={NS_ICON_RED_SOFT} /><span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Upkeep + Payroll</span></div><p className="text-[11px] font-mono px-0.5" style={NS_RED}>{liveFacilityEconomy.totalMonthlyCosts.toLocaleString()} CR</p></div>
+                      <button type="button" onClick={() => navigate(`/interface/nexus-nomad/facility/${encodeURIComponent(fac.id)}/finances`)} style={innerPanelStyle} className="p-3 text-left transition-colors hover:border-[#4A6A98]"><div className="flex items-center justify-between gap-2 mb-2"><span className="flex items-center gap-1.5"><Users size={10} style={NS_ICON_BLUE_SOFT} /><span className="text-[9px] uppercase tracking-wider font-semibold" style={NS_DIM}>Staff Present / Required</span></span><ChevronRight size={10} style={NS_SUBDIM} /></div><p className="text-[11px] font-mono px-0.5" style={NS_BLUE}>{liveFacilityEconomy.staffPresent} / {liveFacilityStats.staffRequired}</p></button>
                     </div>
                   )}
 
@@ -4443,6 +4411,18 @@ export function NexusNomad() {
                         >
                           <Waypoints size={11} />
                           Open Facility Map
+                          <ChevronRight size={11} />
+                        </button>
+                      )}
+                      {fac.businessMap && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/interface/nexus-nomad/facility/${encodeURIComponent(fac.id)}/finances`)}
+                          className="flex items-center gap-1.5 rounded px-3 py-2 text-[10px] font-medium transition-opacity hover:opacity-80"
+                          style={nsAccentBtn("#62C68D")}
+                        >
+                          <DollarSign size={11} />
+                          Monthly Ledger
                           <ChevronRight size={11} />
                         </button>
                       )}

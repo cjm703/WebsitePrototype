@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router";
 import {
   ArrowLeft,
+  ArrowRight,
+  BarChart3,
   Building2,
   CheckCircle2,
   Coins,
@@ -12,6 +14,7 @@ import {
   Shield,
   Sparkles,
   TrendingUp,
+  Users,
   UserRound,
 } from "lucide-react";
 import { appStore } from "@/lib/app-store";
@@ -32,8 +35,8 @@ import {
 } from "@/lib/facility-office-state";
 import {
   calculateFacilityStats,
-  FACILITY_STAT_KEYS,
-  FACILITY_STAT_META,
+  calculateFacilityEconomy,
+  facilitySecurityRisk,
   facilityStatDelta,
   personalFundBalance,
   type FacilityStats,
@@ -49,43 +52,47 @@ const TEXT = { color: "#E6EDF8" } as const;
 const MUTED = { color: "#8490A7" } as const;
 const DIM = { color: "#566176" } as const;
 
-function formatStat(key: keyof FacilityStats, value: number) {
-  return `${Math.round(value).toLocaleString()}${FACILITY_STAT_META[key].unit}`;
+function FacilityStatBar({ label, value, color }: { label: string; value: number; color: string }) {
+  const bounded = Math.max(0, Math.min(100, Math.round(value)));
+  return <div><div className="mb-1 flex items-center justify-between text-[8px]"><span style={MUTED}>{label.toUpperCase()}</span><span className="font-mono" style={{ color }}>{bounded}/100</span></div><div className="h-2 overflow-hidden border border-[#253047] bg-[#05080E]"><div className="h-full transition-[width]" style={{ width: `${bounded}%`, background: color }} /></div></div>;
 }
 
-function FacilityOperationsPanel({ facility, current, preview, fundBalance, ownerName, isOwner, isDM }: { facility: FacilityRecord; current: FacilityStats; preview: FacilityStats; fundBalance: number; ownerName: string; isOwner: boolean; isDM: boolean }) {
+function FacilityOperationsPanel({ facility, current, preview, fundBalance, ownerName, isOwner, isDM, onOpenFinances }: { facility: FacilityRecord; current: FacilityStats; preview: FacilityStats; fundBalance: number; ownerName: string; isOwner: boolean; isDM: boolean; onOpenFinances: () => void }) {
   const expansions = facility.businessMap?.expansions || [];
+  const economy = calculateFacilityEconomy(current, facility.staffCostPerPerson);
+  const risk = facilitySecurityRisk(current.security);
+  const hasPreview = Object.values(preview).some((value) => value !== 0);
   return (
     <div className="min-w-0">
-      <div className="border-b border-[#20283A] pb-4">
+      <div className="border-b border-[#20283A] pb-3">
         <div className="flex items-center gap-2 text-[12px] font-semibold" style={TEXT}><Building2 size={14} color="#78B7FF" />Facility Operations</div>
-        <div className="mt-3 flex items-center justify-between text-[9px]"><span style={DIM}>OWNER</span><span className="truncate" style={TEXT}>{ownerName || "Unassigned"}</span></div>
+        <div className="mt-2 flex items-center justify-between text-[9px]"><span style={DIM}>OWNER</span><span className="truncate" style={TEXT}>{ownerName || "Unassigned"}</span></div>
         <div className="mt-2 flex items-center justify-between text-[9px]"><span style={DIM}>ACCESS</span><span style={isDM || isOwner ? { color: "#62D6A6" } : MUTED}>{isDM ? "DM Control" : isOwner ? "Owner Control" : "Read Only"}</span></div>
-        <div className="mt-3 border border-[#2B3549] bg-[#090E17] p-3">
+        <div className="mt-2 border border-[#2B3549] bg-[#090E17] p-2.5">
           <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 text-[9px]" style={MUTED}><Coins size={11} />Owner Personal Funds</span><strong className="text-[13px] font-mono text-[#F2D06B]">{fundBalance.toLocaleString()} CR</strong></div>
-          <div className="mt-1 text-[7px]" style={DIM}>The DM manages deposits and adjustments in Company Funds.</div>
+          <div className="mt-1 text-[7px]" style={DIM}>Current accounting period: Month {facility.currentMonth}</div>
         </div>
       </div>
 
-      <div className="py-4">
+      <div className="py-3">
         <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase" style={MUTED}><TrendingUp size={12} />Live Facility Stats</div>
-        <div className="space-y-1.5">
-          {FACILITY_STAT_KEYS.map((key) => {
-            const delta = preview[key];
-            const favorable = FACILITY_STAT_META[key].higherIsBetter ? delta > 0 : delta < 0;
-            return (
-              <div key={key} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-b border-[#151C29] py-2">
-                <span className="truncate text-[8px] uppercase" style={MUTED}>{FACILITY_STAT_META[key].label}</span>
-                <span className="text-[10px] font-mono" style={TEXT}>{formatStat(key, current[key])}</span>
-                <span className="w-14 text-right text-[8px] font-mono" style={!delta ? DIM : favorable ? { color: "#62D6A6" } : { color: "#F27D87" }}>{delta ? `${delta > 0 ? "+" : ""}${formatStat(key, delta)}` : "—"}</span>
-              </div>
-            );
-          })}
+        <div className="space-y-3">
+          <FacilityStatBar label="Appeal" value={current.appeal} color="#B99AF5" />
+          <FacilityStatBar label="Condition" value={current.condition} color="#62D6A6" />
+          <FacilityStatBar label={`Security · ${risk.label}`} value={current.security} color={risk.color} />
         </div>
-        <div className="mt-2 text-[7px]" style={DIM}>Select an item in Facility Addition Storage to preview its changes.</div>
+        <div className="mt-3 space-y-1.5 border-t border-[#151C29] pt-2">
+          <div className="flex items-center justify-between text-[8px]"><span style={MUTED}>GUEST CAPACITY</span><span className="font-mono" style={TEXT}>{current.capacity.toLocaleString()}</span></div>
+          <div className="flex items-center justify-between text-[8px]"><span style={MUTED}>REVENUE POTENTIAL</span><span className="font-mono text-[#62D6A6]">{current.revenue.toLocaleString()} CR</span></div>
+          <div className="flex items-center justify-between text-[8px]"><span style={MUTED}>MONTHLY UPKEEP</span><span className="font-mono text-[#F29AA3]">{current.monthlyUpkeep.toLocaleString()} CR</span></div>
+          <div className="flex items-center justify-between text-[8px]"><span className="flex items-center gap-1" style={MUTED}><Users size={9} />STAFF PRESENT / REQUIRED</span><span className="font-mono" style={economy.staffPresent >= current.staffRequired ? { color: "#62D6A6" } : { color: "#F29AA3" }}>{economy.staffPresent} / {current.staffRequired}</span></div>
+          <div className="flex items-center justify-between text-[8px]"><span style={MUTED}>MONTHLY STAFF PAYROLL</span><span className="font-mono" style={TEXT}>{economy.staffPayroll.toLocaleString()} CR</span></div>
+        </div>
+        {hasPreview && <div className="mt-2 border border-[#2A3650] bg-[#080D16] p-2 text-[7px]" style={DIM}>Selected addition preview: {preview.monthlyUpkeep >= 0 ? "+" : ""}{preview.monthlyUpkeep.toLocaleString()} CR upkeep · +{preview.staffRequired} required · +{preview.staffProvided} provided</div>}
+        <button type="button" onClick={onOpenFinances} className="mt-3 flex w-full items-center justify-between border border-[#35506C] bg-[#0A1420] px-3 py-2.5 text-left hover:bg-[#0D1A29]"><span><span className="flex items-center gap-1.5 text-[9px] font-semibold" style={TEXT}><BarChart3 size={11} color="#79B8FF" />Monthly Revenue &amp; Expenses</span><span className="mt-1 block text-[7px]" style={DIM}>Preview Month {facility.currentMonth} and view prior reports</span></span><ArrowRight size={12} color="#79B8FF" /></button>
       </div>
 
-      <div className="border-t border-[#20283A] pt-4">
+      <div className="border-t border-[#20283A] pt-3">
         <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase" style={MUTED}><Hammer size={12} />Development</div>
         <div className="space-y-2">
           {expansions.map((expansion) => (
@@ -337,7 +344,7 @@ export function FacilityMapPage() {
             onExpansionAction={handleExpansion}
             canFundExpansions={isOwner}
             personalFundBalance={fundBalance}
-            operationsPanel={currentStats ? <FacilityOperationsPanel facility={facility} current={currentStats} preview={previewStats} fundBalance={fundBalance} ownerName={ownerName} isOwner={isOwner} isDM={session.isDM} /> : undefined}
+            operationsPanel={currentStats ? <FacilityOperationsPanel facility={facility} current={currentStats} preview={previewStats} fundBalance={fundBalance} ownerName={ownerName} isOwner={isOwner} isDM={session.isDM} onOpenFinances={() => navigate(`/interface/nexus-nomad/facility/${encodeURIComponent(facility.id)}/finances`)} /> : undefined}
             onSave={saveNow}
             saveState={saveState}
           />

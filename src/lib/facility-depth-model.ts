@@ -10,11 +10,55 @@ import {
   type FacilitySlotRole,
   type FacilitySlotTier,
   type FacilityStatKey,
+  type FacilityStatModifierKey,
   type FacilityStatModifier,
   type OfficeBusinessMapState,
 } from "./business-map-model";
 
 export type FacilityStats = Record<FacilityStatKey, number>;
+
+export interface FacilityMonthlyReport {
+  id: string;
+  monthNumber: number;
+  label: string;
+  baseRevenue: number;
+  appeal: number;
+  appealMultiplier: number;
+  condition: number;
+  conditionMultiplier: number;
+  adjustedRevenue: number;
+  monthlyUpkeep: number;
+  staffRequired: number;
+  staffProvided: number;
+  autoHiredStaff: number;
+  staffPresent: number;
+  staffCostPerPerson: number;
+  staffPayroll: number;
+  totalMonthlyCosts: number;
+  eventAdjustment: number;
+  manualAdjustment: number;
+  netIncome: number;
+  fundTransfer: number;
+  unpaidCosts: number;
+  ownerPlayerId: string;
+  note: string;
+  advancedAt: string;
+  advancedBy: string;
+}
+
+export interface FacilityEconomySnapshot {
+  stats: FacilityStats;
+  appealMultiplier: number;
+  conditionMultiplier: number;
+  adjustedRevenue: number;
+  autoHiredStaff: number;
+  staffPresent: number;
+  staffPayroll: number;
+  totalMonthlyCosts: number;
+  eventAdjustment: number;
+  manualAdjustment: number;
+  netIncome: number;
+}
 
 export interface PersonalFund {
   playerId: string;
@@ -29,6 +73,9 @@ export interface FacilityDepthFields {
   ownerPlayerId: string;
   presetId: string;
   baseStats: FacilityStats;
+  staffCostPerPerson: number;
+  currentMonth: number;
+  monthlyReports: FacilityMonthlyReport[];
   revenueDestination: "owner-personal-fund";
 }
 
@@ -36,10 +83,18 @@ export const FACILITY_STAT_KEYS: FacilityStatKey[] = [
   "capacity",
   "appeal",
   "revenue",
-  "expenses",
+  "monthlyUpkeep",
   "security",
-  "maintenance",
-  "staff",
+  "staffRequired",
+  "staffProvided",
+  "condition",
+];
+
+export const FACILITY_ADDITION_STAT_KEYS: FacilityStatModifierKey[] = [
+  "capacity",
+  "appeal",
+  "revenue",
+  "security",
   "condition",
 ];
 
@@ -47,10 +102,10 @@ export const FACILITY_STAT_META: Record<FacilityStatKey, { label: string; unit: 
   capacity: { label: "Guest Capacity", unit: "", higherIsBetter: true },
   appeal: { label: "Appeal", unit: "", higherIsBetter: true },
   revenue: { label: "Revenue / Month", unit: " CR", higherIsBetter: true },
-  expenses: { label: "Expenses / Month", unit: " CR", higherIsBetter: false },
+  monthlyUpkeep: { label: "Monthly Upkeep", unit: " CR", higherIsBetter: false },
   security: { label: "Security", unit: "", higherIsBetter: true },
-  maintenance: { label: "Maintenance", unit: "", higherIsBetter: true },
-  staff: { label: "Staff Required", unit: "", higherIsBetter: false },
+  staffRequired: { label: "Staff Required", unit: "", higherIsBetter: false },
+  staffProvided: { label: "Staff Provided", unit: "", higherIsBetter: true },
   condition: { label: "Condition", unit: "", higherIsBetter: true },
 };
 
@@ -58,12 +113,14 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   capacity: 0,
   appeal: 0,
   revenue: 0,
-  expenses: 0,
+  monthlyUpkeep: 0,
   security: 0,
-  maintenance: 0,
-  staff: 0,
+  staffRequired: 0,
+  staffProvided: 0,
   condition: 100,
 };
+
+export const DEFAULT_STAFF_COST_PER_PERSON = 50;
 
 export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v14";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
@@ -84,10 +141,10 @@ const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
   appeal: 35,
   revenue: 7200,
-  expenses: 3200,
+  monthlyUpkeep: 3200,
   security: 45,
-  maintenance: 70,
-  staff: 38,
+  staffRequired: 38,
+  staffProvided: 38,
   condition: 88,
 };
 
@@ -101,8 +158,67 @@ function text(value: unknown, fallback = "", max = 500) {
 }
 
 export function normalizeFacilityStats(raw: unknown, fallback: FacilityStats = DEFAULT_FACILITY_STATS): FacilityStats {
-  const source = raw && typeof raw === "object" ? raw as Partial<FacilityStats> : {};
-  return Object.fromEntries(FACILITY_STAT_KEYS.map((key) => [key, Math.round(finite(source[key], fallback[key]))])) as FacilityStats;
+  const source = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const legacyStaff = finite(source.staff, fallback.staffRequired);
+  const normalized: FacilityStats = {
+    capacity: Math.max(0, Math.round(finite(source.capacity, fallback.capacity))),
+    appeal: Math.max(0, Math.min(100, Math.round(finite(source.appeal, fallback.appeal)))),
+    revenue: Math.max(0, Math.round(finite(source.revenue, fallback.revenue))),
+    monthlyUpkeep: Math.max(0, Math.round(finite(source.monthlyUpkeep, finite(source.expenses, fallback.monthlyUpkeep)))),
+    security: Math.max(0, Math.min(100, Math.round(finite(source.security, fallback.security)))),
+    staffRequired: Math.max(0, Math.round(finite(source.staffRequired, legacyStaff))),
+    staffProvided: Math.max(0, Math.round(finite(source.staffProvided, legacyStaff))),
+    condition: Math.max(0, Math.min(100, Math.round(finite(source.condition, fallback.condition)))),
+  };
+  return normalized;
+}
+
+export function normalizeFacilityMonthlyReports(raw: unknown): FacilityMonthlyReport[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(-120).flatMap((candidate, index) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const source = candidate as Partial<FacilityMonthlyReport>;
+    const monthNumber = Math.max(1, Math.floor(finite(source.monthNumber, index + 1)));
+    const staffRequired = Math.max(0, Math.round(finite(source.staffRequired, 0)));
+    const staffProvided = Math.max(0, Math.round(finite(source.staffProvided, staffRequired)));
+    const autoHiredStaff = Math.max(0, Math.round(finite(source.autoHiredStaff, staffRequired - staffProvided)));
+    const staffPresent = Math.max(staffProvided + autoHiredStaff, Math.round(finite(source.staffPresent, staffRequired)));
+    const staffCostPerPerson = Math.max(0, Math.round(finite(source.staffCostPerPerson, DEFAULT_STAFF_COST_PER_PERSON)));
+    const staffPayroll = Math.max(0, Math.round(finite(source.staffPayroll, staffPresent * staffCostPerPerson)));
+    const monthlyUpkeep = Math.max(0, Math.round(finite(source.monthlyUpkeep, 0)));
+    const adjustedRevenue = Math.max(0, Math.round(finite(source.adjustedRevenue, source.baseRevenue)));
+    const totalMonthlyCosts = Math.max(0, Math.round(finite(source.totalMonthlyCosts, monthlyUpkeep + staffPayroll)));
+    const eventAdjustment = Math.round(finite(source.eventAdjustment, 0));
+    const manualAdjustment = Math.round(finite(source.manualAdjustment, 0));
+    return [{
+      id: text(source.id, `facility-month-${monthNumber}-${index + 1}`, 120),
+      monthNumber,
+      label: text(source.label, `Month ${monthNumber}`, 80),
+      baseRevenue: Math.max(0, Math.round(finite(source.baseRevenue, adjustedRevenue))),
+      appeal: Math.max(0, Math.min(100, Math.round(finite(source.appeal, 0)))),
+      appealMultiplier: Math.max(0, finite(source.appealMultiplier, 1)),
+      condition: Math.max(0, Math.min(100, Math.round(finite(source.condition, 100)))),
+      conditionMultiplier: Math.max(0, finite(source.conditionMultiplier, 1)),
+      adjustedRevenue,
+      monthlyUpkeep,
+      staffRequired,
+      staffProvided,
+      autoHiredStaff,
+      staffPresent,
+      staffCostPerPerson,
+      staffPayroll,
+      totalMonthlyCosts,
+      eventAdjustment,
+      manualAdjustment,
+      netIncome: Math.round(finite(source.netIncome, adjustedRevenue - totalMonthlyCosts + eventAdjustment + manualAdjustment)),
+      fundTransfer: Math.round(finite(source.fundTransfer, 0)),
+      unpaidCosts: Math.max(0, Math.round(finite(source.unpaidCosts, 0))),
+      ownerPlayerId: text(source.ownerPlayerId, "", 100).trim(),
+      note: text(source.note, "", 500),
+      advancedAt: text(source.advancedAt, "", 80),
+      advancedBy: text(source.advancedBy, "", 100),
+    }];
+  });
 }
 
 export function normalizePersonalFunds(raw: unknown): PersonalFund[] {
@@ -127,10 +243,15 @@ export function normalizePersonalFunds(raw: unknown): PersonalFund[] {
 
 export function normalizeFacilityDepthFields(raw: unknown): FacilityDepthFields {
   const source = raw && typeof raw === "object" ? raw as Partial<FacilityDepthFields> : {};
+  const monthlyReports = normalizeFacilityMonthlyReports(source.monthlyReports);
+  const nextReportMonth = monthlyReports.reduce((next, report) => Math.max(next, report.monthNumber + 1), 1);
   return {
     ownerPlayerId: text(source.ownerPlayerId, "", 100).trim(),
     presetId: text(source.presetId, "", 100).trim(),
     baseStats: normalizeFacilityStats(source.baseStats),
+    staffCostPerPerson: Math.max(0, Math.round(finite(source.staffCostPerPerson, DEFAULT_STAFF_COST_PER_PERSON))),
+    currentMonth: Math.max(nextReportMonth, Math.floor(finite(source.currentMonth, nextReportMonth))),
+    monthlyReports,
     revenueDestination: "owner-personal-fund",
   };
 }
@@ -162,14 +283,74 @@ export function installedFacilityAdditionIds(map: OfficeBusinessMapState) {
 
 export function calculateFacilityStats(baseStats: FacilityStats, map: OfficeBusinessMapState, additions: FacilityAddition[]) {
   const byId = new Map(additions.map((addition) => [addition.id, addition]));
-  return installedFacilityAdditionIds(map).reduce((stats, additionId) => {
+  const totals = installedFacilityAdditionIds(map).reduce((stats, additionId) => {
     const addition = byId.get(additionId);
-    return addition ? addFacilityStatModifiers(stats, addition.statModifiers) : stats;
+    if (!addition) return stats;
+    const next = addFacilityStatModifiers(stats, addition.statModifiers);
+    next.monthlyUpkeep += addition.monthlyUpkeep;
+    next.staffRequired += addition.staffRequired;
+    next.staffProvided += addition.staffProvided;
+    return next;
   }, { ...baseStats });
+  return normalizeFacilityStats(totals, baseStats);
 }
 
 export function facilityStatDelta(addition: FacilityAddition | null | undefined) {
-  return addFacilityStatModifiers(emptyFacilityStats(), addition?.statModifiers || []);
+  const delta = addFacilityStatModifiers(emptyFacilityStats(), addition?.statModifiers || []);
+  if (addition) {
+    delta.monthlyUpkeep = addition.monthlyUpkeep;
+    delta.staffRequired = addition.staffRequired;
+    delta.staffProvided = addition.staffProvided;
+  }
+  return delta;
+}
+
+export function facilityAppealMultiplier(appeal: number) {
+  if (appeal < 20) return 0.65;
+  if (appeal < 40) return 0.85;
+  if (appeal < 60) return 1;
+  if (appeal < 80) return 1.15;
+  return 1.3;
+}
+
+export function facilityConditionMultiplier(condition: number) {
+  if (condition < 20) return 0;
+  if (condition < 40) return 0.5;
+  if (condition < 60) return 0.8;
+  if (condition < 80) return 0.95;
+  return 1;
+}
+
+export function facilitySecurityRisk(security: number) {
+  const value = Math.max(0, Math.min(100, Math.round(security)));
+  if (value < 20) return { label: "Critical", chance: 50, color: "#F06773" };
+  if (value < 40) return { label: "High Risk", chance: 35, color: "#E99856" };
+  if (value < 60) return { label: "Exposed", chance: 20, color: "#D5B85A" };
+  if (value < 80) return { label: "Guarded", chance: 10, color: "#69B6D8" };
+  return { label: "Secure", chance: 5, color: "#62D6A6" };
+}
+
+export function calculateFacilityEconomy(stats: FacilityStats, staffCostPerPerson: number, eventAdjustment = 0, manualAdjustment = 0): FacilityEconomySnapshot {
+  const appealMultiplier = facilityAppealMultiplier(stats.appeal);
+  const conditionMultiplier = facilityConditionMultiplier(stats.condition);
+  const adjustedRevenue = Math.max(0, Math.round(stats.revenue * appealMultiplier * conditionMultiplier));
+  const autoHiredStaff = Math.max(0, stats.staffRequired - stats.staffProvided);
+  const staffPresent = stats.staffProvided + autoHiredStaff;
+  const staffPayroll = Math.max(0, Math.round(staffPresent * Math.max(0, staffCostPerPerson)));
+  const totalMonthlyCosts = stats.monthlyUpkeep + staffPayroll;
+  return {
+    stats,
+    appealMultiplier,
+    conditionMultiplier,
+    adjustedRevenue,
+    autoHiredStaff,
+    staffPresent,
+    staffPayroll,
+    totalMonthlyCosts,
+    eventAdjustment: Math.round(eventAdjustment),
+    manualAdjustment: Math.round(manualAdjustment),
+    netIncome: adjustedRevenue - totalMonthlyCosts + Math.round(eventAdjustment) + Math.round(manualAdjustment),
+  };
 }
 
 type ParkSlotSeed = {
@@ -431,13 +612,16 @@ export function createMysticLandsParkFacility() {
     statusColor: "#4ACA6A",
     capacity: "1200 guests",
     condition: "Excellent",
-    notes: "Facility revenue is assigned to the owner's Personal Fund ledger. The DM adjusts deposited income manually.",
+    notes: "The DM advances this facility's accounting month manually. Confirmed net income is recorded in the monthly ledger and applied to the owner's Personal Funds.",
     revenue: String(MYSTIC_BASE_STATS.revenue),
-    expenses: String(MYSTIC_BASE_STATS.expenses),
-    employeesOnSite: String(MYSTIC_BASE_STATS.staff),
+    expenses: String(MYSTIC_BASE_STATS.monthlyUpkeep),
+    employeesOnSite: String(MYSTIC_BASE_STATS.staffProvided),
     ownerPlayerId: "",
     presetId: MYSTIC_LANDS_PARK_PRESET_ID,
     baseStats: { ...MYSTIC_BASE_STATS },
+    staffCostPerPerson: DEFAULT_STAFF_COST_PER_PERSON,
+    currentMonth: 1,
+    monthlyReports: [] as FacilityMonthlyReport[],
     revenueDestination: "owner-personal-fund" as const,
     businessMap: createMysticLandsParkMap(),
   };

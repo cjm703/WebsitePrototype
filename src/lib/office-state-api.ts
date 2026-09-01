@@ -22,6 +22,14 @@ export interface PersonalFundUpdate {
   note?: string;
 }
 
+export interface FacilityMonthAdvanceAction {
+  facilityId: string;
+  expectedMonth: number;
+  eventAdjustment?: number;
+  manualAdjustment?: number;
+  note?: string;
+}
+
 export async function saveOfficeState<T>(state: T, expectedRevision: number): Promise<T> {
   const body = await sessionApiFetch("/office/state/save", {
     method: "POST",
@@ -50,6 +58,14 @@ export async function updateOfficePersonalFund<T>(update: PersonalFundUpdate): P
   const body = await sessionApiFetch("/office/personal-funds/update", {
     method: "POST",
     body: JSON.stringify(update),
+  });
+  return body.state as T;
+}
+
+export async function advanceFacilityMonth<T>(action: FacilityMonthAdvanceAction): Promise<T> {
+  const body = await sessionApiFetch("/office/facility-month/advance", {
+    method: "POST",
+    body: JSON.stringify(action),
   });
   return body.state as T;
 }

@@ -907,6 +907,103 @@ function officePersonalFund(state: JsonRecord, playerId: string, create = false)
   return fund;
 }
 
+function boundedFacilityNumber(value: unknown, fallback = 0, min = -1000000000, max = 1000000000) {
+  const number = Number(value);
+  return Math.min(max, Math.max(min, Number.isFinite(number) ? number : fallback));
+}
+
+function defaultAdditionStaffing(category: string) {
+  switch (category) {
+    case "Minor Ride": return { required: 6, provided: 0 };
+    case "Minor Attraction": return { required: 3, provided: 0 };
+    case "Shop": return { required: 2, provided: 0 };
+    case "Dining": return { required: 5, provided: 0 };
+    case "Guest Service": return { required: 3, provided: 0 };
+    case "Security": return { required: 1, provided: 4 };
+    case "Recreation": return { required: 3, provided: 0 };
+    case "Operations": return { required: 1, provided: 5 };
+    case "Flexible": return { required: 2, provided: 0 };
+    default: return { required: 1, provided: 0 };
+  }
+}
+
+function facilityAppealMultiplier(value: number) {
+  if (value < 20) return 0.65;
+  if (value < 40) return 0.85;
+  if (value < 60) return 1;
+  if (value < 80) return 1.15;
+  return 1.3;
+}
+
+function facilityConditionMultiplier(value: number) {
+  if (value < 20) return 0;
+  if (value < 40) return 0.5;
+  if (value < 60) return 0.8;
+  if (value < 80) return 0.95;
+  return 1;
+}
+
+function calculateStoredFacilityEconomy(state: JsonRecord, facility: JsonRecord) {
+  const rawBase = facility?.baseStats && typeof facility.baseStats === "object" ? facility.baseStats as JsonRecord : {};
+  const legacyStaff = boundedFacilityNumber(rawBase.staff, boundedFacilityNumber(facility.employeesOnSite, 0), 0);
+  const baseStats: JsonRecord = {
+    capacity: boundedFacilityNumber(rawBase.capacity, boundedFacilityNumber(facility.capacity, 0), 0),
+    appeal: boundedFacilityNumber(rawBase.appeal, 0, 0, 100),
+    revenue: boundedFacilityNumber(rawBase.revenue, boundedFacilityNumber(facility.revenue, 0), 0),
+    monthlyUpkeep: boundedFacilityNumber(rawBase.monthlyUpkeep, boundedFacilityNumber(rawBase.expenses, boundedFacilityNumber(facility.expenses, 0)), 0),
+    security: boundedFacilityNumber(rawBase.security, 0, 0, 100),
+    staffRequired: boundedFacilityNumber(rawBase.staffRequired, legacyStaff, 0),
+    staffProvided: boundedFacilityNumber(rawBase.staffProvided, legacyStaff, 0),
+    condition: boundedFacilityNumber(rawBase.condition, 100, 0, 100),
+  };
+  const stats: JsonRecord = { ...baseStats };
+  const additions = new Map<string, JsonRecord>();
+  if (Array.isArray(state.facilityAdditions)) {
+    state.facilityAdditions.forEach((addition: JsonRecord) => additions.set(String(addition?.id || ""), addition));
+  }
+  const installedIds: string[] = [];
+  if (Array.isArray(facility?.businessMap?.sectors)) {
+    facility.businessMap.sectors.forEach((sector: JsonRecord) => {
+      if (!Array.isArray(sector?.slots)) return;
+      sector.slots.forEach((slot: JsonRecord) => {
+        const id = String(slot?.installedAdditionId || "").trim();
+        if (id) installedIds.push(id);
+      });
+    });
+  }
+  installedIds.forEach((id) => {
+    const addition = additions.get(id);
+    if (!addition) return;
+    const modifiers = Array.isArray(addition.statModifiers) ? addition.statModifiers : [];
+    const legacyExpense = modifiers.reduce((total: number, modifier: JsonRecord) => modifier?.stat === "expenses" ? total + boundedFacilityNumber(modifier.amount, 0) : total, 0);
+    const legacyStaffModifier = modifiers.reduce((total: number, modifier: JsonRecord) => modifier?.stat === "staff" ? total + boundedFacilityNumber(modifier.amount, 0) : total, 0);
+    const staffing = defaultAdditionStaffing(String(addition.additionCategory || "Unassigned"));
+    stats.monthlyUpkeep += boundedFacilityNumber(addition.monthlyUpkeep, 0, 0) + legacyExpense;
+    stats.staffRequired += boundedFacilityNumber(addition.staffRequired, legacyStaffModifier > 0 ? legacyStaffModifier : staffing.required, 0);
+    stats.staffProvided += boundedFacilityNumber(addition.staffProvided, legacyStaffModifier < 0 ? Math.abs(legacyStaffModifier) : staffing.provided, 0);
+    modifiers.forEach((modifier: JsonRecord) => {
+      const stat = String(modifier?.stat || "");
+      if (["capacity", "appeal", "revenue", "security", "condition"].includes(stat)) stats[stat] += boundedFacilityNumber(modifier.amount, 0);
+    });
+  });
+  stats.capacity = Math.max(0, Math.round(stats.capacity));
+  stats.appeal = Math.max(0, Math.min(100, Math.round(stats.appeal)));
+  stats.revenue = Math.max(0, Math.round(stats.revenue));
+  stats.monthlyUpkeep = Math.max(0, Math.round(stats.monthlyUpkeep));
+  stats.security = Math.max(0, Math.min(100, Math.round(stats.security)));
+  stats.staffRequired = Math.max(0, Math.round(stats.staffRequired));
+  stats.staffProvided = Math.max(0, Math.round(stats.staffProvided));
+  stats.condition = Math.max(0, Math.min(100, Math.round(stats.condition)));
+  const appealMultiplier = facilityAppealMultiplier(stats.appeal);
+  const conditionMultiplier = facilityConditionMultiplier(stats.condition);
+  const adjustedRevenue = Math.max(0, Math.round(stats.revenue * appealMultiplier * conditionMultiplier));
+  const autoHiredStaff = Math.max(0, stats.staffRequired - stats.staffProvided);
+  const staffPresent = stats.staffProvided + autoHiredStaff;
+  const staffCostPerPerson = Math.max(0, Math.round(boundedFacilityNumber(facility.staffCostPerPerson, 50, 0)));
+  const staffPayroll = staffPresent * staffCostPerPerson;
+  return { baseStats, stats, appealMultiplier, conditionMultiplier, adjustedRevenue, autoHiredStaff, staffPresent, staffCostPerPerson, staffPayroll, totalMonthlyCosts: stats.monthlyUpkeep + staffPayroll };
+}
+
 function additionFitsBusinessSlot(slot: JsonRecord, addition: JsonRecord) {
   const acceptedCategories = Array.isArray(slot?.acceptedCategories)
     ? slot.acceptedCategories.map((entry: any) => String(entry || ""))
@@ -955,6 +1052,21 @@ function stampOfficeState(state: JsonRecord, playerId: string, previousRevision:
   };
 }
 
+function preserveFacilityMonthlyLedgers(candidate: JsonRecord, current: JsonRecord | null) {
+  if (!current || !Array.isArray(candidate.facilities) || !Array.isArray(current.facilities)) return candidate;
+  const currentFacilities = new Map(
+    current.facilities.map((facility: JsonRecord) => [String(facility?.id || ""), facility]),
+  );
+  candidate.facilities.forEach((facility: JsonRecord) => {
+    const saved = currentFacilities.get(String(facility?.id || ""));
+    if (!saved) return;
+    if (Array.isArray(saved.monthlyReports)) facility.monthlyReports = saved.monthlyReports;
+    const savedMonth = Number(saved.currentMonth);
+    if (Number.isFinite(savedMonth)) facility.currentMonth = Math.max(1, Math.floor(savedMonth));
+  });
+  return candidate;
+}
+
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
     return c.json({ status: "ok", prefix });
@@ -981,7 +1093,8 @@ function registerRoutes(prefix: string) {
       if (!sanitized || typeof sanitized !== "object" || Array.isArray(sanitized)) {
         return c.json({ error: "Office state must be an object" }, 400);
       }
-      const next = stampOfficeState(sanitized as JsonRecord, playerId, currentRevision);
+      const protectedState = preserveFacilityMonthlyLedgers(sanitized as JsonRecord, current);
+      const next = stampOfficeState(protectedState, playerId, currentRevision);
       await persistOfficeStateRecord(next);
       return c.json({ ok: true, state: next });
     } catch (err) {
@@ -1092,6 +1205,105 @@ function registerRoutes(prefix: string) {
       const stamped = stampOfficeState(next, playerId, currentRevision);
       await persistOfficeStateRecord(stamped);
       return c.json({ ok: true, state: stamped });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post(`${prefix}/office/facility-month/advance`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await requireDMSession(c);
+      const body = await c.req.json();
+      const facilityId = String(body?.facilityId || "").trim();
+      const requestedMonth = Number(body?.expectedMonth);
+      if (!facilityId || !Number.isFinite(requestedMonth) || requestedMonth < 1) return c.json({ error: "A facility and expected month are required" }, 400);
+      const expectedMonth = Math.floor(requestedMonth);
+
+      const current = await loadOfficeStateRecord();
+      if (!current) return c.json({ error: "Office state is not available" }, 404);
+      const next = JSON.parse(JSON.stringify(current)) as JsonRecord;
+      const facility = officeFacilityForScope(next, facilityId);
+      if (!facility) return c.json({ error: "Facility was not found" }, 404);
+      const nextReportMonth = Array.isArray(facility.monthlyReports)
+        ? facility.monthlyReports.reduce((nextMonth: number, report: JsonRecord) => Math.max(nextMonth, Math.floor(Number(report?.monthNumber) || 0) + 1), 1)
+        : 1;
+      const currentMonth = Math.max(nextReportMonth, Math.floor(Number(facility.currentMonth) || nextReportMonth));
+      if (currentMonth !== expectedMonth) {
+        return c.json({ error: "This facility month was already advanced in another session", code: "FACILITY_MONTH_CONFLICT", currentMonth }, 409);
+      }
+
+      const eventAdjustment = Math.round(boundedFacilityNumber(body?.eventAdjustment, 0));
+      const manualAdjustment = Math.round(boundedFacilityNumber(body?.manualAdjustment, 0));
+      const economy = calculateStoredFacilityEconomy(next, facility);
+      const netIncome = economy.adjustedRevenue - economy.totalMonthlyCosts + eventAdjustment + manualAdjustment;
+      const ownerPlayerId = String(facility.ownerPlayerId || "").trim();
+      let fundTransfer = 0;
+      let unpaidCosts = 0;
+      if (ownerPlayerId && ownerPlayerId !== "dm") {
+        const fund = officePersonalFund(next, ownerPlayerId, true)!;
+        const balance = Math.max(0, Math.round(Number(fund.balance) || 0));
+        if (netIncome >= 0) {
+          fundTransfer = netIncome;
+          fund.balance = Math.min(1000000000, balance + netIncome);
+        } else {
+          const debit = Math.min(balance, Math.abs(netIncome));
+          fundTransfer = -debit;
+          unpaidCosts = Math.max(0, Math.abs(netIncome) - debit);
+          fund.balance = balance - debit;
+        }
+        fund.currency = "CR";
+        fund.updatedAt = new Date().toISOString();
+        fund.updatedBy = playerId;
+      } else if (netIncome < 0) {
+        unpaidCosts = Math.abs(netIncome);
+      }
+
+      const advancedAt = new Date().toISOString();
+      const report = {
+        id: `facility-month-${facilityId}-${currentMonth}-${Date.now()}`,
+        monthNumber: currentMonth,
+        label: `Month ${currentMonth}`,
+        baseRevenue: economy.stats.revenue,
+        appeal: economy.stats.appeal,
+        appealMultiplier: economy.appealMultiplier,
+        condition: economy.stats.condition,
+        conditionMultiplier: economy.conditionMultiplier,
+        adjustedRevenue: economy.adjustedRevenue,
+        monthlyUpkeep: economy.stats.monthlyUpkeep,
+        staffRequired: economy.stats.staffRequired,
+        staffProvided: economy.stats.staffProvided,
+        autoHiredStaff: economy.autoHiredStaff,
+        staffPresent: economy.staffPresent,
+        staffCostPerPerson: economy.staffCostPerPerson,
+        staffPayroll: economy.staffPayroll,
+        totalMonthlyCosts: economy.totalMonthlyCosts,
+        eventAdjustment,
+        manualAdjustment,
+        netIncome,
+        fundTransfer,
+        unpaidCosts,
+        ownerPlayerId,
+        note: String(body?.note || "").slice(0, 500),
+        advancedAt,
+        advancedBy: playerId,
+      };
+      const priorReports = Array.isArray(facility.monthlyReports) ? facility.monthlyReports.slice(-119) : [];
+      facility.monthlyReports = [...priorReports, report];
+      facility.currentMonth = currentMonth + 1;
+      facility.baseStats = { ...(facility.baseStats || {}), ...economy.baseStats };
+      facility.staffCostPerPerson = economy.staffCostPerPerson;
+      facility.revenue = String(economy.stats.revenue);
+      facility.expenses = String(economy.stats.monthlyUpkeep);
+      facility.employeesOnSite = String(economy.stats.staffProvided);
+
+      const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
+      const stamped = stampOfficeState(next, playerId, currentRevision);
+      await persistOfficeStateRecord(stamped);
+      return c.json({ ok: true, state: stamped, report });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;

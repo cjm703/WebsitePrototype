@@ -62,10 +62,10 @@ function inferredStats(source: Record<string, unknown>): FacilityStats {
     capacity: numericText(source.capacity),
     appeal: 0,
     revenue: numericText(source.revenue),
-    expenses: numericText(source.expenses),
+    monthlyUpkeep: numericText(source.expenses),
     security: 0,
-    maintenance: 0,
-    staff: numericText(source.employeesOnSite),
+    staffRequired: numericText(source.employeesOnSite),
+    staffProvided: numericText(source.employeesOnSite),
     condition: 100,
   });
 }
@@ -92,6 +92,9 @@ export function normalizeFacilityRecord(raw: unknown, index = 0): FacilityRecord
     name: text(source.name, `Facility ${index + 1}`, 80).trim() || `Facility ${index + 1}`,
     type,
     ...depth,
+    revenue: String(depth.baseStats.revenue),
+    expenses: String(depth.baseStats.monthlyUpkeep),
+    employeesOnSite: String(depth.baseStats.staffProvided),
     businessMap: ownedMap,
   } as FacilityRecord;
 }
@@ -377,7 +380,7 @@ export function normalizeFacilityOfficeState(raw: unknown): FacilityOfficeState 
   return {
     ...source,
     id: text(source.id, "default", 100) || "default",
-    version: Math.max(5, Math.floor(number(source.version, 5))),
+    version: Math.max(6, Math.floor(number(source.version, 6))),
     revision: Math.max(0, Math.floor(number(source.revision, 0))),
     updatedAt: text(source.updatedAt, "", 80),
     updatedBy: text(source.updatedBy, "", 100),
@@ -390,7 +393,7 @@ export function normalizeFacilityOfficeState(raw: unknown): FacilityOfficeState 
 }
 
 export function buildFacilityOfficeStateFallback(): FacilityOfficeState {
-  return normalizeFacilityOfficeState({ id: "default", version: 5, revision: 0, facilities: [], facilityCats: [], facilityAdditions: [], personalFunds: [], companyFunds: 50000 });
+  return normalizeFacilityOfficeState({ id: "default", version: 6, revision: 0, facilities: [], facilityCats: [], facilityAdditions: [], personalFunds: [], companyFunds: 50000 });
 }
 
 export function replaceFacilityInOfficeState(state: FacilityOfficeState, facility: FacilityRecord): FacilityOfficeState {
@@ -398,11 +401,15 @@ export function replaceFacilityInOfficeState(state: FacilityOfficeState, facilit
 }
 
 function mergeRemoteFacilityActions(local: FacilityRecord, remote: FacilityRecord): FacilityRecord {
-  if (!local.businessMap || !remote.businessMap) return local;
+  if (!local.businessMap || !remote.businessMap) {
+    return { ...local, currentMonth: remote.currentMonth, monthlyReports: remote.monthlyReports };
+  }
   const remoteSectors = new Map(remote.businessMap.sectors.map((sector) => [sector.id, sector]));
   const remoteExpansions = new Map(remote.businessMap.expansions.map((expansion) => [expansion.id, expansion]));
   return {
     ...local,
+    currentMonth: remote.currentMonth,
+    monthlyReports: remote.monthlyReports,
     businessMap: {
       ...local.businessMap,
       sectors: local.businessMap.sectors.map((sector) => {

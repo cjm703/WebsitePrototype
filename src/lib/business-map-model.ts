@@ -47,7 +47,8 @@ export type FacilitySlotTier = "major" | "minor";
 export type FacilityAdditionCategory = typeof FACILITY_ADDITION_CATEGORIES[number];
 export type BusinessMapShapeKind = "wall" | "pathway" | "area" | "label";
 export type BusinessMapBackgroundFit = "cover" | "contain" | "stretch";
-export type FacilityStatKey = "capacity" | "appeal" | "revenue" | "expenses" | "security" | "maintenance" | "staff" | "condition";
+export type FacilityStatKey = "capacity" | "appeal" | "revenue" | "monthlyUpkeep" | "security" | "staffRequired" | "staffProvided" | "condition";
+export type FacilityStatModifierKey = Exclude<FacilityStatKey, "monthlyUpkeep" | "staffRequired" | "staffProvided">;
 export type BusinessSectorState = "active" | "locked";
 export type BusinessSectorVisualShape = "rectangle" | "ellipse" | "organic";
 export const BUSINESS_SECTOR_DECORATION_THEMES = [
@@ -63,7 +64,7 @@ export type BusinessSectorDecorationTheme = typeof BUSINESS_SECTOR_DECORATION_TH
 export type BusinessExpansionStatus = "available" | "funded" | "complete";
 
 export interface FacilityStatModifier {
-  stat: FacilityStatKey;
+  stat: FacilityStatModifierKey;
   amount: number;
 }
 
@@ -215,6 +216,8 @@ export interface FacilityAddition {
   thumbnailAsset?: BusinessMapAssetRef;
   cost: number;
   monthlyUpkeep: number;
+  staffRequired: number;
+  staffProvided: number;
   ownerPlayerId: string;
   statModifiers: FacilityStatModifier[];
   createdAt: string;
@@ -336,13 +339,28 @@ function cleanStringList(value: unknown, maxItems = 30) {
 
 function normalizeStatModifiers(value: unknown): FacilityStatModifier[] {
   if (!Array.isArray(value)) return [];
-  const allowed = new Set<FacilityStatKey>(["capacity", "appeal", "revenue", "expenses", "security", "maintenance", "staff", "condition"]);
+  const allowed = new Set<FacilityStatModifierKey>(["capacity", "appeal", "revenue", "security", "condition"]);
   return value.slice(0, 24).flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
-    const source = candidate as Partial<FacilityStatModifier>;
-    if (!allowed.has(source.stat as FacilityStatKey)) return [];
-    return [{ stat: source.stat as FacilityStatKey, amount: clamp(finiteNumber(source.amount, 0), -1000000, 1000000) }];
+    const source = candidate as { stat?: unknown; amount?: unknown };
+    if (!allowed.has(source.stat as FacilityStatModifierKey)) return [];
+    return [{ stat: source.stat as FacilityStatModifierKey, amount: clamp(finiteNumber(source.amount, 0), -1000000, 1000000) }];
   });
+}
+
+export function defaultFacilityAdditionStaffing(category: FacilityAdditionCategory) {
+  switch (category) {
+    case "Minor Ride": return { staffRequired: 6, staffProvided: 0 };
+    case "Minor Attraction": return { staffRequired: 3, staffProvided: 0 };
+    case "Shop": return { staffRequired: 2, staffProvided: 0 };
+    case "Dining": return { staffRequired: 5, staffProvided: 0 };
+    case "Guest Service": return { staffRequired: 3, staffProvided: 0 };
+    case "Security": return { staffRequired: 1, staffProvided: 4 };
+    case "Recreation": return { staffRequired: 3, staffProvided: 0 };
+    case "Operations": return { staffRequired: 1, staffProvided: 5 };
+    case "Flexible": return { staffRequired: 2, staffProvided: 0 };
+    default: return { staffRequired: 1, staffProvided: 0 };
+  }
 }
 
 export function normalizeBusinessMapGrid(raw: unknown): BusinessMapGrid {
@@ -680,6 +698,20 @@ export function normalizeFacilityAdditions(raw: unknown): FacilityAddition[] {
     const additionCategory = FACILITY_ADDITION_CATEGORIES.includes(source.additionCategory as FacilityAdditionCategory)
       ? source.additionCategory as FacilityAdditionCategory
       : "Unassigned";
+    const rawModifiers = Array.isArray(source.statModifiers) ? source.statModifiers : [];
+    const legacyExpenseModifier = rawModifiers.reduce((total, candidate) => {
+      if (!candidate || typeof candidate !== "object") return total;
+      const modifier = candidate as { stat?: unknown; amount?: unknown };
+      return modifier.stat === "expenses" ? total + finiteNumber(modifier.amount, 0) : total;
+    }, 0);
+    const legacyStaffModifier = rawModifiers.reduce((total, candidate) => {
+      if (!candidate || typeof candidate !== "object") return total;
+      const modifier = candidate as { stat?: unknown; amount?: unknown };
+      return modifier.stat === "staff" ? total + finiteNumber(modifier.amount, 0) : total;
+    }, 0);
+    const defaultStaffing = defaultFacilityAdditionStaffing(additionCategory);
+    const hasStaffRequired = Number.isFinite(Number(source.staffRequired));
+    const hasStaffProvided = Number.isFinite(Number(source.staffProvided));
     const createdAt = cleanText(source.createdAt, new Date().toISOString(), 80);
     return {
       id: cleanId(source.id, `addition-${index + 1}`),
@@ -694,7 +726,9 @@ export function normalizeFacilityAdditions(raw: unknown): FacilityAddition[] {
       thumbnailUrl: cleanText(source.thumbnailUrl, source.thumbnailAsset?.publicUrl || "", 3000),
       thumbnailAsset: source.thumbnailAsset && typeof source.thumbnailAsset === "object" ? source.thumbnailAsset as BusinessMapAssetRef : undefined,
       cost: clamp(Math.floor(finiteNumber(source.cost, 0)), 0, 1000000000),
-      monthlyUpkeep: clamp(Math.floor(finiteNumber(source.monthlyUpkeep, 0)), 0, 1000000000),
+      monthlyUpkeep: clamp(Math.floor(finiteNumber(source.monthlyUpkeep, 0) + legacyExpenseModifier), 0, 1000000000),
+      staffRequired: clamp(Math.floor(hasStaffRequired ? finiteNumber(source.staffRequired, 0) : legacyStaffModifier > 0 ? legacyStaffModifier : defaultStaffing.staffRequired), 0, 1000000),
+      staffProvided: clamp(Math.floor(hasStaffProvided ? finiteNumber(source.staffProvided, 0) : legacyStaffModifier < 0 ? Math.abs(legacyStaffModifier) : defaultStaffing.staffProvided), 0, 1000000),
       ownerPlayerId: cleanText(source.ownerPlayerId, "", 100).trim(),
       statModifiers: normalizeStatModifiers(source.statModifiers),
       createdAt,
@@ -718,6 +752,8 @@ export function createFacilityAddition(index = 0): FacilityAddition {
     thumbnailUrl: "",
     cost: 0,
     monthlyUpkeep: 0,
+    staffRequired: 1,
+    staffProvided: 0,
     ownerPlayerId: "",
     statModifiers: [],
     createdAt: now,

@@ -310,6 +310,23 @@ async function testOfficeBusinessMapState() {
     height: 2,
   }]);
   const addition = additions[0];
+  assert.equal(addition.staffRequired, 1);
+  assert.equal(addition.staffProvided, 0);
+  const migratedAddition = officeMap.normalizeFacilityAdditions([{
+    id: "legacy-staffed-addition",
+    additionCategory: "Shop",
+    monthlyUpkeep: 100,
+    statModifiers: [
+      { stat: "expenses", amount: 25 },
+      { stat: "staff", amount: 4 },
+      { stat: "maintenance", amount: 10 },
+      { stat: "appeal", amount: 2 },
+    ],
+  }])[0];
+  assert.equal(migratedAddition.monthlyUpkeep, 125);
+  assert.equal(migratedAddition.staffRequired, 4);
+  assert.equal(migratedAddition.staffProvided, 0);
+  assert.deepEqual(migratedAddition.statModifiers, [{ stat: "appeal", amount: 2 }]);
   const slot = {
     ...officeMap.createDefaultBusinessSlot("slot-generator", "Generator Pad", "Utility", 0, 0),
     acceptedCategories: ["Utility"],
@@ -546,6 +563,19 @@ async function testFacilityDepthState() {
   const stats = depth.calculateFacilityStats(park.baseStats, installedMap, testAdditions);
   assert.equal(stats.capacity, park.baseStats.capacity + 180);
   assert.equal(stats.revenue, park.baseStats.revenue + 350);
+  assert.equal(stats.staffRequired, park.baseStats.staffRequired + gatehouse.staffRequired);
+  const economy = depth.calculateFacilityEconomy(park.baseStats, park.staffCostPerPerson);
+  assert.equal(economy.adjustedRevenue, 6120);
+  assert.equal(economy.staffPresent, 38);
+  assert.equal(economy.staffPayroll, 1900);
+  assert.equal(economy.totalMonthlyCosts, 5100);
+  assert.equal(economy.netIncome, 1020);
+  assert.deepEqual(depth.facilitySecurityRisk(45), { label: "Exposed", chance: 20, color: "#D5B85A" });
+  const trimmedLedger = depth.normalizeFacilityDepthFields({
+    currentMonth: 3,
+    monthlyReports: [{ monthNumber: 42, label: "Month 42" }],
+  });
+  assert.equal(trimmedLedger.currentMonth, 43);
 
   const migrated = stateModel.normalizeFacilityOfficeState({
     id: "default",
@@ -554,7 +584,7 @@ async function testFacilityDepthState() {
     facilityCats: [{ id: "legacy", name: "Legacy", facilityIds: ["legacy-facility"] }],
     facilityAdditions: [],
   });
-  assert.equal(migrated.version, 5);
+  assert.equal(migrated.version, 6);
   assert.ok(migrated.facilities.some((facility) => facility.id === "legacy-facility"));
   assert.ok(migrated.facilities.some((facility) => facility.id === "facility-mystic-lands-park"));
 
