@@ -49,7 +49,7 @@ interface WorkshopBlueprintVisualProps {
 const ROBOT_POSITIONS: Record<string, SlotPosition> = {
   "robot-head": { x: 60, y: 9, targetX: 60, targetY: 15 },
   "robot-ai": { x: 47, y: 16, targetX: 56, targetY: 19 },
-  "robot-core": { x: 73, y: 25, targetX: 62, targetY: 31 },
+  "robot-core": { x: 60, y: 42, targetX: 60, targetY: 37 },
   "robot-chest": { x: 47, y: 30, targetX: 56, targetY: 31 },
   "robot-left-arm": { x: 34, y: 41, targetX: 48, targetY: 38 },
   "robot-right-arm": { x: 86, y: 41, targetX: 72, targetY: 38 },
@@ -58,10 +58,10 @@ const ROBOT_POSITIONS: Record<string, SlotPosition> = {
   "robot-back": { x: 84, y: 18, targetX: 67, targetY: 28 },
   "robot-shoulder-left": { x: 39, y: 25, targetX: 50, targetY: 28 },
   "robot-shoulder-right": { x: 81, y: 31, targetX: 70, targetY: 29 },
-  "robot-aux-chest": { x: 60, y: 42, targetX: 60, targetY: 37 },
+  "robot-aux-chest": { x: 73, y: 25, targetX: 62, targetY: 31 },
   "robot-hip-left": { x: 43, y: 54, targetX: 54, targetY: 48 },
   "robot-hip-right": { x: 77, y: 54, targetX: 66, targetY: 48 },
-  "robot-plating": { x: 106, y: 58, targetX: 73, targetY: 45 },
+  "robot-plating": { x: 90, y: 52, targetX: 73, targetY: 45 },
 };
 
 const FIREARM_POSITIONS: Record<string, SlotPosition> = {
@@ -78,9 +78,9 @@ const FIREARM_POSITIONS: Record<string, SlotPosition> = {
 const GROUP_COLORS = ["#72D7FF", "#A998FF", "#F1D47A", "#76D6A4", "#FF9A8C", "#E6A7FF"];
 
 const SLOT_COLORS: Record<string, string> = {
-  "robot-head": "#72D7FF",
-  "robot-ai": "#72D7FF",
-  "robot-core": "#F1D47A",
+  "robot-head": "#F4FAFF",
+  "robot-ai": "#F4FAFF",
+  "robot-core": "#F4FAFF",
   "robot-chest": "#8AA8FF",
   "robot-left-arm": "#76D6A4",
   "robot-right-arm": "#76D6A4",
@@ -184,28 +184,24 @@ function RobotSchematic({ prefix, powered }: { prefix: string; powered: boolean 
 }
 
 function FirearmSchematic({ prefix, powered, frameType }: { prefix: string; powered: boolean; frameType: WorkshopFirearmFrameType }) {
+  if (frameType === "receiver") return null;
   return <g>
     <ellipse cx="59" cy="65" rx="42" ry="2.5" fill="#070B18" stroke="#456178" strokeWidth="0.35" opacity="0.85" />
-    {frameType === "receiver" && <g>
-      <path d="M40 36 H69 L74 41 L66 49 H42 L37 44 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
-      <path d="M67 38 H89 V44 H67 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.65" strokeDasharray="2 1" />
-      <path d="M48 49 H57 L57 60 H50 L46 54 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.7" />
-      <path d="M43 42 H66 M49 39 H62" stroke="#91AEC2" strokeWidth="0.35" opacity="0.75" />
-    </g>}
     {frameType === "pistol" && <g>
-      <path d="M37 34 H94 V43 H39 L35 40 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
-      <path d="M43 43 H73 L69 48 H60 L57 52 H48 L42 47 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.72" />
-      <path d="M48 48 H60 L58 64 H47 L43 56 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.82" />
-      <path d="M59 47 H69 V53 H59 M63 48 V52" fill="none" stroke="#9AB4C7" strokeWidth="0.62" />
-      <path d="M86 36 V41 M90 36 V41 M49 55 H57 M48 59 H56" fill="none" stroke="#A9EEFF" strokeWidth="0.38" opacity="0.78" />
+      <path d="M42 34 H91 L94 37 V43 H42 L39 40 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.92" />
+      <path d="M44 43 H73 L69 49 H61 L58 52 H49 L44 47 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.74" />
+      <path d="M49 48 H61 L59 64 H48 L44 56 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.84" />
+      <path d="M60 47 H70 V53 H60 M64 48 V52" fill="none" stroke="#A7BECD" strokeWidth="0.64" />
+      <path d="M47 33 V34 M85 33 V34 M87 36 V41 M91 36 V41 M50 55 H58 M49 59 H57" fill="none" stroke="#A9EEFF" strokeWidth="0.38" opacity="0.8" />
     </g>}
     {frameType === "revolver" && <g>
-      <path d="M62 35 H95 V42 H62 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.88" />
-      <path d="M42 36 H64 L71 42 L65 50 H43 L37 44 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.8" />
-      <circle cx="58" cy="44" r="7" fill="#111D2E" stroke="#A998FF" strokeWidth="0.95" />
-      <circle cx="58" cy="44" r="2.2" fill="#263C50" stroke="#7596AE" strokeWidth="0.4" />
-      <path d="M42 49 H54 L52 55 Q49 62 42 65 L36 62 Q40 55 39 50 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.82" />
-      <path d="M62 49 H69 V55 H58 M63 50 L60 54" fill="none" stroke="#9AB4C7" strokeWidth="0.62" />
+      <path d="M63 35 H92 L96 38 V42 H63 Z" fill={`url(#${prefix}-barrel)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
+      <path d="M42 36 H65 L72 42 L66 50 H44 L38 44 Z" fill={`url(#${prefix}-metal)`} stroke="#7596AE" strokeWidth="0.82" />
+      <circle cx="58" cy="44" r="7.2" fill="#111D2E" stroke="#A998FF" strokeWidth="0.96" />
+      <circle cx="58" cy="44" r="1.1" fill="#A998FF" opacity="0.75" />
+      <circle cx="58" cy="40.2" r="0.85" fill="#2C455A" /><circle cx="61.6" cy="42.8" r="0.85" fill="#2C455A" /><circle cx="60.2" cy="47" r="0.85" fill="#2C455A" /><circle cx="55.8" cy="47" r="0.85" fill="#2C455A" /><circle cx="54.4" cy="42.8" r="0.85" fill="#2C455A" />
+      <path d="M43 49 H54 L52 55 Q49 62 42 65 L36 61 Q40 54 40 50 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.84" />
+      <path d="M63 49 H70 V55 H59 M64 50 L61 54" fill="none" stroke="#A7BECD" strokeWidth="0.64" />
       <path d="M41 37 L45 31 L51 37" fill="#17283A" stroke="#F1D47A" strokeWidth="0.65" />
       <path d="M42 56 L49 58 M40 60 L47 62" stroke="#7896AB" strokeWidth="0.36" opacity="0.75" />
     </g>}

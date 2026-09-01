@@ -1421,6 +1421,31 @@ function registerRoutes(prefix: string) {
     }
   });
 
+  app.post(`${prefix}/workshop/build/delete-draft`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const buildId = String(body?.buildId || "").trim();
+      const expectedRevision = Math.max(0, Math.round(Number(body?.expectedRevision) || 0));
+      if (!buildId) return c.json({ error: "Workshop build ID is required" }, 400);
+      const supabase = admin();
+      const { data: current, error: readError } = await supabase.from("app_workshop_builds").select("id, status, revision").eq("id", buildId).eq("player_id", playerId).maybeSingle();
+      if (readError) throw new Error(readError.message);
+      if (!current) return c.json({ error: "Workshop draft was not found" }, 404);
+      if (current.status !== "draft") return c.json({ error: "Only Draft work orders can be deleted" }, 409);
+      if (current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      const { data: deleted, error: deleteError } = await supabase.from("app_workshop_builds").delete().eq("id", buildId).eq("player_id", playerId).eq("status", "draft").eq("revision", expectedRevision).select("id").maybeSingle();
+      if (deleteError) throw new Error(deleteError.message);
+      if (!deleted) return c.json({ error: "Workshop build changed before it could be deleted" }, 409);
+      return c.json({ ok: true, buildId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
   app.post(`${prefix}/workshop/build/submit`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);

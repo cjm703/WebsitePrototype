@@ -20,6 +20,7 @@ import type { PlayerTheme } from "./player-theme";
 import type { ManagedItem } from "./types";
 import { WorkshopBlueprintVisual } from "./workshop-blueprint-visual";
 import {
+  deleteWorkshopDraft,
   loadWorkshopBootstrap,
   rebuildWorkshopBuild,
   saveWorkshopBuild,
@@ -137,6 +138,32 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
     setSelectedBuildId(saved.build.id);
   }, `${editor.name} is now Building. You can continue editing it until the DM completes it.`);
 
+  const deleteDraft = async () => {
+    if (!editor || editor.status !== "draft") return;
+    if (!window.confirm(`Delete the draft "${editor.name}"? This cannot be undone.`)) return;
+    const deletedId = editor.id;
+    const deletedName = editor.name;
+    const serverBacked = data.builds.some((build) => build.id === deletedId);
+    const nextBuild = visibleBuilds.find((build) => build.id !== deletedId) || null;
+    setBusy("delete-draft");
+    setError("");
+    setNotice("");
+    try {
+      if (serverBacked) await deleteWorkshopDraft(deletedId, editor.revision);
+      delete localDraftsRef.current[deletedId];
+      setData((current) => ({ ...current, builds: current.builds.filter((build) => build.id !== deletedId) }));
+      setEditor(null);
+      setSelectedSlotId("");
+      setSelectedBuildId(nextBuild?.id || "");
+      setNotice(`${deletedName} deleted.`);
+      if (serverBacked) await refresh();
+    } catch (actionError) {
+      setError(errorText(actionError));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const assign = (slotId: string, componentId: string) => {
     if (!editor) return;
     rememberEditor({ ...editor, assignments: componentId ? [...editor.assignments.filter((entry) => entry.slotId !== slotId), { slotId, componentId }] : editor.assignments.filter((entry) => entry.slotId !== slotId) });
@@ -177,6 +204,7 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
           {((readiness && !readiness.ready) || (quote?.unavailable.length || 0) > 0) && <div className="mt-2 flex gap-2 px-3 py-2 text-[10px] text-[#FFAD96]" style={subPanel}><AlertTriangle size={14} className="shrink-0" /><span>{readiness?.missing.length ? `Required: ${readiness.missing.join(", ")}. ` : ""}{readiness?.incompatible.length ? `Incompatible: ${readiness.incompatible.join(", ")}. ` : ""}{quote?.unavailable.length ? `Missing unorderable parts: ${quote.unavailable.join(", ")}.` : ""}</span></div>}
 
           <div className="mt-4 flex flex-wrap justify-end gap-2">
+            {editor.status === "draft" && <button className={`${button} text-[#FFB0BC]`} style={{ background: "#4A1B29" }} disabled={Boolean(busy)} onClick={() => void deleteDraft()}>{busy === "delete-draft" ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Delete Draft</button>}
             {canEdit && <button className={button} disabled={Boolean(busy)} onClick={() => void save()}>{busy === "save" ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save Changes</button>}
             {editor.status === "draft" && <button className={`${button} text-[#9FF0C5]`} style={{ background: "#174631" }} disabled={Boolean(busy) || !readiness?.ready || Boolean(quote?.unavailable.length)} onClick={() => void beginBuild()}><Hammer size={13} /> Build</button>}
             {editor.status === "completed" && <><button className={button} disabled={Boolean(busy)} onClick={() => void run("rebuild", () => rebuildWorkshopBuild(editor.id, editor.revision), `${editor.name} returned to the Workshop. Its parts are available for the rebuild.`)}><Wrench size={13} /> Rebuild</button><button className={`${button} text-[#FF9BA9]`} disabled={Boolean(busy)} onClick={() => void run("scrap", () => scrapWorkshopBuild(editor.id, editor.revision), `${editor.name} was scrapped. Its components were returned with no credit refund.`)}><Trash2 size={13} /> Scrap</button></>}

@@ -83,7 +83,7 @@ assert.deepEqual(unavailableQuote.unavailable, ["Standard 9mm Barrel"], "A missi
 const rebuildQuote = model.calculateWorkshopQuote({ ...firearmBuild, isRebuild: true }, firearm, model.STARTER_WORKSHOP_COMPONENTS, storage);
 assert.equal(rebuildQuote.baseCost, 75, "Rebuilds should use the blueprint rebuild fee rather than its base construction price");
 
-const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles, interfaceUi, catalogAlignmentMigration] = await Promise.all([
+const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles, interfaceUi, catalogAlignmentMigration, workshopApi] = await Promise.all([
   fs.readFile(path.join(root, "supabase", "migrations", "20260901000000_workshop_system.sql"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "index.ts"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "workshop.ts"), "utf8"),
@@ -93,6 +93,7 @@ const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, persona
   fs.readFile(path.join(root, "src", "app", "components", "personal-files.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "intelli-interface.tsx"), "utf8"),
   fs.readFile(path.join(root, "supabase", "migrations", "20260901020000_workshop_catalog_alignment.sql"), "utf8"),
+  fs.readFile(path.join(root, "src", "lib", "workshop-api.ts"), "utf8"),
 ]);
 const salvageSafetyMigration = await fs.readFile(path.join(root, "supabase", "migrations", "20260901010000_workshop_salvage_assignment_safety.sql"), "utf8");
 
@@ -104,6 +105,8 @@ assert.match(migration, /Player does not have enough credits\. Required:/, "Comp
 assert.match(salvageSafetyMigration, /jsonb_array_length\(v_assigned\) > 1/, "Shared legacy item salvage must preserve other players' assignments");
 assert.match(edge, /workshop\/admin\/build\/complete/, "DM completion endpoint must exist");
 assert.match(edge, /workshop\/build\/rebuild/, "Player rebuild endpoint must exist");
+assert.match(edge, /workshop\/build\/delete-draft/, "Player draft deletion endpoint must exist");
+assert.match(edge, /Only Draft work orders can be deleted/, "Server must refuse deletion after construction begins");
 assert.match(edge, /workshop\/item\/scrap/, "Existing-item salvage endpoint must exist");
 assert.match(dmUi, /Blueprint access/, "DM manager must expose individual blueprint grants");
 assert.match(dmUi, /Complete Construction/, "DM manager must expose explicit completion");
@@ -111,10 +114,14 @@ assert.match(playerUi, /Construction is awaiting DM completion/, "Player UI must
 assert.match(playerUi, /localDraftsRef/, "Player Workshop must retain unsaved work orders across bootstrap refreshes");
 assert.match(playerUi, /UNSAVED/, "Player Workshop must expose retained local drafts in the work-order list");
 assert.match(playerUi, /WorkshopBlueprintVisual/, "Player Workshop must mount the visual assembly editor");
+assert.match(playerUi, /Delete Draft/, "Player Workshop must expose draft deletion");
+assert.match(playerUi, /serverBacked/, "Draft deletion must distinguish unsaved local drafts from persisted drafts");
+assert.match(workshopApi, /deleteWorkshopDraft/, "Workshop API must expose persisted draft deletion");
 assert.match(blueprintVisual, /Assembly projection/, "Visual editor must expose the central blueprint projection");
 assert.match(blueprintVisual, /Parts Bay/, "Visual editor must keep compatible owned and orderable parts in the bottom bay");
 assert.match(blueprintVisual, /isWorkshopComponentCompatible/, "Visual part choices must use the canonical compatibility rules");
 assert.match(blueprintVisual, /Automatic configuration/, "Firearm projection must expose frame-driven visual families");
+assert.match(blueprintVisual, /if \(frameType === "receiver"\) return null;/, "An empty firearm frame must not render a weapon decoration");
 assert.match(blueprintVisual, /<g pointerEvents="none">/, "Connector lines must stay outside the interactive marker layer");
 assert.match(blueprintVisual, /textLength=/, "Long module-bay labels must fit inside the compact selected label box");
 assert.doesNotMatch(blueprintVisual, /stroke="transparent" strokeWidth="7"/, "Connector hit strokes must not cover module-bay buttons");

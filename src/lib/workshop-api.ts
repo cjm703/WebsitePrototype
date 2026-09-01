@@ -27,6 +27,7 @@ export const updateWorkshopAccess = (playerId: string, enabled: boolean, bluepri
 export const updateWorkshopStorage = (playerId: string, componentId: string, delta: number) => sessionApiFetch("/workshop/admin/storage", { method: "POST", body: JSON.stringify({ playerId, componentId, delta }) });
 
 export const saveWorkshopBuild = (build: WorkshopBuild, expectedRevision: number) => sessionApiFetch("/workshop/build/save", { method: "POST", body: JSON.stringify({ build, expectedRevision }) }) as Promise<{ build: WorkshopBuild }>;
+export const deleteWorkshopDraft = (buildId: string, expectedRevision: number) => sessionApiFetch("/workshop/build/delete-draft", { method: "POST", body: JSON.stringify({ buildId, expectedRevision }) }) as Promise<{ ok: true; buildId: string }>;
 export const submitWorkshopBuild = (buildId: string, expectedRevision: number) => sessionApiFetch("/workshop/build/submit", { method: "POST", body: JSON.stringify({ buildId, expectedRevision }) }) as Promise<{ build: WorkshopBuild }>;
 export const completeWorkshopBuild = (buildId: string, expectedRevision: number) => sessionApiFetch("/workshop/admin/build/complete", { method: "POST", body: JSON.stringify({ buildId, expectedRevision }) });
 export const rebuildWorkshopBuild = (buildId: string, expectedRevision: number) => sessionApiFetch("/workshop/build/rebuild", { method: "POST", body: JSON.stringify({ buildId, expectedRevision }) });
