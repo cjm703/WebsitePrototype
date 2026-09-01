@@ -14,9 +14,11 @@ import type { PlayerTheme } from "./player-theme";
 import {
   calculateWorkshopQuote,
   isWorkshopComponentCompatible,
+  workshopFirearmFrameType,
   type WorkshopBlueprint,
   type WorkshopBuild,
   type WorkshopComponent,
+  type WorkshopFirearmFrameType,
   type WorkshopSlotDefinition,
   type WorkshopStorage,
 } from "@/lib/workshop-model";
@@ -82,6 +84,15 @@ function blueprintKind(blueprint: WorkshopBlueprint): BlueprintKind {
   return "generic";
 }
 
+const FIREARM_FRAME_LABELS: Record<WorkshopFirearmFrameType, string> = {
+  receiver: "Awaiting frame type",
+  pistol: "Pistol configuration",
+  revolver: "Revolver configuration",
+  shotgun: "Shotgun configuration",
+  rifle: "Rifle configuration",
+  automatic: "Automatic configuration",
+};
+
 function groupColor(group: string) {
   let hash = 0;
   for (let index = 0; index < group.length; index += 1) hash = ((hash << 5) - hash + group.charCodeAt(index)) | 0;
@@ -115,7 +126,7 @@ function componentInitials(name: string) {
 }
 
 function RobotSchematic({ prefix, powered }: { prefix: string; powered: boolean }) {
-  return <g>
+  return <g><g transform="translate(60 39) scale(1.1) translate(-60 -39)">
     <ellipse cx="60" cy="70" rx="25" ry="2.5" fill="#070B18" stroke="#456178" strokeWidth="0.35" opacity="0.85" />
     <path d="M49 28 L52 23 L68 23 L71 28 L68 48 L64 53 L56 53 L52 48 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.75" />
     <path d="M54 14 L57 11 H63 L66 14 V22 L63 25 H57 L54 22 Z" fill={`url(#${prefix}-metal)`} stroke="#72D7FF" strokeWidth="0.7" />
@@ -139,23 +150,63 @@ function RobotSchematic({ prefix, powered }: { prefix: string; powered: boolean 
         <animateTransform attributeName="transform" type="rotate" from="0 60 38" to="360 60 38" dur="48s" repeatCount="indefinite" />
       </circle>
     </g>
-  </g>;
+  </g></g>;
 }
 
-function FirearmSchematic({ prefix, powered }: { prefix: string; powered: boolean }) {
+function FirearmSchematic({ prefix, powered, frameType }: { prefix: string; powered: boolean; frameType: WorkshopFirearmFrameType }) {
   return <g>
     <ellipse cx="59" cy="65" rx="42" ry="2.5" fill="#070B18" stroke="#456178" strokeWidth="0.35" opacity="0.85" />
-    <path d="M21 46 L35 38 L47 39 L46 48 L34 53 L19 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.75" />
-    <path d="M42 36 H66 L72 41 L65 49 H43 L39 45 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.8" />
-    <path d="M64 37 H91 V43 H65 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.65" />
-    <path d="M91 36 H98 V44 H91 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
-    <path d="M48 48 L57 48 L59 61 L52 63 L47 54 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.7" />
-    <path d="M59 49 L67 49 L64 59 L56 59 Z" fill="#111D2E" stroke="#A998FF" strokeWidth="0.6" />
-    <path d="M49 36 L52 31 H61 L64 36" fill="#121F31" stroke="#F1D47A" strokeWidth="0.6" />
-    <path d="M68 44 H79" stroke="#76D6A4" strokeWidth="0.7" strokeDasharray="1.1 0.8" />
-    <circle cx="52" cy="45" r="3.6" fill="none" stroke="#829EB3" strokeWidth="0.55" />
-    <path d="M44 42 H66 M48 39 H62" stroke="#91AEC2" strokeWidth="0.35" opacity="0.7" />
-    {powered && <path d="M98 40 H108" stroke={`url(#${prefix}-beam)`} strokeWidth="1.1" opacity="0.8">
+    {frameType === "receiver" && <g>
+      <path d="M40 36 H69 L74 41 L66 49 H42 L37 44 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
+      <path d="M67 38 H89 V44 H67 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.65" strokeDasharray="2 1" />
+      <path d="M48 49 H57 L57 60 H50 L46 54 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.7" />
+      <path d="M43 42 H66 M49 39 H62" stroke="#91AEC2" strokeWidth="0.35" opacity="0.75" />
+    </g>}
+    {frameType === "pistol" && <g>
+      <path d="M38 36 H69 L74 41 L66 48 H41 L37 44 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
+      <path d="M64 37 H91 V43 H66 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.7" />
+      <path d="M91 36 H98 V44 H91 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
+      <path d="M48 48 H59 L57 63 H49 L45 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.75" />
+      <circle cx="57" cy="48" r="3.5" fill="none" stroke="#829EB3" strokeWidth="0.55" />
+      <path d="M44 40 H67 M48 44 H65" stroke="#91AEC2" strokeWidth="0.38" opacity="0.78" />
+    </g>}
+    {frameType === "revolver" && <g>
+      <path d="M38 37 H62 L70 42 L64 49 H41 L36 44 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
+      <path d="M61 38 H92 V44 H62 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.72" />
+      <path d="M92 37 H98 V45 H92 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
+      <circle cx="55" cy="45" r="6.1" fill="#111D2E" stroke="#A998FF" strokeWidth="0.8" />
+      <circle cx="55" cy="45" r="3.5" fill="none" stroke="#718EA4" strokeWidth="0.45" strokeDasharray="0.8 0.7" />
+      <path d="M43 49 H53 L50 63 H42 L38 55 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.75" />
+      <path d="M39 37 L44 32 L49 38" fill="#17283A" stroke="#F1D47A" strokeWidth="0.55" />
+    </g>}
+    {frameType === "shotgun" && <g>
+      <path d="M18 47 L36 37 L47 39 L46 49 L33 55 L17 54 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.8" />
+      <path d="M40 37 H65 L71 42 L64 49 H41 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.85" />
+      <path d="M63 36 H101 V40 H64 Z M63 42 H101 V46 H64 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.58" />
+      <path d="M68 46 H82 V52 H67 Z" fill="#172A3D" stroke="#76D6A4" strokeWidth="0.65" />
+      <path d="M49 49 H57 L56 60 H50 L46 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.7" />
+      <path d="M72 48 H79 M74 50 H81" stroke="#A9EEFF" strokeWidth="0.35" />
+    </g>}
+    {frameType === "rifle" && <g>
+      <path d="M16 46 L34 35 L46 38 L46 49 L31 55 L15 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.8" />
+      <path d="M39 36 H68 L74 41 L66 49 H40 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
+      <path d="M65 37 H101 V43 H65 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.7" />
+      <path d="M101 36 H106 V44 H101 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
+      <path d="M48 49 H58 L57 61 H49 L45 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.7" />
+      <path d="M59 49 H68 L65 61 H56 Z" fill="#111D2E" stroke="#A998FF" strokeWidth="0.65" />
+      <path d="M47 35 L52 29 H66 L70 36" fill="#121F31" stroke="#F1D47A" strokeWidth="0.6" />
+    </g>}
+    {frameType === "automatic" && <g>
+      <path d="M22 45 L35 37 L44 39 V49 L31 54 L20 52 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.75" />
+      <path d="M38 34 H72 L79 40 L71 50 H39 L34 43 Z" fill={`url(#${prefix}-metal)`} stroke={`url(#${prefix}-edge)`} strokeWidth="0.9" />
+      <path d="M70 36 H94 V43 H72 Z" fill={`url(#${prefix}-barrel)`} stroke="#7596AE" strokeWidth="0.7" />
+      <path d="M94 35 H100 V44 H94 Z" fill="#16263A" stroke="#72D7FF" strokeWidth="0.65" />
+      <path d="M47 49 H56 L55 61 H48 L44 53 Z" fill={`url(#${prefix}-limb)`} stroke="#63819A" strokeWidth="0.7" />
+      <path d="M59 49 H70 L66 63 H56 Z" fill="#111D2E" stroke="#A998FF" strokeWidth="0.7" />
+      <path d="M44 38 H68 M47 42 H72" stroke="#91AEC2" strokeWidth="0.4" opacity="0.78" />
+      {[76, 80, 84, 88].map((x) => <circle key={x} cx={x} cy="39.5" r="0.7" fill="#76D6A4" opacity="0.8" />)}
+    </g>}
+    {powered && <path d="M101 40 H113" stroke={`url(#${prefix}-beam)`} strokeWidth="1.1" opacity="0.8">
       <animate attributeName="opacity" values="0.25;0.8;0.25" dur="3.4s" repeatCount="indefinite" />
     </path>}
     <path d="M17 27 H32 M88 26 H103 M14 61 H31 M86 61 H104" stroke="#72D7FF" strokeWidth="0.3" opacity="0.22" />
@@ -192,6 +243,8 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
   const selectedSlot = blueprint.slots.find((slot) => slot.id === selectedSlotId) || blueprint.slots[0] || null;
   const assignments = useMemo(() => new Map(build.assignments.map((entry) => [entry.slotId, entry.componentId])), [build.assignments]);
   const componentsById = useMemo(() => new Map(components.map((component) => [component.id, component])), [components]);
+  const installedFrame = componentsById.get(assignments.get("gun-frame") || "") || null;
+  const frameType = workshopFirearmFrameType(installedFrame);
   const selectedComponentId = selectedSlot ? assignments.get(selectedSlot.id) || "" : "";
   const selectedComponent = selectedComponentId ? componentsById.get(selectedComponentId) || null : null;
   const compatibleComponents = useMemo(() => {
@@ -214,6 +267,7 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
         <div className="pointer-events-none absolute left-3 top-2 z-10">
           <div className="text-[8px] uppercase tracking-[0.18em]" style={{ color: theme.labelColor }}>Assembly projection</div>
           <div className="mt-0.5 text-[11px] font-bold" style={{ color: theme.accentColor }}>{blueprint.name}</div>
+          {kind === "firearm" && <div className="mt-0.5 text-[7px] uppercase tracking-[0.1em] text-[#76D6A4]">{FIREARM_FRAME_LABELS[frameType]}</div>}
         </div>
         <div className="pointer-events-none absolute right-3 top-2 z-10 text-right">
           <div className="text-[8px] uppercase tracking-[0.14em]" style={{ color: theme.labelColor }}>Systems installed</div>
@@ -237,7 +291,7 @@ export function WorkshopBlueprintVisual({ blueprint, build, components, storage,
           <rect x="0" y="-12" width="120" height="9" fill="#72D7FF" opacity="0.025">
             <animate attributeName="y" values="-12;88" dur="9s" repeatCount="indefinite" />
           </rect>
-          {kind === "robot" ? <RobotSchematic prefix={prefix} powered={assignments.has("robot-core")} /> : kind === "firearm" ? <FirearmSchematic prefix={prefix} powered={installedCount >= 3} /> : <GenericSchematic prefix={prefix} powered={installedCount > 0} slotCount={blueprint.slots.length} />}
+          {kind === "robot" ? <RobotSchematic prefix={prefix} powered={assignments.has("robot-core")} /> : kind === "firearm" ? <FirearmSchematic prefix={prefix} powered={installedCount >= 3} frameType={frameType} /> : <GenericSchematic prefix={prefix} powered={installedCount > 0} slotCount={blueprint.slots.length} />}
           {blueprint.slots.map((slot, index) => {
             const position = slotPosition(kind, slot, index, blueprint.slots.length);
             const assignedComponent = componentsById.get(assignments.get(slot.id) || "");

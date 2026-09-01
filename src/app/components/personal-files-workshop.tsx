@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArchiveRestore,
@@ -51,15 +51,17 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const localDraftsRef = useRef<Record<string, WorkshopBuild>>({});
 
   useEffect(() => {
     setData(initialBootstrap);
-    setSelectedBuildId((current) => current && initialBootstrap.builds.some((build) => build.id === current) ? current : initialBootstrap.builds[0]?.id || "");
+    setSelectedBuildId((current) => current && (initialBootstrap.builds.some((build) => build.id === current) || Boolean(localDraftsRef.current[current])) ? current : initialBootstrap.builds[0]?.id || "");
   }, [initialBootstrap]);
 
   useEffect(() => {
+    const localDraft = localDraftsRef.current[selectedBuildId];
     const build = data.builds.find((entry) => entry.id === selectedBuildId);
-    setEditor((current) => build ? structuredClone(build) : current?.id === selectedBuildId ? current : null);
+    setEditor((current) => localDraft ? structuredClone(localDraft) : build ? structuredClone(build) : current?.id === selectedBuildId ? current : null);
   }, [data.builds, selectedBuildId]);
 
   const refresh = useCallback(async () => {
@@ -91,7 +93,17 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
   const readiness = editor && selectedBlueprint ? workshopBuildReadiness(editor, selectedBlueprint, data.components) : null;
   const quote = editor && selectedBlueprint ? calculateWorkshopQuote(editor, selectedBlueprint, data.components, data.storage) : null;
   const canEdit = editor?.status === "draft" || editor?.status === "building";
+  const hasUnsavedChanges = Boolean(editor && localDraftsRef.current[editor.id]);
+  const visibleBuilds = [
+    ...Object.values(localDraftsRef.current),
+    ...data.builds.filter((build) => !localDraftsRef.current[build.id]),
+  ];
   const externalScrappable = items.filter((item) => item.assignedTo.includes(playerId) && item.tags.includes("Scrappable") && !item.tags.includes("Workshop Built"));
+
+  const rememberEditor = (next: WorkshopBuild) => {
+    localDraftsRef.current[next.id] = structuredClone(next);
+    setEditor(next);
+  };
 
   useEffect(() => {
     if (!selectedBlueprint) {
@@ -104,7 +116,7 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
   const createBuild = (blueprint: WorkshopBlueprint) => {
     const now = new Date().toISOString();
     const build = normalizeWorkshopBuild({ id: createWorkshopId("build"), playerId, blueprintId: blueprint.id, blueprintVersion: blueprint.version, name: `New ${blueprint.name}`, designation: "", notes: "", status: "draft", outputItemId: createWorkshopId("workshop-item"), revision: 0, createdAt: now, updatedAt: now, assignments: [] });
-    setEditor(build);
+    rememberEditor(build);
     setSelectedBuildId(build.id);
     setSelectedSlotId(blueprint.slots[0]?.id || "");
     setSection("builds");
@@ -112,18 +124,22 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
 
   const save = () => editor && run("save", async () => {
     const result = await saveWorkshopBuild(editor, editor.revision);
+    delete localDraftsRef.current[result.build.id];
+    setEditor(structuredClone(result.build));
     setSelectedBuildId(result.build.id);
   }, `${editor.name} saved.`);
 
   const beginBuild = () => editor && run("submit", async () => {
     const saved = await saveWorkshopBuild(editor, editor.revision);
-    await submitWorkshopBuild(saved.build.id, saved.build.revision);
+    const submitted = await submitWorkshopBuild(saved.build.id, saved.build.revision);
+    delete localDraftsRef.current[submitted.build.id];
+    setEditor(structuredClone(submitted.build));
     setSelectedBuildId(saved.build.id);
   }, `${editor.name} is now Building. You can continue editing it until the DM completes it.`);
 
   const assign = (slotId: string, componentId: string) => {
     if (!editor) return;
-    setEditor({ ...editor, assignments: componentId ? [...editor.assignments.filter((entry) => entry.slotId !== slotId), { slotId, componentId }] : editor.assignments.filter((entry) => entry.slotId !== slotId) });
+    rememberEditor({ ...editor, assignments: componentId ? [...editor.assignments.filter((entry) => entry.slotId !== slotId), { slotId, componentId }] : editor.assignments.filter((entry) => entry.slotId !== slotId) });
   };
 
   return <div className="space-y-3" style={{ color: theme.textColor }}>
@@ -143,7 +159,7 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
     {section === "builds" && <div className="grid min-h-[520px] gap-3 xl:grid-cols-[260px_1fr]">
       <aside className="p-2" style={panel}>
         <div className="mb-2 text-[9px] uppercase tracking-[0.12em]" style={{ color: theme.labelColor }}>Work orders</div>
-        <div className="space-y-1">{data.builds.map((build) => <button key={build.id} className="flex w-full items-center gap-2 px-2 py-2 text-left" style={{ background: selectedBuildId === build.id ? theme.cardBg : "transparent" }} onClick={() => setSelectedBuildId(build.id)}><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold">{build.name}</span><span className="block text-[9px]" style={{ color: STATUS_COLOR[build.status] }}>{build.status.toUpperCase()}{build.isRebuild ? " · REBUILD" : ""}</span></span><ChevronRight size={12} /></button>)}</div>
+        <div className="space-y-1">{visibleBuilds.map((build) => <button key={build.id} className="flex w-full items-center gap-2 px-2 py-2 text-left" style={{ background: selectedBuildId === build.id ? theme.cardBg : "transparent" }} onClick={() => setSelectedBuildId(build.id)}><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold">{build.name}</span><span className="block text-[9px]" style={{ color: STATUS_COLOR[build.status] }}>{build.status.toUpperCase()}{build.isRebuild ? " · REBUILD" : ""}{localDraftsRef.current[build.id] ? " · UNSAVED" : ""}</span></span><ChevronRight size={12} /></button>)}</div>
         <div className="my-3 border-t" style={{ borderColor: theme.dividerColor }} />
         <div className="mb-2 text-[9px] uppercase tracking-[0.12em]" style={{ color: theme.labelColor }}>Start a design</div>
         <div className="space-y-1">{data.blueprints.map((blueprint) => <button key={blueprint.id} className="flex w-full items-center gap-2 px-2 py-2 text-left hover:brightness-125" style={subPanel} onClick={() => createBuild(blueprint)}><Plus size={13} style={{ color: theme.accentColor }} /><span><span className="block text-[10px] font-bold">{blueprint.name}</span><span className="text-[8px]" style={{ color: theme.labelColor }}>{blueprint.category} · {blueprint.basePrice.toLocaleString()} CR base</span></span></button>)}</div>
@@ -151,9 +167,9 @@ export function PersonalFilesWorkshop({ initialBootstrap, playerId, items, theme
 
       <section className="min-w-0 p-3" style={panel}>
         {!editor || !selectedBlueprint ? <div className="flex h-full items-center justify-center text-center text-[11px]" style={{ color: theme.labelColor }}>Choose a granted blueprint or an existing work order.</div> : <>
-          <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3" style={{ borderColor: theme.dividerColor }}><div><div className="flex flex-wrap items-center gap-2"><span className="text-[15px] font-bold">{editor.name}</span><span className="px-2 py-0.5 text-[9px] uppercase" style={{ background: `${STATUS_COLOR[editor.status]}22`, color: STATUS_COLOR[editor.status] }}>{editor.status}</span>{editor.isRebuild && <span className="px-2 py-0.5 text-[9px] uppercase text-[#8AC8FF]" style={{ background: "#14334B" }}>Rebuild</span>}</div><div className="mt-1 text-[9px]" style={{ color: theme.labelColor }}>{selectedBlueprint.name} · design v{editor.blueprintVersion} · revision {editor.revision}</div></div><div className="text-right"><div className="text-[15px] font-bold" style={{ color: theme.accentColor }}>{quote?.totalCost.toLocaleString()} CR</div><div className="text-[8px]" style={{ color: theme.labelColor }}>{quote?.baseCost.toLocaleString()} base + {quote?.componentCost.toLocaleString()} ordered parts</div></div></div>
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3" style={{ borderColor: theme.dividerColor }}><div><div className="flex flex-wrap items-center gap-2"><span className="text-[15px] font-bold">{editor.name}</span><span className="px-2 py-0.5 text-[9px] uppercase" style={{ background: `${STATUS_COLOR[editor.status]}22`, color: STATUS_COLOR[editor.status] }}>{editor.status}</span>{hasUnsavedChanges && <span className="px-2 py-0.5 text-[9px] uppercase text-[#F1D47A]" style={{ background: "#41340F" }}>Unsaved</span>}{editor.isRebuild && <span className="px-2 py-0.5 text-[9px] uppercase text-[#8AC8FF]" style={{ background: "#14334B" }}>Rebuild</span>}</div><div className="mt-1 text-[9px]" style={{ color: theme.labelColor }}>{selectedBlueprint.name} · design v{editor.blueprintVersion} · revision {editor.revision}</div></div><div className="text-right"><div className="text-[15px] font-bold" style={{ color: theme.accentColor }}>{quote?.totalCost.toLocaleString()} CR</div><div className="text-[8px]" style={{ color: theme.labelColor }}>{quote?.baseCost.toLocaleString()} base + {quote?.componentCost.toLocaleString()} ordered parts</div></div></div>
 
-          <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,1.35fr)]"><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Name</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Designation</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.designation} onChange={(event) => setEditor({ ...editor, designation: event.target.value })} /></label><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Build notes</span><textarea className={`${input} min-h-[36px] resize-y`} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.notes} onChange={(event) => setEditor({ ...editor, notes: event.target.value })} placeholder="Assembly notes" /></label></div>
+          <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(220px,1.35fr)]"><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Name</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.name} onChange={(event) => rememberEditor({ ...editor, name: event.target.value })} /></label><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Designation</span><input className={input} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.designation} onChange={(event) => rememberEditor({ ...editor, designation: event.target.value })} /></label><label><span className="mb-1 block text-[8px] uppercase" style={{ color: theme.labelColor }}>Build notes</span><textarea className={`${input} min-h-[36px] resize-y`} style={{ background: theme.inputBg, color: theme.textColor }} disabled={!canEdit} value={editor.notes} onChange={(event) => rememberEditor({ ...editor, notes: event.target.value })} placeholder="Assembly notes" /></label></div>
 
           {quote && <WorkshopBlueprintVisual blueprint={selectedBlueprint} build={editor} components={data.components} storage={data.storage} quote={quote} canEdit={Boolean(canEdit)} selectedSlotId={selectedSlotId} onSelectSlot={setSelectedSlotId} onAssign={assign} theme={theme} />}
 

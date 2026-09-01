@@ -1,6 +1,7 @@
 export type WorkshopBuildStatus = "draft" | "building" | "completed" | "scrapped";
 export type WorkshopEffectKind = "stat" | "dice" | "rule";
 export type WorkshopEffectMode = "add" | "set" | "grant";
+export type WorkshopFirearmFrameType = "receiver" | "pistol" | "revolver" | "shotgun" | "rifle" | "automatic";
 
 export interface WorkshopEffect {
   id: string;
@@ -286,6 +287,17 @@ export function isWorkshopComponentCompatible(slot: WorkshopSlotDefinition, comp
   return component.active && categoryFits && tagsFit;
 }
 
+export function workshopFirearmFrameType(component: Pick<WorkshopComponent, "name" | "tags"> | null | undefined): WorkshopFirearmFrameType {
+  if (!component) return "receiver";
+  const identity = `${component.name} ${component.tags.join(" ")}`.toLowerCase();
+  if (/(automatic|auto[- ]?loading|machine|smg|carbine)/.test(identity)) return "automatic";
+  if (identity.includes("shotgun")) return "shotgun";
+  if (identity.includes("revolver")) return "revolver";
+  if (identity.includes("rifle")) return "rifle";
+  if (identity.includes("pistol") || identity.includes("handgun")) return "pistol";
+  return "receiver";
+}
+
 export function workshopAssignments(build: WorkshopBuild) {
   return new Map(build.assignments.map((assignment) => [assignment.slotId, assignment.componentId]));
 }
@@ -339,8 +351,8 @@ function slot(idValue: string, group: string, label: string, required: boolean, 
   return { id: idValue, group, label, required, acceptedCategories, acceptedTags: [], description: "" };
 }
 
-function component(idValue: string, name: string, category: string, price: number, orderable: boolean, tags: string[], effects: WorkshopEffect[]): WorkshopComponent {
-  return normalizeWorkshopComponent({ id: idValue, name, category, price, orderable, tags, effects, description: "Starter Workshop component." });
+function component(idValue: string, name: string, category: string, price: number, orderable: boolean, tags: string[], effects: WorkshopEffect[], description = "Starter Workshop component."): WorkshopComponent {
+  return normalizeWorkshopComponent({ id: idValue, name, category, price, orderable, tags, effects, description });
 }
 
 export const STARTER_WORKSHOP_BLUEPRINTS: WorkshopBlueprint[] = [
@@ -372,7 +384,17 @@ export const STARTER_WORKSHOP_COMPONENTS: WorkshopComponent[] = [
   component("component-heavy-chest-mount", "Augmented Large Firearm Mount", "Robot Auxiliary", 900, true, ["chest", "heavy-firearm"], [effect("mount-rule", "Large Firearm Mount", "rule", "", 0, "Supports a large chest-mounted firearm.")]),
   component("component-steel-plating", "Steel Exterior Plating", "Plating", 700, true, ["steel", "armor"], [effect("steel-armor", "Steel Plating", "stat", "Armor", 4, "+4 Armor")]),
   component("component-pistol-frame", "Balanced Pistol Frame", "Firearm Frame", 300, true, ["9mm", "pistol"], [effect("frame-accuracy", "Balanced Frame", "stat", "Accuracy", 1, "+1 Accuracy", true)]),
+  component("component-revolver-frame", "Service Revolver Frame", "Firearm Frame", 360, true, ["revolver", "handgun", ".357", "frame:revolver"], [effect("revolver-frame-rule", "Revolver Configuration", "rule", "", 0, "Configures the weapon as a durable cylinder-fed revolver.", true)]),
+  component("component-shotgun-frame", "Tactical Shotgun Frame", "Firearm Frame", 550, true, ["shotgun", "12-gauge", "frame:shotgun"], [effect("shotgun-frame-rule", "Shotgun Configuration", "rule", "", 0, "Configures the weapon as a close-range shotgun platform.", true)]),
+  component("component-rifle-frame", "Precision Rifle Frame", "Firearm Frame", 650, true, ["rifle", "longarm", "frame:rifle"], [effect("rifle-frame-rule", "Rifle Configuration", "rule", "", 0, "Configures the weapon as a stable long-range rifle platform.", true)]),
+  component("component-automatic-frame", "Automatic Carbine Frame", "Firearm Frame", 800, true, ["automatic", "carbine", "rifle", "frame:automatic"], [effect("automatic-frame-rule", "Automatic Configuration", "rule", "", 0, "Configures the weapon as a magazine-fed automatic carbine.", true)]),
   component("component-9mm-ammo", "9mm Ammunition System", "Ammunition", 80, true, ["9mm"], [effect("ammo-damage", "9mm Damage", "dice", "Damage", 0, "1d10 piercing", true)]),
+  component("component-abyss-incendiary-ammo", "Abyss Fabricator - Incendiary Magazine", "Ammunition", 0, true, ["abyss-fabricator", "universal", "incendiary", "red", "30-round"], [effect("abyss-incendiary-rule", "Incendiary Rounds", "rule", "", 0, "Changes the weapon's damage type to fire and deals an additional 1d8 fire damage on hit.", true)], "A free 30-round magazine produced by the matte-black Abyss Fabricator's red setting."),
+  component("component-abyss-cryo-ammo", "Abyss Fabricator - Cryo Magazine", "Ammunition", 0, true, ["abyss-fabricator", "universal", "cryo", "blue", "30-round"], [effect("abyss-cryo-rule", "Cryo Rounds", "rule", "", 0, "On hit, the target makes a Constitution save against DC 10 + proficiency bonus + Constitution modifier. Failure halves speed until the end of its next turn; a target already slowed this way is frozen on another failed save.", true)], "A free 30-round magazine produced by the matte-black Abyss Fabricator's blue setting."),
+  component("component-abyss-toxic-ammo", "Abyss Fabricator - Toxic Magazine", "Ammunition", 0, true, ["abyss-fabricator", "universal", "toxic", "green", "30-round"], [effect("abyss-toxic-rule", "Toxic Rounds", "rule", "", 0, "On hit, the target makes a Constitution save or is Poisoned for 1 minute and takes 1d6 poison damage at the start of each turn. The damage stacks, and the save repeats at the end of each turn.", true)], "A free 30-round magazine produced by the matte-black Abyss Fabricator's green setting."),
+  component("component-abyss-concussive-ammo", "Abyss Fabricator - Concussive Magazine", "Ammunition", 0, true, ["abyss-fabricator", "universal", "concussive", "yellow", "30-round"], [effect("abyss-concussive-rule", "Concussive Rounds", "rule", "", 0, "On hit, the target gains 1 Stagger Potential. Each point raises the base 50% health threshold for triggering the campaign's stagger effect by 5%.", true)], "A free 30-round magazine produced by the matte-black Abyss Fabricator's yellow setting."),
+  component("component-abyss-gravitic-ammo", "Abyss Fabricator - Gravitic Magazine", "Ammunition", 0, true, ["abyss-fabricator", "universal", "gravitic", "purple", "30-round"], [effect("abyss-gravitic-rule", "Gravitic Rounds", "rule", "", 0, "On hit, the target makes an Agility save against DC 10 + proficiency bonus + Dexterity modifier or is pushed 15 feet in a chosen direction and knocked prone.", true)], "A free 30-round magazine produced by the matte-black Abyss Fabricator's purple setting."),
+  component("component-abyss-echo-ammo", "Abyss Fabricator - Echo Magazine", "Ammunition", 0, true, ["abyss-fabricator", "universal", "echo", "white", "30-round"], [effect("abyss-echo-rule", "Echo Rounds", "rule", "", 0, "On hit, the projectile rebounds to a second target within 15 feet. Make a separate attack roll; on a hit, it deals full damage including modifiers.", true)], "A free 30-round magazine produced by the matte-black Abyss Fabricator's white setting."),
   component("component-9mm-barrel", "Standard 9mm Barrel", "Firearm Barrel", 220, true, ["9mm"], [effect("barrel-range", "Standard Barrel", "stat", "Range", 30, "+30 ft range", true)]),
   component("component-tactical-stock", "Tactical Folding Stock", "Firearm Stock", 180, true, ["pistol", "rifle"], [effect("stock-accuracy", "Braced Fire", "stat", "Accuracy", 1, "+1 Accuracy while braced", true)]),
   component("component-reflex-sight", "Reflex Sight", "Firearm Sight", 240, true, ["optic", "rail"], [effect("sight-accuracy", "Reflex Sight", "stat", "Accuracy", 1, "+1 Accuracy", true)]),

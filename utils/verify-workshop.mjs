@@ -13,7 +13,24 @@ const robot = model.STARTER_WORKSHOP_BLUEPRINTS.find((entry) => entry.id === "bl
 const firearm = model.STARTER_WORKSHOP_BLUEPRINTS.find((entry) => entry.id === "blueprint-modular-firearm");
 assert.ok(robot, "Humanoid Robot starter blueprint is required");
 assert.ok(firearm, "Modular Firearm starter blueprint is required");
-assert.ok(model.STARTER_WORKSHOP_COMPONENTS.length >= 14, "Starter component catalog should cover both designs");
+assert.ok(model.STARTER_WORKSHOP_COMPONENTS.length >= 24, "Starter component catalog should cover both designs, firearm families, and Abyss ammunition");
+
+const frameCases = [
+  ["component-pistol-frame", "pistol"],
+  ["component-revolver-frame", "revolver"],
+  ["component-shotgun-frame", "shotgun"],
+  ["component-rifle-frame", "rifle"],
+  ["component-automatic-frame", "automatic"],
+];
+for (const [componentId, expectedType] of frameCases) {
+  const frame = model.STARTER_WORKSHOP_COMPONENTS.find((entry) => entry.id === componentId);
+  assert.ok(frame, `${componentId} starter frame is required`);
+  assert.equal(model.workshopFirearmFrameType(frame), expectedType, `${componentId} must control the firearm silhouette and output type`);
+}
+
+const abyssAmmo = model.STARTER_WORKSHOP_COMPONENTS.filter((entry) => entry.tags.includes("abyss-fabricator"));
+assert.equal(abyssAmmo.length, 6, "All six Abyss Fabricator ammunition settings must be available");
+assert.ok(abyssAmmo.every((entry) => entry.category === "Ammunition" && entry.orderable && entry.price === 0), "Abyss magazines must be compatible, orderable, and free");
 
 const saintReadiness = model.workshopBuildReadiness(model.SAINT_GREGORY_SAMPLE, robot, model.STARTER_WORKSHOP_COMPONENTS);
 assert.equal(saintReadiness.ready, true, "Saint Gregory should fill every required Humanoid Robot slot compatibly");
@@ -47,9 +64,10 @@ assert.deepEqual(unavailableQuote.unavailable, ["Standard 9mm Barrel"], "A missi
 const rebuildQuote = model.calculateWorkshopQuote({ ...firearmBuild, isRebuild: true }, firearm, model.STARTER_WORKSHOP_COMPONENTS, storage);
 assert.equal(rebuildQuote.baseCost, 75, "Rebuilds should use the blueprint rebuild fee rather than its base construction price");
 
-const [migration, edge, dmUi, playerUi, blueprintVisual, personalFiles] = await Promise.all([
+const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles] = await Promise.all([
   fs.readFile(path.join(root, "supabase", "migrations", "20260901000000_workshop_system.sql"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "index.ts"), "utf8"),
+  fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "workshop.ts"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "dm-workshop-manager.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "personal-files-workshop.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "workshop-blueprint-visual.tsx"), "utf8"),
@@ -69,10 +87,14 @@ assert.match(edge, /workshop\/item\/scrap/, "Existing-item salvage endpoint must
 assert.match(dmUi, /Blueprint access/, "DM manager must expose individual blueprint grants");
 assert.match(dmUi, /Complete Construction/, "DM manager must expose explicit completion");
 assert.match(playerUi, /Construction is awaiting DM completion/, "Player UI must explain the Building lifecycle");
+assert.match(playerUi, /localDraftsRef/, "Player Workshop must retain unsaved work orders across bootstrap refreshes");
+assert.match(playerUi, /UNSAVED/, "Player Workshop must expose retained local drafts in the work-order list");
 assert.match(playerUi, /WorkshopBlueprintVisual/, "Player Workshop must mount the visual assembly editor");
 assert.match(blueprintVisual, /Assembly projection/, "Visual editor must expose the central blueprint projection");
 assert.match(blueprintVisual, /Parts Bay/, "Visual editor must keep compatible owned and orderable parts in the bottom bay");
 assert.match(blueprintVisual, /isWorkshopComponentCompatible/, "Visual part choices must use the canonical compatibility rules");
+assert.match(blueprintVisual, /Automatic configuration/, "Firearm projection must expose frame-driven visual families");
+assert.match(serverWorkshop, /Workshop::Firearm Type/, "Completed firearm items must retain their frame-defined type");
 assert.match(personalFiles, /workshopBootstrap\?\.enabled/, "Personal Files must hide Workshop unless server-granted access is enabled");
 
 console.log("Workshop verification passed: catalog, quotes, access, transactions, visual assembly, and UI contracts are intact.");
