@@ -241,8 +241,11 @@ assert.match(businessMapEditor, /MysticParkZoneDecoration/);
   "whispering-woods",
 ].forEach((theme) => assert.match(mysticParkDecoration, new RegExp(theme)));
 assert.match(mysticParkDecoration, /function BlossomTree/);
+assert.match(mysticParkDecoration, /function DreamHouse/);
 assert.match(mysticParkDecoration, /function GiantMushroom/);
-assert.match(mysticParkDecoration, /attributeName="opacity"/);
+assert.match(mysticParkDecoration, /attributeName="cx"/);
+assert.doesNotMatch(mysticParkDecoration, /function WhimsyTree/);
+assert.doesNotMatch(mysticParkDecoration, /fairyGlow|greenGround|cliff|woods:/);
 assert.match(businessMapStorage, /business-map\/assets\/upload/);
 assert.match(officeStateApi, /office\/facility-addition\/action/);
 assert.match(officeStateApi, /office\/facility-expansion\/action/);
