@@ -62,7 +62,7 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   condition: 100,
 };
 
-export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v11";
+export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v12";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
 export const PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v2";
 export const RECENT_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
@@ -73,6 +73,7 @@ export const SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v7";
 export const EIGHTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v8";
 export const NINTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v9";
 export const TENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v10";
+export const ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v11";
 
 const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
@@ -182,12 +183,15 @@ const surface = () => ({
 });
 
 export function createMysticLandsParkMap(): OfficeBusinessMapState {
+  const horizontalTrim = 3;
+  const parkX = (x: number) => x - horizontalTrim;
+  const parkPoint = (x: number, y: number) => ({ x: parkX(x), y });
   const walkway = (id: string, points: Array<{ x: number; y: number }>, curved = true): BusinessMapShape => ({
     id,
     kind: "pathway",
     layerId: "pathways",
     name: "Guest Walkway",
-    points,
+    points: points.map((point) => parkPoint(point.x, point.y)),
     color: "#C8BFA5",
     fillColor: "#C8BFA5",
     opacity: 0.96,
@@ -207,7 +211,7 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
     kind: "wall",
     layerId: "walls",
     name: "Park Perimeter Fence",
-    points,
+    points: points.map((point) => parkPoint(point.x, point.y)),
     color: "#E0F0C8",
     fillColor: "#E0F0C8",
     opacity: 0.95,
@@ -217,20 +221,20 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
     visible: true,
     locked: true,
   });
-  const sector = (data: Record<string, unknown>) => ({ ...surface(), state: "active", unlockExpansionId: "", zoneType: "Attraction", ...data });
+  const sector = (data: Record<string, unknown>) => ({ ...surface(), state: "active", unlockExpansionId: "", zoneType: "Attraction", ...data, x: parkX(finite(data.x, 0)) });
   const expansionId = "mystic-north-expansion";
 
   return normalizeOfficeBusinessMap({
     version: 3,
     name: "Mystic Lands Park",
     description: "A fenced destination park organized around a circular central commons and promenade loop, with five adjoining themed districts, a single southern entrance, a compact northwest alley, and a reserved northern expansion beyond the fence.",
-    grid: { width: 32, height: 24, showGrid: true, snapToGrid: false },
+    grid: { width: 26, height: 24, showGrid: true, snapToGrid: false },
     background: { mode: "solid", color: "#06110D", imageUrl: "", opacity: 1, fit: "cover" },
     layers: BUSINESS_MAP_LAYER_DEFAULTS,
     permissions: { playerCanInstall: true, playerCanRemove: true, allowedPlayerIds: [] },
     shapes: [
-      { id: "park-boundary", kind: "area", layerId: "areas", name: "Park Grounds", points: [{ x: 4, y: 5 }, { x: 28, y: 5 }, { x: 28, y: 23 }, { x: 4, y: 23 }], color: "#77B993", fillColor: "#0E3B29", opacity: 0.52, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
-      { id: "north-expansion-ground", kind: "area", layerId: "areas", name: "Northern Expansion Grounds", points: [{ x: 11, y: 0 }, { x: 21, y: 0 }, { x: 21, y: 4 }, { x: 11, y: 4 }], color: "#7D6BCD", fillColor: "#211B3B", opacity: 0.42, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
+      { id: "park-boundary", kind: "area", layerId: "areas", name: "Park Grounds", points: [parkPoint(4, 5), parkPoint(28, 5), parkPoint(28, 23), parkPoint(4, 23)], color: "#77B993", fillColor: "#0E3B29", opacity: 0.52, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
+      { id: "north-expansion-ground", kind: "area", layerId: "areas", name: "Northern Expansion Grounds", points: [parkPoint(11, 0), parkPoint(21, 0), parkPoint(21, 4), parkPoint(11, 4)], color: "#7D6BCD", fillColor: "#211B3B", opacity: 0.42, strokeWidth: 1.2, label: "", curved: false, visible: true, locked: true },
       fence("fence-north", [{ x: 4, y: 5 }, { x: 28, y: 5 }]),
       fence("fence-west", [{ x: 4, y: 5 }, { x: 4, y: 23 }]),
       fence("fence-east", [{ x: 28, y: 5 }, { x: 28, y: 23 }]),
@@ -264,7 +268,7 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       sector({ id: "mystic-expansion-west", name: "Celestial Wilds", description: "The western half of the northern expansion, ready for a new themed district.", color: "#8B7BE8", zoneType: "Expansion", x: 11, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("celestial-anchor", "Expansion Anchor A", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("celestial-support", "Expansion Support A", "Utility", 13, 3, 4, 4, ["utility", "expansion"])] }),
       sector({ id: "mystic-expansion-east", name: "Astral Frontier", description: "The eastern half of the northern expansion, built for another major park experience.", color: "#9B8CFF", zoneType: "Expansion", x: 17, y: 0, width: 4, height: 4, state: "locked", unlockExpansionId: expansionId, slots: [parkSlot("astral-anchor", "Expansion Anchor B", "Commercial", 2, 2, 9, 6, ["attraction", "expansion"]), parkSlot("astral-support", "Expansion Support B", "Operations", 13, 3, 4, 4, ["operations", "expansion"])] }),
     ],
-    expansions: [{ id: expansionId, name: "Northern Expansion Grounds", description: "A funded development outside the current fence unlocks Celestial Wilds and Astral Frontier immediately after DM completion.", x: 11, y: 0, width: 10, height: 4, cost: 15000, currency: "CR", status: "available", unlockSectorIds: ["mystic-expansion-west", "mystic-expansion-east"], fundedBy: "", fundedAt: "", completedBy: "", completedAt: "" }],
+    expansions: [{ id: expansionId, name: "Northern Expansion Grounds", description: "A funded development outside the current fence unlocks Celestial Wilds and Astral Frontier immediately after DM completion.", x: parkX(11), y: 0, width: 10, height: 4, cost: 15000, currency: "CR", status: "available", unlockSectorIds: ["mystic-expansion-west", "mystic-expansion-east"], fundedBy: "", fundedAt: "", completedBy: "", completedAt: "" }],
   });
 }
 
@@ -323,5 +327,6 @@ export function isMysticLandsPark(candidate: unknown) {
     || source.presetId === EIGHTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === NINTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === TENTH_MYSTIC_LANDS_PARK_PRESET_ID
+    || source.presetId === ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.name === "Mystic Lands Park";
 }

@@ -1,4 +1,5 @@
 import {
+  ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID,
   MYSTIC_LANDS_PARK_PRESET_ID,
   createMysticLandsParkFacility,
   ensureMysticLandsAdditions,
@@ -112,6 +113,31 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
     })!;
   }
 
+  if (existing.presetId === ELEVENTH_MYSTIC_LANDS_PARK_PRESET_ID && existingMap) {
+    const width = presetMap.grid.width;
+    const translateRect = <T extends { x: number; width: number }>(rect: T): T => {
+      const x = Math.max(0, Math.min(width - 1, rect.x - 3));
+      return { ...rect, x, width: Math.max(1, Math.min(rect.width, width - x)) };
+    };
+    const translatedMap = normalizeOfficeBusinessMap({
+      ...existingMap,
+      grid: { ...existingMap.grid, width },
+      shapes: existingMap.shapes.map((shape) => ({
+        ...shape,
+        points: shape.points.map((point) => ({ ...point, x: Math.max(0, Math.min(width, point.x - 3)) })),
+      })),
+      sectors: existingMap.sectors.map(translateRect),
+      expansions: existingMap.expansions.map(translateRect),
+    });
+    return normalizeFacilityRecord({
+      ...preset,
+      ...existing,
+      presetId: MYSTIC_LANDS_PARK_PRESET_ID,
+      baseStats: existing.baseStats || preset.baseStats,
+      businessMap: translatedMap,
+    })!;
+  }
+
   const mergeById = <T extends { id: string }>(defaults: T[], current: T[]) => {
     const currentById = new Map(current.map((entry) => [entry.id, entry]));
     const defaultIds = new Set(defaults.map((entry) => entry.id));
@@ -192,7 +218,7 @@ function mergeMysticPark(existing: FacilityRecord | undefined): FacilityRecord {
     description: existingMap.description || presetMap.description,
     grid: {
       ...existingMap.grid,
-      width: Math.max(existingMap.grid.width, presetMap.grid.width),
+      width: presetMap.grid.width,
       height: Math.max(existingMap.grid.height, presetMap.grid.height),
     },
     layers: mergeById(presetMap.layers, existingMap.layers),
