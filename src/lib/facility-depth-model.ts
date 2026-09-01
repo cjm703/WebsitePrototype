@@ -62,13 +62,14 @@ export const DEFAULT_FACILITY_STATS: FacilityStats = {
   condition: 100,
 };
 
-export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v7";
+export const MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v8";
 export const LEGACY_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v1";
 export const PREVIOUS_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v2";
 export const RECENT_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v3";
 export const FOURTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v4";
 export const LAST_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v5";
 export const SIXTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v6";
+export const SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID = "mystic-lands-park-v7";
 
 const MYSTIC_BASE_STATS: FacilityStats = {
   capacity: 1200,
@@ -230,10 +231,10 @@ export function createMysticLandsParkMap(): OfficeBusinessMapState {
       fence("entrance-gate-west", [{ x: 13, y: 22.2 }, { x: 13, y: 23.8 }]),
       fence("entrance-gate-east", [{ x: 19, y: 22.2 }, { x: 19, y: 23.8 }]),
       walkway("park-ring", [{ x: 16, y: 9 }, { x: 17.75, y: 9.25 }, { x: 19.5, y: 10.5 }, { x: 20.75, y: 12.25 }, { x: 21, y: 14 }, { x: 20.75, y: 15.75 }, { x: 19.5, y: 17.5 }, { x: 17.75, y: 18.75 }, { x: 16, y: 19 }, { x: 14.25, y: 18.75 }, { x: 12.5, y: 17.5 }, { x: 11.25, y: 15.75 }, { x: 11, y: 14 }, { x: 11.25, y: 12.25 }, { x: 12.5, y: 10.5 }, { x: 14.25, y: 9.25 }, { x: 16, y: 9 }]),
-      walkway("path-northwest", [{ x: 12.5, y: 10.5 }, { x: 11, y: 9 }, { x: 11, y: 6 }, { x: 8, y: 6 }, { x: 5, y: 6 }, { x: 5, y: 6.5 }], false),
-      walkway("path-northeast", [{ x: 19.5, y: 10.5 }, { x: 21, y: 9 }, { x: 21, y: 5.5 }], false),
-      walkway("path-west", [{ x: 11.25, y: 12.25 }, { x: 11, y: 13 }, { x: 5, y: 13 }], false),
-      walkway("path-east", [{ x: 20.75, y: 12.25 }, { x: 21, y: 13 }, { x: 27, y: 13 }], false),
+      walkway("path-northwest", [{ x: 16, y: 9 }, { x: 11, y: 9 }, { x: 11, y: 6 }, { x: 5, y: 6 }, { x: 5, y: 6.5 }], false),
+      walkway("path-northeast", [{ x: 16, y: 9 }, { x: 21, y: 9 }, { x: 21, y: 5.5 }], false),
+      walkway("path-west", [{ x: 11, y: 14 }, { x: 11, y: 13 }, { x: 5, y: 13 }], false),
+      walkway("path-east", [{ x: 21, y: 14 }, { x: 21, y: 13 }, { x: 27, y: 13 }], false),
     ],
     sectors: [
       sector({ id: "mystic-entrance", name: "Moonstone Entrance", description: "The park's only public entrance, extending directly from Aetherheart Commons to the southern gate for ticketing, guest services, and security.", color: "#79B8FF", zoneType: "Entrance", visualShape: "organic", x: 13, y: 19, width: 6, height: 4, slots: [parkSlot("entrance-gates", "Enchanted Gatehouse", "Commercial", 1, 1, 5, 3, ["entrance", "guest-service"]), parkSlot("entrance-security", "Arrival Security", "Security", 7, 1, 4, 3, ["security", "entrance"]), parkSlot("entrance-information", "Guest Information", "Office", 13, 1, 4, 3, ["guest-service"])] }),
@@ -302,5 +303,6 @@ export function isMysticLandsPark(candidate: unknown) {
     || source.presetId === FOURTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === LAST_MYSTIC_LANDS_PARK_PRESET_ID
     || source.presetId === SIXTH_MYSTIC_LANDS_PARK_PRESET_ID
+    || source.presetId === SEVENTH_MYSTIC_LANDS_PARK_PRESET_ID
     || source.name === "Mystic Lands Park";
 }

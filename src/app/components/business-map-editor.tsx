@@ -170,9 +170,22 @@ function shapeDefaults(kind: BusinessMapShapeKind, points: BusinessMapPoint[], i
   };
 }
 
-function shapePath(shape: Pick<BusinessMapShape, "points" | "curved">) {
+function shapePath(shape: Pick<BusinessMapShape, "id" | "points" | "curved">) {
   const points = shape.points;
   if (points.length === 0) return "";
+  if (shape.id === "park-ring" && points.length >= 2) {
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const radiusX = (maxX - minX) / 2;
+    const radiusY = (maxY - minY) / 2;
+    return `M ${minX} ${centerY} A ${radiusX} ${radiusY} 0 1 0 ${maxX} ${centerY} A ${radiusX} ${radiusY} 0 1 0 ${minX} ${centerY} Z`;
+  }
   if (!shape.curved || points.length < 3) {
     return `M ${points.map((point) => `${point.x} ${point.y}`).join(" L ")}`;
   }
