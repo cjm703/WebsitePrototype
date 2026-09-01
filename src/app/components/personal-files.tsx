@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
-import { User, Package, CreditCard, Info, Search, Tag, X, ChevronLeft, ChevronRight, ArrowLeft, Minus, Plus, Trash2, ChevronDown, Shield, Zap, Coins, Sword, Backpack, Crown, Eye, Gem, Shirt, Hand, Footprints, CircleDot, Save, Lock, Edit, Unlock, Sparkles, GitBranch, MessageSquare, SkipForward, Play, Dices, Banknote, Star, Scale, Clock, History, Flame, RefreshCw } from "lucide-react";
+import { User, Package, CreditCard, Info, Search, Tag, X, ChevronLeft, ChevronRight, ArrowLeft, Minus, Plus, Trash2, ChevronDown, Shield, Zap, Coins, Sword, Backpack, Crown, Eye, Gem, Shirt, Hand, Footprints, CircleDot, Save, Lock, Edit, Unlock, Sparkles, GitBranch, MessageSquare, SkipForward, Play, Dices, Banknote, Star, Scale, Clock, History, Flame, RefreshCw, Hammer } from "lucide-react";
 import { RenderFormattedText } from "./render-text";
 import { RichTextEditor } from "./rich-text-editor";
 import { MascotPopup } from "./mascot-popup";
@@ -52,6 +52,9 @@ import type {
 } from "./types";
 import { STICKER_IMAGES } from "./sticker-images";
 import PersonalFilesInformationPanel from "./personal-files-information-panel";
+import { PersonalFilesWorkshop } from "./personal-files-workshop";
+import { loadWorkshopBootstrap } from "@/lib/workshop-api";
+import type { WorkshopBootstrap } from "@/lib/workshop-model";
 import {
   sanitizeInfoDocumentsForLoad,
   sanitizeInfoSubTabsForLoad,
@@ -539,7 +542,7 @@ function isPlayerHiddenCustomFieldKey(key: string): boolean {
 
 export function PersonalFiles() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<"character" | "progression" | "inventory" | "cards" | "information">("character");
+  const [activeTab, setActiveTab] = useState<"character" | "progression" | "inventory" | "cards" | "information" | "workshop">("character");
   const [inventorySubTab, setInventorySubTab] = useState<"equipment" | "consumables" | "general">("equipment");
   const [equipmentSubTab, setEquipmentSubTab] = useState<"equipped" | "effects">("equipped");
   const [progressionSubTab, setProgressionSubTab] = useState<"level" | "magic">("level");
@@ -603,6 +606,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
   const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
   const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
+  const [workshopBootstrap, setWorkshopBootstrap] = useState<WorkshopBootstrap | null>(null);
 
   const hydratePersonalFiles = useCallback(async () => {
     if (!currentUserId) {
@@ -620,6 +624,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         statusTagRows,
         infoSubTabRows,
         playerState,
+        workshopState,
       ] = await Promise.all([
         appStore.listItems<ManagedItem>(),
         appStore.listCards<ManagedCard>(),
@@ -628,6 +633,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         appStore.listTags<TagDefinition>("status"),
         appStore.listInfoSubTabs<InfoSubTab>(),
         loadPlayerState(),
+        loadWorkshopBootstrap().catch(() => null),
       ]);
 
       const normalizedInfoSubTabs = sanitizeInfoSubTabsForLoad(infoSubTabRows);
@@ -640,6 +646,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setItemTags(itemTagRows);
       setStatusTags(statusTagRows);
       setInfoSubTabs(normalizedInfoSubTabs);
+      setWorkshopBootstrap(workshopState);
 
       setQuickItems(playerState.quickItems ?? []);
       setSourceUsed(playerState.sourceUsage ?? []);
@@ -671,6 +678,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   useEffect(() => {
     if (!isHydrating) hasHydratedRef.current = true;
   }, [isHydrating]);
+
+  useEffect(() => {
+    if (activeTab === "workshop" && !workshopBootstrap?.enabled) setActiveTab("character");
+  }, [activeTab, workshopBootstrap?.enabled]);
 
   useEffect(() => {
     if (!hasHydratedRef.current || !currentUserId) return;
@@ -1868,6 +1879,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     { id: "inventory" as const, label: "Inventory", icon: Package },
     { id: "cards" as const, label: "Cards", icon: CreditCard },
     { id: "information" as const, label: "Information", icon: Info },
+    ...(workshopBootstrap?.enabled ? [{ id: "workshop" as const, label: "Workshop", icon: Hammer }] : []),
   ];
 
   const activeSectionSummary = (() => {
@@ -1951,6 +1963,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             text: "View progression trees and the cards currently granted through node unlocks.",
           };
       }
+    }
+
+    if (activeTab === "workshop") {
+      return {
+        label: "Modular Workshop",
+        accent: "#F1D47A",
+        text: "Assemble granted blueprints, manage owned components, and submit work orders for DM completion.",
+      };
     }
 
     return {
@@ -6114,6 +6134,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               theme={theme}
               playerInfos={playerInfos}
               infoSubTabs={infoSubTabs}
+            />
+          )}
+
+          {player && activeTab === "workshop" && workshopBootstrap?.enabled && (
+            <PersonalFilesWorkshop
+              initialBootstrap={workshopBootstrap}
+              playerId={player.id}
+              items={allItems}
+              theme={theme}
+              onChanged={hydratePersonalFiles}
             />
           )}
 

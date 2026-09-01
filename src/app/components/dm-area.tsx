@@ -7,7 +7,7 @@ import {
   ShieldAlert, Package, CreditCard, FileText, Users,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, ArrowLeft, ArrowRight,
   Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
-  Newspaper, Copy, Zap, ChevronUp, Images, BookOpen, Server,
+  Newspaper, Copy, Zap, ChevronUp, Images, BookOpen, Server, Hammer,
 } from "lucide-react";
 import type { NodeTree } from "./node-trees";
 import {
@@ -81,6 +81,9 @@ const DMImageStorageSection = lazy(() =>
 );
 const DMSystemStatus = lazy(() =>
   import("./dm-system-status").then((module) => ({ default: module.DMSystemStatus })),
+);
+const DMWorkshopManager = lazy(() =>
+  import("./dm-workshop-manager").then((module) => ({ default: module.DMWorkshopManager })),
 );
 const DMNotificationsManager = lazy(() =>
   import("./dm-notifications-manager").then((module) => ({ default: module.DMNotificationsManager })),
@@ -504,6 +507,7 @@ function DMReactionManager({
 type SectionId =
   | "players"
   | "system"
+  | "workshop"
   | "items"
   | "cards"
   | "images"
@@ -524,6 +528,7 @@ const DM_INPUT_STYLE = S_TEXT;
 const DM_SECTIONS = [
   { id: "players" as const, label: "Players", icon: Users },
   { id: "system" as const, label: "System Status", icon: Server },
+  { id: "workshop" as const, label: "Workshop", icon: Hammer },
   { id: "items" as const, label: "Manage Items", icon: Package },
   { id: "cards" as const, label: "Manage Cards", icon: CreditCard },
   { id: "images" as const, label: "Image Storage", icon: Images },
@@ -1541,6 +1546,12 @@ const handleSaveItem = async () => {
                 />
               )}
             />
+          )}
+
+          {activeSection === "workshop" && (
+            <Suspense fallback={<DMSectionFallback />}>
+              <DMWorkshopManager />
+            </Suspense>
           )}
 
           {/* ======================================================= */}

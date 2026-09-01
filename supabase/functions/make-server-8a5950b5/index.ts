@@ -3,6 +3,22 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.ts";
+import {
+  normalizeWorkshopAccess,
+  normalizeWorkshopBlueprint,
+  normalizeWorkshopBuild,
+  normalizeWorkshopComponent,
+  normalizeWorkshopRecipe,
+  normalizeWorkshopStorage,
+  workshopComponentCounts,
+  workshopGeneratedItem,
+  workshopId,
+  workshopQuote,
+  WORKSHOP_SAINT_GREGORY,
+  WORKSHOP_STARTER_BLUEPRINTS,
+  WORKSHOP_STARTER_COMPONENTS,
+  type WorkshopRecord,
+} from "./workshop.ts";
 
 const app = new Hono();
 
@@ -1067,9 +1083,485 @@ function preserveFacilityMonthlyLedgers(candidate: JsonRecord, current: JsonReco
   return candidate;
 }
 
+async function ensureWorkshopStarterCatalog() {
+  const supabase = admin();
+  const [{ data: blueprintRows, error: blueprintReadError }, { data: componentRows, error: componentReadError }] = await Promise.all([
+    supabase.from("app_workshop_blueprints").select("id"),
+    supabase.from("app_workshop_components").select("id"),
+  ]);
+  if (blueprintReadError) throw new Error(blueprintReadError.message);
+  if (componentReadError) throw new Error(componentReadError.message);
+  const blueprintIds = new Set((blueprintRows || []).map((row: any) => row.id));
+  const componentIds = new Set((componentRows || []).map((row: any) => row.id));
+  const now = new Date().toISOString();
+  const missingBlueprints = WORKSHOP_STARTER_BLUEPRINTS.filter((entry) => !blueprintIds.has(entry.id));
+  const missingComponents = WORKSHOP_STARTER_COMPONENTS.filter((entry) => !componentIds.has(entry.id));
+  if (missingBlueprints.length > 0) {
+    const { error } = await supabase.from("app_workshop_blueprints").upsert(missingBlueprints.map((data) => ({ id: data.id, data, updated_at: now })), { onConflict: "id", ignoreDuplicates: true });
+    if (error) throw new Error(error.message);
+  }
+  if (missingComponents.length > 0) {
+    const { error } = await supabase.from("app_workshop_components").upsert(missingComponents.map((data) => ({ id: data.id, data, updated_at: now })), { onConflict: "id", ignoreDuplicates: true });
+    if (error) throw new Error(error.message);
+  }
+}
+
+async function workshopDataRows(table: string) {
+  const { data, error } = await admin().from(table).select("id, data, updated_at").order("updated_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data || []).map((row: any) => ({ ...(row.data || {}), id: row.id }));
+}
+
+async function workshopBuildRows(playerId?: string) {
+  let query = admin().from("app_workshop_builds").select("id, player_id, status, revision, data, updated_at").order("updated_at", { ascending: false });
+  if (playerId) query = query.eq("player_id", playerId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data || []).map((row: any, index: number) => normalizeWorkshopBuild({ ...(row.data || {}), id: row.id, playerId: row.player_id, status: row.status, revision: row.revision }, index));
+}
+
+async function workshopAccessFor(playerId: string) {
+  const { data, error } = await admin().from("player_workshop_access").select("data").eq("player_id", playerId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return normalizeWorkshopAccess(data?.data, playerId);
+}
+
+async function workshopStorageFor(playerId: string) {
+  const { data, error } = await admin().from("player_workshop_storage").select("data").eq("player_id", playerId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return normalizeWorkshopStorage(data?.data, playerId);
+}
+
+async function workshopPersonalFundsFor(playerId: string) {
+  const office = await loadOfficeStateRecord();
+  const fund = Array.isArray(office?.personalFunds) ? office.personalFunds.find((entry: any) => String(entry?.playerId || "") === playerId) : null;
+  return Math.max(0, Math.round(Number(fund?.balance) || 0));
+}
+
+function workshopReservations(builds: WorkshopRecord[], excludedBuildId: string) {
+  const reserved: WorkshopRecord = {};
+  builds.forEach((build) => {
+    if (build.id === excludedBuildId || build.status !== "building") return;
+    Object.entries(build.storageReservation || {}).forEach(([componentId, quantity]) => {
+      reserved[componentId] = (reserved[componentId] || 0) + Math.max(0, Number(quantity) || 0);
+    });
+  });
+  return reserved;
+}
+
+async function workshopQuoteContext(build: WorkshopRecord, requireAccess = true) {
+  const [blueprints, components, storage, builds, access] = await Promise.all([
+    workshopDataRows("app_workshop_blueprints").then((rows) => rows.map(normalizeWorkshopBlueprint)),
+    workshopDataRows("app_workshop_components").then((rows) => rows.map(normalizeWorkshopComponent)),
+    workshopStorageFor(build.playerId),
+    workshopBuildRows(build.playerId),
+    workshopAccessFor(build.playerId),
+  ]);
+  const blueprint = blueprints.find((entry) => entry.id === build.blueprintId);
+  if (!blueprint || !blueprint.active) throw new Error("That Workshop blueprint is not available");
+  if (requireAccess && (!access.enabled || !access.blueprintIds.includes(blueprint.id))) throw new Error("This player has not been granted that Workshop blueprint");
+  const quote = workshopQuote(build, blueprint, components, storage, workshopReservations(builds, build.id));
+  return { blueprint, components, storage, access, quote };
+}
+
+async function workshopUpsertBuild(build: WorkshopRecord) {
+  const { error } = await admin().from("app_workshop_builds").upsert({
+    id: build.id,
+    player_id: build.playerId,
+    status: build.status,
+    revision: build.revision,
+    data: build,
+    updated_at: build.updatedAt || new Date().toISOString(),
+  }, { onConflict: "id" });
+  if (error) throw new Error(error.message);
+}
+
+async function workshopInsertBuild(build: WorkshopRecord) {
+  const { error } = await admin().from("app_workshop_builds").insert({
+    id: build.id,
+    player_id: build.playerId,
+    status: build.status,
+    revision: build.revision,
+    data: build,
+    updated_at: build.updatedAt || new Date().toISOString(),
+  });
+  if (error) throw new Error(/duplicate key/i.test(error.message) ? "That Workshop build ID is already in use" : error.message);
+}
+
+async function workshopInsertLedger(playerId: string, buildId: string | null, action: string, amount: number, detail: string, createdBy: string) {
+  const data = { id: workshopId("ledger"), playerId, buildId: buildId || "", action, amount, detail, createdAt: new Date().toISOString(), createdBy };
+  const { error } = await admin().from("app_workshop_ledger").insert({ id: data.id, player_id: playerId, build_id: buildId, action, data });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+function workshopFailureStatus(message: string) {
+  if (/session/i.test(message)) return 401;
+  if (/DM access only|not been granted|not assigned to this player/i.test(message)) return 403;
+  if (/not found|not available/i.test(message)) return 404;
+  if (/changed on another client|only .* can|does not have enough|no longer available|not compatible|missing|required|must be/i.test(message)) return 409;
+  return 500;
+}
+
+function workshopBuildNeedsMessage(quote: WorkshopRecord) {
+  return [
+    quote.missing.length > 0 ? `Required slots: ${quote.missing.join(", ")}` : "",
+    quote.incompatible.length > 0 ? `Incompatible slots: ${quote.incompatible.join(", ")}` : "",
+    quote.unavailable.length > 0 ? `Unorderable components missing from storage: ${quote.unavailable.join(", ")}` : "",
+  ].filter(Boolean).join(". ");
+}
+
 function registerRoutes(prefix: string) {
   app.get(`${prefix}/health`, (c) => {
     return c.json({ status: "ok", prefix });
+  });
+
+  app.get(`${prefix}/workshop/bootstrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      await ensureWorkshopStarterCatalog();
+      const access = await workshopAccessFor(playerId);
+      const [allBlueprints, allComponents, builds, storage, personalFunds, allRecipes] = await Promise.all([
+        workshopDataRows("app_workshop_blueprints").then((rows) => rows.map(normalizeWorkshopBlueprint)),
+        workshopDataRows("app_workshop_components").then((rows) => rows.map(normalizeWorkshopComponent)),
+        workshopBuildRows(playerId),
+        workshopStorageFor(playerId),
+        workshopPersonalFundsFor(playerId),
+        workshopDataRows("app_workshop_salvage_recipes").then((rows) => rows.map(normalizeWorkshopRecipe)),
+      ]);
+      return c.json({
+        enabled: access.enabled,
+        access,
+        blueprints: access.enabled ? allBlueprints.filter((entry) => entry.active && access.blueprintIds.includes(entry.id)) : [],
+        components: access.enabled ? allComponents.filter((entry) => entry.active) : [],
+        builds: access.enabled ? builds : [],
+        storage,
+        personalFunds,
+        salvageRecipes: access.enabled ? allRecipes.filter((entry) => entry.active) : [],
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.get(`${prefix}/workshop/admin/bootstrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      await ensureWorkshopStarterCatalog();
+      const supabase = admin();
+      const [blueprints, components, builds, recipes, accessResult, storageResult, ledgerResult, playersResult] = await Promise.all([
+        workshopDataRows("app_workshop_blueprints").then((rows) => rows.map(normalizeWorkshopBlueprint)),
+        workshopDataRows("app_workshop_components").then((rows) => rows.map(normalizeWorkshopComponent)),
+        workshopBuildRows(),
+        workshopDataRows("app_workshop_salvage_recipes").then((rows) => rows.map(normalizeWorkshopRecipe)),
+        supabase.from("player_workshop_access").select("player_id, data"),
+        supabase.from("player_workshop_storage").select("player_id, data"),
+        supabase.from("app_workshop_ledger").select("id, player_id, build_id, action, data, created_at").order("created_at", { ascending: false }).limit(300),
+        supabase.from("app_players").select("id, data").order("id"),
+      ]);
+      for (const result of [accessResult, storageResult, ledgerResult, playersResult]) if (result.error) throw new Error(result.error.message);
+      const accessRows = (accessResult.data || []).map((row: any) => normalizeWorkshopAccess(row.data, row.player_id));
+      const storageRows = (storageResult.data || []).map((row: any) => normalizeWorkshopStorage(row.data, row.player_id));
+      const players = (playersResult.data || []).filter((row: any) => row.id !== "dm").map((row: any) => ({ id: row.id, name: String(row.data?.name || row.id) }));
+      return c.json({
+        enabled: true,
+        access: normalizeWorkshopAccess({}, "dm"),
+        blueprints,
+        components,
+        builds,
+        storage: normalizeWorkshopStorage({}, "dm"),
+        personalFunds: await workshopPersonalFundsFor("dm"),
+        salvageRecipes: recipes,
+        players,
+        accessRows,
+        storageRows,
+        ledger: (ledgerResult.data || []).map((row: any) => ({ ...(row.data || {}), id: row.id, playerId: row.player_id, buildId: row.build_id || "", action: row.action, createdAt: row.data?.createdAt || row.created_at })),
+        sampleBuild: WORKSHOP_SAINT_GREGORY,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/admin/blueprint/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      const body = await c.req.json();
+      const candidate = normalizeWorkshopBlueprint(body?.blueprint);
+      const { data: current, error: readError } = await admin().from("app_workshop_blueprints").select("data").eq("id", candidate.id).maybeSingle();
+      if (readError) throw new Error(readError.message);
+      candidate.version = current ? Math.max(1, Number(current.data?.version) || 1) + 1 : 1;
+      const { error } = await admin().from("app_workshop_blueprints").upsert({ id: candidate.id, data: candidate, updated_at: new Date().toISOString() }, { onConflict: "id" });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, blueprint: candidate });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/admin/component/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      const component = normalizeWorkshopComponent((await c.req.json())?.component);
+      const { error } = await admin().from("app_workshop_components").upsert({ id: component.id, data: component, updated_at: new Date().toISOString() }, { onConflict: "id" });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, component });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/admin/salvage/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      const recipe = normalizeWorkshopRecipe((await c.req.json())?.recipe);
+      const { error } = await admin().from("app_workshop_salvage_recipes").upsert({ id: recipe.id, data: recipe, updated_at: new Date().toISOString() }, { onConflict: "id" });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, recipe });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/admin/access`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await requireDMSession(c);
+      const body = await c.req.json();
+      const playerId = String(body?.playerId || "").trim();
+      if (!playerId || playerId === "dm") return c.json({ error: "A player profile is required" }, 400);
+      await ensurePlayerExists(playerId);
+      const now = new Date().toISOString();
+      const access = normalizeWorkshopAccess({ playerId, enabled: body?.enabled === true, blueprintIds: body?.blueprintIds, updatedAt: now, updatedBy: dmId }, playerId);
+      const { error } = await admin().from("player_workshop_access").upsert({ player_id: playerId, data: access, updated_at: now }, { onConflict: "player_id" });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, access });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/admin/storage`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await requireDMSession(c);
+      const body = await c.req.json();
+      const playerId = String(body?.playerId || "").trim();
+      const componentId = String(body?.componentId || "").trim();
+      const delta = Math.max(-100000, Math.min(100000, Math.round(Number(body?.delta) || 0)));
+      if (!playerId || !componentId || delta === 0) return c.json({ error: "A player, component, and non-zero adjustment are required" }, 400);
+      const { data, error } = await admin().rpc("workshop_adjust_storage", { p_player_id: playerId, p_component_id: componentId, p_delta: delta, p_actor_id: dmId, p_ledger_id: workshopId("ledger") });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, storage: data });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/build/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const supplied = normalizeWorkshopBuild(body?.build);
+      const expectedRevision = Math.max(0, Math.round(Number(body?.expectedRevision) || 0));
+      const { data: row, error: readError } = await admin().from("app_workshop_builds").select("id, player_id, status, revision, data").eq("id", supplied.id).maybeSingle();
+      if (readError) throw new Error(readError.message);
+      const current = row ? normalizeWorkshopBuild({ ...(row.data || {}), id: row.id, playerId: row.player_id, status: row.status, revision: row.revision }) : null;
+      if (current && current.playerId !== playerId) return c.json({ error: "That Workshop build belongs to another player" }, 403);
+      if (current && !["draft", "building"].includes(current.status)) return c.json({ error: "Only Draft or Building work orders can be edited" }, 409);
+      if (current && current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      const now = new Date().toISOString();
+      const next = normalizeWorkshopBuild({
+        ...supplied,
+        id: current?.id || supplied.id || workshopId("build"),
+        playerId,
+        blueprintId: current?.blueprintId || supplied.blueprintId,
+        status: current?.status || "draft",
+        isRebuild: current?.isRebuild || false,
+        outputItemId: current?.outputItemId || supplied.outputItemId || workshopId("workshop-item"),
+        manifest: current?.manifest || [],
+        rebuildManifest: current?.rebuildManifest || [],
+        revision: (current?.revision || 0) + 1,
+        createdAt: current?.createdAt || now,
+        updatedAt: now,
+        submittedAt: current?.submittedAt || "",
+      });
+      const context = await workshopQuoteContext(next);
+      next.blueprintVersion = context.blueprint.version;
+      next.quotedCost = context.quote.totalCost;
+      next.manifest = context.quote.manifest;
+      next.storageReservation = next.status === "building" ? context.quote.storageReservation : {};
+      if (current) await workshopUpsertBuild(next);
+      else await workshopInsertBuild(next);
+      return c.json({ ok: true, build: next, quote: context.quote });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/build/submit`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const expectedRevision = Math.max(0, Math.round(Number(body?.expectedRevision) || 0));
+      const builds = await workshopBuildRows(playerId);
+      const current = builds.find((entry) => entry.id === String(body?.buildId || ""));
+      if (!current) return c.json({ error: "Workshop build was not found" }, 404);
+      if (current.status !== "draft") return c.json({ error: "Only Draft work orders can begin construction" }, 409);
+      if (current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      const context = await workshopQuoteContext(current);
+      if (!context.quote.ready) return c.json({ error: workshopBuildNeedsMessage(context.quote), quote: context.quote }, 409);
+      const now = new Date().toISOString();
+      const next = normalizeWorkshopBuild({ ...current, status: "building", manifest: context.quote.manifest, storageReservation: context.quote.storageReservation, quotedCost: context.quote.totalCost, revision: current.revision + 1, submittedAt: now, updatedAt: now });
+      await workshopUpsertBuild(next);
+      await workshopInsertLedger(playerId, next.id, "submitted", 0, `${next.name} entered construction.`, playerId);
+      return c.json({ ok: true, build: next, quote: context.quote });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/admin/build/complete`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await requireDMSession(c);
+      const body = await c.req.json();
+      const buildId = String(body?.buildId || "").trim();
+      const expectedRevision = Math.max(0, Math.round(Number(body?.expectedRevision) || 0));
+      const current = (await workshopBuildRows()).find((entry) => entry.id === buildId);
+      if (!current) return c.json({ error: "Workshop build was not found" }, 404);
+      if (current.status !== "building") return c.json({ error: "Only Building work orders can be completed" }, 409);
+      if (current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      const context = await workshopQuoteContext(current, false);
+      if (!context.quote.ready) return c.json({ error: workshopBuildNeedsMessage(context.quote), quote: context.quote }, 409);
+      const now = new Date().toISOString();
+      const completed = normalizeWorkshopBuild({ ...current, status: "completed", manifest: context.quote.manifest, storageReservation: {}, quotedCost: context.quote.totalCost, revision: current.revision + 1, completedAt: now, completedBy: dmId, updatedAt: now });
+      const item = workshopGeneratedItem(completed, context.blueprint, context.components);
+      const ledgerId = workshopId("ledger");
+      const ledgerData = { id: ledgerId, playerId: current.playerId, buildId: current.id, action: "completed", amount: context.quote.totalCost, detail: `${current.name} completed and charged ${context.quote.totalCost} CR.`, createdAt: now, createdBy: dmId };
+      const { data, error } = await admin().rpc("workshop_complete_build", {
+        p_build_id: current.id, p_expected_revision: current.revision, p_dm_id: dmId, p_total_cost: context.quote.totalCost,
+        p_storage_delta: context.quote.storageDelta, p_item_id: item.id, p_item_data: item, p_build_data: completed, p_ledger_id: ledgerId, p_ledger_data: ledgerData,
+      });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, ...data });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/build/rebuild`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const expectedRevision = Math.max(0, Math.round(Number(body?.expectedRevision) || 0));
+      const current = (await workshopBuildRows(playerId)).find((entry) => entry.id === String(body?.buildId || ""));
+      if (!current) return c.json({ error: "Workshop build was not found" }, 404);
+      if (current.status !== "completed") return c.json({ error: "Only completed Workshop items can be rebuilt" }, 409);
+      if (current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      const returned = workshopComponentCounts(current.manifest);
+      const context = await workshopQuoteContext({ ...current, isRebuild: true });
+      const virtualStorage = normalizeWorkshopStorage({ ...context.storage, quantities: { ...context.storage.quantities } }, playerId);
+      Object.entries(returned).forEach(([componentId, quantity]) => { virtualStorage.quantities[componentId] = (virtualStorage.quantities[componentId] || 0) + Number(quantity); });
+      const allBuilds = await workshopBuildRows(playerId);
+      const quote = workshopQuote({ ...current, isRebuild: true }, context.blueprint, context.components, virtualStorage, workshopReservations(allBuilds, current.id));
+      const now = new Date().toISOString();
+      const next = normalizeWorkshopBuild({ ...current, status: "building", isRebuild: true, rebuildManifest: current.manifest, manifest: quote.manifest, storageReservation: quote.storageReservation, quotedCost: quote.totalCost, revision: current.revision + 1, completedAt: "", completedBy: "", updatedAt: now });
+      const ledgerId = workshopId("ledger");
+      const ledgerData = { id: ledgerId, playerId, buildId: current.id, action: "rebuild-started", amount: 0, detail: `${current.name} returned to the Workshop for rebuilding.`, createdAt: now, createdBy: playerId };
+      const { data, error } = await admin().rpc("workshop_return_components", { p_player_id: playerId, p_build_id: current.id, p_expected_revision: current.revision, p_item_id: current.outputItemId, p_component_counts: returned, p_build_data: next, p_actor_id: playerId, p_action: "rebuild-started", p_ledger_id: ledgerId, p_ledger_data: ledgerData });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, ...data, quote });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/build/scrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const expectedRevision = Math.max(0, Math.round(Number(body?.expectedRevision) || 0));
+      const current = (await workshopBuildRows(playerId)).find((entry) => entry.id === String(body?.buildId || ""));
+      if (!current) return c.json({ error: "Workshop build was not found" }, 404);
+      if (current.status !== "completed") return c.json({ error: "Only completed Workshop items can be scrapped" }, 409);
+      if (current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      const returned = workshopComponentCounts(current.manifest);
+      const now = new Date().toISOString();
+      const next = normalizeWorkshopBuild({ ...current, status: "scrapped", isRebuild: false, storageReservation: {}, revision: current.revision + 1, scrappedAt: now, updatedAt: now });
+      const ledgerId = workshopId("ledger");
+      const ledgerData = { id: ledgerId, playerId, buildId: current.id, action: "scrapped", amount: 0, detail: `${current.name} was scrapped. Components were returned with no credit refund.`, createdAt: now, createdBy: playerId };
+      const { data, error } = await admin().rpc("workshop_return_components", { p_player_id: playerId, p_build_id: current.id, p_expected_revision: current.revision, p_item_id: current.outputItemId, p_component_counts: returned, p_build_data: next, p_actor_id: playerId, p_action: "scrapped", p_ledger_id: ledgerId, p_ledger_data: ledgerData });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, ...data });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/workshop/item/scrap`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      const itemId = String((await c.req.json())?.itemId || "").trim();
+      const [{ data: itemRow, error: itemError }, recipes] = await Promise.all([
+        admin().from("app_items").select("id, data").eq("id", itemId).maybeSingle(),
+        workshopDataRows("app_workshop_salvage_recipes").then((rows) => rows.map(normalizeWorkshopRecipe)),
+      ]);
+      if (itemError) throw new Error(itemError.message);
+      if (!itemRow) return c.json({ error: "Item was not found" }, 404);
+      const item = { ...(itemRow.data || {}), id: itemRow.id };
+      const assignedToPlayer = Array.isArray(item.assignedTo) ? item.assignedTo.includes(playerId) : String(item.assignedTo || "") === playerId;
+      if (!assignedToPlayer) return c.json({ error: "That item is not assigned to this player" }, 403);
+      if (Array.isArray(item.tags) && item.tags.includes("Workshop Built")) return c.json({ error: "Use the Workshop build's Scrap action so its exact component manifest is returned" }, 409);
+      const recipe = recipes.find((entry) => entry.active && (entry.itemId === itemId || (entry.itemTag && Array.isArray(item.tags) && item.tags.includes(entry.itemTag))));
+      if (!recipe) return c.json({ error: "That item has no active DM salvage recipe" }, 409);
+      const counts: WorkshopRecord = {};
+      recipe.components.forEach((entry: WorkshopRecord) => { counts[entry.componentId] = (counts[entry.componentId] || 0) + entry.quantity; });
+      const ledgerId = workshopId("ledger");
+      const now = new Date().toISOString();
+      const ledgerData = { id: ledgerId, playerId, buildId: "", action: "scrapped", amount: 0, detail: `${item.name || "Item"} was salvaged using ${recipe.name}.`, createdAt: now, createdBy: playerId };
+      const { data, error } = await admin().rpc("workshop_scrap_existing_item", { p_player_id: playerId, p_item_id: itemId, p_component_counts: counts, p_actor_id: playerId, p_ledger_id: ledgerId, p_ledger_data: ledgerData });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, ...data });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, workshopFailureStatus(message));
+    }
   });
 
   app.post(`${prefix}/office/state/save`, async (c) => {

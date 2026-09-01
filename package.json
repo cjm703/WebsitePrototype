@@ -8,7 +8,8 @@
     "dev": "vite",
     "check:dead-jsx": "node utils/remove-dead-jsx.mjs",
     "check:deps": "node utils/check-unused-dependencies.mjs",
-    "test:repairs": "node utils/verify-source-invariants.mjs && node utils/verify-runtime.mjs",
+    "test:repairs": "node utils/verify-source-invariants.mjs && node utils/verify-runtime.mjs && node utils/verify-workshop.mjs",
+    "test:workshop": "node utils/verify-workshop.mjs",
     "check": "npm run check:dead-jsx && npm run check:deps && npm run test:repairs && npm run build",
     "supabase:db:push": "supabase db push",
     "supabase:functions:deploy": "supabase functions deploy make-server-8a5950b5"
