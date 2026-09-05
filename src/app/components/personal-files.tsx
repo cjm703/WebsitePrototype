@@ -5267,7 +5267,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         [
                           {
                             id: "money",
-                            label: "Physical Currencies & Tokens",
+                            label: "Physical Currencies & Coins",
                             icon: Banknote,
                             accent: "#D7B95B",
                             dmItems: moneyItems,

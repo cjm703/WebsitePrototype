@@ -18,6 +18,8 @@ import { creditRequestId, loadCreditAccount, purchaseCommerceCart, saveCommerceC
 import type { ManagedItem, TagDefinition } from "./types";
 import { DMItemManagerSection } from "./dm-item-manager-section";
 import { DISPLAY_CONTENTS } from "./shared-styles";
+import { RichTextEditor } from "./rich-text-editor";
+import { RenderFormattedText } from "./render-text";
 
 // ════════════════════════════════════════════
 // Types
@@ -29,6 +31,7 @@ interface ShopItem {
   id: string;
   name: string;
   description: string;
+  effect?: string;
   price: number;
   currency: string;
   quantity: number; // -1 = unlimited
@@ -135,12 +138,23 @@ function stockNumber(value: unknown) {
   return parsed < 0 ? -1 : parsed;
 }
 
+function richTextToSearchText(value: string | undefined) {
+  return (value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeCommerceShops(rows: Shop[]): Shop[] {
   return (Array.isArray(rows) ? rows : []).map((shop) => ({
     ...shop,
     revision: Math.max(0, Math.floor(Number(shop.revision) || 0)),
     items: (Array.isArray(shop.items) ? shop.items : []).map((item) => ({
       ...item,
+      description: typeof item.description === "string" ? item.description : "",
+      effect: typeof item.effect === "string" ? item.effect : "",
       price: Math.max(0, wholeNumber(item.price)),
       currency: "Credits",
       quantity: stockNumber(item.quantity),
@@ -927,6 +941,7 @@ export function CommercePage() {
       id: uid(),
       name: draftItem.name?.trim() || "New Item",
       description: draftItem.description?.trim() || "",
+      effect: draftItem.effect?.trim() || "",
       price: Math.max(0, wholeNumber(draftItem.price)),
       currency: "Credits",
       quantity: stockNumber(draftItem.quantity),
@@ -1082,7 +1097,11 @@ export function CommercePage() {
     if (activeCategory !== "All") items = items.filter(i => i.category === activeCategory);
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      items = items.filter(i => i.name.toLowerCase().includes(q) || i.description.toLowerCase().includes(q));
+      items = items.filter(i =>
+        i.name.toLowerCase().includes(q)
+        || i.description.toLowerCase().includes(q)
+        || richTextToSearchText(i.effect).toLowerCase().includes(q)
+      );
     }
     if (filterRarity !== "all") items = items.filter(i => i.rarity === filterRarity);
     const ro: Record<ItemRarity, number> = { Common: 0, Uncommon: 1, Rare: 2, "Very Rare": 3, Legendary: 4 };
@@ -1651,7 +1670,17 @@ export function CommercePage() {
                   </div>
                   <div>
                     <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Description</label>
-                    <textarea value={draftItem.description || ""} onChange={e => setDraftItem(p => ({ ...p, description: e.target.value }))} className="w-full text-[12px] outline-none px-2 py-1 resize-y min-h-[40px]" style={inputStyle} />
+                    <textarea value={draftItem.description || ""} onChange={e => setDraftItem(p => ({ ...p, description: e.target.value }))} placeholder="What the item is and what it looks like" className="w-full text-[12px] outline-none px-2 py-1 resize-y min-h-[56px]" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Effect</label>
+                    <RichTextEditor
+                      value={draftItem.effect || ""}
+                      onChange={effect => setDraftItem(p => ({ ...p, effect }))}
+                      placeholder="Add the item's effects"
+                      minHeight={88}
+                      floatingToolbar
+                    />
                   </div>
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_120px]">
                     <div><label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Product Tags</label><input value={(draftItem.tags || []).join(", ")} onChange={e => setDraftItem(p => ({ ...p, tags: e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) }))} placeholder="firearm, limited, utility" className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} /></div>
@@ -1733,7 +1762,20 @@ export function CommercePage() {
                                 <option value="Misc">Misc</option>
                               </select>
                             </div>
-                            <textarea value={item.description} onChange={e => updateItem(shop.id, item.id, { description: e.target.value })} className="w-full text-[11px] outline-none px-1.5 py-1 resize-y min-h-[35px]" style={inputStyle} />
+                            <div>
+                              <label className="text-[8px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Description</label>
+                              <textarea value={item.description} onChange={e => updateItem(shop.id, item.id, { description: e.target.value })} className="w-full text-[11px] outline-none px-1.5 py-1 resize-y min-h-[48px]" style={inputStyle} />
+                            </div>
+                            <div>
+                              <label className="text-[8px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Effect</label>
+                              <RichTextEditor
+                                value={item.effect || ""}
+                                onChange={effect => updateItem(shop.id, item.id, { effect })}
+                                placeholder="Add the item's effects"
+                                minHeight={76}
+                                floatingToolbar
+                              />
+                            </div>
                             <div className="grid grid-cols-[1fr_95px] gap-1"><input value={(item.tags || []).join(", ")} onChange={e => updateItem(shop.id, item.id, { tags: e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} placeholder="Product tags" className="w-full text-[10px] outline-none px-1.5 py-0.5" style={inputStyle} /><input type="number" min="0" step={1} value={item.purchaseLimit || 0} onChange={e => updateItem(shop.id, item.id, { purchaseLimit: Math.max(0, wholeNumber(e.target.value)) })} title="Purchase limit per player; zero is unlimited" className="w-full text-[10px] outline-none px-1.5 py-0.5" style={inputStyle} /></div>
                             <input value={item.deliveryNote || ""} onChange={e => updateItem(shop.id, item.id, { deliveryNote: e.target.value })} placeholder="Delivery note" className="w-full text-[10px] outline-none px-1.5 py-0.5" style={inputStyle} />
                             <input value={item.notes} onChange={e => updateItem(shop.id, item.id, { notes: e.target.value })} placeholder="DM notes..." className="w-full text-[10px] outline-none px-1.5 py-0.5" style={{ ...inputStyle, borderColor: "#2A1515" }} />
@@ -1790,7 +1832,16 @@ export function CommercePage() {
 
                             {/* Description */}
                             {item.description && (
-                              <p className="text-[11px] leading-relaxed mb-2" style={{ color: shopTextMuted }}>{item.description}</p>
+                              <div className="mb-2">
+                                <span className="mb-0.5 block text-[8px] font-semibold uppercase tracking-wider" style={{ color: shopTextMuted }}>Description</span>
+                                <p className="text-[11px] leading-relaxed" style={{ color: shopTextMuted }}>{item.description}</p>
+                              </div>
+                            )}
+                            {richTextToSearchText(item.effect) && (
+                              <div className="mb-2 border-l-2 pl-2" style={{ borderColor: `${sc}60` }}>
+                                <span className="mb-0.5 block text-[8px] font-semibold uppercase tracking-wider" style={{ color: sc }}>Effect</span>
+                                <RenderFormattedText text={item.effect || ""} color={shopTextMuted} baseSize={11} />
+                              </div>
                             )}
                             {(item.tags || []).length > 0 && <div className="mb-2 flex flex-wrap gap-1">{(item.tags || []).slice(0, 5).map((tag) => <span key={tag} className="border px-1.5 py-0.5 text-[8px]" style={{ borderColor: `${sc}35`, color: shopTextMuted }}>{tag}</span>)}</div>}
                             {item.deliveryNote && <div className="mb-2 flex items-start gap-1.5 border border-[#275344] bg-[#07130F] px-2 py-1.5 text-[9px] text-[#72CF9F]"><Package size={10} className="mt-0.5 shrink-0" />{item.deliveryNote}</div>}
