@@ -1197,6 +1197,7 @@ async function creditAccountBalance(playerId: string) {
 }
 
 const LOAN_AGENCY_TYPES = ["Corporation", "Government", "Syndicate", "Person"] as const;
+const CREDIT_LOAN_OFFER_REFRESH_MS = 24 * 60 * 60 * 1_000;
 
 function normalizeLoanOffer(raw: any) {
   const principal = Math.max(1_000, Math.min(25_000, Math.round(Number(raw?.principal) || 0)));
@@ -1222,6 +1223,7 @@ function normalizeCreditLoanState(raw: any) {
       status: entry?.status === "paid" ? "paid" : "active",
       transactionId: String(entry?.transactionId || "").slice(0, 160),
     })).slice(-100),
+    offersRefreshedAt: String(raw?.offersRefreshedAt || ""),
     updatedAt: String(raw?.updatedAt || ""),
   };
 }
@@ -1386,8 +1388,15 @@ function registerRoutes(prefix: string) {
       if (playerId === "dm") throw new Error("The DM profile cannot open a personal loan account");
       const { account, player } = await ensureCreditAccountRow(playerId);
       let state = await loadCreditLoanState(playerId);
-      if (state.offers.length === 0) {
-        state = await saveCreditLoanState(playerId, { ...state, offers: generateCreditLoanOffers() });
+      const offersRefreshedAt = Date.parse(state.offersRefreshedAt);
+      const offersNeedRefresh = !Number.isFinite(offersRefreshedAt)
+        || Date.now() - offersRefreshedAt >= CREDIT_LOAN_OFFER_REFRESH_MS;
+      if (offersNeedRefresh) {
+        state = await saveCreditLoanState(playerId, {
+          ...state,
+          offers: generateCreditLoanOffers(),
+          offersRefreshedAt: new Date().toISOString(),
+        });
       }
       return c.json({ ...state, account: creditAccountResponse(account, player) });
     } catch (err) {

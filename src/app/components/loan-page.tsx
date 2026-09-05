@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import {
   ArrowLeft,
@@ -9,7 +9,6 @@ import {
   Coins,
   Landmark,
   LoaderCircle,
-  RefreshCw,
 } from "lucide-react";
 import {
   acceptCreditLoan,
@@ -51,23 +50,27 @@ export function LoanPage() {
   const [message, setMessage] = useState("");
   const [acceptedAmount, setAcceptedAmount] = useState(0);
 
-  const refresh = useCallback(async () => {
+  useEffect(() => {
     if (isDM) {
       setLoading(false);
       return;
     }
-    setLoading(true);
-    setError("");
-    try {
-      setState(await loadCreditLoans());
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Loan offers could not be loaded.");
-    } finally {
-      setLoading(false);
-    }
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const nextState = await loadCreditLoans();
+        if (!cancelled) setState(nextState);
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Loan offers could not be loaded.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
   }, [isDM]);
-
-  useEffect(() => { void refresh(); }, [refresh]);
 
   const accept = async (offerId: string) => {
     const offer = state?.offers.find((entry) => entry.id === offerId);
@@ -105,16 +108,24 @@ export function LoanPage() {
         100% { opacity: 0; transform: translate(-50%, -30px) scale(0.96); }
       }
       @keyframes loan-sign-flicker {
-        0%, 17%, 20%, 63%, 67%, 100% { opacity: 1; filter: drop-shadow(0 0 5px #8D232F); }
-        18%, 65% { opacity: 0.42; filter: none; }
+        0%, 8%, 11%, 14%, 17%, 63%, 68%, 100% { opacity: 1; filter: drop-shadow(0 0 6px #A02736); }
+        9%, 15%, 65% { opacity: 0.3; filter: none; }
+      }
+      @keyframes loan-red-drift {
+        0% { background-position: 0% 50%, 0 0, 0 0; }
+        50% { background-position: 100% 50%, 0 0, 0 0; }
+        100% { background-position: 0% 50%, 0 0, 0 0; }
       }
       .loan-den {
         position: relative;
         font-family: "Courier New", monospace;
         background-color: #050405;
         background-image:
+          linear-gradient(115deg, rgba(22, 3, 7, 0.96), rgba(83, 10, 20, 0.34), rgba(8, 3, 5, 0.98), rgba(97, 15, 25, 0.25), rgba(17, 3, 6, 0.96)),
           linear-gradient(92deg, transparent 0 48%, rgba(112, 55, 47, 0.055) 49%, transparent 50%),
           repeating-linear-gradient(176deg, transparent 0 27px, rgba(213, 184, 94, 0.025) 28px, transparent 29px 47px);
+        background-size: 260% 100%, auto, auto;
+        animation: loan-red-drift 18s ease-in-out infinite;
       }
       .loan-den::before {
         content: "";
@@ -143,18 +154,6 @@ export function LoanPage() {
         background: #0D090A;
         box-shadow: 7px 8px 0 #020202, inset 0 0 30px rgba(0, 0, 0, 0.82);
         transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
-      }
-      .loan-offer-card::before {
-        content: "";
-        position: absolute;
-        left: 14%;
-        top: -3px;
-        width: 42%;
-        height: 5px;
-        z-index: -1;
-        background: #6E5A38;
-        opacity: 0.62;
-        transform: rotate(-1.5deg);
       }
       .loan-offer-card::after {
         content: "";
@@ -191,6 +190,7 @@ export function LoanPage() {
       @media (prefers-reduced-motion: reduce) {
         .loan-credit-arrival { animation-duration: 1ms; }
         .loan-sigil { animation: none; }
+        .loan-den { animation: none; }
         .loan-offer-card, .loan-accept { transition: none; transform: none; }
       }
     `}</style>
@@ -212,13 +212,13 @@ export function LoanPage() {
     <div className="mx-auto max-w-[1280px] px-4 py-5 lg:px-6">
       {(routeState.message || routeState.requiredAmount) && <section className="mb-5 flex items-start gap-3 border border-[#633640] bg-[#17090D] p-4"><CircleAlert size={17} className="mt-0.5 shrink-0 text-[#F195A2]" /><div><div className="text-[11px] font-semibold text-[#F4B0BA]">Payment Required, funds insufficient</div><div className="mt-1 text-[9px] leading-5" style={MUTED}>{routeState.message || `${money(routeState.requiredAmount || 0)} in additional Credits is needed.`}</div></div></section>}
 
-      <div className="mb-5 flex items-center justify-between gap-3 border-b border-dashed border-[#4D3334] pb-3"><div><h2 className="loan-paper-title text-[13px] font-semibold text-[#D4BEA5]">Available Offers</h2><div className="mt-1 text-[8px]" style={MUTED}>Larger principals carry consistently higher interest rates.</div></div><button type="button" onClick={() => void refresh()} disabled={loading} className="flex h-8 w-8 items-center justify-center border border-[#56353A] bg-[#0B0708] text-[#B59E90] shadow-[3px_3px_0_#020202] disabled:opacity-40" title="Refresh loan account"><RefreshCw size={12} className={loading ? "animate-spin" : ""} /></button></div>
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {(state?.offers || []).map((offer, index) => <article key={offer.id} className="loan-offer-card p-4" style={{ "--loan-tilt": OFFER_TILTS[index % OFFER_TILTS.length] } as React.CSSProperties}>
-          <div className="flex items-start justify-between gap-3"><div><div className="loan-redacted text-[14px] font-semibold">(Redacted)</div><div className="mt-1 flex items-center gap-1.5 text-[8px] uppercase" style={MUTED}><Building2 size={9} />{offer.agencyType}</div></div><BadgeDollarSign size={18} className="text-[#A98C4D]" /></div>
-          <div className="mt-5 text-[8px] uppercase" style={MUTED}>Principal</div><div className="mt-1 text-[22px] font-mono font-semibold text-[#CFB15F]">{money(offer.principal)}</div>
-          <div className="loan-contract-grid mt-4 grid grid-cols-2 border"><div className="p-3"><div className="text-[7px] uppercase" style={MUTED}>Interest</div><div className="mt-1 text-[12px] font-mono text-[#C6656E]">{offer.interestRate.toFixed(1)}%</div></div><div className="border-l border-[#3F302D] p-3"><div className="text-[7px] uppercase" style={MUTED}>Total Owed</div><div className="mt-1 text-[12px] font-mono text-[#CFC3B2]">{money(offer.repaymentTotal)}</div></div></div>
-          <button type="button" onClick={() => void accept(offer.id)} disabled={Boolean(busyId)} className="loan-accept mt-4 flex w-full items-center justify-center gap-2 border px-3 py-2.5 text-[10px] font-semibold disabled:opacity-40">{busyId === offer.id ? <LoaderCircle size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}{busyId === offer.id ? "Processing" : "Accept Loan"}</button>
+      <div className="mb-6 border-b border-dashed border-[#4D3334] pb-4"><h2 className="loan-paper-title text-[20px] font-semibold text-[#D4BEA5]">Available Offers</h2><div className="mt-1.5 text-[12px] leading-5" style={MUTED}>Larger principals carry consistently higher interest rates.</div></div>
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {(state?.offers || []).map((offer, index) => <article key={offer.id} className="loan-offer-card p-5" style={{ "--loan-tilt": OFFER_TILTS[index % OFFER_TILTS.length] } as React.CSSProperties}>
+          <div className="flex items-start justify-between gap-3"><div><div className="loan-redacted text-[17px] font-semibold">(Redacted)</div><div className="mt-1.5 flex items-center gap-2 text-[10px] uppercase" style={MUTED}><Building2 size={11} />{offer.agencyType}</div></div><BadgeDollarSign size={22} className="text-[#A98C4D]" /></div>
+          <div className="mt-6 text-[10px] uppercase" style={MUTED}>Principal</div><div className="mt-1 text-[27px] font-mono font-semibold text-[#CFB15F]">{money(offer.principal)}</div>
+          <div className="loan-contract-grid mt-5 grid grid-cols-2 border"><div className="p-4"><div className="text-[9px] uppercase" style={MUTED}>Interest</div><div className="mt-1.5 text-[15px] font-mono text-[#C6656E]">{offer.interestRate.toFixed(1)}%</div></div><div className="border-l border-[#3F302D] p-4"><div className="text-[9px] uppercase" style={MUTED}>Total Owed</div><div className="mt-1.5 text-[15px] font-mono text-[#CFC3B2]">{money(offer.repaymentTotal)}</div></div></div>
+          <button type="button" onClick={() => void accept(offer.id)} disabled={Boolean(busyId)} className="loan-accept mt-5 flex w-full items-center justify-center gap-2 border px-3 py-3 text-[12px] font-semibold disabled:opacity-40">{busyId === offer.id ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}{busyId === offer.id ? "Processing" : "Accept Loan"}</button>
         </article>)}
         {!error && (state?.offers.length || 0) === 0 && <div className="border border-[#293149] bg-[#080B14] p-8 text-center text-[9px]" style={MUTED}>No additional offers are available.</div>}
       </section>

@@ -91,6 +91,7 @@ export interface CreditLoanState {
   offers: CreditLoanOffer[];
   loans: CreditLoanAgreement[];
   account: CreditAccount;
+  offersRefreshedAt?: string;
 }
 
 export function creditRequestId(prefix: string) {
