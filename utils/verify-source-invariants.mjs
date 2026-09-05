@@ -51,6 +51,8 @@ const facilityMapPage = read("src/app/components/facility-map-page.tsx");
 const facilityFinancePage = read("src/app/components/facility-finance-page.tsx");
 const businessMapMigration = read("supabase/migrations/20260830020000_business_map_assets.sql");
 const intelliInterface = read("src/app/components/intelli-interface.tsx");
+const loanPage = read("src/app/components/loan-page.tsx");
+const creditLoansMigration = read("supabase/migrations/20260905000000_credit_loans.sql");
 parse(edge, { sourceType: "module", plugins: ["typescript"] });
 parse(storageStatusEdge, { sourceType: "module", plugins: ["typescript"] });
 parse(officeBusinessMap, { sourceType: "module", plugins: ["typescript", "jsx"] });
@@ -66,6 +68,7 @@ parse(facilityFinancePage, { sourceType: "module", plugins: ["typescript", "jsx"
 parse(dmItemManager, { sourceType: "module", plugins: ["typescript", "jsx"] });
 parse(personalFiles, { sourceType: "module", plugins: ["typescript", "jsx"] });
 parse(itemCombatRules, { sourceType: "module", plugins: ["typescript"] });
+parse(loanPage, { sourceType: "module", plugins: ["typescript", "jsx"] });
 
 function routeBody(routeMarker, nextMarker) {
   const start = edge.indexOf(routeMarker);
@@ -138,6 +141,17 @@ assert.match(personalFiles, /resolveWeaponDamageAttribute\(item, effectiveStats\
 assert.match(personalFiles, /renderWeaponDamageRoll\(item\)/);
 assert.match(personalFiles, /assignToSlot\(assigningSlot, item\.id, isWeaponSlot && is2H \? true : undefined\)/);
 assert.match(personalFiles, /renderWeaponDamageRoll\(item, true\)/);
+assert.doesNotMatch(personalFiles, /Core stats, current resources|Browse every carried item with the normal search/);
+assert.match(itemCombatRules, /"STR" \| "AGI" \| "CON" \| "KNOW" \| "WIS" \| "WILL"/);
+assert.match(itemCombatRules, /Boolean\(getWeaponDamageInfoFieldId\(item\)\)/);
+assert.match(dmItemManager, /Open full item page/);
+assert.match(routes, /path: "loan"/);
+assert.match(loanPage, /Available Offers/);
+assert.match(loanPage, /Larger principals carry consistently higher interest rates/);
+assert.match(creditLoansMigration, /create table if not exists public\.player_credit_loans/);
+assert.match(edge, /credits\/loans\/accept/);
+assert.match(commerce, /PurchaseCelebration/);
+assert.match(commerce, /Open Loan Options/);
 assert.doesNotMatch(initialData, /testItemDefaults|testCardDefaults|Insert funny joke/);
 assert.doesNotMatch(initialData, /missing = defaults\.filter/);
 

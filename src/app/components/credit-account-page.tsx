@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   ArrowUpRight,
   Coins,
+  CircleAlert,
+  Landmark,
   LoaderCircle,
   RotateCcw,
   Search,
@@ -18,6 +20,8 @@ import {
   type CreditAccountDetail,
   type CreditTransaction,
 } from "@/lib/credits-api";
+import { appStore } from "@/lib/app-store";
+import { buildFacilityOfficeStateFallback, type FacilityOfficeState } from "@/lib/facility-office-state";
 
 const PANEL = { background: "#080B14", border: "1px solid #242C42" } as const;
 const FIELD = { background: "#050812", border: "1px solid #303A53", color: "#D7DEF0" } as const;
@@ -57,6 +61,7 @@ export function CreditAccountPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [balanceAnimation, setBalanceAnimation] = useState<{ id: number; amount: number } | null>(null);
+  const [monthlyPaymentDue, setMonthlyPaymentDue] = useState(0);
 
   const refresh = useCallback(async () => {
     if (!targetPlayerId || targetPlayerId === "dm") {
@@ -67,7 +72,16 @@ export function CreditAccountPage() {
     setLoading(true);
     setError("");
     try {
-      setDetail(await loadCreditAccount(targetPlayerId));
+      const [nextDetail, office] = await Promise.all([
+        loadCreditAccount(targetPlayerId),
+        appStore.loadNexusNomadState<FacilityOfficeState>("default", buildFacilityOfficeStateFallback()).catch(() => null),
+      ]);
+      setDetail(nextDetail);
+      const unpaidCosts = (office?.facilities || [])
+        .filter((facility) => facility.ownerPlayerId === targetPlayerId)
+        .flatMap((facility) => facility.monthlyReports || [])
+        .reduce((total, report) => total + Math.max(0, Number(report.unpaidCosts) || 0), 0);
+      setMonthlyPaymentDue(Math.max(0, unpaidCosts - nextDetail.account.balance));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "The Credits account could not be loaded.");
     } finally {
@@ -204,6 +218,7 @@ export function CreditAccountPage() {
     {(error || message) && <div className={`border-b px-5 py-2 text-center text-[9px] ${error ? "border-[#5B303A] bg-[#17090D] text-[#F29AA3]" : "border-[#285A47] bg-[#07140E] text-[#73D5A8]"}`}>{error || message}</div>}
 
     <div className="mx-auto max-w-[1320px] px-4 py-5 lg:px-6">
+      {monthlyPaymentDue > 0 && <section className="mb-5 flex flex-wrap items-center gap-3 border border-[#633640] bg-[#17090D] p-4"><CircleAlert size={18} className="shrink-0 text-[#F195A2]" /><div className="min-w-0 flex-1"><div className="text-[11px] font-semibold text-[#F4B0BA]">Payment Required, funds insufficient</div><div className="mt-1 text-[8px]" style={MUTED}>{money(monthlyPaymentDue)} is still needed to cover recorded monthly facility costs.</div></div>{!isDM && <button type="button" onClick={() => navigate("/interface/loan", { state: { reason: "monthly", requiredAmount: monthlyPaymentDue, message: `${money(monthlyPaymentDue)} is needed to cover recorded monthly facility costs.` } })} className="flex items-center gap-2 border border-[#70404A] bg-[#240D13] px-3 py-2 text-[9px] font-semibold text-[#F4B0BA]"><Landmark size={12} />Open Loan Page</button>}</section>}
       <section className="grid border border-[#283149] bg-[#080B14] sm:grid-cols-3">
         <div className="p-4 sm:border-r sm:border-[#283149]">
           <div className="text-[8px] uppercase" style={MUTED}>Available Credits</div>

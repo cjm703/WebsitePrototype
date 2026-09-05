@@ -11,7 +11,16 @@ const ITEM_INFO_CONTENT_KEY = "Content";
 const ITEM_INFO_ROLL_LABEL_KEY = "Roll Label";
 const ITEM_INFO_ROLL_EXPRESSION_KEY = "Roll Expression";
 
-export type WeaponDamageAttribute = "STR" | "AGI";
+export type WeaponDamageAttribute = "STR" | "AGI" | "CON" | "KNOW" | "WIS" | "WILL";
+
+const WEAPON_DAMAGE_ATTRIBUTES = new Set<WeaponDamageAttribute>([
+  "STR",
+  "AGI",
+  "CON",
+  "KNOW",
+  "WIS",
+  "WILL",
+]);
 
 interface CombatItemLike {
   name?: string;
@@ -42,6 +51,10 @@ function getWeaponDamageInfoValue(item: CombatItemLike | null | undefined, key: 
   return fieldId ? item?.customFields?.[`${ITEM_INFO_PREFIX}${fieldId}::${key}`]?.trim() || "" : "";
 }
 
+function firstDiceExpression(value: string) {
+  return value.match(/\b\d*d\d+(?:\s*[+-]\s*\d+)?\b/i)?.[0]?.replace(/\s+/g, "") || "";
+}
+
 export function isWeaponItem(item: CombatItemLike | null | undefined) {
   if (!item) return false;
   const fields = item.customFields || {};
@@ -51,7 +64,8 @@ export function isWeaponItem(item: CombatItemLike | null | undefined) {
   return String(item.type || "").toLowerCase().includes("weapon")
     || normalizedTags(item).includes("weapon")
     || allowedSlots.some((slot) => slot === "weapon_l" || slot === "weapon_r")
-    || Boolean((fields[ITEM_WEAPON_DAMAGE_KEY] || "").trim());
+    || Boolean((fields[ITEM_WEAPON_DAMAGE_KEY] || "").trim())
+    || Boolean(getWeaponDamageInfoFieldId(item));
 }
 
 export function isTwoHandedItem(item: CombatItemLike | null | undefined) {
@@ -73,6 +87,7 @@ export function isVersatileItem(item: CombatItemLike | null | undefined) {
 
 export function getWeaponDamageExpression(item: CombatItemLike | null | undefined) {
   return getWeaponDamageInfoValue(item, ITEM_INFO_ROLL_EXPRESSION_KEY)
+    || firstDiceExpression(getWeaponDamageInfoValue(item, ITEM_INFO_CONTENT_KEY))
     || item?.customFields?.[ITEM_WEAPON_DAMAGE_KEY]?.trim()
     || "";
 }
@@ -88,9 +103,11 @@ export function getWeaponDamageRollLabel(item: CombatItemLike | null | undefined
 }
 
 export function getWeaponDamageAttribute(item: CombatItemLike | null | undefined): WeaponDamageAttribute {
-  return getWeaponDamageInfoValue(item, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY) === "AGI"
-    || item?.customFields?.[ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY] === "AGI"
-    ? "AGI"
+  const stored = getWeaponDamageInfoValue(item, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)
+    || item?.customFields?.[ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY]?.trim()
+    || "";
+  return WEAPON_DAMAGE_ATTRIBUTES.has(stored as WeaponDamageAttribute)
+    ? stored as WeaponDamageAttribute
     : "STR";
 }
 

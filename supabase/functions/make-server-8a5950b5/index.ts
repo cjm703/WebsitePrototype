@@ -797,6 +797,7 @@ async function movePlayerToDeleted(playerId: string) {
     "player_activity_log",
     "player_arcade_profiles",
     "player_commerce_cart",
+    "player_credit_loans",
     "player_community_profile",
     "player_customization",
     "player_equipment_slots",
@@ -1195,6 +1196,73 @@ async function creditAccountBalance(playerId: string) {
   return Math.max(0, Math.round(Number(account.balance) || 0));
 }
 
+const LOAN_AGENCY_TYPES = ["Corporation", "Government", "Syndicate", "Person"] as const;
+
+function normalizeLoanOffer(raw: any) {
+  const principal = Math.max(1_000, Math.min(25_000, Math.round(Number(raw?.principal) || 0)));
+  const interestRate = Math.max(0.1, Math.min(99, Math.round((Number(raw?.interestRate) || 0) * 10) / 10));
+  const agencyType = LOAN_AGENCY_TYPES.includes(raw?.agencyType) ? raw.agencyType : "Corporation";
+  return {
+    id: String(raw?.id || `loan-offer-${crypto.randomUUID()}`).slice(0, 160),
+    agencyName: "(Redacted)",
+    agencyType,
+    principal,
+    interestRate,
+    repaymentTotal: Math.max(principal, Math.round(Number(raw?.repaymentTotal) || principal * (1 + interestRate / 100))),
+    createdAt: String(raw?.createdAt || new Date().toISOString()),
+  };
+}
+
+function normalizeCreditLoanState(raw: any) {
+  return {
+    offers: (Array.isArray(raw?.offers) ? raw.offers : []).map(normalizeLoanOffer).slice(0, 12),
+    loans: (Array.isArray(raw?.loans) ? raw.loans : []).map((entry: any) => ({
+      ...normalizeLoanOffer(entry),
+      acceptedAt: String(entry?.acceptedAt || entry?.createdAt || new Date().toISOString()),
+      status: entry?.status === "paid" ? "paid" : "active",
+      transactionId: String(entry?.transactionId || "").slice(0, 160),
+    })).slice(-100),
+    updatedAt: String(raw?.updatedAt || ""),
+  };
+}
+
+function generateCreditLoanOffers() {
+  const count = 2 + Math.floor(Math.random() * 5);
+  const amounts = new Set<number>();
+  while (amounts.size < count) amounts.add(1_000 + Math.floor(Math.random() * 49) * 500);
+  let priorRate = 0;
+  return Array.from(amounts).sort((a, b) => a - b).map((principal) => {
+    const scaledRate = 4.5 + (principal / 25_000) * 15 + Math.random();
+    const interestRate = Math.round(Math.max(scaledRate, priorRate + 0.5) * 10) / 10;
+    priorRate = interestRate;
+    return normalizeLoanOffer({
+      id: `loan-offer-${crypto.randomUUID()}`,
+      agencyType: LOAN_AGENCY_TYPES[Math.floor(Math.random() * LOAN_AGENCY_TYPES.length)],
+      principal,
+      interestRate,
+      repaymentTotal: Math.round(principal * (1 + interestRate / 100)),
+      createdAt: new Date().toISOString(),
+    });
+  });
+}
+
+async function loadCreditLoanState(playerId: string) {
+  const { data, error } = await admin().from("player_credit_loans").select("data").eq("player_id", playerId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return normalizeCreditLoanState(data?.data);
+}
+
+async function saveCreditLoanState(playerId: string, state: any) {
+  const normalized = normalizeCreditLoanState({ ...state, updatedAt: new Date().toISOString() });
+  const { error } = await admin().from("player_credit_loans").upsert({
+    player_id: playerId,
+    data: normalized,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "player_id" });
+  if (error) throw new Error(error.message);
+  return normalized;
+}
+
 function creditFailureStatus(message: string) {
   if (/session/i.test(message)) return 401;
   if (/DM access only|Cannot view|permission/i.test(message)) return 403;
@@ -1303,6 +1371,100 @@ function registerRoutes(prefix: string) {
       return c.json({
         account: creditAccountResponse(account, player),
         transactions: (transactions || []).map(creditTransactionResponse),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.get(`${prefix}/credits/loans`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      if (playerId === "dm") throw new Error("The DM profile cannot open a personal loan account");
+      const { account, player } = await ensureCreditAccountRow(playerId);
+      let state = await loadCreditLoanState(playerId);
+      if (state.offers.length === 0) {
+        state = await saveCreditLoanState(playerId, { ...state, offers: generateCreditLoanOffers() });
+      }
+      return c.json({ ...state, account: creditAccountResponse(account, player) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/credits/loans/accept`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      if (playerId === "dm") throw new Error("The DM profile cannot accept a personal loan");
+      const body = await c.req.json();
+      const offerId = String(body?.offerId || "").trim().slice(0, 160);
+      const idempotencyKey = String(body?.idempotencyKey || `loan:${playerId}:${offerId}`).trim().slice(0, 200);
+      if (!offerId) throw new Error("A loan offer is required");
+
+      let state = await loadCreditLoanState(playerId);
+      const priorLoan = state.loans.find((loan: any) => loan.id === offerId);
+      if (priorLoan) {
+        const [{ account, player }, transactionResult] = await Promise.all([
+          ensureCreditAccountRow(playerId),
+          admin().from("player_credit_transactions").select("*").eq("id", priorLoan.transactionId).maybeSingle(),
+        ]);
+        if (transactionResult.error) throw new Error(transactionResult.error.message);
+        return c.json({
+          ok: true,
+          duplicate: true,
+          account: creditAccountResponse(account, player),
+          transaction: creditTransactionResponse(transactionResult.data),
+          loan: priorLoan,
+          offers: state.offers,
+          loans: state.loans,
+        });
+      }
+
+      const offer = state.offers.find((entry: any) => entry.id === offerId);
+      if (!offer) throw new Error("That loan offer is no longer available");
+      const { data, error } = await admin().rpc("wallet_apply_transaction", {
+        p_player_id: playerId,
+        p_amount: offer.principal,
+        p_category: "loan",
+        p_source: "loan-agency",
+        p_reason: `${offer.agencyName} ${offer.agencyType} loan`,
+        p_actor_id: playerId,
+        p_related_id: offer.id,
+        p_idempotency_key: idempotencyKey,
+        p_metadata: {
+          agencyType: offer.agencyType,
+          principal: offer.principal,
+          interestRate: offer.interestRate,
+          repaymentTotal: offer.repaymentTotal,
+        },
+      });
+      if (error) throw new Error(error.message);
+
+      const loan = {
+        ...offer,
+        acceptedAt: new Date().toISOString(),
+        status: "active",
+        transactionId: String(data?.transaction?.id || ""),
+      };
+      state = await saveCreditLoanState(playerId, {
+        ...state,
+        offers: state.offers.filter((entry: any) => entry.id !== offer.id),
+        loans: [...state.loans, loan],
+      });
+      return c.json({
+        ok: true,
+        duplicate: Boolean(data?.duplicate),
+        account: creditAccountResponse(data?.account),
+        transaction: creditTransactionResponse(data?.transaction),
+        loan,
+        offers: state.offers,
+        loans: state.loans,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

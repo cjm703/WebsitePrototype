@@ -2,6 +2,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { retro } from "./retro-styles";
 import { RichTextEditor } from "./rich-text-editor";
+import { RenderFormattedText } from "./render-text";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 import type { ManagedItem, PlayerData, TagDefinition } from "./types";
 import {
@@ -20,6 +21,7 @@ import {
   ITEM_WEAPON_DAMAGE_KEY,
   isVersatileItem,
   isWeaponItem,
+  type WeaponDamageAttribute,
 } from "@/lib/item-combat-rules";
 import {
   DM_DIVIDER,
@@ -59,6 +61,7 @@ import {
   Dices,
   Play,
   ChevronDown,
+  ArrowLeft,
 } from "lucide-react";
 
 interface DMItemManagerSectionProps {
@@ -111,7 +114,7 @@ interface ItemInfoField {
   trackerBuffTarget: string;
   trackerBuffValue: string;
   weaponDamage: boolean;
-  damageAttribute: "" | "STR" | "AGI";
+  damageAttribute: "" | WeaponDamageAttribute;
 }
 
 interface ItemInfoFieldPreset {
@@ -252,6 +255,14 @@ const INFO_FIELD_CONTENT_PLACEHOLDERS: Record<string, string> = {
 
 const rarities = ["Common", "Uncommon", "Rare", "Very Rare", "Legendary"];
 const ATTRS = ["STR", "AGI", "CON", "KNOW", "WIS", "WILL"];
+const ATTRIBUTE_LABELS: Record<WeaponDamageAttribute, string> = {
+  STR: "Strength",
+  AGI: "Agility",
+  CON: "Constitution",
+  KNOW: "Knowledge",
+  WIS: "Wisdom",
+  WILL: "Will",
+};
 const ALL_SKILLS = ["Athletics", "Grappling", "Acrobatics", "Sleight of Hand", "Stealth", "Endurance", "Shock", "History", "Investigation", "Arcana", "Religion", "Medicine", "Nature", "Technology/Tinkering", "Perception", "Insight", "Survival", "Persuasion", "Charm", "Control", "Clear Mind"];
 const ALL_RESOURCES = ["Max HP", "Armor Class", "Speed", "Movement", "Damage Reduction", "Temp HP", "Max Weight", "Total Wounds", "Max Exhaustion"];
 const EQUIP_SLOT_OPTIONS = [
@@ -385,9 +396,9 @@ function buildInfoFields(customFields: Record<string, string>): ItemInfoField[] 
     trackerBuffTarget: customFields[getInfoFieldKey(fieldId, INFO_TRACKER_BUFF_TARGET)] || "",
     trackerBuffValue: customFields[getInfoFieldKey(fieldId, INFO_TRACKER_BUFF_VALUE)] || "",
     weaponDamage: customFields[getInfoFieldKey(fieldId, INFO_WEAPON_DAMAGE)] === "1",
-    damageAttribute: customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] === "AGI"
-      ? "AGI"
-      : customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] === "STR" ? "STR" : "",
+    damageAttribute: ATTRS.includes(customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] as WeaponDamageAttribute)
+      ? customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] as WeaponDamageAttribute
+      : "",
   }));
 }
 
@@ -446,7 +457,9 @@ function migrateLegacyWeaponDamage(item: ManagedItem) {
     rollLabel: "Use / Roll Damage",
     rollExpression: extractFirstDiceExpression(legacyDamage),
     weaponDamage: true,
-    damageAttribute: item.customFields[FIELD_KEYS.weaponDamageAttribute] === "AGI" ? "AGI" : "STR",
+    damageAttribute: ATTRS.includes(item.customFields[FIELD_KEYS.weaponDamageAttribute] as WeaponDamageAttribute)
+      ? item.customFields[FIELD_KEYS.weaponDamageAttribute] as WeaponDamageAttribute
+      : "STR",
   });
   delete nextCustomFields[FIELD_KEYS.weaponDamage];
   delete nextCustomFields[FIELD_KEYS.weaponDamageAttribute];
@@ -481,7 +494,7 @@ function buildDisplayFacts(item: ManagedItem) {
 
       if (key === FIELD_KEYS.weaponDamageAttribute) {
         label = "Damage Attribute";
-        displayValue = value === "AGI" ? "Agility" : "Strength";
+        displayValue = ATTRIBUTE_LABELS[value as WeaponDamageAttribute] || "Strength";
       }
 
       if ([FIELD_KEYS.attributeAmount, FIELD_KEYS.skillAmount, FIELD_KEYS.resourceAmount].includes(key as any)) {
@@ -584,6 +597,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
   const [tagSaveError, setTagSaveError] = useState("");
   const [tagSaving, setTagSaving] = useState(false);
   const [activeInfoFieldId, setActiveInfoFieldId] = useState<string | null>(null);
+  const [viewingItem, setViewingItem] = useState<ManagedItem | null>(null);
   const originalAssignedToRef = useRef<string[]>([]);
 
   const updateItemField = <K extends keyof ManagedItem>(key: K, value: ManagedItem[K]) => {
@@ -812,6 +826,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
 
   const startEditingItem = (item: ManagedItem) => {
     const normalizedItem = migrateLegacyWeaponDamage(item);
+    setViewingItem(null);
     originalAssignedToRef.current = [...item.assignedTo];
     setEditingItem({
       ...normalizedItem,
@@ -986,6 +1001,89 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
   const showDisadvantage = !!editingItem && !!(editingItem.customFields[FIELD_KEYS.disadvantageSkill] || "").trim();
   const showSource = !!editingItem && ((editingItem.customFields[FIELD_KEYS.sourcePoints] || "").trim() || editingItem.tags.some((tag) => /source/i.test(tag)));
   const showWeaponData = isWeaponItem(editingItem);
+
+  if (viewingItem && !creationOnly && !editingItem) {
+    const detailFields = buildInfoFields(viewingItem.customFields || {});
+    const detailFacts = buildDisplayFacts(viewingItem);
+    const detailEffects = Object.entries(viewingItem.customFields || {})
+      .filter(([key, value]) => key.startsWith(EFFECT_PREFIX) && String(value || "").trim());
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <button type="button" onClick={() => setViewingItem(null)} className={`${retro.button} px-3 py-2 text-[11px] inline-flex items-center gap-2`} style={S_TEXT}>
+            <ArrowLeft size={13} /> Back to Item Library
+          </button>
+          <button type="button" onClick={() => startEditingItem(viewingItem)} className={`${retro.button} px-4 py-2 text-[11px] inline-flex items-center gap-2`} style={S_ACCENT}>
+            <Edit size={13} /> Edit Item
+          </button>
+        </div>
+
+        <article className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+          <header className="flex items-start justify-between gap-4 flex-wrap border-b border-[#272752] pb-4">
+            <div className="min-w-0">
+              <div className="text-[9px] uppercase tracking-[0.1em] mb-1" style={S_MUTED}>Item Record</div>
+              <h2 className="text-[20px] break-words" style={S_ACCENT_HDR}>{viewingItem.name}</h2>
+              <div className="text-[10px] mt-1" style={S_MUTED}>
+                {viewingItem.type || "No type"} · {viewingItem.rarity || "Common"} · {formatOwners(viewingItem.assignedTo, players)}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-w-xl justify-end">
+              {viewingItem.tags.map((tag) => <span key={tag} className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}>{tag}</span>)}
+            </div>
+          </header>
+
+          {detailFacts.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mt-4">
+              {detailFacts.map((fact) => (
+                <div key={fact.key} className={`${retro.raised} bg-[#101038] px-3 py-2`}>
+                  <div className="text-[8px] uppercase" style={S_MUTED}>{fact.label}</div>
+                  <div className="text-[11px] mt-1 break-words" style={S_TEXT_BOLD}>{fact.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mt-5">
+            <section>
+              <div className="text-[10px] mb-2" style={S_SECTION_HDR}>DESCRIPTION</div>
+              <div className={`${retro.raised} bg-[#0E0E35] p-4 min-h-[100px]`}>
+                {viewingItem.description?.trim()
+                  ? <RenderFormattedText text={viewingItem.description} color="#C0D0F0" baseSize={12} />
+                  : <div className="text-[11px] italic" style={S_MUTED}>No description has been added.</div>}
+              </div>
+            </section>
+            <section>
+              <div className="text-[10px] mb-2" style={S_SECTION_HDR}>ITEM INFORMATION</div>
+              <div className="space-y-2">
+                {detailFields.map((field) => (
+                  <div key={field.fieldId} className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                    <div className="text-[9px] uppercase mb-1" style={S_ACCENT}>{field.label || "Field"}</div>
+                    {field.content && <RenderFormattedText text={field.content} color="#C0D0F0" baseSize={11} />}
+                    {field.rollExpression && <div className="text-[9px] mt-2" style={S_MUTED}>Roll: {field.rollExpression} · Attribute: {field.damageAttribute || "None"}</div>}
+                  </div>
+                ))}
+                {detailFields.length === 0 && <div className={`${retro.raised} bg-[#0E0E35] p-4 text-[11px] italic`} style={S_MUTED}>No information fields have been added.</div>}
+              </div>
+            </section>
+          </div>
+
+          {detailEffects.length > 0 && (
+            <section className="mt-5">
+              <div className="text-[10px] mb-2" style={S_SECTION_HDR}>EFFECTS</div>
+              <div className="space-y-2">
+                {detailEffects.map(([key, value], index) => (
+                  <div key={key} className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                    <div className="text-[9px] mb-1" style={S_MUTED}>Effect {index + 1}</div>
+                    <RenderFormattedText text={String(value)} color="#C0D0F0" baseSize={11} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </article>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1577,8 +1675,9 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                               <div>
                                 <label className="text-[10px] block mb-1" style={labelStyle}>Damage Attribute</label>
                                 <select value={field.damageAttribute || "STR"} onChange={(event) => updateInfoField(field.fieldId, INFO_DAMAGE_ATTRIBUTE, event.target.value)} className={inputClass} style={inputStyle}>
-                                  <option value="STR">Strength</option>
-                                  <option value="AGI">Agility</option>
+                                  {ATTRS.map((attribute) => (
+                                    <option key={attribute} value={attribute}>{attribute} - {ATTRIBUTE_LABELS[attribute as WeaponDamageAttribute]}</option>
+                                  ))}
                                 </select>
                               </div>
                             </div>
@@ -1940,7 +2039,20 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
               const facts = buildDisplayFacts(item);
               const fieldCount = buildInfoFields(item.customFields || {}).length;
               return (
-                <div key={item.id} className={`${retro.raised} bg-[#0E0E35] p-3`}>
+                <div
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setViewingItem(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setViewingItem(item);
+                    }
+                  }}
+                  className={`${retro.raised} bg-[#0E0E35] p-3 cursor-pointer hover:bg-[#151548] transition-colors`}
+                  title="Open full item page"
+                >
                   <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
                     <div>
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -1967,10 +2079,10 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <button onClick={() => startEditingItem(item)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+                      <button onClick={(event) => { event.stopPropagation(); startEditingItem(item); }} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
                         <Edit size={12} /> Edit
                       </button>
-                      <button onClick={() => handleDeleteItem(item.id)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_RED}>
+                      <button onClick={(event) => { event.stopPropagation(); handleDeleteItem(item.id); }} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5`} style={S_RED}>
                         <Trash2 size={12} /> Delete
                       </button>
                     </div>

@@ -10,16 +10,18 @@ import {
   Users, SortAsc, SortDesc, Settings, EyeOff, MessageSquare,
   Upload, Building2, Sparkles, RotateCcw, GripVertical,
   Sun, Moon, ChevronLeft, ChevronRight, LoaderCircle, Save,
+  Landmark,
 } from "lucide-react";
 import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import { loadDMItems, loadDMTags, saveDMItems, saveDMTags } from "@/lib/player-state-api";
-import { creditRequestId, loadCreditAccount, purchaseCommerceCart, saveCommerceCatalog, type CreditAccount } from "@/lib/credits-api";
+import { creditRequestId, isInsufficientCreditsError, loadCreditAccount, purchaseCommerceCart, saveCommerceCatalog, type CreditAccount } from "@/lib/credits-api";
 import type { ManagedItem, TagDefinition } from "./types";
 import { DMItemManagerSection } from "./dm-item-manager-section";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 import { RichTextEditor } from "./rich-text-editor";
 import { RenderFormattedText } from "./render-text";
+import { playSuccessChime } from "./sound-effects";
 
 // ════════════════════════════════════════════
 // Types
@@ -649,6 +651,37 @@ function ScrollableShopRow({ children, shopCount }: { children: React.ReactNode;
   );
 }
 
+function PurchaseCelebration({ total, itemCount, onDone }: { total: number; itemCount: number; onDone: () => void }) {
+  return <>
+    <style>{`
+      @keyframes commerce-purchase-arrive {
+        0% { opacity: 0; transform: translate(-50%, 20px) scale(0.9); }
+        18% { opacity: 1; transform: translate(-50%, 0) scale(1.04); }
+        76% { opacity: 1; transform: translate(-50%, -6px) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -28px) scale(0.96); }
+      }
+      @keyframes commerce-coin-burst {
+        0% { opacity: 0; transform: translateY(8px) rotate(-8deg); }
+        28% { opacity: 1; transform: translateY(0) rotate(0); }
+        100% { opacity: 0; transform: translateY(-24px) rotate(14deg); }
+      }
+      .commerce-purchase-arrive { animation: commerce-purchase-arrive 1650ms ease-out forwards; }
+      .commerce-coin-burst { animation: commerce-coin-burst 900ms ease-out forwards; }
+      @media (prefers-reduced-motion: reduce) { .commerce-purchase-arrive, .commerce-coin-burst { animation-duration: 1ms; } }
+    `}</style>
+    <div
+      className="commerce-purchase-arrive pointer-events-none fixed left-1/2 top-20 z-[80] min-w-[260px] border border-[#7D6A2B] bg-[#111008] px-5 py-4 text-center shadow-2xl"
+      onAnimationEnd={(event) => {
+        if (event.target === event.currentTarget) onDone();
+      }}
+    >
+      <div className="relative mx-auto flex h-9 w-9 items-center justify-center border border-[#7D6A2B] bg-[#201B08] text-[#F0D36B]"><Check size={18} /><Coins size={11} className="commerce-coin-burst absolute -right-3 -top-2" /></div>
+      <div className="mt-2 text-[12px] font-semibold text-[#F5E4A2]">Purchase Complete</div>
+      <div className="mt-1 text-[9px] text-[#9EA5B4]">{total.toLocaleString()} CR paid · {itemCount} item{itemCount === 1 ? "" : "s"}</div>
+    </div>
+  </>;
+}
+
 export function CommercePage() {
   const navigate = useNavigate();
   const theme = getPlayerTheme();
@@ -691,6 +724,7 @@ export function CommercePage() {
   const [showHidden, setShowHidden] = useState(false);
   const [purchasing, setPurchasing] = useState(false);
   const [purchaseMessage, setPurchaseMessage] = useState("");
+  const [purchaseCelebration, setPurchaseCelebration] = useState<{ id: number; total: number; itemCount: number } | null>(null);
   const [showItemCreator, setShowItemCreator] = useState(false);
   const [itemCreatorMinimized, setItemCreatorMinimized] = useState(false);
   const [itemCreatorTarget, setItemCreatorTarget] = useState<{ shopId?: string; itemId?: string } | null>(null);
@@ -1068,6 +1102,21 @@ export function CommercePage() {
       setCommerceError("The DM profile does not use a player Credits account.");
       return;
     }
+    const orderTotal = cart.reduce((sum, line) => {
+      const item = shops.find((shop) => shop.id === line.shopId)?.items.find((entry) => entry.id === line.itemId);
+      return sum + (item?.price || 0) * line.quantity;
+    }, 0);
+    if (creditAccount && creditAccount.balance < orderTotal) {
+      setShowCart(false);
+      navigate("/interface/loan", {
+        state: {
+          reason: "purchase",
+          requiredAmount: orderTotal - creditAccount.balance,
+          message: `This purchase needs ${(orderTotal - creditAccount.balance).toLocaleString()} more Credits.`,
+        },
+      });
+      return;
+    }
     const requestId = purchaseRequestRef.current || creditRequestId("commerce-checkout");
     purchaseRequestRef.current = requestId;
     setPurchasing(true);
@@ -1087,14 +1136,28 @@ export function CommercePage() {
       setCart([]);
       setShowCart(false);
       setPurchaseMessage(`Purchase complete. ${result.total.toLocaleString()} CR paid${result.grantedItems.length ? ` and ${result.grantedItems.length} inventory delivery received` : ""}.`);
+      setPurchaseCelebration({ id: Date.now(), total: result.total, itemCount: cart.reduce((sum, line) => sum + line.quantity, 0) });
+      playSuccessChime();
       purchaseRequestRef.current = "";
       if (currentUserId) await appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, []);
     } catch (err) {
+      if (isInsufficientCreditsError(err)) {
+        purchaseRequestRef.current = "";
+        setShowCart(false);
+        navigate("/interface/loan", {
+          state: {
+            reason: "purchase",
+            requiredAmount: Math.max(0, orderTotal - (creditAccount?.balance || 0)),
+            message: "Your Credits balance changed before checkout could finish. Choose a loan offer to cover the purchase.",
+          },
+        });
+        return;
+      }
       setCommerceError(err instanceof Error ? err.message : "The purchase could not be completed.");
     } finally {
       setPurchasing(false);
     }
-  }, [cart, currentUserId, isDM, purchasing]);
+  }, [cart, creditAccount, currentUserId, isDM, navigate, purchasing, shops]);
 
   // ── Reorder shops within a group ──
   const reorderShop = useCallback((dragIdx: number, hoverIdx: number, groupType: string) => {
@@ -2013,7 +2076,7 @@ export function CommercePage() {
                 {!canAfford && <div className="text-[9px] text-[#FF7777]">Insufficient Credits for this order.</div>}
               </div>
               <div className="flex items-center gap-2">
-                <button disabled={!canAfford || purchasing} onClick={() => void checkout()} className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-semibold disabled:opacity-40 ${retro.button}`} style={{ color: "#E0E4F0" }}>{purchasing ? <LoaderCircle size={11} className="animate-spin" /> : <Coins size={11} />}{purchasing ? "Processing" : "Purchase"}</button>
+                <button disabled={purchasing} onClick={() => void checkout()} className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-semibold disabled:opacity-40 ${retro.button}`} style={{ color: canAfford ? "#E0E4F0" : "#F195A2" }}>{purchasing ? <LoaderCircle size={11} className="animate-spin" /> : canAfford ? <Coins size={11} /> : <Landmark size={11} />}{purchasing ? "Processing" : canAfford ? "Purchase" : "Open Loan Options"}</button>
                 <button disabled={purchasing} onClick={clearCart} className={`flex items-center gap-1 px-3 py-2 text-[11px] font-semibold disabled:opacity-40 ${retro.button}`} style={{ color: "#E0E4F0" }}><Trash2 size={10} />Clear</button>
               </div>
             </div>
@@ -2067,16 +2130,21 @@ export function CommercePage() {
   // Main Render
   // ═══════════════════════════════════════════
 
+  const purchaseOverlay = purchaseCelebration
+    ? <PurchaseCelebration key={purchaseCelebration.id} total={purchaseCelebration.total} itemCount={purchaseCelebration.itemCount} onDone={() => setPurchaseCelebration(null)} />
+    : null;
+
   // Ledger view
-  if (showLedger) return <DndProvider backend={HTML5Backend} key="ledger"><div style={DISPLAY_CONTENTS}>{renderLedger()}{renderCart()}{renderItemCreator()}{renderCommerceNotice()}</div></DndProvider>;
+  if (showLedger) return <DndProvider backend={HTML5Backend} key="ledger"><div style={DISPLAY_CONTENTS}>{renderLedger()}{renderCart()}{renderItemCreator()}{renderCommerceNotice()}{purchaseOverlay}</div></DndProvider>;
 
   // Shop sub-page view
-  if (selectedShop) return <DndProvider backend={HTML5Backend} key="shop-sub"><div style={DISPLAY_CONTENTS}>{renderShopSubPage(selectedShop)}{renderCart()}{renderItemCreator()}{renderCommerceNotice()}</div></DndProvider>;
+  if (selectedShop) return <DndProvider backend={HTML5Backend} key="shop-sub"><div style={DISPLAY_CONTENTS}>{renderShopSubPage(selectedShop)}{renderCart()}{renderItemCreator()}{renderCommerceNotice()}{purchaseOverlay}</div></DndProvider>;
 
   // ── Shop listing (main page) ──
   return (
     <DndProvider backend={HTML5Backend} key="shop-listing">
       <div className="min-h-screen relative" style={{ background: `linear-gradient(170deg, ${STEEL.bg1} 0%, #0A0C18 25%, #0D0E1A 50%, color-mix(in srgb, ${STEEL.accent} 4%, ${STEEL.bg1}) 75%, ${STEEL.bg1} 100%)` }}>
+        {purchaseOverlay}
         <div className="absolute inset-0 pointer-events-none" style={{
           background: [
             `repeating-linear-gradient(45deg, ${STEEL.accent}0C 0px, ${STEEL.accent}0C 1px, transparent 1px, transparent 12px)`,

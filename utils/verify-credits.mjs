@@ -25,6 +25,8 @@ const arcadeManager = read("src/app/components/dm-arcade-manager.tsx");
 const customization = read("src/app/components/customization-page.tsx");
 const initialData = read("src/app/components/initial-data.tsx");
 const intelliInterface = read("src/app/components/intelli-interface.tsx");
+const loanPage = read("src/app/components/loan-page.tsx");
+const loanMigration = read("supabase/migrations/20260905000000_credit_loans.sql");
 
 for (const [source, jsx] of [
   [edge, false],
@@ -39,6 +41,7 @@ for (const [source, jsx] of [
   [facilityFinance, true],
   [personalWorkshop, true],
   [routes, true],
+  [loanPage, true],
 ]) {
   parse(source, { sourceType: "module", plugins: jsx ? ["typescript", "jsx"] : ["typescript"] });
 }
@@ -155,6 +158,19 @@ assert.match(accountPage, /prefers-reduced-motion/);
 assert.match(accountPage, /Choose a Player Account/);
 assert.match(routes, /path: "credits"/);
 assert.match(routes, /path: "credits\/:playerId"/);
+assert.match(routes, /path: "loan"/);
+assert.match(loanMigration, /player_credit_loans/);
+assert.match(loanMigration, /enable row level security/);
+assert.match(creditsApi, /\/credits\/loans/);
+assert.match(creditsApi, /\/credits\/loans\/accept/);
+assert.match(edge, /generateCreditLoanOffers/);
+assert.match(edge, /Math\.max\(scaledRate, priorRate \+ 0\.5\)/);
+assert.match(edge, /p_category: "loan"/);
+assert.match(accountPage, /Payment Required, funds insufficient/);
+assert.match(accountPage, /Open Loan Page/);
+assert.match(loanPage, /\(Redacted\)/);
+assert.match(commerce, /isInsufficientCreditsError/);
+assert.match(commerce, /playSuccessChime/);
 assert.match(personalFiles, /navigate\("\/interface\/credits"\)/);
 assert.match(personalFiles, /Physical Currencies & Coins/);
 assert.doesNotMatch(personalFiles, /Open purchases, income, adjustments, and the complete audit trail/);

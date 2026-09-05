@@ -34,6 +34,12 @@ export function isCreditsServiceUnavailable(error: unknown) {
   return error instanceof ApiRequestError && error.code === "CREDITS_SERVICE_UNAVAILABLE";
 }
 
+export function isInsufficientCreditsError(error: unknown) {
+  return error instanceof ApiRequestError
+    ? error.code === "INSUFFICIENT_CREDITS" || /insufficient credits|would make.*negative/i.test(error.message)
+    : error instanceof Error && /insufficient credits|would make.*negative/i.test(error.message);
+}
+
 export interface CreditAccount {
   playerId: string;
   playerName: string;
@@ -61,6 +67,30 @@ export interface CreditTransaction {
 export interface CreditAccountDetail {
   account: CreditAccount;
   transactions: CreditTransaction[];
+}
+
+export type LoanAgencyType = "Corporation" | "Government" | "Syndicate" | "Person";
+
+export interface CreditLoanOffer {
+  id: string;
+  agencyName: "(Redacted)";
+  agencyType: LoanAgencyType;
+  principal: number;
+  interestRate: number;
+  repaymentTotal: number;
+  createdAt: string;
+}
+
+export interface CreditLoanAgreement extends CreditLoanOffer {
+  acceptedAt: string;
+  status: "active" | "paid";
+  transactionId: string;
+}
+
+export interface CreditLoanState {
+  offers: CreditLoanOffer[];
+  loans: CreditLoanAgreement[];
+  account: CreditAccount;
 }
 
 export function creditRequestId(prefix: string) {
@@ -109,6 +139,25 @@ export async function reverseCreditTransaction(input: {
       idempotencyKey: input.idempotencyKey || creditRequestId(`credit-reversal:${input.transactionId}`),
     }),
   }) as Promise<{ ok: true; account: CreditAccount; transaction: CreditTransaction; duplicate: boolean }>;
+}
+
+export async function loadCreditLoans(): Promise<CreditLoanState> {
+  return creditsApiFetch("/credits/loans", { method: "GET" }) as Promise<CreditLoanState>;
+}
+
+export async function acceptCreditLoan(offerId: string, idempotencyKey = creditRequestId(`loan:${offerId}`)) {
+  return creditsApiFetch("/credits/loans/accept", {
+    method: "POST",
+    body: JSON.stringify({ offerId, idempotencyKey }),
+  }) as Promise<{
+    ok: true;
+    duplicate: boolean;
+    account: CreditAccount;
+    transaction: CreditTransaction;
+    loan: CreditLoanAgreement;
+    offers: CreditLoanOffer[];
+    loans: CreditLoanAgreement[];
+  }>;
 }
 
 export async function purchaseCommerceCart(cart: Array<{ shopId: string; itemId: string; quantity: number }>, idempotencyKey: string) {

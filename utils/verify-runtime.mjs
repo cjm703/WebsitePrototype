@@ -283,6 +283,21 @@ async function testItemCombatRules() {
   assert.equal(rules.getWeaponDamageExpression(shotgun), "3d6");
   assert.equal(rules.getWeaponDamageRollLabel(shotgun), "Fire Shotgun");
   assert.equal(rules.getWeaponDamageAttribute(shotgun), "AGI");
+
+  const fieldOnlyShotgun = {
+    name: "B&M Corp Ironeater Shotgun",
+    type: "Firearm",
+    tags: [],
+    customFields: {
+      "Info Field::1::Label": "Damage",
+      "Info Field::1::Content": "3d6 piercing damage (10 ft) / 2d6 (20 ft) / 1d6 (30 ft)",
+      "Info Field::1::Weapon Damage": "1",
+      "Info Field::1::Damage Attribute": "WILL",
+    },
+  };
+  assert.equal(rules.isWeaponItem(fieldOnlyShotgun), true);
+  assert.equal(rules.getWeaponDamageExpression(fieldOnlyShotgun), "3d6");
+  assert.equal(rules.getWeaponDamageAttribute(fieldOnlyShotgun), "WILL");
 }
 
 async function testOfficeBusinessMapState() {

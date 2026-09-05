@@ -52,6 +52,7 @@ import {
   isTwoHandedItem as itemUsesTwoHands,
   isVersatileItem,
   resolveWeaponDamageAttribute,
+  type WeaponDamageAttribute,
 } from "@/lib/item-combat-rules";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type {
@@ -171,6 +172,14 @@ const PLAYER_DETAIL_HIDDEN_TAGS = new Set([
 ]);
 
 const ITEM_MECHANICS_LABEL_PATTERN = /\b(weapon type|damage|armor|defen[cs]e|protection|range|charge|capacity|ammunition|ammo|condition|duration|healing|bonus|save|attack|accuracy|critical|resistance|reload|shot|effect|tracker|potency|buff|penalty|speed|movement|source points?)\b/i;
+const WEAPON_DAMAGE_ATTRIBUTE_LABELS: Record<WeaponDamageAttribute, string> = {
+  STR: "Strength",
+  AGI: "Agility",
+  CON: "Constitution",
+  KNOW: "Knowledge",
+  WIS: "Wisdom",
+  WILL: "Will",
+};
 
 function getPlayerFacingDetailTags(tags: string[], formatter: (tag: string) => string = (tag) => tag): string[] {
   const seen = new Set<string>();
@@ -211,7 +220,7 @@ interface ItemInfoField {
   trackerBuffTarget: string;
   trackerBuffValue: string;
   weaponDamage: boolean;
-  damageAttribute: "" | "STR" | "AGI";
+  damageAttribute: "" | WeaponDamageAttribute;
 }
 
 function isMechanicalItemInfoField(field: ItemInfoField): boolean {
@@ -574,9 +583,11 @@ function getItemInfoFields(customFields: Record<string, string> | null | undefin
     trackerBuffTarget: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_TARGET_KEY)] || "",
     trackerBuffValue: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_VALUE_KEY)] || "",
     weaponDamage: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_WEAPON_DAMAGE_KEY)] === "1",
-    damageAttribute: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)] === "AGI"
-      ? "AGI"
-      : entries[getItemInfoFieldKey(fieldId, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)] === "STR" ? "STR" : "",
+    damageAttribute: (["STR", "AGI", "CON", "KNOW", "WIS", "WILL"] as WeaponDamageAttribute[]).includes(
+      entries[getItemInfoFieldKey(fieldId, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)] as WeaponDamageAttribute,
+    )
+      ? entries[getItemInfoFieldKey(fieldId, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)] as WeaponDamageAttribute
+      : "",
   }));
 }
 
@@ -1947,104 +1958,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     ...(workshopBootstrap?.enabled ? [{ id: "workshop" as const, label: "Workshop", icon: Hammer }] : []),
   ];
 
-  const activeSectionSummary = (() => {
-    if (activeTab === "character") {
-      switch (charSubTab) {
-        case "sheet":
-          return {
-            label: "Character Overview",
-            accent: "#5A9AFF",
-            text: "Core stats, current resources, equipped load, and the main character snapshot.",
-          };
-        case "status":
-          return {
-            label: "Active Effects",
-            accent: "#AA77FF",
-            text: "Track timed statuses, card effects, and turn-end progression in one place.",
-          };
-        case "source":
-          return {
-            label: "Source Tracking",
-            accent: "#C4A0FF",
-            text: "Watch source gain and spend activity without mixing it into inventory management.",
-          };
-      }
-    }
-
-    if (activeTab === "progression") {
-      switch (progressionSubTab) {
-        case "level":
-          return {
-            label: "Level Progression",
-            accent: "#FFD700",
-            text: "Race traits, level rewards, and progression cards are grouped in a vertical history of what this character gained.",
-          };
-        case "magic":
-          return {
-            label: "Magic Lists",
-            accent: "#8AB8FF",
-            text: "Browse large spell lists by school or source, and mark spells as learned before they enter the main card loadout.",
-          };
-      }
-    }
-
-    if (activeTab === "inventory") {
-      switch (inventorySubTab) {
-        case "equipment":
-          return {
-            label: equipmentSubTab === "effects" ? "Equipped Item Effects" : "Equipment Loadout",
-            accent: equipmentSubTab === "effects" ? "#C4A0FF" : "#FF7A5A",
-            text: equipmentSubTab === "effects"
-              ? "Review the active effects coming from equipped gear."
-              : "Manage equipped slots and inspect the items currently worn or wielded.",
-          };
-        case "consumables":
-          return {
-            label: "Money Tracker",
-            accent: "#FFD700",
-            text: "Quick access to coinage and other money-tagged items assigned to this profile.",
-          };
-        case "general":
-          return {
-            label: "Full Inventory",
-            accent: "#5A9AFF",
-            text: "Browse every carried item with the normal search and tag filters still available.",
-          };
-      }
-    }
-
-    if (activeTab === "cards") {
-      switch (cardsSubTab) {
-        case "cards":
-          return {
-            label: "Ability Cards",
-            accent: "#FF7A5A",
-            text: "Direct cards, learned magic, node rewards, and any level rewards that are meant to appear in the main card list.",
-          };
-        case "nodetrees":
-          return {
-            label: "Node Trees",
-            accent: "#5AE0B0",
-            text: "View progression trees and the cards currently granted through node unlocks.",
-          };
-      }
-    }
-
-    if (activeTab === "workshop") {
-      return {
-        label: "Modular Workshop",
-        accent: "#F1D47A",
-        text: "Assemble granted blueprints, manage owned components, and submit work orders for DM completion.",
-      };
-    }
-
-    return {
-      label: "Intel Archive",
-      accent: firstColor(theme.accentColor),
-      text: "Reference notes, world details, and supporting character information.",
-    };
-  })();
-
   // --- Render tag pill ---
   const renderTagPill = (tag: string, isActive: boolean, onClick: () => void) => (
     <button
@@ -2579,7 +2492,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     if (weaponDamage || weaponDamageDisplay) {
       const damageAttribute = isVersatileItem(item)
         ? "Higher of Strength / Agility"
-        : getWeaponDamageAttribute(item) === "AGI" ? "Agility" : "Strength";
+        : WEAPON_DAMAGE_ATTRIBUTE_LABELS[getWeaponDamageAttribute(item)];
       addFact("Damage", weaponDamageDisplay || weaponDamage, ITEM_WEAPON_DAMAGE_KEY);
       addFact("Damage Stat", damageAttribute, ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY);
       summaryExcludedKeys.add(ITEM_EQUIPMENT_HANDS_KEY);
@@ -2782,9 +2695,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const damageExpression = extractDiceExpressions(storedDamage)[0] || "";
     if (!damageExpression) return null;
 
-    const effectiveStats = {
+    const effectiveStats: Record<WeaponDamageAttribute, number> = {
       STR: (player?.stats?.STR ?? 10) + (equipBuffs.attrBuffs.STR || 0) + (seBuffs.attrBuffs.STR || 0),
       AGI: (player?.stats?.AGI ?? 10) + (equipBuffs.attrBuffs.AGI || 0) + (seBuffs.attrBuffs.AGI || 0),
+      CON: (player?.stats?.CON ?? 10) + (equipBuffs.attrBuffs.CON || 0) + (seBuffs.attrBuffs.CON || 0),
+      KNOW: (player?.stats?.KNOW ?? 10) + (equipBuffs.attrBuffs.KNOW || 0) + (seBuffs.attrBuffs.KNOW || 0),
+      WIS: (player?.stats?.WIS ?? 10) + (equipBuffs.attrBuffs.WIS || 0) + (seBuffs.attrBuffs.WIS || 0),
+      WILL: (player?.stats?.WILL ?? 10) + (equipBuffs.attrBuffs.WILL || 0) + (seBuffs.attrBuffs.WILL || 0),
     };
     const attribute = resolveWeaponDamageAttribute(item, effectiveStats);
     const modifier = statModNum(effectiveStats[attribute]);
@@ -2794,7 +2711,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const versatile = isVersatileItem(item);
     const rollKey = `weapon-damage:${item.id}:${attribute}:${modifier}`;
     const result = inlineDiceRollResults[rollKey];
-    const attributeLabel = attribute === "AGI" ? "Agility" : "Strength";
+    const attributeLabel = WEAPON_DAMAGE_ATTRIBUTE_LABELS[attribute];
     const actionLabel = getWeaponDamageRollLabel(item);
     const displayedDamage = stripHtml(getWeaponDamageDisplay(item));
 
@@ -2913,6 +2830,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           const canApplyTracker = !!field.trackerMode;
           const isWeaponDamageField = isWeaponItem(item)
             && (field.weaponDamage || field.label.trim().toLowerCase() === "damage");
+          const availableRollExpression = isWeaponDamageField ? getWeaponDamageExpression(item) : rollExpression;
           return (
             <div key={field.fieldId} className="border-l-2 pl-3 py-1" style={{ borderColor: section === "mechanics" ? "#7D64C6" : "#42649B" }}>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -2933,11 +2851,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               {visibleContent && (
                 <RenderFormattedText text={field.content} color={theme.textColor} baseSize={12} />
               )}
-              {rollExpression && (
+              {availableRollExpression && (
                 <div className="mt-2">
                   {isWeaponDamageField
                     ? renderWeaponDamageRoll(item)
-                    : renderDiceRollControls(`item:${item.id}:info-field:${field.fieldId}`, rollExpression, rollPotency || "")}
+                    : renderDiceRollControls(`item:${item.id}:info-field:${field.fieldId}`, availableRollExpression, rollPotency || "")}
                 </div>
               )}
             </div>
@@ -3704,26 +3622,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </div>
           )}
 
-          <div
-            className={`${retro.sunken} mt-3 ml-1 px-4 py-2.5 flex flex-wrap items-center gap-3`}
-            style={{
-              background: "#0C0C2E",
-              borderLeft: `3px solid ${activeSectionSummary.accent}66`,
-            }}
-          >
-            <span
-              className="text-[9px] uppercase tracking-[0.08em]"
-              style={{ color: activeSectionSummary.accent, fontWeight: 700 }}
-            >
-              {activeSectionSummary.label}
-            </span>
-            <span
-              className="text-[11px] leading-relaxed flex-1 min-w-[220px]"
-              style={{ color: theme.labelColor }}
-            >
-              {activeSectionSummary.text}
-            </span>
-          </div>
         </div>
 
         {/* Tab Content */}
