@@ -4401,7 +4401,13 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             const ActiveIcon = active.icon;
 
             // ── Render an item row (reusable) ──
-            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: { onDelete?: () => void; onEdit?: () => void }) => {
+            const renderItemRow = (item: ManagedItem, onClick: () => void, opts?: {
+              onDelete?: () => void;
+              onEdit?: () => void;
+              onAssign?: () => void;
+              statusText?: string;
+              twoHanded?: boolean;
+            }) => {
               const infoFields = getItemInfoFields(item.customFields || {});
               const allowedSlots = getAllowedEquipSlots(item.customFields || {});
               const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
@@ -4447,6 +4453,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 <Lock size={7} /> LOCKED
                               </span>
                             )}
+                            {opts?.twoHanded && (
+                              <span className="text-[8px] px-1 py-px" style={{ background: "rgba(255,122,90,0.1)", color: "#FF7A5A", border: "1px solid rgba(255,122,90,0.3)" }}>
+                                TWO-HANDED
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] mt-0.5" style={{ color: theme.labelColor }}>
                             {item.type || "No type"}
@@ -4488,9 +4499,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                           </span>
                         )}
                       </div>
+                      {opts?.statusText && (
+                        <div className="mt-2 text-[9px]" style={{ color: "#5A9A72" }}>{opts.statusText}</div>
+                      )}
                     </button>
                     <div className="flex items-center gap-0.5 shrink-0 pt-1">
                       {hasWeaponDamageRoll && renderWeaponDamageRoll(item, true, true)}
+                      {opts?.onAssign && (
+                        <button onClick={opts.onAssign} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_GREEN_BTN}>
+                          Assign
+                        </button>
+                      )}
                       {opts?.onEdit && (
                         <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
                           <Edit size={13} style={{ color: "#5A9AFF" }} />
@@ -5022,135 +5041,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                     : "No items match your search or filter."}
                                 </div>
                               ) : (
-                                <div className="space-y-0">
+                                <div className="space-y-1">
                                   {equipCandidates.map((item) => {
                                     const is2H = itemUsesTwoHands(item);
-                                    // Check if already slotted somewhere
                                     const slottedIn = EQUIP_SLOT_DEFS.filter(s => equipSlots[s.id]?.itemId === item.id).map(s => s.label);
-
-                                    return (
-                                      <div
-                                        key={item.id}
-                                        className="py-2.5 px-3 border-b border-[#1A1A4B] last:border-b-0 hover:bg-[#0E0E35] transition-colors"
-                                      >
-                                        <div className="flex items-center justify-between mb-1">
-                                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                                            <span className="text-[13px] truncate" style={{ color: theme.textColor }}>
-                                              {item.name}
-                                            </span>
-                                            {is2H && (
-                                              <span className="text-[8px] px-1 py-0.5 shrink-0" style={{ background: "#3A1A1A", color: "#FF7A5A", border: "1px solid #5A2A2A" }}>
-                                                TWO-HANDED
-                                              </span>
-                                            )}
-                                            {item.rarity && (
-                                              <span
-                                                className="text-[8px] px-1 py-0.5 shrink-0"
-                                                style={{
-                                                  background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                                                  color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                                                }}
-                                              >
-                                                {item.rarity}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                                            <span className="text-[10px]" style={{ color: theme.labelColor }}>{item.type}</span>
-                                            {assigningSlot ? (
-                                              <button
-                                                onClick={() => {
-                                                  const isWeaponSlot = assigningSlot === "weapon_l" || assigningSlot === "weapon_r";
-                                                  assignToSlot(assigningSlot, item.id, isWeaponSlot && is2H ? true : undefined);
-                                                }}
-                                                className={`${retro.button} px-2 py-1 text-[9px]`}
-                                                style={S_GREEN_BTN}
-                                              >
-                                                Assign
-                                              </button>
-                                            ) : (
-                                              <button
-                                                onClick={() => setSelectedItem(item)}
-                                                className={`${retro.button} p-1`}
-                                                style={S_MUTED}
-                                                title="View details"
-                                              >
-                                                <ChevronLeft size={12} className="rotate-180" />
-                                              </button>
-                                            )}
-                                          </div>
-                                        </div>
-                                        {slottedIn.length > 0 && (
-                                          <div>
-                                            <div className="text-[9px] mt-0.5" style={{ color: "#5A7A5A" }}>
-                                              Equipped in: {slottedIn.join(", ")}
-                                            </div>
-                                            {renderWeaponDamageRoll(item, true)}
-                                          </div>
-                                        )}
-                                        {getAllowedEquipSlots(item.customFields).length > 0 && (
-                                          <div className="text-[9px] mt-0.5" style={{ color: "#7A7ABA" }}>
-                                            Slots: {getAllowedEquipSlots(item.customFields).map((slot) => SLOT_LABELS[slot] || slot).join(", ")}
-                                          </div>
-                                        )}
-                                        {/* ── Buff pills on item cards ── */}
-                                        <div className="flex flex-wrap items-center gap-1 mt-1">
-                                          {item.customFields["Attribute Buff::Attribute"] && item.customFields["Attribute Buff::Amount"] && (() => {
-                                            const amt = Number(item.customFields["Attribute Buff::Amount"]);
-                                            const pos = amt >= 0;
-                                            return (
-                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-sm text-[9px]" style={{ background: pos ? "rgba(74,202,106,0.1)" : "rgba(224,85,85,0.1)", border: `1px solid ${pos ? "rgba(74,202,106,0.25)" : "rgba(224,85,85,0.25)"}`, color: pos ? "#5ACA6A" : "#E05555", fontWeight: 600, lineHeight: 1.2 }}>
-                                                {item.customFields["Attribute Buff::Attribute"]} {pos ? "▲" : "▼"}{Math.abs(amt)}
-                                              </span>
-                                            );
-                                          })()}
-                                          {item.customFields["Skill Buff::Skill"] && item.customFields["Skill Buff::Amount"] && (() => {
-                                            const amt = Number(item.customFields["Skill Buff::Amount"]);
-                                            const pos = amt >= 0;
-                                            return (
-                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-sm text-[9px]" style={{ background: pos ? "rgba(90,160,220,0.1)" : "rgba(224,85,85,0.1)", border: `1px solid ${pos ? "rgba(90,160,220,0.25)" : "rgba(224,85,85,0.25)"}`, color: pos ? "#5AA0DC" : "#E05555", fontWeight: 600, lineHeight: 1.2 }}>
-                                                {item.customFields["Skill Buff::Skill"]} {pos ? "▲" : "▼"}{Math.abs(amt)}
-                                              </span>
-                                            );
-                                          })()}
-                                          {item.customFields["Resources Buff::Resource"] && item.customFields["Resources Buff::Amount"] && (() => {
-                                            const amt = Number(item.customFields["Resources Buff::Amount"]);
-                                            const pos = amt >= 0;
-                                            return (
-                                              <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-sm text-[9px]" style={{ background: pos ? "rgba(160,200,90,0.1)" : "rgba(220,130,80,0.1)", border: `1px solid ${pos ? "rgba(160,200,90,0.25)" : "rgba(220,130,80,0.25)"}`, color: pos ? "#A0C85A" : "#DC8250", fontWeight: 600, lineHeight: 1.2 }}>
-                                                {item.customFields["Resources Buff::Resource"]} {pos ? "▲" : "▼"}{Math.abs(amt)}
-                                              </span>
-                                            );
-                                          })()}
-                                          {item.customFields["Status Effect::Effect Name"] && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-sm text-[9px]" style={{ background: "rgba(200,140,234,0.1)", border: "1px solid rgba(200,140,234,0.25)", color: "#CA8AEA", fontWeight: 600, lineHeight: 1.2 }}>
-                                              {item.customFields["Status Effect::Effect Name"]}
-                                            </span>
-                                          )}
-                                          {item.customFields["Disadvantageous::Skill"] && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-sm text-[9px]" style={{ background: "rgba(224,85,85,0.1)", border: "1px solid rgba(224,85,85,0.25)", color: "#E05555", fontWeight: 600, lineHeight: 1.2 }}>
-                                              ⚠ {item.customFields["Disadvantageous::Skill"]}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="flex items-center gap-1.5 mt-1">
-                                          {item.tags.slice(0, 3).map((tag) => (
-                                            <span
-                                              key={tag}
-                                              className="text-[8px] px-1.5 py-0.5"
-                                              style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-                                            >
-                                              {tag}
-                                            </span>
-                                          ))}
-                                          {item.tags.length > 3 && (
-                                            <span className="text-[8px]" style={S_MUTED}>
-                                              +{item.tags.length - 3}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
+                                    return renderItemRow(item, () => setSelectedItem(item), {
+                                      twoHanded: is2H,
+                                      statusText: slottedIn.length > 0 ? `Equipped in: ${slottedIn.join(", ")}` : undefined,
+                                      onAssign: assigningSlot ? () => {
+                                        const isWeaponSlot = assigningSlot === "weapon_l" || assigningSlot === "weapon_r";
+                                        assignToSlot(assigningSlot, item.id, isWeaponSlot && is2H ? true : undefined);
+                                      } : undefined,
+                                    });
                                   })}
                                 </div>
                               )}
