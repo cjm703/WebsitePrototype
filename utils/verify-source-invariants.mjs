@@ -10,6 +10,9 @@ const read = (relativePath) =>
 const edge = read("supabase/functions/make-server-8a5950b5/index.ts");
 const richEditor = read("src/app/components/rich-text-editor.tsx");
 const commerce = read("src/app/components/commerce-page.tsx");
+const dmItemManager = read("src/app/components/dm-item-manager-section.tsx");
+const personalFiles = read("src/app/components/personal-files.tsx");
+const itemCombatRules = read("src/lib/item-combat-rules.ts");
 const initialData = read("src/app/components/initial-data.tsx");
 const dmArea = read("src/app/components/dm-area.tsx");
 const dmWikiSection = read("src/app/components/dm-wiki-section.tsx");
@@ -60,6 +63,9 @@ parse(facilityDepthModel, { sourceType: "module", plugins: ["typescript"] });
 parse(facilityOfficeState, { sourceType: "module", plugins: ["typescript"] });
 parse(facilityMapPage, { sourceType: "module", plugins: ["typescript", "jsx"] });
 parse(facilityFinancePage, { sourceType: "module", plugins: ["typescript", "jsx"] });
+parse(dmItemManager, { sourceType: "module", plugins: ["typescript", "jsx"] });
+parse(personalFiles, { sourceType: "module", plugins: ["typescript", "jsx"] });
+parse(itemCombatRules, { sourceType: "module", plugins: ["typescript"] });
 
 function routeBody(routeMarker, nextMarker) {
   const start = edge.indexOf(routeMarker);
@@ -113,6 +119,19 @@ for (const filePath of sourceFiles) {
 assert.match(commerce, /useState<Shop\[]>\(\[\]\)/);
 assert.match(commerce, /normalizeCommerceShops\(shopsData\)/);
 assert.doesNotMatch(commerce, /deductCurrencyFromInventoryState|addPurchasesToInventoryState/);
+assert.match(commerce, /onPersistTags=\{persistCommerceItemTags\}/);
+assert.match(dmArea, /onPersistTags=\{\(next\) => persistTags\("item", next\)\}/);
+assert.match(dmItemManager, /"Create Tag"/);
+assert.match(dmItemManager, /Two-Handed Weapon/);
+assert.match(dmItemManager, /Weapon Damage Roll/);
+assert.match(dmItemManager, /activeInfoFieldId/);
+assert.match(dmItemManager, /aria-expanded=\{expanded\}/);
+assert.match(itemCombatRules, /ITEM_EQUIPMENT_HANDS_KEY = "Equipment::Hands"/);
+assert.match(itemCombatRules, /ITEM_WEAPON_DAMAGE_KEY = "Weapon::Damage"/);
+assert.match(itemCombatRules, /normalizedTags\(item\)\.includes\("versatile"\)/);
+assert.match(personalFiles, /resolveWeaponDamageAttribute\(item, effectiveStats\)/);
+assert.match(personalFiles, /assignToSlot\(assigningSlot, item\.id, isWeaponSlot && is2H \? true : undefined\)/);
+assert.match(personalFiles, /renderWeaponDamageRoll\(item, true\)/);
 assert.doesNotMatch(initialData, /testItemDefaults|testCardDefaults|Insert funny joke/);
 assert.doesNotMatch(initialData, /missing = defaults\.filter/);
 

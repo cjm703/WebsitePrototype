@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
-import { loadDMItems, loadDMTags, saveDMItems } from "@/lib/player-state-api";
+import { loadDMItems, loadDMTags, saveDMItems, saveDMTags } from "@/lib/player-state-api";
 import { creditRequestId, loadCreditAccount, purchaseCommerceCart, saveCommerceCatalog, type CreditAccount } from "@/lib/credits-api";
 import type { ManagedItem, TagDefinition } from "./types";
 import { DMItemManagerSection } from "./dm-item-manager-section";
@@ -692,6 +692,7 @@ export function CommercePage() {
   const [purchasing, setPurchasing] = useState(false);
   const [purchaseMessage, setPurchaseMessage] = useState("");
   const [showItemCreator, setShowItemCreator] = useState(false);
+  const [itemCreatorMinimized, setItemCreatorMinimized] = useState(false);
   const [itemCreatorTarget, setItemCreatorTarget] = useState<{ shopId?: string; itemId?: string } | null>(null);
   const purchaseRequestRef = useRef("");
 
@@ -861,6 +862,11 @@ export function CommercePage() {
     setDmItemsCache(next as unknown as DmManagedItemCompat[]);
   }, []);
 
+  const persistCommerceItemTags = useCallback(async (next: TagDefinition[]) => {
+    await saveDMTags("item", next as unknown as Record<string, unknown>[]);
+    setItemTags(next);
+  }, []);
+
   const selectedShop = useMemo(() => shops.find(s => s.id === selectedShopId) || null, [shops, selectedShopId]);
 
   const visibleShops = useMemo(() => {
@@ -975,6 +981,7 @@ export function CommercePage() {
     if (item.name.trim().toLowerCase() === "credits") {
       setCommerceError("Credits are account balance and cannot be delivered as an inventory item.");
       setShowItemCreator(false);
+      setItemCreatorMinimized(false);
       setItemCreatorTarget(null);
       return;
     }
@@ -996,8 +1003,21 @@ export function CommercePage() {
       }));
     }
     setShowItemCreator(false);
+    setItemCreatorMinimized(false);
     setItemCreatorTarget(null);
   }, [itemCreatorTarget, updateItem]);
+
+  const openItemCreator = useCallback((target: { shopId?: string; itemId?: string }) => {
+    if (!showItemCreator) setItemCreatorTarget(target);
+    setItemCreatorMinimized(false);
+    setShowItemCreator(true);
+  }, [showItemCreator]);
+
+  const closeItemCreator = useCallback(() => {
+    setShowItemCreator(false);
+    setItemCreatorMinimized(false);
+    setItemCreatorTarget(null);
+  }, []);
 
   const deleteItem = useCallback((shopId: string, itemId: string) => {
     setShops(prev => prev.map(s =>
@@ -1705,7 +1725,7 @@ export function CommercePage() {
                           {dmPlayerItems.map(di => <option key={di.id} value={di.id}>{di.name}{di.tags.includes("Quantity") ? " [Qty]" : ""}{di.tags.includes("Currency") ? " [$]" : ""}</option>)}
                         </select>
                       </div>
-                      <button type="button" onClick={() => { setItemCreatorTarget({}); setShowItemCreator(true); }} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[10px]`} style={{ color: "#4AE0C0" }}><Plus size={10} />Create Item</button>
+                      <button type="button" onClick={() => openItemCreator({})} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[10px]`} style={{ color: "#4AE0C0" }}><Plus size={10} />{showItemCreator ? "Resume Creator" : "Create Item"}</button>
                       <div className="w-16">
                         <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Qty</label>
                         <input type="number" value={draftItem.inventoryQuantity ?? 1} onChange={e => setDraftItem(p => ({ ...p, inventoryQuantity: Math.max(1, wholeNumber(e.target.value, 1)) }))} min={1} step={1} className="w-full text-[11px] outline-none px-2 py-1 text-center" style={inputStyle} />
@@ -1797,7 +1817,7 @@ export function CommercePage() {
                                   <label className="text-[8px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Qty</label>
                                   <input type="number" value={item.inventoryQuantity ?? 1} onChange={e => updateItem(shop.id, item.id, { inventoryQuantity: Math.max(1, wholeNumber(e.target.value, 1)) })} min={1} step={1} className="w-full text-[10px] outline-none px-1.5 py-0.5 text-center" style={inputStyle} />
                                 </div>
-                                <button type="button" onClick={() => { setItemCreatorTarget({ shopId: shop.id, itemId: item.id }); setShowItemCreator(true); }} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[9px]`} style={{ color: "#4AE0C0" }}><Plus size={9} />Create</button>
+                                <button type="button" onClick={() => openItemCreator({ shopId: shop.id, itemId: item.id })} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[9px]`} style={{ color: "#4AE0C0" }}><Plus size={9} />{showItemCreator ? "Resume" : "Create"}</button>
                               </div>
                             )}
                             <button onClick={() => setEditingItemId(null)} className={`flex items-center gap-1 px-2 py-1 text-[10px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Check size={10} />Done</button>
@@ -1904,20 +1924,35 @@ export function CommercePage() {
 
   const renderItemCreator = () => {
     if (!showItemCreator || !isDM) return null;
-    return <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/80 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowItemCreator(false); setItemCreatorTarget(null); } }}>
-      <div className="mx-auto max-w-[1400px] border border-[#39436A] bg-[#080820] p-4 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between border-b border-[#24244D] pb-3"><div><div className="text-[13px] font-semibold text-[#DCE5FF]">Create Reusable Commerce Item</div><div className="mt-1 text-[9px] text-[#737FA4]">This uses the same item authoring workflow as the DM Area and links the saved item to this product.</div></div><button type="button" onClick={() => { setShowItemCreator(false); setItemCreatorTarget(null); }} className="flex h-8 w-8 items-center justify-center border border-[#3A2A3A] text-[#FF8A99]" title="Close"><X size={14} /></button></div>
-        <DMItemManagerSection
-          players={[]}
-          managedItems={dmItemsCache as unknown as ManagedItem[]}
-          itemTags={itemTags}
-          onPersistItems={persistCommerceItems}
-          creationOnly
-          onCreatedItem={handleCommerceItemCreated}
-          onCancelCreation={() => { setShowItemCreator(false); setItemCreatorTarget(null); }}
-        />
+    return <>
+      {itemCreatorMinimized && (
+        <button type="button" onClick={() => setItemCreatorMinimized(false)} className="fixed bottom-5 right-5 z-[72] flex items-center gap-2 border border-[#39436A] bg-[#0B0B25] px-4 py-2.5 text-[10px] font-semibold text-[#DCE5FF] shadow-2xl hover:border-[#596797]" title="Return to the current reusable item draft">
+          <Package size={13} className="text-[#4AE0C0]" />
+          Return to Item Creator
+        </button>
+      )}
+      <div className={`${itemCreatorMinimized ? "hidden" : "fixed"} inset-0 z-[70] overflow-y-auto bg-black/80 p-3 sm:p-6`} onMouseDown={(event) => { if (event.target === event.currentTarget) closeItemCreator(); }}>
+        <div className="mx-auto max-w-[1400px] border border-[#39436A] bg-[#080820] p-4 shadow-2xl">
+          <div className="mb-4 flex items-center justify-between gap-3 border-b border-[#24244D] pb-3">
+            <div className="text-[13px] font-semibold text-[#DCE5FF]">Create Reusable Commerce Item</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button type="button" onClick={() => setItemCreatorMinimized(true)} className="flex h-8 items-center gap-1.5 border border-[#39436A] bg-[#0D1028] px-3 text-[9px] text-[#B9C7EE] hover:border-[#596797]" title="Keep this draft open and view the store"><Store size={12} />View Store</button>
+              <button type="button" onClick={closeItemCreator} className="flex h-8 w-8 items-center justify-center border border-[#3A2A3A] text-[#FF8A99]" title="Close"><X size={14} /></button>
+            </div>
+          </div>
+          <DMItemManagerSection
+            players={[]}
+            managedItems={dmItemsCache as unknown as ManagedItem[]}
+            itemTags={itemTags}
+            onPersistTags={persistCommerceItemTags}
+            onPersistItems={persistCommerceItems}
+            creationOnly
+            onCreatedItem={handleCommerceItemCreated}
+            onCancelCreation={closeItemCreator}
+          />
+        </div>
       </div>
-    </div>;
+    </>;
   };
 
   // Cart sidebar

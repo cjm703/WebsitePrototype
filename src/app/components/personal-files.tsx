@@ -38,6 +38,16 @@ import {
   usesAutoMaxWeight,
   WOUND_DICE_INCREASE_LEVELS,
 } from "@/lib/weight-rules";
+import {
+  ITEM_EQUIPMENT_HANDS_KEY,
+  ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
+  ITEM_WEAPON_DAMAGE_KEY,
+  getWeaponDamageAttribute,
+  getWeaponDamageExpression,
+  isTwoHandedItem as itemUsesTwoHands,
+  isVersatileItem,
+  resolveWeaponDamageAttribute,
+} from "@/lib/item-combat-rules";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
 import type {
   LevelCategory,
@@ -1651,6 +1661,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const assignToSlot = useCallback((slotId: EquipSlotId, itemId: string | null, twoHanded?: boolean) => {
     setEquipSlots(prev => {
       const next = { ...prev };
+      const isWeaponSlot = slotId === "weapon_l" || slotId === "weapon_r";
       // If clearing
       if (!itemId) {
         // If this was a two-handed weapon occupying both slots, clear both
@@ -1668,6 +1679,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         next.weapon_l = { itemId, twoHanded: true };
         next.weapon_r = { itemId, twoHanded: true };
       } else {
+        if (isWeaponSlot && (prev.weapon_l.twoHanded || prev.weapon_r.twoHanded)) {
+          next.weapon_l = { itemId: null };
+          next.weapon_r = { itemId: null };
+        }
         next[slotId] = { itemId };
       }
       return next;
@@ -1823,12 +1838,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     }
     return items;
   }, [equippedItems, equipSearch, equipFilterCat, assigningSlot]);
-
-  // Check if an item is a two-handed weapon (heuristic)
-  const isTwoHandedItem = useCallback((item: ManagedItem): boolean => {
-    const allText = [item.name, item.type, ...item.tags].join(" ").toLowerCase();
-    return allText.includes("two-handed") || allText.includes("two handed") || allText.includes("2-handed") || allText.includes("2h");
-  }, []);
 
   const filteredCards = useMemo(() => {
     return playerCards.filter((card) => {
@@ -2106,6 +2115,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           // Friendly slot label
           if (tagName === "Equipment" && fieldName === "Slot") {
             displayValue = SLOT_LABELS[value] || value;
+          }
+          if (tagName === "Equipment" && fieldName === "Hands") {
+            displayValue = value === "2" ? "Two-handed" : "One-handed";
           }
           // +/- prefix for buff amounts
           if ((tagName === "Attribute Buff" || tagName === "Skill Buff" || tagName === "Resources Buff") && fieldName === "Amount") {
@@ -2528,6 +2540,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const itemWeight = getItemWeightValue(item);
     const allowedSlots = getAllowedEquipSlots(item.customFields || {});
     const infoFields = getItemInfoFields(item.customFields || {});
+    const weaponDamage = getWeaponDamageExpression(item);
     const effectKeys = Object.keys(item.customFields ?? {})
       .filter((key) => key.startsWith("Effect::") && item.customFields[key]?.trim())
       .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
@@ -2550,6 +2563,16 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       addFact("Equip", allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", "));
       summaryExcludedKeys.add(EQUIPMENT_SLOTS_KEY);
       summaryExcludedKeys.add("Equipment::Slot");
+    }
+    if (weaponDamage) {
+      const damageAttribute = isVersatileItem(item)
+        ? "Higher of Strength / Agility"
+        : getWeaponDamageAttribute(item) === "AGI" ? "Agility" : "Strength";
+      addFact("Damage", weaponDamage, ITEM_WEAPON_DAMAGE_KEY);
+      addFact("Damage Stat", damageAttribute, ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY);
+      summaryExcludedKeys.add(ITEM_EQUIPMENT_HANDS_KEY);
+      summaryExcludedKeys.add(ITEM_WEAPON_DAMAGE_KEY);
+      summaryExcludedKeys.add(ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY);
     }
     infoFields
       .filter((field) => isMechanicalItemInfoField(field) && ITEM_MECHANICS_LABEL_PATTERN.test(field.label))
@@ -2654,6 +2677,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#C4A0FF", fontWeight: 700 }}>
                 <Sword size={12} /> Gameplay
               </div>
+              {renderWeaponDamageRoll(item)}
               {renderItemInfoFields(item, "mechanics")}
               {renderStoredQuickRollButtons(item.customFields || {}, `item:${item.id}:quick`, "")}
               {effectKeys.length > 0 && (
@@ -2740,6 +2764,47 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       </div>
     );
   }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
+
+  const renderWeaponDamageRoll = useCallback((item: ManagedItem, compact = false) => {
+    const storedDamage = getWeaponDamageExpression(item);
+    const damageExpression = extractDiceExpressions(storedDamage)[0] || "";
+    if (!damageExpression) return null;
+
+    const effectiveStats = {
+      STR: (player?.stats?.STR ?? 10) + (equipBuffs.attrBuffs.STR || 0) + (seBuffs.attrBuffs.STR || 0),
+      AGI: (player?.stats?.AGI ?? 10) + (equipBuffs.attrBuffs.AGI || 0) + (seBuffs.attrBuffs.AGI || 0),
+    };
+    const attribute = resolveWeaponDamageAttribute(item, effectiveStats);
+    const modifier = statModNum(effectiveStats[attribute]);
+    const resolvedExpression = modifier === 0
+      ? damageExpression
+      : `(${damageExpression})${modifier > 0 ? "+" : ""}${modifier}`;
+    const versatile = isVersatileItem(item);
+    const rollKey = `weapon-damage:${item.id}:${attribute}:${modifier}`;
+    const result = inlineDiceRollResults[rollKey];
+    const attributeLabel = attribute === "AGI" ? "Agility" : "Strength";
+
+    return (
+      <div className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : "mb-3"}`}>
+        <button
+          type="button"
+          onClick={() => handleInlineDiceRoll(rollKey, resolvedExpression)}
+          className={`${retro.button} inline-flex items-center gap-1.5 ${compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
+          style={{ color: "#FFD166" }}
+          title={`${storedDamage} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
+        >
+          <Dices size={compact ? 9 : 12} />
+          {compact ? "Roll Damage" : `Roll Damage · ${attributeLabel}${versatile ? " (Versatile)" : ""}`}
+        </button>
+        {!compact && (
+          <span className="text-[9px]" style={S_MUTED}>
+            {damageExpression} {modifier >= 0 ? "+" : "-"} {Math.abs(modifier)} from {attributeLabel}
+          </span>
+        )}
+        {result && <span className={compact ? "text-[10px]" : "text-[12px]"} style={{ color: "#FF6A6A", fontWeight: 700 }}>{result}</span>}
+      </div>
+    );
+  }, [equipBuffs.attrBuffs, handleInlineDiceRoll, inlineDiceRollResults, player?.stats, seBuffs.attrBuffs]);
 
   const renderStoredQuickRollButtons = useCallback((customFields: Record<string, string> | null | undefined, baseKey: string, defaultPotencyRaw = "") => {
     const slots = getQuickRollSlots(customFields).filter((slot) => slot.expression.trim());
@@ -5034,7 +5099,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                               ) : (
                                 <div className="space-y-0">
                                   {equipCandidates.map((item) => {
-                                    const is2H = isTwoHandedItem(item);
+                                    const is2H = itemUsesTwoHands(item);
                                     // Check if already slotted somewhere
                                     const slottedIn = EQUIP_SLOT_DEFS.filter(s => equipSlots[s.id]?.itemId === item.id).map(s => s.label);
 
@@ -5091,8 +5156,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                           </div>
                                         </div>
                                         {slottedIn.length > 0 && (
-                                          <div className="text-[9px] mt-0.5" style={{ color: "#5A7A5A" }}>
-                                            Equipped in: {slottedIn.join(", ")}
+                                          <div>
+                                            <div className="text-[9px] mt-0.5" style={{ color: "#5A7A5A" }}>
+                                              Equipped in: {slottedIn.join(", ")}
+                                            </div>
+                                            {renderWeaponDamageRoll(item, true)}
                                           </div>
                                         )}
                                         {getAllowedEquipSlots(item.customFields).length > 0 && (
@@ -5259,7 +5327,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center border border-[#7B6A2D] bg-[#211D09] text-[#F1D46B]"><Coins size={18} /></span>
-                          <span className="min-w-0"><span className="block text-[13px] font-semibold text-[#F1D46B]">Credits</span><span className="mt-1 block text-[9px]" style={S_MUTED}>Open purchases, income, adjustments, and the complete audit trail</span></span>
+                          <span className="min-w-0"><span className="block text-[13px] font-semibold text-[#F1D46B]">Credits</span></span>
                         </span>
                         <span className="flex shrink-0 items-center gap-2"><strong className="text-[18px] font-mono text-[#F1D46B]">{(creditAccount?.balance || 0).toLocaleString()} CR</strong><ChevronRight size={14} style={S_DIM} /></span>
                       </button>

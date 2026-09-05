@@ -1915,6 +1915,7 @@ const handleSaveItem = async () => {
               players={players}
               managedItems={managedItems}
               itemTags={itemTags}
+              onPersistTags={(next) => persistTags("item", next)}
               onPersistItems={async (next) => {
                 try {
                   setDmError(null);

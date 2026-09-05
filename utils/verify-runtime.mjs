@@ -225,6 +225,44 @@ async function testStaleChunkDetection() {
   assert.equal(reloadCount, 1);
 }
 
+async function testItemCombatRules() {
+  const rules = await bundledModule("src/lib/item-combat-rules.ts");
+  const versatileWeapon = {
+    name: "Test Blade",
+    type: "Weapon",
+    tags: ["Weapon", "Versatile"],
+    customFields: {
+      "Equipment::Slots": "weapon_l,weapon_r",
+      "Equipment::Hands": "2",
+      "Weapon::Damage": "2d8",
+      "Weapon::Damage Attribute": "STR",
+    },
+  };
+
+  assert.equal(rules.isWeaponItem(versatileWeapon), true);
+  assert.equal(rules.isTwoHandedItem(versatileWeapon), true);
+  assert.equal(rules.isVersatileItem(versatileWeapon), true);
+  assert.equal(rules.getWeaponDamageExpression(versatileWeapon), "2d8");
+  assert.equal(
+    rules.resolveWeaponDamageAttribute(versatileWeapon, { STR: 12, AGI: 16 }),
+    "AGI",
+  );
+  assert.equal(
+    rules.resolveWeaponDamageAttribute(versatileWeapon, { STR: 16, AGI: 16 }),
+    "STR",
+  );
+
+  const agilityWeapon = {
+    ...versatileWeapon,
+    tags: ["Weapon"],
+    customFields: { ...versatileWeapon.customFields, "Equipment::Hands": "1", "Weapon::Damage Attribute": "AGI" },
+  };
+  assert.equal(rules.isTwoHandedItem(agilityWeapon), false);
+  assert.equal(rules.resolveWeaponDamageAttribute(agilityWeapon, { STR: 20, AGI: 8 }), "AGI");
+
+  assert.equal(rules.isTwoHandedItem({ name: "Legacy Two-Handed Axe", tags: [], customFields: {} }), true);
+}
+
 async function testOfficeBusinessMapState() {
   const officeMap = await bundledModule("src/lib/business-map-model.ts");
   const defaults = officeMap.createDefaultOfficeBusinessMap();
@@ -786,6 +824,7 @@ try {
   await testCollectionDeletionDiff();
   await testLegacyCollectionDeletionDiff();
   await testStaleChunkDetection();
+  await testItemCombatRules();
   await testStorageSafetyAndStatusApi();
   await testOfficeBusinessMapState();
   await testFacilityDepthState();

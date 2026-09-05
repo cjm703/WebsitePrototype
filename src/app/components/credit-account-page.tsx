@@ -56,6 +56,7 @@ export function CreditAccountPage() {
   const [reason, setReason] = useState("");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const [balanceAnimation, setBalanceAnimation] = useState<{ id: number; amount: number } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!targetPlayerId || targetPlayerId === "dm") {
@@ -115,7 +116,12 @@ export function CreditAccountPage() {
     setError("");
     setMessage("");
     try {
-      await adjustCredits({ playerId: targetPlayerId, amount: mode === "gain" ? parsed : -parsed, reason: reason.trim() });
+      const result = await adjustCredits({ playerId: targetPlayerId, amount: mode === "gain" ? parsed : -parsed, reason: reason.trim() });
+      setDetail((current) => current ? {
+        account: result.account,
+        transactions: [result.transaction, ...current.transactions.filter((entry) => entry.id !== result.transaction.id)],
+      } : current);
+      setBalanceAnimation({ id: Date.now(), amount: result.transaction.amount });
       setAmount("");
       setReason("");
       setMessage(`${mode === "gain" ? "Income" : "Expense"} recorded.`);
@@ -134,7 +140,12 @@ export function CreditAccountPage() {
     setError("");
     setMessage("");
     try {
-      await reverseCreditTransaction({ transactionId: transaction.id, reason: reversalReason });
+      const result = await reverseCreditTransaction({ transactionId: transaction.id, reason: reversalReason });
+      setDetail((current) => current ? {
+        account: result.account,
+        transactions: [result.transaction, ...current.transactions.filter((entry) => entry.id !== result.transaction.id)],
+      } : current);
+      setBalanceAnimation({ id: Date.now(), amount: result.transaction.amount });
       setMessage("Transaction reversed. The original entry remains in the audit trail.");
       await refresh();
     } catch (reverseError) {
@@ -147,6 +158,38 @@ export function CreditAccountPage() {
   if (loading && !detail) return <div className="flex min-h-screen items-center justify-center bg-[#03050A] text-[#D7DEF0]"><LoaderCircle size={28} className="animate-spin" /></div>;
 
   return <main className="min-h-screen bg-[#03050A] text-[#D7DEF0]">
+    <style>{`
+      @keyframes credit-balance-pulse-gain {
+        0% { color: #F0D36B; text-shadow: none; transform: scale(1); }
+        38% { color: #8BE7B8; text-shadow: 0 0 18px rgba(117, 213, 166, 0.55); transform: scale(1.045); }
+        100% { color: #F0D36B; text-shadow: none; transform: scale(1); }
+      }
+      @keyframes credit-balance-pulse-spend {
+        0% { color: #F0D36B; text-shadow: none; transform: scale(1); }
+        38% { color: #F6A6B1; text-shadow: 0 0 18px rgba(241, 149, 162, 0.5); transform: scale(0.97); }
+        100% { color: #F0D36B; text-shadow: none; transform: scale(1); }
+      }
+      @keyframes credit-change-rise {
+        0% { opacity: 0; transform: translateY(7px) scale(0.9); }
+        22% { opacity: 1; transform: translateY(0) scale(1); }
+        100% { opacity: 0; transform: translateY(-28px) scale(1.03); }
+      }
+      @keyframes credit-change-fall {
+        0% { opacity: 0; transform: translateY(-7px) scale(0.9); }
+        22% { opacity: 1; transform: translateY(0) scale(1); }
+        100% { opacity: 0; transform: translateY(28px) scale(0.98); }
+      }
+      .credit-balance-pulse-gain { animation: credit-balance-pulse-gain 720ms ease-out; }
+      .credit-balance-pulse-spend { animation: credit-balance-pulse-spend 720ms ease-out; }
+      .credit-change-rise { animation: credit-change-rise 1050ms ease-out forwards; }
+      .credit-change-fall { animation: credit-change-fall 1050ms ease-out forwards; }
+      @media (prefers-reduced-motion: reduce) {
+        .credit-balance-pulse-gain,
+        .credit-balance-pulse-spend,
+        .credit-change-rise,
+        .credit-change-fall { animation-duration: 1ms; }
+      }
+    `}</style>
     <header className="border-b border-[#242C42] bg-[#070A12] px-4 py-3 lg:px-6">
       <div className="mx-auto flex max-w-[1320px] items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -162,7 +205,26 @@ export function CreditAccountPage() {
 
     <div className="mx-auto max-w-[1320px] px-4 py-5 lg:px-6">
       <section className="grid border border-[#283149] bg-[#080B14] sm:grid-cols-3">
-        <div className="p-4 sm:border-r sm:border-[#283149]"><div className="text-[8px] uppercase" style={MUTED}>Available Credits</div><div className="mt-2 text-[24px] font-semibold text-[#F0D36B]">{money(detail?.account.balance || 0)}</div></div>
+        <div className="p-4 sm:border-r sm:border-[#283149]">
+          <div className="text-[8px] uppercase" style={MUTED}>Available Credits</div>
+          <div className="relative mt-2 inline-flex items-center">
+            <div
+              key={`balance-${balanceAnimation?.id || "idle"}`}
+              className={`text-[24px] font-semibold text-[#F0D36B] ${balanceAnimation ? balanceAnimation.amount > 0 ? "credit-balance-pulse-gain" : "credit-balance-pulse-spend" : ""}`}
+            >
+              {money(detail?.account.balance || 0)}
+            </div>
+            {balanceAnimation && (
+              <div
+                key={balanceAnimation.id}
+                className={`pointer-events-none absolute left-[calc(100%+12px)] top-1/2 whitespace-nowrap text-[11px] font-mono font-semibold ${balanceAnimation.amount > 0 ? "credit-change-rise text-[#75D5A6]" : "credit-change-fall text-[#F195A2]"}`}
+                onAnimationEnd={() => setBalanceAnimation((current) => current?.id === balanceAnimation.id ? null : current)}
+              >
+                {signedMoney(balanceAnimation.amount)}
+              </div>
+            )}
+          </div>
+        </div>
         <div className="border-t border-[#283149] p-4 sm:border-r sm:border-t-0"><div className="text-[8px] uppercase" style={MUTED}>Recent Income</div><div className="mt-2 text-[18px] font-semibold text-[#75D5A6]">+{money(totals.income)}</div></div>
         <div className="border-t border-[#283149] p-4 sm:border-t-0"><div className="text-[8px] uppercase" style={MUTED}>Recent Expenses</div><div className="mt-2 text-[18px] font-semibold text-[#F195A2]">-{money(totals.spent)}</div></div>
       </section>

@@ -12,6 +12,14 @@ import {
   ITEM_WEIGHT_OPTIONS,
 } from "@/lib/weight-rules";
 import {
+  ITEM_EQUIPMENT_HANDS_KEY,
+  ITEM_EQUIPMENT_SLOTS_KEY,
+  ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
+  ITEM_WEAPON_DAMAGE_KEY,
+  isVersatileItem,
+  isWeaponItem,
+} from "@/lib/item-combat-rules";
+import {
   DM_DIVIDER,
   DM_LOCKED_BADGE,
   DM_PANEL_ALT,
@@ -48,6 +56,7 @@ import {
   WandSparkles,
   Dices,
   Play,
+  ChevronDown,
 } from "lucide-react";
 
 interface DMItemManagerSectionProps {
@@ -55,6 +64,7 @@ interface DMItemManagerSectionProps {
   managedItems: ManagedItem[];
   itemTags: TagDefinition[];
   onPersistItems: (next: ManagedItem[]) => Promise<void>;
+  onPersistTags?: (next: TagDefinition[]) => Promise<void>;
   creationOnly?: boolean;
   onCreatedItem?: (item: ManagedItem) => void;
   onCancelCreation?: () => void;
@@ -130,8 +140,9 @@ const EDITOR_PANELS: Array<{ id: ItemEditorPanel; label: string; icon: React.Com
   { id: "preview", label: "Preview", icon: Eye },
 ];
 
-const EQUIP_SLOT_PRESETS = [
-  { id: "weaponPair", label: "Weapon Pair", slots: ["weapon_l", "weapon_r"] },
+const EQUIP_SLOT_PRESETS: Array<{ id: string; label: string; slots: string[]; hands?: "1" | "2" }> = [
+  { id: "weaponPair", label: "One-Handed Weapon", slots: ["weapon_l", "weapon_r"], hands: "1" },
+  { id: "twoHandedWeapon", label: "Two-Handed Weapon", slots: ["weapon_l", "weapon_r"], hands: "2" },
   { id: "armorSet", label: "Armor Slot", slots: ["armor"] },
   { id: "trinket", label: "Accessory", slots: ["neck", "belt", "belt_slot"] },
   { id: "rings", label: "Ring", slots: ["ring"] },
@@ -231,8 +242,11 @@ const EQUIP_SLOT_OPTIONS = [
 ];
 
 const FIELD_KEYS = {
-  equipmentSlots: "Equipment::Slots",
+  equipmentSlots: ITEM_EQUIPMENT_SLOTS_KEY,
   equipmentSlotLegacy: "Equipment::Slot",
+  equipmentHands: ITEM_EQUIPMENT_HANDS_KEY,
+  weaponDamage: ITEM_WEAPON_DAMAGE_KEY,
+  weaponDamageAttribute: ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
   attributeName: "Attribute Buff::Attribute",
   attributeAmount: "Attribute Buff::Amount",
   skillName: "Skill Buff::Skill",
@@ -397,6 +411,16 @@ function buildDisplayFacts(item: ManagedItem) {
         displayValue = getAllowedSlots(item.customFields).map((slot) => slotLabels[slot] || slot).join(", ");
       }
 
+      if (key === FIELD_KEYS.equipmentHands) {
+        label = "Hands Required";
+        displayValue = value === "2" ? "Two-handed" : "One-handed";
+      }
+
+      if (key === FIELD_KEYS.weaponDamageAttribute) {
+        label = "Damage Attribute";
+        displayValue = value === "AGI" ? "Agility" : "Strength";
+      }
+
       if ([FIELD_KEYS.attributeAmount, FIELD_KEYS.skillAmount, FIELD_KEYS.resourceAmount].includes(key as any)) {
         const numeric = Number(value);
         if (!Number.isNaN(numeric) && numeric > 0) displayValue = `+${numeric}`;
@@ -437,7 +461,11 @@ function makeItemFromTemplate(template: ItemTemplateDef, itemTags: TagDefinition
   const tags = template.tags.filter((tag) => existingTagNames.has(tag));
   const customFields: Record<string, string> = {};
 
-  if (template.id === "weapon") customFields[FIELD_KEYS.equipmentSlots] = "weapon_l,weapon_r";
+  if (template.id === "weapon") {
+    customFields[FIELD_KEYS.equipmentSlots] = "weapon_l,weapon_r";
+    customFields[FIELD_KEYS.equipmentHands] = "1";
+    customFields[FIELD_KEYS.weaponDamageAttribute] = "STR";
+  }
   if (template.id === "armor") customFields[FIELD_KEYS.equipmentSlots] = "armor";
   if (template.id === "source") customFields[FIELD_KEYS.sourcePoints] = "";
   if (template.starterEffects) {
@@ -477,13 +505,19 @@ function getSuggestedTags(editingItem: ManagedItem | null, itemTags: TagDefiniti
   }).slice(0, 8);
 }
 
-export function DMItemManagerSection({ players, managedItems, itemTags, onPersistItems, creationOnly = false, onCreatedItem, onCancelCreation }: DMItemManagerSectionProps) {
+export function DMItemManagerSection({ players, managedItems, itemTags, onPersistItems, onPersistTags, creationOnly = false, onCreatedItem, onCancelCreation }: DMItemManagerSectionProps) {
   const [itemFilterTab, setItemFilterTab] = useState<string>("all");
   const [itemSearch, setItemSearch] = useState("");
   const [editingItem, setEditingItem] = useState<ManagedItem | null>(() => creationOnly ? makeItemFromTemplate(ITEM_TEMPLATES[0], itemTags) : null);
   const [isAddingNewItem, setIsAddingNewItem] = useState(creationOnly);
   const [editorPanel, setEditorPanel] = useState<ItemEditorPanel>("basics");
   const [tagSearch, setTagSearch] = useState("");
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagDescription, setNewTagDescription] = useState("");
+  const [tagSaveError, setTagSaveError] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
+  const [activeInfoFieldId, setActiveInfoFieldId] = useState<string | null>(null);
   const originalAssignedToRef = useRef<string[]>([]);
 
   const updateItemField = <K extends keyof ManagedItem>(key: K, value: ManagedItem[K]) => {
@@ -510,7 +544,24 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     if (!editingItem) return;
     const current = getAllowedSlots(editingItem.customFields);
     const next = checked ? [...current, slotId] : current.filter((slot) => slot !== slotId);
-    setEditingItem({ ...editingItem, customFields: setAllowedSlots(editingItem.customFields, next) });
+    const nextCustomFields = setAllowedSlots(editingItem.customFields, next);
+    if (
+      nextCustomFields[FIELD_KEYS.equipmentHands] === "2"
+      && (!next.includes("weapon_l") || !next.includes("weapon_r"))
+    ) {
+      nextCustomFields[FIELD_KEYS.equipmentHands] = "1";
+    }
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
+  };
+
+  const setEquipmentHands = (hands: "1" | "2") => {
+    if (!editingItem) return;
+    let nextCustomFields = { ...editingItem.customFields, [FIELD_KEYS.equipmentHands]: hands };
+    const allowedSlots = getAllowedSlots(nextCustomFields);
+    if (hands === "2") {
+      nextCustomFields = setAllowedSlots(nextCustomFields, [...allowedSlots, "weapon_l", "weapon_r"]);
+    }
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
   };
 
   const addEffectBlock = () => {
@@ -535,6 +586,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
       placement: "above",
     });
     setEditingItem({ ...editingItem, customFields: nextCustomFields });
+    setActiveInfoFieldId(nextId);
   };
 
   const addInfoFieldPreset = (preset: ItemInfoFieldPreset) => {
@@ -542,6 +594,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     const nextId = makeInfoFieldId(editingItem.customFields);
     const nextCustomFields = applyInfoFieldSeed(editingItem.customFields, nextId, preset.seed);
     setEditingItem({ ...editingItem, customFields: nextCustomFields });
+    setActiveInfoFieldId(nextId);
     setEditorPanel("details");
   };
 
@@ -557,8 +610,14 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
 
   const removeInfoField = (fieldId: string) => {
     if (!editingItem) return;
+    const fields = buildInfoFields(editingItem.customFields);
+    const removedIndex = fields.findIndex((field) => field.fieldId === fieldId);
     const keys = Object.keys(editingItem.customFields).filter((key) => key.startsWith(`${ITEM_INFO_PREFIX}${fieldId}::`));
     setEditingItem(deleteKeys(editingItem, keys));
+    if (activeInfoFieldId === fieldId) {
+      const remaining = fields.filter((field) => field.fieldId !== fieldId);
+      setActiveInfoFieldId(remaining[Math.min(Math.max(removedIndex, 0), remaining.length - 1)]?.fieldId || null);
+    }
   };
 
   const duplicateInfoField = (fieldId: string) => {
@@ -571,6 +630,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
       label: field.label ? `${field.label} Copy` : "Field Copy",
     });
     setEditingItem({ ...editingItem, customFields: nextCustomFields });
+    setActiveInfoFieldId(nextId);
   };
 
   const moveInfoField = (fieldId: string, direction: -1 | 1) => {
@@ -596,11 +656,15 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     });
 
     setEditingItem({ ...editingItem, customFields: preserved });
+    setActiveInfoFieldId(String(swapIndex + 1));
   };
 
-  const applyEquipSlotPreset = (slotIds: string[]) => {
+  const applyEquipSlotPreset = (slotIds: string[], hands?: string) => {
     if (!editingItem) return;
-    setEditingItem({ ...editingItem, customFields: setAllowedSlots(editingItem.customFields, slotIds) });
+    const nextCustomFields = setAllowedSlots(editingItem.customFields, slotIds);
+    if (hands) nextCustomFields[FIELD_KEYS.equipmentHands] = hands;
+    else delete nextCustomFields[FIELD_KEYS.equipmentHands];
+    setEditingItem({ ...editingItem, customFields: nextCustomFields });
     setEditorPanel("details");
   };
 
@@ -609,6 +673,53 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     const has = editingItem.tags.includes(tagName);
     const nextTags = has ? editingItem.tags.filter((tag) => tag !== tagName) : [...editingItem.tags, tagName];
     setEditingItem({ ...editingItem, tags: nextTags });
+  };
+
+  const resetTagCreator = () => {
+    setCreatingTag(false);
+    setNewTagName("");
+    setNewTagDescription("");
+    setTagSaveError("");
+  };
+
+  const createItemTag = async () => {
+    if (!editingItem || !onPersistTags || tagSaving) return;
+    const name = newTagName.trim();
+    if (!name) {
+      setTagSaveError("Enter a tag name.");
+      return;
+    }
+
+    const existing = itemTags.find((tag) => tag.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setEditingItem((current) => current && !current.tags.includes(existing.name)
+        ? { ...current, tags: [...current.tags, existing.name] }
+        : current);
+      resetTagCreator();
+      return;
+    }
+
+    const nextTag: TagDefinition = {
+      id: `itag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      description: newTagDescription.trim(),
+      fields: [],
+    };
+
+    setTagSaving(true);
+    setTagSaveError("");
+    try {
+      await onPersistTags([...itemTags, nextTag]);
+      setEditingItem((current) => current && !current.tags.includes(nextTag.name)
+        ? { ...current, tags: [...current.tags, nextTag.name] }
+        : current);
+      setTagSearch("");
+      resetTagCreator();
+    } catch (error) {
+      setTagSaveError(error instanceof Error ? error.message : "Tag could not be saved.");
+    } finally {
+      setTagSaving(false);
+    }
   };
 
   const startEditingItem = (item: ManagedItem) => {
@@ -622,6 +733,8 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     setIsAddingNewItem(false);
     setEditorPanel("basics");
     setTagSearch("");
+    setActiveInfoFieldId(getInfoFieldIds(item.customFields)[0] || null);
+    resetTagCreator();
   };
 
   const handleAddItem = (templateId: ItemTemplateId = "blank") => {
@@ -631,6 +744,8 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     setIsAddingNewItem(true);
     setEditorPanel("basics");
     setTagSearch("");
+    setActiveInfoFieldId(null);
+    resetTagCreator();
   };
 
   const duplicateAsNew = () => {
@@ -650,6 +765,8 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
   const handleCancelItemEdit = () => {
     setEditingItem(null);
     setIsAddingNewItem(false);
+    setActiveInfoFieldId(null);
+    resetTagCreator();
     onCancelCreation?.();
   };
 
@@ -779,6 +896,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
   const showResourceBuff = !!editingItem && ((editingItem.customFields[FIELD_KEYS.resourceName] || "").trim() || (editingItem.customFields[FIELD_KEYS.resourceAmount] || "").trim());
   const showDisadvantage = !!editingItem && !!(editingItem.customFields[FIELD_KEYS.disadvantageSkill] || "").trim();
   const showSource = !!editingItem && ((editingItem.customFields[FIELD_KEYS.sourcePoints] || "").trim() || editingItem.tags.some((tag) => /source/i.test(tag)));
+  const showWeaponData = isWeaponItem(editingItem);
 
   return (
     <div className="space-y-4">
@@ -1047,11 +1165,74 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
             <div className="space-y-4">
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)] gap-4">
                 <div>
-                  <label className="text-[10px] block mb-1" style={labelStyle}>Search Tags</label>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="text-[10px]" style={labelStyle}>Search Tags</label>
+                    {onPersistTags && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (creatingTag) resetTagCreator();
+                          else {
+                            setCreatingTag(true);
+                            setNewTagName(tagSearch.trim());
+                            setTagSaveError("");
+                          }
+                        }}
+                        className={`${retro.button} px-2 py-1 text-[9px] inline-flex items-center gap-1`}
+                        style={creatingTag ? S_RED : S_GREEN_BTN}
+                      >
+                        {creatingTag ? <X size={9} /> : <Plus size={9} />}
+                        {creatingTag ? "Cancel" : "Create Tag"}
+                      </button>
+                    )}
+                  </div>
                   <div className="relative mb-3">
                     <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2" style={S_MUTED} />
                     <input value={tagSearch} onChange={(e) => setTagSearch(e.target.value)} placeholder="Search item tags..." className={`${inputClass} pl-7`} style={inputStyle} />
                   </div>
+                  {creatingTag && (
+                    <div className={`${retro.raised} mb-3 bg-[#101038] p-3`}>
+                      <div className="grid grid-cols-1 md:grid-cols-[minmax(180px,0.7fr)_minmax(240px,1.3fr)_auto] gap-2 items-end">
+                        <div>
+                          <label className="text-[9px] block mb-1" style={labelStyle}>Tag Name</label>
+                          <input
+                            autoFocus
+                            value={newTagName}
+                            onChange={(event) => setNewTagName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") void createItemTag();
+                            }}
+                            placeholder="e.g. Versatile"
+                            className={inputClass}
+                            style={inputStyle}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] block mb-1" style={labelStyle}>Description</label>
+                          <input
+                            value={newTagDescription}
+                            onChange={(event) => setNewTagDescription(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") void createItemTag();
+                            }}
+                            placeholder="Optional tag meaning"
+                            className={inputClass}
+                            style={inputStyle}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void createItemTag()}
+                          disabled={tagSaving}
+                          className={`${retro.button} h-[34px] px-3 text-[10px] inline-flex items-center justify-center gap-1.5`}
+                          style={tagSaving ? S_MUTED : S_GREEN_BTN}
+                        >
+                          <Save size={10} /> {tagSaving ? "Saving..." : "Save Tag"}
+                        </button>
+                      </div>
+                      {tagSaveError && <div className="text-[10px] mt-2" style={S_RED}>{tagSaveError}</div>}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1.5">
                     {filteredEditorTags.map((tag) => {
                       const active = editingItem.tags.includes(tag.name);
@@ -1103,7 +1284,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {EQUIP_SLOT_PRESETS.map((preset) => (
-                      <button key={preset.id} onClick={() => applyEquipSlotPreset([...preset.slots])} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_ACCENT}>
+                      <button key={preset.id} onClick={() => applyEquipSlotPreset([...preset.slots], preset.hands)} className={`${retro.button} px-2 py-1 text-[9px]`} style={S_ACCENT}>
                         {preset.label}
                       </button>
                     ))}
@@ -1120,6 +1301,28 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                     );
                   })}
                 </div>
+                {showWeaponData && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#272752] pt-3">
+                    <span className="text-[10px] mr-1" style={labelStyle}>Hands Required</span>
+                    {(["1", "2"] as const).map((hands) => {
+                      const active = (editingItem.customFields[FIELD_KEYS.equipmentHands] || "1") === hands;
+                      return (
+                        <button
+                          key={hands}
+                          type="button"
+                          onClick={() => setEquipmentHands(hands)}
+                          className="px-3 py-1.5 text-[10px]"
+                          style={dmActiveBtn(active)}
+                        >
+                          {hands === "2" ? "Two-Handed" : "One-Handed"}
+                        </button>
+                      );
+                    })}
+                    {editingItem.customFields[FIELD_KEYS.equipmentHands] === "2" && (
+                      <span className="text-[9px]" style={S_MUTED}>Occupies both weapon slots when equipped.</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className={`${retro.raised} bg-[#0E0E35] p-3`}>
@@ -1128,6 +1331,38 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                   Use these structured fields for buffs, resources, and equipment behavior. Tags do not create fields anymore.
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {showWeaponData && (
+                    <div className="md:col-span-2 xl:col-span-3 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_220px] gap-3 border-b border-[#272752] pb-4">
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Weapon Damage Roll</label>
+                        <input
+                          type="text"
+                          value={editingItem.customFields[FIELD_KEYS.weaponDamage] || ""}
+                          onChange={(event) => updateItemCustomField(FIELD_KEYS.weaponDamage, event.target.value)}
+                          placeholder="e.g. 2d8 or 3d6+2"
+                          className={inputClass}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] block mb-1" style={labelStyle}>Damage Attribute</label>
+                        <select
+                          value={editingItem.customFields[FIELD_KEYS.weaponDamageAttribute] || "STR"}
+                          onChange={(event) => updateItemCustomField(FIELD_KEYS.weaponDamageAttribute, event.target.value)}
+                          className={inputClass}
+                          style={inputStyle}
+                        >
+                          <option value="STR">Strength</option>
+                          <option value="AGI">Agility</option>
+                        </select>
+                      </div>
+                      {isVersatileItem(editingItem) && (
+                        <div className="md:col-span-2 text-[9px]" style={S_ACCENT}>
+                          Versatile uses the higher effective Strength or Agility modifier when the player rolls damage.
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Attribute Buff</label>
                     <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
@@ -1207,17 +1442,27 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                   <div className="text-[11px]" style={S_MUTED}>No information fields yet.</div>
                 ) : (
                   <div className="space-y-4">
-                    {infoFields.map((field, index) => (
+                    {infoFields.map((field, index) => {
+                      const expanded = (activeInfoFieldId || infoFields[0]?.fieldId) === field.fieldId;
+                      return (
                       <div key={field.fieldId} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
                         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-                          <div style={DISPLAY_CONTENTS}>
-                            <div className="text-[10px]" style={S_SECTION_HDR}>FIELD #{index + 1}</div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveInfoFieldId(field.fieldId)}
+                            className="min-w-0 text-left inline-flex items-start gap-2"
+                            aria-expanded={expanded}
+                          >
+                            <ChevronDown size={12} className="mt-0.5 shrink-0 transition-transform" style={{ ...S_ACCENT, transform: expanded ? "rotate(0deg)" : "rotate(-90deg)" }} />
+                            <span className="min-w-0">
+                              <span className="text-[10px] block" style={S_SECTION_HDR}>FIELD #{index + 1}: {field.label || "New Field"}</span>
                             <div className="flex flex-wrap gap-1.5 mt-1">
                               {field.rollExpression && <span className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}><Dices size={8} className="inline mr-1" />Dice</span>}
                               {field.equippedEffect && <span className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}><Sparkles size={8} className="inline mr-1" />Equipped</span>}
                               {field.trackerMode && <span className="text-[8px] px-1.5 py-0.5" style={DM_TAG_BADGE}><Play size={8} className="inline mr-1" />{field.trackerMode === "ability" ? "Card" : "Status"}</span>}
                             </div>
-                          </div>
+                            </span>
+                          </button>
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => moveInfoField(field.fieldId, -1)} disabled={index === 0} className={`${retro.button} px-2 py-1 text-[9px]`} style={index === 0 ? S_MUTED : S_TEXT}>Up</button>
                             <button onClick={() => moveInfoField(field.fieldId, 1)} disabled={index === infoFields.length - 1} className={`${retro.button} px-2 py-1 text-[9px]`} style={index === infoFields.length - 1 ? S_MUTED : S_TEXT}>Down</button>
@@ -1226,6 +1471,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                           </div>
                         </div>
 
+                        {expanded && <>
                         <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_160px] gap-3 mb-3">
                           <div>
                             <label className="text-[10px] block mb-1" style={labelStyle}>Field Label</label>
@@ -1345,8 +1591,10 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                             </>
                           )}
                         </div>
+                        </>}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
