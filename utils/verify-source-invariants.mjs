@@ -141,6 +141,8 @@ assert.match(personalFiles, /resolveWeaponDamageAttribute\(item, effectiveStats\
 assert.match(personalFiles, /renderWeaponDamageRoll\(item\)/);
 assert.match(personalFiles, /assignToSlot\(assigningSlot, item\.id, isWeaponSlot && is2H \? true : undefined\)/);
 assert.match(personalFiles, /renderWeaponDamageRoll\(item, true\)/);
+assert.match(personalFiles, /renderWeaponDamageRoll\(item, true, true\)/);
+assert.match(personalFiles, /aria-label=\{iconOnly \? actionLabel : undefined\}/);
 assert.doesNotMatch(personalFiles, /Core stats, current resources|Browse every carried item with the normal search/);
 assert.match(itemCombatRules, /"STR" \| "AGI" \| "CON" \| "KNOW" \| "WIS" \| "WILL"/);
 assert.match(itemCombatRules, /Boolean\(getWeaponDamageInfoFieldId\(item\)\)/);

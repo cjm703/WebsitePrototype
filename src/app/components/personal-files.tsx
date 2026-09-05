@@ -2689,7 +2689,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     );
   }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
 
-  const renderWeaponDamageRoll = useCallback((item: ManagedItem, compact = false) => {
+  const renderWeaponDamageRoll = useCallback((item: ManagedItem, compact = false, iconOnly = false) => {
     if (!isWeaponItem(item)) return null;
     const storedDamage = getWeaponDamageExpression(item);
     const damageExpression = extractDiceExpressions(storedDamage)[0] || "";
@@ -2716,16 +2716,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const displayedDamage = stripHtml(getWeaponDamageDisplay(item));
 
     return (
-      <div className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : "mb-3"}`}>
+      <div className={`flex flex-wrap items-center gap-2 ${compact && !iconOnly ? "mt-1" : iconOnly ? "" : "mb-3"}`}>
         <button
           type="button"
           onClick={() => handleInlineDiceRoll(rollKey, resolvedExpression)}
-          className={`${retro.button} inline-flex items-center gap-1.5 ${compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
+          className={`${retro.button} inline-flex items-center justify-center gap-1.5 ${iconOnly ? "h-7 w-7 p-0" : compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
           style={{ color: "#FFD166" }}
           title={`${displayedDamage || storedDamage} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
+          aria-label={iconOnly ? actionLabel : undefined}
         >
           <Dices size={compact ? 9 : 12} />
-          {compact ? actionLabel : `${actionLabel} - ${attributeLabel}${versatile ? " (Versatile)" : ""}`}
+          {!iconOnly && (compact ? actionLabel : `${actionLabel} - ${attributeLabel}${versatile ? " (Versatile)" : ""}`)}
         </button>
         {!compact && (
           <span className="text-[9px]" style={S_MUTED}>
@@ -4404,7 +4405,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               const infoFields = getItemInfoFields(item.customFields || {});
               const allowedSlots = getAllowedEquipSlots(item.customFields || {});
               const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
-              const quickRollCount = getQuickRollSlots(item.customFields || {}).filter((slot) => slot.expression.trim()).length + infoFields.filter((field) => field.rollExpression.trim()).length;
+              const hasWeaponDamageRoll = isWeaponItem(item) && extractDiceExpressions(getWeaponDamageExpression(item)).length > 0;
+              const nonDamageInfoRollCount = infoFields.filter((field) => {
+                const isDamageField = field.weaponDamage || field.label.trim().toLowerCase() === "damage";
+                return !isDamageField && field.rollExpression.trim();
+              }).length;
+              const quickRollCount = getQuickRollSlots(item.customFields || {}).filter((slot) => slot.expression.trim()).length
+                + nonDamageInfoRollCount
+                + (hasWeaponDamageRoll ? 1 : 0);
               const trackerCount = infoFields.filter((field) => field.trackerMode).length;
               const equippedEffectCount = infoFields.filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()).length;
               const itemWeight = getItemWeightValue(item);
@@ -4482,6 +4490,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       </div>
                     </button>
                     <div className="flex items-center gap-0.5 shrink-0 pt-1">
+                      {hasWeaponDamageRoll && renderWeaponDamageRoll(item, true, true)}
                       {opts?.onEdit && (
                         <button onClick={opts.onEdit} className="px-2 py-1 hover:opacity-80" title="Edit this item">
                           <Edit size={13} style={{ color: "#5A9AFF" }} />
