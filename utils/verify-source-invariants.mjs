@@ -145,6 +145,9 @@ assert.match(personalFiles, /aria-label=\{iconOnly \? actionLabel : undefined\}/
 assert.match(personalFiles, /return renderItemRow\(item, \(\) => setSelectedItem\(item\), \{/);
 assert.match(itemCombatRules, /WEAPON_TYPE_PATTERN/);
 assert.match(itemCombatRules, /getFallbackDamageValue/);
+assert.match(itemCombatRules, /export function extractDiceExpressions/);
+assert.match(personalFiles, /const hasWeaponDamageRoll = isWeaponItem\(item\) && Boolean\(getWeaponDamageExpression\(item\)\)/);
+assert.doesNotMatch(personalFiles, /function extractDiceExpressions/);
 assert.doesNotMatch(personalFiles, /Core stats, current resources|Browse every carried item with the normal search/);
 assert.match(itemCombatRules, /"STR" \| "AGI" \| "CON" \| "KNOW" \| "WIS" \| "WILL"/);
 assert.match(itemCombatRules, /Boolean\(getWeaponDamageInfoFieldId\(item\)\)/);

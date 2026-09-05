@@ -44,6 +44,7 @@ import {
   ITEM_INFO_WEAPON_DAMAGE_KEY,
   ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
   ITEM_WEAPON_DAMAGE_KEY,
+  extractDiceExpressions,
   getWeaponDamageAttribute,
   getWeaponDamageDisplay,
   getWeaponDamageExpression,
@@ -517,21 +518,6 @@ function getAllTags(items: { tags: string[] }[]): string[] {
 function stripHtml(value: string): string {
   return value.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
 }
-
-function extractDiceExpressions(value: string): string[] {
-  const plain = stripHtml(value);
-  const matches = plain.match(/(?:(?:\d*d\d+|P)(?:\s*(?:[+\-*/]\s*)(?:\d*d\d+|\d+|P))*)/gi) || [];
-  const unique: string[] = [];
-
-  matches.forEach((match) => {
-    const cleaned = match.replace(/\s+/g, " ").trim();
-    if (!cleaned || !hasDiceNotation(cleaned) || unique.includes(cleaned)) return;
-    unique.push(cleaned);
-  });
-
-  return unique;
-}
-
 
 function getQuickRollSlots(customFields: Record<string, string> | null | undefined): QuickRollSlot[] {
   const entries = customFields || {};
@@ -2466,6 +2452,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const infoFields = getItemInfoFields(item.customFields || {});
     const weaponDamage = getWeaponDamageExpression(item);
     const weaponDamageDisplay = getWeaponDamageDisplay(item);
+    const hasStructuredWeaponDamage = infoFields.some((field) => isWeaponItem(item)
+      && (field.weaponDamage || field.label.trim().toLowerCase() === "damage"));
     const effectKeys = Object.keys(item.customFields ?? {})
       .filter((key) => key.startsWith("Effect::") && item.customFields[key]?.trim())
       .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
@@ -2513,6 +2501,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const hasLoreFields = infoFields.some((field) => !isMechanicalItemInfoField(field))
       || Object.keys(item.customFields || {}).some((key) => !isPlayerHiddenCustomFieldKey(key) && !isMechanicalCustomField(key) && !key.startsWith("Effect::"));
     const hasMechanics = infoFields.some(isMechanicalItemInfoField)
+      || Boolean(weaponDamage)
       || effectKeys.length > 0
       || getQuickRollSlots(item.customFields || {}).some((slot) => slot.expression.trim())
       || Object.keys(item.customFields || {}).some((key) => !summaryExcludedKeys.has(key) && !isPlayerHiddenCustomFieldKey(key) && isMechanicalCustomField(key) && !key.startsWith("Effect::"));
@@ -2602,6 +2591,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#C4A0FF", fontWeight: 700 }}>
                 <Sword size={12} /> Gameplay
               </div>
+              {weaponDamage && !hasStructuredWeaponDamage && (
+                <div className="mb-3 border-l-2 py-1 pl-3" style={{ borderColor: "#B38A35" }}>
+                  {renderWeaponDamageRoll(item)}
+                </div>
+              )}
               {renderItemInfoFields(item, "mechanics")}
               {renderStoredQuickRollButtons(item.customFields || {}, `item:${item.id}:quick`, "")}
               {effectKeys.length > 0 && (
@@ -2691,8 +2685,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const renderWeaponDamageRoll = useCallback((item: ManagedItem, compact = false, iconOnly = false) => {
     if (!isWeaponItem(item)) return null;
-    const storedDamage = getWeaponDamageExpression(item);
-    const damageExpression = extractDiceExpressions(storedDamage)[0] || "";
+    const damageExpression = getWeaponDamageExpression(item);
     if (!damageExpression) return null;
 
     const effectiveStats: Record<WeaponDamageAttribute, number> = {
@@ -2720,12 +2713,14 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         <button
           type="button"
           onClick={() => handleInlineDiceRoll(rollKey, resolvedExpression)}
-          className={`${retro.button} inline-flex items-center justify-center gap-1.5 ${iconOnly ? "h-7 w-7 p-0" : compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
-          style={{ color: "#FFD166" }}
-          title={`${displayedDamage || storedDamage} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
+          className={`${retro.button} inline-flex items-center justify-center gap-1.5 ${iconOnly ? "h-9 w-9 p-0" : compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
+          style={iconOnly
+            ? { color: "#FFD166", background: "rgba(68, 48, 8, 0.9)", border: "1px solid #9B7A28", boxShadow: "inset 0 0 0 1px rgba(255, 209, 102, 0.14)" }
+            : { color: "#FFD166" }}
+          title={`${displayedDamage || damageExpression} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
           aria-label={iconOnly ? actionLabel : undefined}
         >
-          <Dices size={compact ? 9 : 12} />
+          <Dices size={iconOnly ? 15 : compact ? 10 : 13} />
           {!iconOnly && (compact ? actionLabel : `${actionLabel} - ${attributeLabel}${versatile ? " (Versatile)" : ""}`)}
         </button>
         {!compact && (
@@ -4411,7 +4406,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               const infoFields = getItemInfoFields(item.customFields || {});
               const allowedSlots = getAllowedEquipSlots(item.customFields || {});
               const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
-              const hasWeaponDamageRoll = isWeaponItem(item) && extractDiceExpressions(getWeaponDamageExpression(item)).length > 0;
+              const hasWeaponDamageRoll = isWeaponItem(item) && Boolean(getWeaponDamageExpression(item));
               const nonDamageInfoRollCount = infoFields.filter((field) => {
                 const isDamageField = field.weaponDamage || field.label.trim().toLowerCase() === "damage";
                 return !isDamageField && field.rollExpression.trim();
@@ -4439,7 +4434,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   <div className="flex items-start gap-3">
                     <button
                       onClick={onClick}
-                      className="flex-1 text-left hover:opacity-95 transition-opacity cursor-pointer"
+                      className="min-w-0 flex-1 text-left hover:opacity-95 transition-opacity cursor-pointer"
                     >
                       <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
                         <div>

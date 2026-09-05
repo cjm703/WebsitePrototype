@@ -66,6 +66,20 @@ function firstDiceExpression(value: string) {
   return value.match(/\b\d*d\d+(?:\s*[+-]\s*\d+)?\b/i)?.[0]?.replace(/\s+/g, "") || "";
 }
 
+export function extractDiceExpressions(value: string): string[] {
+  const plain = String(value || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const matches = plain.match(/\b(?:\d*d\d+|Pd\d+|P)(?:\s*(?:[+\-*/]\s*)(?:\d*d\d+|Pd\d+|\d+|P))*\b/gi) || [];
+  return matches.reduce<string[]>((expressions, match) => {
+    const cleaned = match.replace(/\s+/g, " ").trim();
+    if (cleaned && !expressions.includes(cleaned)) expressions.push(cleaned);
+    return expressions;
+  }, []);
+}
+
 function getFallbackDamageValue(item: CombatItemLike | null | undefined) {
   const fields = item?.customFields || {};
   const candidate = Object.entries(fields).find(([key, rawValue]) => {

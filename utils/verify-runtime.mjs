@@ -309,6 +309,9 @@ async function testItemCombatRules() {
   assert.equal(rules.isWeaponItem(legacyFirearm), true);
   assert.equal(rules.getWeaponDamageExpression(legacyFirearm), "3d6");
   assert.match(rules.getWeaponDamageDisplay(legacyFirearm), /3d6 piercing damage/);
+  assert.deepEqual(rules.extractDiceExpressions("Damage: 3d6 piercing / 2d6 distant"), ["3d6", "2d6"]);
+  assert.deepEqual(rules.extractDiceExpressions("Roll <b>3d6 + 2</b> damage"), ["3d6 + 2"]);
+  assert.deepEqual(rules.extractDiceExpressions("No roll configured"), []);
 }
 
 async function testOfficeBusinessMapState() {
