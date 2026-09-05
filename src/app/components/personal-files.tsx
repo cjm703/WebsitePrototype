@@ -40,10 +40,15 @@ import {
 } from "@/lib/weight-rules";
 import {
   ITEM_EQUIPMENT_HANDS_KEY,
+  ITEM_INFO_DAMAGE_ATTRIBUTE_KEY,
+  ITEM_INFO_WEAPON_DAMAGE_KEY,
   ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
   ITEM_WEAPON_DAMAGE_KEY,
   getWeaponDamageAttribute,
+  getWeaponDamageDisplay,
   getWeaponDamageExpression,
+  getWeaponDamageRollLabel,
+  isWeaponItem,
   isTwoHandedItem as itemUsesTwoHands,
   isVersatileItem,
   resolveWeaponDamageAttribute,
@@ -165,7 +170,7 @@ const PLAYER_DETAIL_HIDDEN_TAGS = new Set([
   USE_BUTTON_ENABLED_TAG.toLowerCase(),
 ]);
 
-const ITEM_MECHANICS_LABEL_PATTERN = /\b(damage|armor|defen[cs]e|protection|range|charge|capacity|ammunition|ammo|condition|duration|healing|bonus|save|attack|accuracy|critical|resistance|reload|shot|effect|tracker|potency|buff|penalty|speed|movement|source points?)\b/i;
+const ITEM_MECHANICS_LABEL_PATTERN = /\b(weapon type|damage|armor|defen[cs]e|protection|range|charge|capacity|ammunition|ammo|condition|duration|healing|bonus|save|attack|accuracy|critical|resistance|reload|shot|effect|tracker|potency|buff|penalty|speed|movement|source points?)\b/i;
 
 function getPlayerFacingDetailTags(tags: string[], formatter: (tag: string) => string = (tag) => tag): string[] {
   const seen = new Set<string>();
@@ -205,6 +210,8 @@ interface ItemInfoField {
   trackerBuffType: "attribute" | "skill" | "resource" | "";
   trackerBuffTarget: string;
   trackerBuffValue: string;
+  weaponDamage: boolean;
+  damageAttribute: "" | "STR" | "AGI";
 }
 
 function isMechanicalItemInfoField(field: ItemInfoField): boolean {
@@ -566,6 +573,10 @@ function getItemInfoFields(customFields: Record<string, string> | null | undefin
     trackerBuffType: (entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_TYPE_KEY)] || "") as "attribute" | "skill" | "resource" | "",
     trackerBuffTarget: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_TARGET_KEY)] || "",
     trackerBuffValue: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_TRACKER_BUFF_VALUE_KEY)] || "",
+    weaponDamage: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_WEAPON_DAMAGE_KEY)] === "1",
+    damageAttribute: entries[getItemInfoFieldKey(fieldId, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)] === "AGI"
+      ? "AGI"
+      : entries[getItemInfoFieldKey(fieldId, ITEM_INFO_DAMAGE_ATTRIBUTE_KEY)] === "STR" ? "STR" : "",
   }));
 }
 
@@ -2541,6 +2552,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const allowedSlots = getAllowedEquipSlots(item.customFields || {});
     const infoFields = getItemInfoFields(item.customFields || {});
     const weaponDamage = getWeaponDamageExpression(item);
+    const weaponDamageDisplay = getWeaponDamageDisplay(item);
     const effectKeys = Object.keys(item.customFields ?? {})
       .filter((key) => key.startsWith("Effect::") && item.customFields[key]?.trim())
       .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
@@ -2564,11 +2576,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       summaryExcludedKeys.add(EQUIPMENT_SLOTS_KEY);
       summaryExcludedKeys.add("Equipment::Slot");
     }
-    if (weaponDamage) {
+    if (weaponDamage || weaponDamageDisplay) {
       const damageAttribute = isVersatileItem(item)
         ? "Higher of Strength / Agility"
         : getWeaponDamageAttribute(item) === "AGI" ? "Agility" : "Strength";
-      addFact("Damage", weaponDamage, ITEM_WEAPON_DAMAGE_KEY);
+      addFact("Damage", weaponDamageDisplay || weaponDamage, ITEM_WEAPON_DAMAGE_KEY);
       addFact("Damage Stat", damageAttribute, ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY);
       summaryExcludedKeys.add(ITEM_EQUIPMENT_HANDS_KEY);
       summaryExcludedKeys.add(ITEM_WEAPON_DAMAGE_KEY);
@@ -2677,7 +2689,6 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#C4A0FF", fontWeight: 700 }}>
                 <Sword size={12} /> Gameplay
               </div>
-              {renderWeaponDamageRoll(item)}
               {renderItemInfoFields(item, "mechanics")}
               {renderStoredQuickRollButtons(item.customFields || {}, `item:${item.id}:quick`, "")}
               {effectKeys.length > 0 && (
@@ -2766,6 +2777,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   }, [handleInlineDiceRoll, inlineDiceRollResults, theme.accentColor]);
 
   const renderWeaponDamageRoll = useCallback((item: ManagedItem, compact = false) => {
+    if (!isWeaponItem(item)) return null;
     const storedDamage = getWeaponDamageExpression(item);
     const damageExpression = extractDiceExpressions(storedDamage)[0] || "";
     if (!damageExpression) return null;
@@ -2783,6 +2795,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const rollKey = `weapon-damage:${item.id}:${attribute}:${modifier}`;
     const result = inlineDiceRollResults[rollKey];
     const attributeLabel = attribute === "AGI" ? "Agility" : "Strength";
+    const actionLabel = getWeaponDamageRollLabel(item);
+    const displayedDamage = stripHtml(getWeaponDamageDisplay(item));
 
     return (
       <div className={`flex flex-wrap items-center gap-2 ${compact ? "mt-1" : "mb-3"}`}>
@@ -2791,10 +2805,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           onClick={() => handleInlineDiceRoll(rollKey, resolvedExpression)}
           className={`${retro.button} inline-flex items-center gap-1.5 ${compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
           style={{ color: "#FFD166" }}
-          title={`${storedDamage} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
+          title={`${displayedDamage || storedDamage} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
         >
           <Dices size={compact ? 9 : 12} />
-          {compact ? "Roll Damage" : `Roll Damage · ${attributeLabel}${versatile ? " (Versatile)" : ""}`}
+          {compact ? actionLabel : `${actionLabel} - ${attributeLabel}${versatile ? " (Versatile)" : ""}`}
         </button>
         {!compact && (
           <span className="text-[9px]" style={S_MUTED}>
@@ -2897,6 +2911,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           const rollExpression = field.rollExpression.trim();
           const rollPotency = field.rollPotency.trim();
           const canApplyTracker = !!field.trackerMode;
+          const isWeaponDamageField = isWeaponItem(item)
+            && (field.weaponDamage || field.label.trim().toLowerCase() === "damage");
           return (
             <div key={field.fieldId} className="border-l-2 pl-3 py-1" style={{ borderColor: section === "mechanics" ? "#7D64C6" : "#42649B" }}>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -2919,7 +2935,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               )}
               {rollExpression && (
                 <div className="mt-2">
-                  {renderDiceRollControls(`item:${item.id}:info-field:${field.fieldId}`, rollExpression, rollPotency || "")}
+                  {isWeaponDamageField
+                    ? renderWeaponDamageRoll(item)
+                    : renderDiceRollControls(`item:${item.id}:info-field:${field.fieldId}`, rollExpression, rollPotency || "")}
                 </div>
               )}
             </div>
@@ -2927,7 +2945,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         })}
       </div>
     );
-  }, [applyItemInfoTracker, renderDiceRollControls, theme.inputBg, theme.textColor]);
+  }, [applyItemInfoTracker, renderDiceRollControls, renderWeaponDamageRoll, theme.inputBg, theme.textColor]);
 
   const handleUseCard = (card: ManagedCard) => {
     const isUseButtonEnabled = hasUseButtonEnabledTag(card);

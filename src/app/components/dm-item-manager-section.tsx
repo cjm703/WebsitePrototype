@@ -14,6 +14,8 @@ import {
 import {
   ITEM_EQUIPMENT_HANDS_KEY,
   ITEM_EQUIPMENT_SLOTS_KEY,
+  ITEM_INFO_DAMAGE_ATTRIBUTE_KEY,
+  ITEM_INFO_WEAPON_DAMAGE_KEY,
   ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
   ITEM_WEAPON_DAMAGE_KEY,
   isVersatileItem,
@@ -108,6 +110,8 @@ interface ItemInfoField {
   trackerBuffType: TrackerBuffType;
   trackerBuffTarget: string;
   trackerBuffValue: string;
+  weaponDamage: boolean;
+  damageAttribute: "" | "STR" | "AGI";
 }
 
 interface ItemInfoFieldPreset {
@@ -158,8 +162,10 @@ const ITEM_INFO_FIELD_PRESETS: ItemInfoFieldPreset[] = [
     seed: {
       label: "Damage",
       placement: "above",
-      rollLabel: "Roll Damage",
-      rollExpression: "1d6+P",
+      rollLabel: "Use / Roll Damage",
+      rollExpression: "1d6",
+      weaponDamage: true,
+      damageAttribute: "STR",
     },
   },
   {
@@ -219,6 +225,31 @@ const ITEM_INFO_FIELD_PRESETS: ItemInfoFieldPreset[] = [
   },
 ] as const;
 
+const WEAPON_INFO_FIELD_SEEDS: Array<Partial<ItemInfoField>> = [
+  { label: "Weapon Type", placement: "above" },
+  {
+    label: "Damage",
+    placement: "above",
+    rollLabel: "Use / Roll Damage",
+    rollExpression: "1d6",
+    weaponDamage: true,
+    damageAttribute: "STR",
+  },
+  { label: "Range", placement: "above" },
+  { label: "Reload", placement: "above" },
+  { label: "Capacity", placement: "above" },
+  { label: "Ammunition", placement: "above" },
+];
+
+const INFO_FIELD_CONTENT_PLACEHOLDERS: Record<string, string> = {
+  "weapon type": "Firearm (Ranged, Two-Handed, Shotgun)",
+  damage: "3d6 piercing damage (10 ft) / 2d6 (20 ft) / 1d6 (30 ft)",
+  range: "30 ft / 90 ft (Disadvantage beyond 30 ft)",
+  reload: "2 shots (requires an action to reload both barrels)",
+  capacity: "2 shots before reloading",
+  ammunition: "Just about any type of bullet that can fit within the barrel",
+};
+
 const rarities = ["Common", "Uncommon", "Rare", "Very Rare", "Legendary"];
 const ATTRS = ["STR", "AGI", "CON", "KNOW", "WIS", "WILL"];
 const ALL_SKILLS = ["Athletics", "Grappling", "Acrobatics", "Sleight of Hand", "Stealth", "Endurance", "Shock", "History", "Investigation", "Arcana", "Religion", "Medicine", "Nature", "Technology/Tinkering", "Perception", "Insight", "Survival", "Persuasion", "Charm", "Control", "Clear Mind"];
@@ -276,6 +307,8 @@ const INFO_TRACKER_DESCRIPTION = "Tracker Description";
 const INFO_TRACKER_BUFF_TYPE = "Tracker Buff Type";
 const INFO_TRACKER_BUFF_TARGET = "Tracker Buff Target";
 const INFO_TRACKER_BUFF_VALUE = "Tracker Buff Value";
+const INFO_WEAPON_DAMAGE = ITEM_INFO_WEAPON_DAMAGE_KEY;
+const INFO_DAMAGE_ATTRIBUTE = ITEM_INFO_DAMAGE_ATTRIBUTE_KEY;
 
 function rarityColor(r: string) {
   switch (r) {
@@ -351,6 +384,10 @@ function buildInfoFields(customFields: Record<string, string>): ItemInfoField[] 
     trackerBuffType: (customFields[getInfoFieldKey(fieldId, INFO_TRACKER_BUFF_TYPE)] || "") as TrackerBuffType,
     trackerBuffTarget: customFields[getInfoFieldKey(fieldId, INFO_TRACKER_BUFF_TARGET)] || "",
     trackerBuffValue: customFields[getInfoFieldKey(fieldId, INFO_TRACKER_BUFF_VALUE)] || "",
+    weaponDamage: customFields[getInfoFieldKey(fieldId, INFO_WEAPON_DAMAGE)] === "1",
+    damageAttribute: customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] === "AGI"
+      ? "AGI"
+      : customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] === "STR" ? "STR" : "",
   }));
 }
 
@@ -380,6 +417,8 @@ function applyInfoFieldSeed(customFields: Record<string, string>, fieldId: strin
   setValue(INFO_TRACKER_BUFF_TYPE, seed.trackerBuffType || "");
   setValue(INFO_TRACKER_BUFF_TARGET, seed.trackerBuffTarget || "");
   setValue(INFO_TRACKER_BUFF_VALUE, seed.trackerBuffValue || "");
+  setValue(INFO_WEAPON_DAMAGE, seed.weaponDamage || false);
+  setValue(INFO_DAMAGE_ATTRIBUTE, seed.damageAttribute || "");
   return next;
 }
 
@@ -388,6 +427,30 @@ function makeInfoFieldId(customFields: Record<string, string>) {
     .map((fieldId) => parseInt(fieldId, 10))
     .reduce((highest, value) => (Number.isNaN(value) ? highest : Math.max(highest, value)), 0) + 1;
   return String(nextIndex);
+}
+
+function extractFirstDiceExpression(value: string) {
+  return value.match(/\b\d*d\d+(?:\s*[+-]\s*\d+)?\b/i)?.[0]?.replace(/\s+/g, "") || "";
+}
+
+function migrateLegacyWeaponDamage(item: ManagedItem) {
+  const legacyDamage = (item.customFields[FIELD_KEYS.weaponDamage] || "").trim();
+  const hasDamageInfoField = buildInfoFields(item.customFields).some((field) => field.weaponDamage || field.label.trim().toLowerCase() === "damage");
+  if (!legacyDamage || hasDamageInfoField) return item;
+
+  const fieldId = makeInfoFieldId(item.customFields);
+  const nextCustomFields = applyInfoFieldSeed(item.customFields, fieldId, {
+    label: "Damage",
+    content: legacyDamage,
+    placement: "above",
+    rollLabel: "Use / Roll Damage",
+    rollExpression: extractFirstDiceExpression(legacyDamage),
+    weaponDamage: true,
+    damageAttribute: item.customFields[FIELD_KEYS.weaponDamageAttribute] === "AGI" ? "AGI" : "STR",
+  });
+  delete nextCustomFields[FIELD_KEYS.weaponDamage];
+  delete nextCustomFields[FIELD_KEYS.weaponDamageAttribute];
+  return { ...item, customFields: nextCustomFields };
 }
 
 function deleteKeys(item: ManagedItem, keys: string[]) {
@@ -459,12 +522,15 @@ function stripUnusedCustomFields(item: ManagedItem) {
 function makeItemFromTemplate(template: ItemTemplateDef, itemTags: TagDefinition[]): ManagedItem {
   const existingTagNames = new Set(itemTags.map((tag) => tag.name));
   const tags = template.tags.filter((tag) => existingTagNames.has(tag));
-  const customFields: Record<string, string> = {};
+  let customFields: Record<string, string> = {};
 
   if (template.id === "weapon") {
     customFields[FIELD_KEYS.equipmentSlots] = "weapon_l,weapon_r";
     customFields[FIELD_KEYS.equipmentHands] = "1";
-    customFields[FIELD_KEYS.weaponDamageAttribute] = "STR";
+    WEAPON_INFO_FIELD_SEEDS.forEach((seed) => {
+      const fieldId = makeInfoFieldId(customFields);
+      customFields = applyInfoFieldSeed(customFields, fieldId, seed);
+    });
   }
   if (template.id === "armor") customFields[FIELD_KEYS.equipmentSlots] = "armor";
   if (template.id === "source") customFields[FIELD_KEYS.sourcePoints] = "";
@@ -598,6 +664,28 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
     setEditorPanel("details");
   };
 
+  const addWeaponInfoFields = () => {
+    if (!editingItem) return;
+    const migratedItem = migrateLegacyWeaponDamage(editingItem);
+    let nextCustomFields = { ...migratedItem.customFields };
+    const existingLabels = new Set(buildInfoFields(nextCustomFields).map((field) => field.label.trim().toLowerCase()));
+    const addedFieldIds: string[] = [];
+
+    WEAPON_INFO_FIELD_SEEDS.forEach((seed) => {
+      const label = seed.label?.trim().toLowerCase() || "";
+      if (label && existingLabels.has(label)) return;
+      const nextId = makeInfoFieldId(nextCustomFields);
+      nextCustomFields = applyInfoFieldSeed(nextCustomFields, nextId, seed);
+      addedFieldIds.push(nextId);
+      if (label) existingLabels.add(label);
+    });
+
+    setEditingItem({ ...migratedItem, customFields: nextCustomFields });
+    const damageField = buildInfoFields(nextCustomFields).find((field) => field.weaponDamage || field.label.trim().toLowerCase() === "damage");
+    setActiveInfoFieldId(addedFieldIds[0] || damageField?.fieldId || null);
+    setEditorPanel("details");
+  };
+
   const updateInfoField = (fieldId: string, key: string, value: string | boolean) => {
     if (!editingItem) return;
     const nextCustomFields = { ...editingItem.customFields };
@@ -723,17 +811,18 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
   };
 
   const startEditingItem = (item: ManagedItem) => {
+    const normalizedItem = migrateLegacyWeaponDamage(item);
     originalAssignedToRef.current = [...item.assignedTo];
     setEditingItem({
-      ...item,
+      ...normalizedItem,
       weightTier: getItemWeightTier(item) ?? "M",
       weightValue: getItemWeightValue(item) ?? 1,
-      customFields: { ...item.customFields },
+      customFields: { ...normalizedItem.customFields },
     });
     setIsAddingNewItem(false);
     setEditorPanel("basics");
     setTagSearch("");
-    setActiveInfoFieldId(getInfoFieldIds(item.customFields)[0] || null);
+    setActiveInfoFieldId(getInfoFieldIds(normalizedItem.customFields)[0] || null);
     resetTagCreator();
   };
 
@@ -1331,38 +1420,6 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                   Use these structured fields for buffs, resources, and equipment behavior. Tags do not create fields anymore.
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {showWeaponData && (
-                    <div className="md:col-span-2 xl:col-span-3 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_220px] gap-3 border-b border-[#272752] pb-4">
-                      <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Weapon Damage Roll</label>
-                        <input
-                          type="text"
-                          value={editingItem.customFields[FIELD_KEYS.weaponDamage] || ""}
-                          onChange={(event) => updateItemCustomField(FIELD_KEYS.weaponDamage, event.target.value)}
-                          placeholder="e.g. 2d8 or 3d6+2"
-                          className={inputClass}
-                          style={inputStyle}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] block mb-1" style={labelStyle}>Damage Attribute</label>
-                        <select
-                          value={editingItem.customFields[FIELD_KEYS.weaponDamageAttribute] || "STR"}
-                          onChange={(event) => updateItemCustomField(FIELD_KEYS.weaponDamageAttribute, event.target.value)}
-                          className={inputClass}
-                          style={inputStyle}
-                        >
-                          <option value="STR">Strength</option>
-                          <option value="AGI">Agility</option>
-                        </select>
-                      </div>
-                      {isVersatileItem(editingItem) && (
-                        <div className="md:col-span-2 text-[9px]" style={S_ACCENT}>
-                          Versatile uses the higher effective Strength or Agility modifier when the player rolls damage.
-                        </div>
-                      )}
-                    </div>
-                  )}
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Attribute Buff</label>
                     <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
@@ -1425,6 +1482,17 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                 </div>
 
                 <div className="flex flex-wrap gap-2 mb-3">
+                  {showWeaponData && (
+                    <button
+                      type="button"
+                      onClick={addWeaponInfoFields}
+                      className={`${retro.button} px-2 py-1 text-[9px] inline-flex items-center gap-1`}
+                      style={{ color: "#FFD166" }}
+                      title="Add Weapon Type, Damage, Range, Reload, Capacity, and Ammunition fields"
+                    >
+                      <Plus size={10} /> Add Weapon Details
+                    </button>
+                  )}
                   {ITEM_INFO_FIELD_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
@@ -1444,6 +1512,8 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                   <div className="space-y-4">
                     {infoFields.map((field, index) => {
                       const expanded = (activeInfoFieldId || infoFields[0]?.fieldId) === field.fieldId;
+                      const isWeaponDamageField = showWeaponData
+                        && (field.weaponDamage || field.label.trim().toLowerCase() === "damage");
                       return (
                       <div key={field.fieldId} className={`${retro.sunken} bg-[#0A0A28] p-3`}>
                         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
@@ -1486,25 +1556,70 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                           </div>
                         </div>
 
-                        <div className="mb-3">
-                          <label className="text-[10px] block mb-1" style={labelStyle}>Field Content</label>
-                          <RichTextEditor value={field.content} onChange={(html) => updateInfoField(field.fieldId, INFO_CONTENT, html)} placeholder="Write the player-facing content for this field..." minHeight={70} />
-                        </div>
+                        {isWeaponDamageField ? (
+                          <div className={`${retro.raised} bg-[#0E0E35] p-3 mb-3`}>
+                            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.6fr)_minmax(160px,0.7fr)_170px] gap-3 mb-3">
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Displayed Damage</label>
+                                <textarea
+                                  value={stripHtml(field.content)}
+                                  onChange={(event) => updateInfoField(field.fieldId, INFO_CONTENT, event.target.value)}
+                                  placeholder={INFO_FIELD_CONTENT_PLACEHOLDERS.damage}
+                                  rows={2}
+                                  className={`${inputClass} resize-y`}
+                                  style={inputStyle}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Damage Dice</label>
+                                <input type="text" value={field.rollExpression} onChange={(event) => updateInfoField(field.fieldId, INFO_ROLL_EXPRESSION, event.target.value)} placeholder="e.g. 3d6" className={inputClass} style={inputStyle} />
+                              </div>
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Damage Attribute</label>
+                                <select value={field.damageAttribute || "STR"} onChange={(event) => updateInfoField(field.fieldId, INFO_DAMAGE_ATTRIBUTE, event.target.value)} className={inputClass} style={inputStyle}>
+                                  <option value="STR">Strength</option>
+                                  <option value="AGI">Agility</option>
+                                </select>
+                              </div>
+                            </div>
+                            <div className="max-w-sm">
+                              <label className="text-[10px] block mb-1" style={labelStyle}>Use Button Label</label>
+                              <input type="text" value={field.rollLabel} onChange={(event) => updateInfoField(field.fieldId, INFO_ROLL_LABEL, event.target.value)} placeholder="Use / Roll Damage" className={inputClass} style={inputStyle} />
+                            </div>
+                            {isVersatileItem(editingItem) && (
+                              <div className="text-[9px] mt-2" style={S_ACCENT}>
+                                Versatile uses the higher effective Strength or Agility modifier when the player rolls damage.
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            <div className="mb-3">
+                              <label className="text-[10px] block mb-1" style={labelStyle}>Field Content</label>
+                              <RichTextEditor
+                                value={field.content}
+                                onChange={(html) => updateInfoField(field.fieldId, INFO_CONTENT, html)}
+                                placeholder={INFO_FIELD_CONTENT_PLACEHOLDERS[field.label.trim().toLowerCase()] || "Write the player-facing content for this field..."}
+                                minHeight={70}
+                              />
+                            </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_160px] gap-3 mb-3">
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Dice Button Label</label>
-                            <input type="text" value={field.rollLabel} onChange={(e) => updateInfoField(field.fieldId, INFO_ROLL_LABEL, e.target.value)} placeholder="Defaults to field label" className={inputClass} style={inputStyle} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Dice Roll Expression</label>
-                            <input type="text" value={field.rollExpression} onChange={(e) => updateInfoField(field.fieldId, INFO_ROLL_EXPRESSION, e.target.value)} placeholder="e.g. 2d6+P" className={inputClass} style={inputStyle} />
-                          </div>
-                          <div>
-                            <label className="text-[10px] block mb-1" style={labelStyle}>Dice Potency</label>
-                            <input type="text" value={field.rollPotency} onChange={(e) => updateInfoField(field.fieldId, INFO_ROLL_POTENCY, e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
-                          </div>
-                        </div>
+                            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_160px] gap-3 mb-3">
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Dice Button Label</label>
+                                <input type="text" value={field.rollLabel} onChange={(e) => updateInfoField(field.fieldId, INFO_ROLL_LABEL, e.target.value)} placeholder="Defaults to field label" className={inputClass} style={inputStyle} />
+                              </div>
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Dice Roll Expression</label>
+                                <input type="text" value={field.rollExpression} onChange={(e) => updateInfoField(field.fieldId, INFO_ROLL_EXPRESSION, e.target.value)} placeholder="e.g. 2d6+P" className={inputClass} style={inputStyle} />
+                              </div>
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Dice Potency</label>
+                                <input type="text" value={field.rollPotency} onChange={(e) => updateInfoField(field.fieldId, INFO_ROLL_POTENCY, e.target.value)} placeholder="Optional" className={inputClass} style={inputStyle} />
+                              </div>
+                            </div>
+                          </>
+                        )}
 
                         <div className={`${retro.raised} bg-[#0E0E35] p-3 mb-3`}>
                           <label className="flex items-center gap-2 cursor-pointer mb-2">

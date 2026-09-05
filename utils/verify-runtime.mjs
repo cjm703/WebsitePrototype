@@ -261,6 +261,28 @@ async function testItemCombatRules() {
   assert.equal(rules.resolveWeaponDamageAttribute(agilityWeapon, { STR: 20, AGI: 8 }), "AGI");
 
   assert.equal(rules.isTwoHandedItem({ name: "Legacy Two-Handed Axe", tags: [], customFields: {} }), true);
+
+  const shotgun = {
+    name: "Test Shotgun",
+    type: "Weapon",
+    tags: ["Weapon"],
+    customFields: {
+      "Equipment::Slots": "weapon_l,weapon_r",
+      "Equipment::Hands": "2",
+      "Weapon::Damage": "legacy damage",
+      "Weapon::Damage Attribute": "STR",
+      "Info Field::2::Label": "Damage",
+      "Info Field::2::Content": "3d6 piercing damage (10 ft) / 2d6 (20 ft) / 1d6 (30 ft)",
+      "Info Field::2::Roll Label": "Fire Shotgun",
+      "Info Field::2::Roll Expression": "3d6",
+      "Info Field::2::Weapon Damage": "1",
+      "Info Field::2::Damage Attribute": "AGI",
+    },
+  };
+  assert.equal(rules.getWeaponDamageDisplay(shotgun), "3d6 piercing damage (10 ft) / 2d6 (20 ft) / 1d6 (30 ft)");
+  assert.equal(rules.getWeaponDamageExpression(shotgun), "3d6");
+  assert.equal(rules.getWeaponDamageRollLabel(shotgun), "Fire Shotgun");
+  assert.equal(rules.getWeaponDamageAttribute(shotgun), "AGI");
 }
 
 async function testOfficeBusinessMapState() {
