@@ -311,6 +311,61 @@ export interface PlacedSticker {
   stickerId: string;   // references the sticker asset id
   slotId: string;      // references a STICKER_SLOTS id
   scale: number;       // scale multiplier (0.5 - 3)
+  kind?: "image" | "note";
+  text?: string;
+  x?: number;
+  y?: number;
+  rotation?: number;
+}
+
+export const INTERFACE_NOTE_STICKER_ID = "dm-interface-note";
+
+const clampStickerNumber = (value: unknown, minimum: number, maximum: number, fallback: number) => {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? Math.max(minimum, Math.min(maximum, numeric)) : fallback;
+};
+
+export function isInterfaceNoteSticker(sticker: PlacedSticker) {
+  return sticker.kind === "note" || sticker.stickerId === INTERFACE_NOTE_STICKER_ID;
+}
+
+export function createInterfaceNoteSticker(
+  text: string,
+  existing: PlacedSticker[] = [],
+  random: () => number = Math.random,
+): PlacedSticker {
+  const normalizedText = String(text || "You're late").trim().slice(0, 42) || "You're late";
+  const existingNotes = existing.filter(isInterfaceNoteSticker);
+  let best = { x: 50, y: 50, distance: -1 };
+
+  // Pick the least crowded of several random candidates while keeping the result unpredictable.
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const candidate = {
+      x: 12 + random() * 76,
+      y: 7 + random() * 86,
+    };
+    const distance = existingNotes.length === 0
+      ? Number.POSITIVE_INFINITY
+      : Math.min(...existingNotes.map((sticker) => {
+          const dx = candidate.x - clampStickerNumber(sticker.x, 0, 100, 50);
+          const dy = candidate.y - clampStickerNumber(sticker.y, 0, 100, 50);
+          return (dx * dx) + (dy * dy);
+        }));
+    if (distance > best.distance) best = { ...candidate, distance };
+  }
+
+  const randomSuffix = Math.floor(random() * 0xFFFFFF).toString(36).padStart(4, "0");
+  return {
+    id: `interface-note-${Date.now()}-${randomSuffix}`,
+    stickerId: INTERFACE_NOTE_STICKER_ID,
+    slotId: "if-random",
+    kind: "note",
+    text: normalizedText,
+    x: Number(best.x.toFixed(2)),
+    y: Number(best.y.toFixed(2)),
+    rotation: Number((-9 + random() * 18).toFixed(2)),
+    scale: Number((0.72 + random() * 0.36).toFixed(2)),
+  };
 }
 
 function stickerKey(pid?: string): string {
@@ -320,17 +375,27 @@ function stickerKey(pid?: string): string {
 const stickerCache = new Map<string, PlacedSticker[]>();
 const stickerInitialized = new Set<string>();
 
-function normalizePlacedStickers(stickers: unknown): PlacedSticker[] {
+export function normalizePlacedStickers(stickers: unknown): PlacedSticker[] {
   if (!Array.isArray(stickers)) return [];
   return stickers
     .filter((entry): entry is PlacedSticker => !!entry && typeof entry === "object")
-    .map((entry) => ({
-      id: String(entry.id || ""),
-      stickerId: String(entry.stickerId || ""),
-      slotId: String(entry.slotId || ""),
-      scale: typeof entry.scale === "number" && Number.isFinite(entry.scale) ? entry.scale : 1,
-    }))
-    .filter((entry) => entry.id && entry.stickerId && entry.slotId);
+    .map((entry) => {
+      const noteSticker = isInterfaceNoteSticker(entry);
+      return {
+        id: String(entry.id || ""),
+        stickerId: noteSticker ? INTERFACE_NOTE_STICKER_ID : String(entry.stickerId || ""),
+        slotId: noteSticker ? "if-random" : String(entry.slotId || ""),
+        scale: clampStickerNumber(entry.scale, noteSticker ? 0.72 : 0.5, noteSticker ? 1.08 : 3, 1),
+        ...(noteSticker ? {
+          kind: "note" as const,
+          text: String(entry.text || "You're late").trim().slice(0, 42) || "You're late",
+          x: clampStickerNumber(entry.x, 4, 96, 50),
+          y: clampStickerNumber(entry.y, 4, 96, 50),
+          rotation: clampStickerNumber(entry.rotation, -12, 12, 0),
+        } : {}),
+      };
+    })
+    .filter((entry) => entry.id && entry.stickerId && entry.slotId && (!isInterfaceNoteSticker(entry) || !!entry.text));
 }
 
 function dispatchStickerUpdate(playerId: string) {

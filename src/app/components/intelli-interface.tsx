@@ -8,11 +8,12 @@ import { submitReport } from "./error-logger";
 import { safeGetItem, safeRemoveItem, safeGetJson, safeSetJson } from "./safe-storage";
 import mascotImg from "@/assets/figma/Gnarpy_Boss1.png";
 import { playRandomMascotSound } from "./mascot-sounds";
-import { getPlayerTheme, getPlacedStickers, buildPageGradient, isGradient, firstColor, ts, getSlot, type PlayerTheme, type PlacedSticker } from "./player-theme";
+import { getPlayerTheme, getPlacedStickers, hydratePlacedStickersState, isInterfaceNoteSticker, buildPageGradient, isGradient, firstColor, ts, getSlot, type PlayerTheme, type PlacedSticker } from "./player-theme";
 import { usePageVisibility } from "./use-visibility";
 import { ServerStatusPanel } from "./server-status-panel";
 import { loadOfficeName } from "./nexus-nomad";
 import { STICKER_IMAGES } from "./sticker-images";
+import { InterfaceNoteSticker } from "./interface-note-sticker";
 import type { DMNotification } from "./types";
 import { appStore } from "@/lib/app-store";
 import { buildSupabasePublicHeaders, supabaseFunctionBase } from "@/lib/supabase-env";
@@ -30,7 +31,7 @@ export function IntelliInterface() {
 
   // Player theme
   const theme = getPlayerTheme();
-  const placedStickers = getPlacedStickers();
+  const [placedStickers, setPlacedStickers] = useState<PlacedSticker[]>(() => getPlacedStickers(currentUserId));
 
   const DEFAULT_SECTION_DETAILS = {
     personalFiles: "View and manage your character sheet",
@@ -69,6 +70,39 @@ export function IntelliInterface() {
   const [calendarState, setCalendarState] = useState(DEFAULT_CALENDAR);
   const [weatherState, setWeatherState] = useState(DEFAULT_WEATHER);
   const [boredLines, setBoredLines] = useState<string[]>(DEFAULT_BORED_LINES);
+
+  useEffect(() => {
+    if (!currentUserId) return;
+    let cancelled = false;
+
+    const refreshStickers = async () => {
+      try {
+        const stored = await appStore.loadPlayerPlacedStickers<unknown>(currentUserId, getPlacedStickers(currentUserId));
+        if (cancelled) return;
+        setPlacedStickers(hydratePlacedStickersState(currentUserId, stored));
+      } catch {
+        if (!cancelled) setPlacedStickers(getPlacedStickers(currentUserId));
+      }
+    };
+    const handleStickerUpdate = (event: Event) => {
+      const updatedPlayerId = (event as CustomEvent<{ playerId?: string }>).detail?.playerId;
+      if (!updatedPlayerId || updatedPlayerId === currentUserId) {
+        setPlacedStickers(getPlacedStickers(currentUserId));
+      }
+    };
+    const handleFocus = () => { void refreshStickers(); };
+
+    void refreshStickers();
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("player-stickers-updated", handleStickerUpdate);
+    const refreshTimer = isPageVisible ? window.setInterval(() => { void refreshStickers(); }, 12_000) : undefined;
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("player-stickers-updated", handleStickerUpdate);
+      if (refreshTimer !== undefined) window.clearInterval(refreshTimer);
+    };
+  }, [currentUserId, isPageVisible]);
 
   // Notification types & state
 
@@ -466,6 +500,9 @@ export function IntelliInterface() {
       <div className="flex-1 flex gap-4 p-4 max-w-[1680px] mx-auto w-full relative">
         {/* Sticker overlay - interface page slots */}
         {placedStickers.map((ps) => {
+          if (isInterfaceNoteSticker(ps)) {
+            return <InterfaceNoteSticker key={ps.id} sticker={ps} />;
+          }
           const slot = getSlot(ps.slotId);
           if (!slot || slot.page !== "interface") return null;
           const img = STICKER_IMAGES[ps.stickerId];

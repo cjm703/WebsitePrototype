@@ -81,17 +81,19 @@ interface DMCardManagerSectionProps {
   nodeTrees: NodeTree[];
   onPersistCards: (next: ManagedCard[]) => Promise<void>;
   onPersistNodeTrees: (next: NodeTree[]) => Promise<void>;
+  onPersistTags?: (next: TagDefinition[]) => Promise<void>;
   setDmError: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 type CardEditorPanel = "preview" | "core" | "mechanics" | "tags" | "progression" | "assignment";
-type CardWorkspaceStage = "live" | "overview" | "rules" | "effects" | "delivery";
+type CardWorkspaceStage = "basics" | "rules" | "access";
 type CardRulesMode = "guided" | "manual";
 type MechanicsWorkspaceView = "rules" | "automation" | "text";
 type OverviewSubTab = "identity" | "profile" | "advanced-profile";
 type RulesSubTab = "main-effect" | "builder" | "section-blocks" | "scaling";
 type EffectsSubTab = "tags" | "visible-fields" | "tracker" | "quick-rolls" | "advanced";
 type DeliverySubTab = "players" | "node-trees" | "validation";
+type RulesWorkspaceTool = RulesSubTab | EffectsSubTab;
 type CardTemplateId = "blank" | "attack" | "heal" | "buff" | "debuff" | "reaction" | "passive" | "utility";
 type TagFilterMode = "all" | "active" | "withFields" | "simple";
 type CardFamily = "" | "spell" | "skill" | "ability";
@@ -105,8 +107,6 @@ interface CardFamilyDef {
   id: Exclude<CardFamily, "">;
   label: string;
   accent: string;
-  description: string;
-  helper: string;
 }
 
 interface CardTemplateDef {
@@ -166,14 +166,6 @@ interface CardWorkspaceStageDef {
   label: string;
   accent: string;
   icon: React.ComponentType<{ size?: number }>;
-  helper: string;
-}
-
-interface WorkspaceSubTabDef<T extends string> {
-  id: T;
-  label: string;
-  helper: string;
-  accent: string;
 }
 
 interface PreviewInfoField {
@@ -218,18 +210,6 @@ const QUICK_ROLL_PREFIX = "Quick Roll::";
 const QUICK_ROLL_LABEL_KEY = "Label";
 const QUICK_ROLL_EXPRESSION_KEY = "Expression";
 const QUICK_ROLL_POTENCY_KEY = "Potency";
-const FAMILY_CONTROLLED_PROFILE_KEYS = [
-  USE_PROFILE_MAGIC_NATURE_KEY,
-  USE_PROFILE_COST_MODEL_KEY,
-  USE_PROFILE_PRIMARY_COST_KEY,
-  USE_PROFILE_USES_KEY,
-  USE_PROFILE_COMPONENTS_KEY,
-  USE_PROFILE_COMPONENT_DETAILS_KEY,
-  USE_PROFILE_UPCAST_KEY,
-  USE_PROFILE_ORIGIN_KEY,
-  USE_PROFILE_PASSIVE_MODE_KEY,
-] as const;
-
 interface QuickRollSlot {
   slotId: string;
   label: string;
@@ -245,22 +225,16 @@ const CARD_FAMILY_OPTIONS: CardFamilyDef[] = [
     id: "spell",
     label: "Spell",
     accent: "#8AB8FF",
-    description: "True magic that uses source, usually matching the spell's nature and level.",
-    helper: "Best for source costs, upcasting, concentration, and component-based casting.",
   },
   {
     id: "skill",
     label: "Skill",
     accent: "#7ACA8A",
-    description: "A learned technique, usually paying exhaustion and sometimes uses per long rest.",
-    helper: "Best for martial techniques, taught tricks, and learned magical-but-non-spell effects.",
   },
   {
     id: "ability",
     label: "Ability",
     accent: "#C4A0FF",
-    description: "An inherent or granted power that is natural to the character, lineage, or source.",
-    helper: "Best for innate gifts, racial powers, passives, and granted supernatural expressions.",
   },
 ];
 
@@ -294,67 +268,23 @@ const CARD_SECTION_BLOCK_PRESETS: Array<{ title: string; tone: CardSectionTone; 
 
 const CARD_WORKSPACE_STAGES: CardWorkspaceStageDef[] = [
   {
-    id: "live",
-    label: "Live Edit",
-    accent: "#5C8DFF",
-    icon: Eye,
-    helper: "Focus entirely on the live card preview and edit the player-facing content directly.",
-  },
-  {
-    id: "overview",
-    label: "Overview",
+    id: "basics",
+    label: "Basics",
     accent: "#4A7BFF",
     icon: Settings,
-    helper: "Identity, family, description, and the card's core use profile.",
   },
   {
     id: "rules",
     label: "Rules",
     accent: "#6ABAFF",
     icon: FileText,
-    helper: "Guided builder, rules source, manual text, and scaling.",
   },
   {
-    id: "effects",
-    label: "Effects & Tags",
-    accent: "#9A7ABB",
-    icon: Tags,
-    helper: "Tracker, quick rolls, tags, and helper field groups.",
-  },
-  {
-    id: "delivery",
-    label: "Delivery",
+    id: "access",
+    label: "Access",
     accent: "#7ACA8A",
     icon: Users,
-    helper: "Assignments, progression, validation, and final publishing checks.",
   },
-];
-
-const OVERVIEW_SUB_TABS: WorkspaceSubTabDef<OverviewSubTab>[] = [
-  { id: "identity", label: "Identity", helper: "Name, type, cost, source, and player-facing description.", accent: "#4A7BFF" },
-  { id: "profile", label: "Profile", helper: "Family selection and the card's main use-profile summary.", accent: "#6ABAFF" },
-  { id: "advanced-profile", label: "Advanced Profile", helper: "Requirements, components, duration, and deeper profile fields.", accent: "#8AB8FF" },
-];
-
-const RULES_SUB_TABS: WorkspaceSubTabDef<RulesSubTab>[] = [
-  { id: "main-effect", label: "Main Effect", helper: "Saved rules source, import actions, and the main rules text.", accent: "#FFD166" },
-  { id: "builder", label: "Builder", helper: "Structured mechanics steps that feed guided rules output.", accent: "#6ABAFF" },
-  { id: "section-blocks", label: "Section Blocks", helper: "Add reminders, limits, and supporting text blocks.", accent: "#FFD700" },
-  { id: "scaling", label: "Scaling", helper: "Scaling, upcast notes, and structured draft output.", accent: "#FFCD4D" },
-];
-
-const EFFECTS_SUB_TABS: WorkspaceSubTabDef<EffectsSubTab>[] = [
-  { id: "tags", label: "Tags", helper: "Add or remove helper tags and see the active set.", accent: "#9A7ABB" },
-  { id: "visible-fields", label: "Visible Fields", helper: "Fill the tag-owned fields players can actually see on the card.", accent: "#B193FF" },
-  { id: "tracker", label: "Tracker", helper: "Configure built-in tracker behavior and summary text.", accent: "#4ACA6A" },
-  { id: "quick-rolls", label: "Quick Rolls", helper: "Edit the roll buttons players will see on the card.", accent: "#FFD166" },
-  { id: "advanced", label: "Advanced", helper: "Browse all tags, optional groups, and supporting automation details.", accent: "#7A8AAA" },
-];
-
-const DELIVERY_SUB_TABS: WorkspaceSubTabDef<DeliverySubTab>[] = [
-  { id: "players", label: "Players", helper: "Choose who should receive the card.", accent: "#7ACA8A" },
-  { id: "node-trees", label: "Node Trees", helper: "Choose progression placement and review node capacity.", accent: "#FFD700" },
-  { id: "validation", label: "Validation", helper: "Review save blockers, warnings, and final readiness.", accent: "#FF9A7A" },
 ];
 
 const CARD_TEMPLATES: CardTemplateDef[] = [
@@ -572,17 +502,6 @@ function getResolvedRulesText(card: ManagedCard, builder: MechanicsBuilderState,
   return rulesMode === "guided" ? getStructuredRulesOutput(builder, blocks) : card.effect || "";
 }
 
-function stripInactiveTagCustomFields(customFields: Record<string, string>, activeTags: string[], tagList: TagDefinition[]) {
-  const activeKeys = new Set(getActiveCustomFields({ tags: activeTags }, tagList).map((field) => field.key));
-  return Object.fromEntries(
-    Object.entries(customFields || {}).filter(([key]) => {
-      const owningTag = tagList.find((tag) => key.startsWith(`${tag.name}::`));
-      if (!owningTag) return true;
-      return activeTags.includes(owningTag.name) && activeKeys.has(key);
-    }),
-  );
-}
-
 function getNodeCapacityState(node: NodeTree["nodes"][number], cardId?: string | null) {
   const includesCurrentCard = !!cardId && node.cardIds.includes(cardId);
   const filledSlots = node.cardIds.length;
@@ -593,6 +512,34 @@ function getNodeCapacityState(node: NodeTree["nodes"][number], cardId?: string |
     isFullForSelection,
     remainingSlots: Math.max(0, 3 - filledSlots),
   };
+}
+
+function upsertManagedCard(cards: ManagedCard[], card: ManagedCard, isAddingNewCard: boolean) {
+  return isAddingNewCard
+    ? [...cards, card]
+    : cards.map((entry) => (entry.id === card.id ? card : entry));
+}
+
+function synchronizeCardNodeTrees(trees: NodeTree[], card: ManagedCard) {
+  let changed = false;
+  const nextTrees = trees.map((tree) => {
+    const nextNodes = tree.nodes.map((node) => {
+      const hasCard = node.cardIds.includes(card.id);
+      const shouldHave = card.nodeTreeId === tree.id && card.nodeId === node.id;
+      if (shouldHave && !hasCard) {
+        if (getNodeCapacityState(node, card.id).isFullForSelection) return node;
+        changed = true;
+        return { ...node, cardIds: [...node.cardIds, card.id] };
+      }
+      if (!shouldHave && hasCard) {
+        changed = true;
+        return { ...node, cardIds: node.cardIds.filter((cardId) => cardId !== card.id) };
+      }
+      return node;
+    });
+    return { ...tree, nodes: nextNodes };
+  });
+  return { changed, nextTrees };
 }
 
 function getCardSummary(card: ManagedCard) {
@@ -612,38 +559,12 @@ function getCardLibraryOwnerSortKey(card: ManagedCard, players: { id: string; na
   return `1::${ownerNames}`;
 }
 
-function getWorkspaceStageForPanel(panel: CardEditorPanel, mechanicsView?: MechanicsWorkspaceView): CardWorkspaceStage {
-  if (panel === "preview") return "live";
-  if (panel === "mechanics") {
-    return mechanicsView === "automation" ? "effects" : "rules";
-  }
-  if (panel === "tags") return "effects";
-  if (panel === "progression" || panel === "assignment") return "delivery";
-  return "overview";
-}
-
 function getWorkspaceStageMeta(stage: CardWorkspaceStage) {
   return CARD_WORKSPACE_STAGES.find((entry) => entry.id === stage) || CARD_WORKSPACE_STAGES[0];
 }
 
 function getWorkspaceStageAccent(stage: CardWorkspaceStage) {
   return getWorkspaceStageMeta(stage).accent;
-}
-
-function getWorkspaceSubTabs(stage: CardWorkspaceStage) {
-  if (stage === "live") return [];
-  if (stage === "overview") return OVERVIEW_SUB_TABS;
-  if (stage === "rules") return RULES_SUB_TABS;
-  if (stage === "effects") return EFFECTS_SUB_TABS;
-  return DELIVERY_SUB_TABS;
-}
-
-function getDefaultStageSubTab(stage: CardWorkspaceStage) {
-  if (stage === "live") return null;
-  if (stage === "overview") return OVERVIEW_SUB_TABS[0].id;
-  if (stage === "rules") return RULES_SUB_TABS[0].id;
-  if (stage === "effects") return EFFECTS_SUB_TABS[0].id;
-  return DELIVERY_SUB_TABS[0].id;
 }
 
 function hasFilledFieldValue(value?: string | null) {
@@ -804,42 +725,6 @@ function getQuickRollFieldKey(slotId: string, field: string) {
   return `${QUICK_ROLL_PREFIX}${slotId}::${field}`;
 }
 
-function WorkspaceSubTabBar<T extends string>({
-  tabs,
-  activeTab,
-  onSelect,
-}: {
-  tabs: WorkspaceSubTabDef<T>[];
-  activeTab: T;
-  onSelect: (tab: T) => void;
-}) {
-  const activeMeta = tabs.find((tab) => tab.id === activeTab) || tabs[0];
-
-  return (
-    <div className={`${retro.sunken} bg-[#081022] p-4 space-y-3`} style={editorSurfaceStyle(activeMeta.accent)}>
-      <div className="flex flex-wrap gap-2">
-        {tabs.map((tab) => {
-          const active = tab.id === activeTab;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => onSelect(tab.id)}
-              className={`${active ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] transition-colors`}
-              style={{ color: active ? tab.accent : "#8A9ABB", fontWeight: active ? 600 : 400 }}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-      <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>
-        <span style={S_TEXT_BOLD}>{activeMeta.label}:</span> {activeMeta.helper}
-      </div>
-    </div>
-  );
-}
-
 function getQuickRollSlotIds(customFields: Record<string, string>) {
   return Array.from(new Set(
     Object.keys(customFields || {})
@@ -893,22 +778,15 @@ function getCardFamilyDef(family: CardFamily): CardFamilyDef | null {
   return CARD_FAMILY_OPTIONS.find((option) => option.id === family) || null;
 }
 
-function withCardFamilyDefaults(card: ManagedCard, family: CardFamily, options?: { overwriteExisting?: boolean }): ManagedCard {
-  const overwriteExisting = !!options?.overwriteExisting;
+function withCardFamilyDefaults(card: ManagedCard, family: CardFamily): ManagedCard {
   const nextCustomFields: Record<string, string> = {
     ...card.customFields,
     [CARD_FAMILY_KEY]: family,
   };
 
-  if (overwriteExisting) {
-    FAMILY_CONTROLLED_PROFILE_KEYS.forEach((key) => {
-      nextCustomFields[key] = "";
-    });
-  }
-
   const setFamilyDefault = (key: string, value: string) => {
     const existing = (nextCustomFields[key] || "").trim();
-    if (overwriteExisting || !existing) {
+    if (!existing) {
       nextCustomFields[key] = value;
     }
   };
@@ -1255,14 +1133,14 @@ function withPersistedEditorStructure(
   builder: MechanicsBuilderState,
   blocks: CardSectionBlock[],
   rulesMode: CardRulesMode,
-  tagList: TagDefinition[],
+  _tagList: TagDefinition[],
 ): ManagedCard {
-  const nextCustomFields = stripInactiveTagCustomFields({
+  const nextCustomFields = {
     ...card.customFields,
     [EDITOR_MECHANICS_KEY]: JSON.stringify(builder),
     [EDITOR_SECTION_BLOCKS_KEY]: JSON.stringify(blocks.map((block, index) => sanitizeSectionBlock(block, index))),
     [EDITOR_RULES_MODE_KEY]: rulesMode,
-  }, card.tags, tagList);
+  };
   return {
     ...card,
     effect: getResolvedRulesText(card, builder, blocks, rulesMode),
@@ -1301,10 +1179,6 @@ function collectCardValidationIssues(
     }
   } else if (!strippedRulesText) {
     pushIssue({ id: "manual-rules", level: "error", panel: "mechanics", mechanicsView: "text", message: "Manual rules mode needs effect text before you save." });
-  }
-
-  if (rulesMode === "manual" && hasStructuredRulesContent(builder, blocks)) {
-    pushIssue({ id: "manual-draft", level: "warning", panel: "mechanics", mechanicsView: "rules", message: "This card has a structured draft, but manual rules text is the saved source right now." });
   }
 
   getActiveCustomFields(card, tagList)
@@ -1367,6 +1241,37 @@ function collectCardValidationIssues(
 
   return issues;
 }
+
+// Pure transforms used by the editor and its data-preservation regression test.
+const cardEditorTestApi = {
+  buildEditorSnapshot,
+  buildQuickRollSlots,
+  collectCardValidationIssues,
+  createCardFromTemplate,
+  getCardFamily,
+  getNodeCapacityState,
+  getStoredRulesMode,
+  parseStoredMechanicsBuilder,
+  parseStoredSectionBlocks,
+  synchronizeCardNodeTrees,
+  upsertManagedCard,
+  withCardFamilyDefaults,
+  withPersistedEditorStructure,
+  keys: {
+    cardDescription: CARD_DESCRIPTION_KEY,
+    cardFamily: CARD_FAMILY_KEY,
+    editorMechanics: EDITOR_MECHANICS_KEY,
+    editorRulesMode: EDITOR_RULES_MODE_KEY,
+    editorSectionBlocks: EDITOR_SECTION_BLOCKS_KEY,
+    quickRollExpression: QUICK_ROLL_EXPRESSION_KEY,
+    quickRollLabel: QUICK_ROLL_LABEL_KEY,
+    quickRollPotency: QUICK_ROLL_POTENCY_KEY,
+    quickRollPrefix: QUICK_ROLL_PREFIX,
+    trackerBucket: CARD_TRACKER_BUCKET_KEY,
+    trackerDuration: CARD_TRACKER_DURATION_KEY,
+    trackerName: CARD_TRACKER_NAME_KEY,
+  },
+} as const;
 
 function CardPreviewPanel({
   card,
@@ -1523,7 +1428,6 @@ function CardLibraryRail({
   allCardTagNames,
   onOpenCard,
   onDeleteCard,
-  onNewCard,
   showFilters,
   onToggleFilters,
 }: {
@@ -1547,7 +1451,6 @@ function CardLibraryRail({
   allCardTagNames: string[];
   onOpenCard: (card: ManagedCard, panel?: CardEditorPanel) => void;
   onDeleteCard: (id: string) => void;
-  onNewCard: () => void;
   showFilters: boolean;
   onToggleFilters: () => void;
 }) {
@@ -1558,9 +1461,6 @@ function CardLibraryRail({
       <div className={`${railShellClass} hidden xl:flex xl:w-[88px] xl:flex-col xl:items-center xl:gap-3 xl:p-3`}>
         <button onClick={onToggleCollapsed} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={sectionBadgeStyle("#4A7BFF")}>
           <ChevronRight size={14} className="rotate-180" />
-        </button>
-        <button onClick={onNewCard} className={`${retro.button} w-full px-2 py-2 text-[10px] flex items-center justify-center`} style={S_GREEN_BTN} title="New Card">
-          <Plus size={14} />
         </button>
         <div className="text-[9px] text-center" style={S_SUBTLE}>
           <div style={S_TEXT_BOLD}>{filteredCards.length}</div>
@@ -1590,10 +1490,7 @@ function CardLibraryRail({
   return (
     <div className={`${railShellClass} ${mobileOpen ? "block" : "hidden"} xl:block xl:w-[320px] 2xl:w-[348px] p-4 space-y-3`}>
       <div className="flex items-center justify-between gap-2">
-        <div>
-          <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
-          <div className="text-[11px] mt-1 leading-relaxed" style={S_SUBTLE}>Search, sort, and reopen cards without leaving the preview-first workspace.</div>
-        </div>
+        <div className="text-[12px]" style={S_SECTION_HDR}>CARD LIBRARY</div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-[10px] px-2 py-1" style={{ color: "#7A8AAA", border: "1px solid #1A1A4B", background: "#0A0A28" }}>
             {filteredCards.length}/{managedCardsCount}
@@ -1606,10 +1503,6 @@ function CardLibraryRail({
           </button>
         </div>
       </div>
-
-      <button onClick={onNewCard} className={`${retro.button} w-full px-4 py-2 text-[12px] flex items-center justify-center gap-2`} style={S_GREEN_BTN}>
-        <Plus size={14} /> New Card
-      </button>
 
       <div className="space-y-2">
         <div className="relative">
@@ -1705,6 +1598,7 @@ function CardWorkspaceHeader({
   onClose,
   onNewCard,
   onOpenLibrary,
+  onStageSelect,
 }: {
   editingCard: ManagedCard;
   isAddingNewCard: boolean;
@@ -1720,69 +1614,65 @@ function CardWorkspaceHeader({
   onClose: () => void;
   onNewCard: () => void;
   onOpenLibrary: () => void;
+  onStageSelect: (stage: CardWorkspaceStage) => void;
 }) {
   const stageMeta = getWorkspaceStageMeta(currentStage);
-  const statusChips = [
-    currentFamilyDef ? { label: currentFamilyDef.label, accent: currentFamilyDef.accent } : null,
-    hasUnsavedChanges ? { label: "Unsaved Changes", accent: "#FF9A7A" } : null,
-    blockingValidationIssues.length > 0
-      ? { label: `${blockingValidationIssues.length} Blocking Issue${blockingValidationIssues.length === 1 ? "" : "s"}`, accent: "#FF7A7A" }
-      : null,
-    warningValidationIssues.length > 0
-      ? { label: `${warningValidationIssues.length} Warning${warningValidationIssues.length === 1 ? "" : "s"}`, accent: "#FFD700" }
-      : null,
-    trackerLabel ? { label: trackerLabel, accent: "#4ACA6A" } : null,
-    ...currentProfileBadges.slice(currentFamilyDef ? 1 : 0, currentFamilyDef ? 4 : 3).map((badge) => ({ label: badge, accent: "#6ABAFF" })),
-  ].filter(Boolean) as Array<{ label: string; accent: string }>;
+  const issueCount = blockingValidationIssues.length + warningValidationIssues.length;
 
   return (
-    <div className={`${retro.sunken} bg-[#081022] p-4 space-y-4`} style={editorSurfaceStyle(stageMeta.accent)}>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button onClick={onOpenLibrary} className="xl:hidden hover:opacity-80" title="Open card library">
-              <CreditCard size={14} style={S_ACCENT} />
-            </button>
-            <span className="text-[10px]" style={S_SECTION_HDR}>{isAddingNewCard ? "NEW CARD WORKSPACE" : "CARD EDITOR WORKSPACE"}</span>
-            <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(stageMeta.accent)}>Stage: {stageMeta.label}</span>
-          </div>
-          <div className="text-[22px] leading-tight break-words" style={S_TEXT_BOLD}>{editingCard.name || "Untitled Card"}</div>
-          <div className="text-[11px] leading-snug break-words" style={S_MUTED}>
-            {editingCard.type || "No type"} | {editingCard.actionCost || "No action cost"} | {rulesMode === "guided" ? "Guided rules source" : "Manual rules source"}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {statusChips.map((chip) => (
-              <span key={`${chip.label}-${chip.accent}`} className="text-[10px] px-2 py-1" style={sectionBadgeStyle(chip.accent)}>
-                {chip.label}
-              </span>
-            ))}
-          </div>
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2.5">
-            {[
-              { label: "Rules Source", value: rulesMode === "guided" ? "Guided Builder" : "Manual Text" },
-              { label: "Validation", value: blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} blocking issue${blockingValidationIssues.length === 1 ? "" : "s"} to fix` : warningValidationIssues.length > 0 ? `${warningValidationIssues.length} warning${warningValidationIssues.length === 1 ? "" : "s"} to review` : "Ready to save" },
-              { label: "Tracker", value: trackerLabel || "Tracker off" },
-              { label: "Current Stage", value: stageMeta.label },
-            ].map((item) => (
-              <div key={item.label} className={`${retro.raised} bg-[#101B36] px-3.5 py-3 min-h-[60px]`} style={{ border: "1px solid #20345C" }}>
-                <div className="text-[10px] uppercase tracking-[0.06em] mb-1" style={S_SECTION_HDR}>{item.label}</div>
-                <div className="text-[12px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
-              </div>
-            ))}
+    <div className={`${retro.sunken} bg-[#081022] px-3 py-2.5 space-y-2.5`} style={editorSurfaceStyle(stageMeta.accent)}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 flex items-center gap-2.5">
+          <button type="button" onClick={onOpenLibrary} className="xl:hidden hover:opacity-80" title="Open card library">
+            <CreditCard size={14} style={S_ACCENT} />
+          </button>
+          <div className="min-w-0">
+            <div className="text-[14px] leading-tight truncate" style={S_TEXT_BOLD}>{editingCard.name || "Untitled Card"}</div>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+              <span className="text-[9px]" style={S_MUTED}>{isAddingNewCard ? "New card" : editingCard.type || "No type"}</span>
+              {currentFamilyDef && <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle(currentFamilyDef.accent)}>{currentFamilyDef.label}</span>}
+              <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle(rulesMode === "guided" ? "#6ABAFF" : "#FFD166")}>{rulesMode === "guided" ? "Guided" : "Manual"}</span>
+              {trackerLabel && <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle("#4ACA6A")}>{trackerLabel}</span>}
+              {hasUnsavedChanges && <span className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle("#FF9A7A")}>Unsaved</span>}
+              {currentProfileBadges.slice(1, 2).map((badge) => <span key={badge} className="text-[9px] px-1.5 py-0.5" style={sectionBadgeStyle("#6ABAFF")}>{badge}</span>)}
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0 xl:justify-end">
-          <button onClick={onNewCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_ACCENT}>
-            <Plus size={14} /> New Card
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+          <span className="text-[9px] px-2 py-1" style={sectionBadgeStyle(blockingValidationIssues.length > 0 ? "#FF7A7A" : issueCount > 0 ? "#FFD700" : "#7ACA8A")}>
+            {blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} blocked` : issueCount > 0 ? `${issueCount} notice${issueCount === 1 ? "" : "s"}` : "Ready"}
+          </span>
+          <button type="button" onClick={onNewCard} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={S_ACCENT}>
+            <Plus size={12} /> New
           </button>
-          <button onClick={onSave} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-            <Save size={14} /> {isAddingNewCard ? "Add Card" : "Save Changes"}
+          <button type="button" onClick={onSave} className={`${retro.button} px-2.5 py-1.5 text-[10px] flex items-center gap-1`} style={S_GREEN_BTN}>
+            <Save size={12} /> {isAddingNewCard ? "Create" : "Save"}
           </button>
-          <button onClick={onClose} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_TEXT}>
-            <X size={14} /> Close
+          <button type="button" onClick={onClose} className={`${retro.button} w-8 h-8 flex items-center justify-center`} style={S_TEXT} title="Close editor">
+            <X size={13} />
           </button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Card editor stages">
+        {CARD_WORKSPACE_STAGES.map((stage) => {
+          const active = currentStage === stage.id;
+          const Icon = stage.icon;
+          return (
+            <button
+              key={stage.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onStageSelect(stage.id)}
+              className={`${active ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648]"} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+              style={{ color: active ? stage.accent : "#8A9ABB" }}
+            >
+              <Icon size={11} /> {stage.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1809,7 +1699,6 @@ function InteractiveCardPreview({
   renderTagFieldInput,
   onAddQuickRoll,
   onRemoveQuickRoll,
-  stickyPreview = true,
   panelClassName = "",
 }: {
   card: ManagedCard;
@@ -1836,7 +1725,6 @@ function InteractiveCardPreview({
   renderTagFieldInput: (cf: ActiveCustomFieldEntry) => React.ReactNode;
   onAddQuickRoll: () => void;
   onRemoveQuickRoll: (slotId: string) => void;
-  stickyPreview?: boolean;
   panelClassName?: string;
 }) {
   const visibleCustomFieldGroups = groupCustomFieldsByTag(getActiveCustomFields(card, cardTags).filter((cf) => hasFilledFieldValue(card.customFields[cf.key])));
@@ -1847,8 +1735,6 @@ function InteractiveCardPreview({
   const selectedNodeLabel = getNodeAssignmentLabel(card, nodeTrees);
   const previewMeta = buildPlayerFacingPreviewMeta(card);
   const tagBadgeLabels = playerFacingTagBadges.length > 0 ? playerFacingTagBadges.map((badge) => badge.label) : card.tags;
-  const livePreviewMode = currentStage === "live";
-
   const previewSectionStyle = (accent: string, active: boolean) => ({
     ...editorSurfaceStyle(active ? accent : "#223256"),
     border: active ? `1px solid ${accent}` : "1px solid #1A1A4B",
@@ -1859,10 +1745,8 @@ function InteractiveCardPreview({
     stage: CardWorkspaceStage,
     region: CardPreviewFocusRegion,
     subTab?: OverviewSubTab | RulesSubTab | EffectsSubTab | DeliverySubTab,
-    forceSupportingStage = false,
   ) => {
-    const resolvedStage = livePreviewMode && !forceSupportingStage ? "live" : stage;
-    onStageSelect(resolvedStage, region, resolvedStage === "live" ? undefined : subTab);
+    onStageSelect(stage, region, subTab);
     onPreviewFocus(region);
     if (previewEditField && region !== previewFocusRegion) {
       onPreviewEditFieldChange(null);
@@ -1874,9 +1758,8 @@ function InteractiveCardPreview({
     region: CardPreviewFocusRegion,
     field: CardPreviewEditField,
     subTab?: OverviewSubTab | RulesSubTab | EffectsSubTab | DeliverySubTab,
-    forceSupportingStage = false,
   ) => {
-    focusStage(stage, region, subTab, forceSupportingStage);
+    focusStage(stage, region, subTab);
     onPreviewEditFieldChange(field);
   };
 
@@ -1885,41 +1768,13 @@ function InteractiveCardPreview({
   return (
     <div className={`${retro.sunken} bg-[#07101F] p-6 space-y-4 ${panelClassName}`.trim()} style={editorSurfaceStyle(selectedStageAccent)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
-          <div className="text-[10px] mt-1" style={S_SUBTLE}>
-            {livePreviewMode
-              ? "Live Edit keeps the preview in focus. Click visible card sections to edit what players will actually see."
-              : "Click the card like a player would read it. Common edits open directly on the preview."}
-          </div>
-        </div>
+        <div className="text-[12px]" style={S_SECTION_HDR}>LIVE CARD PREVIEW</div>
         <span className="text-[9px] px-2 py-1" style={sectionBadgeStyle(selectedStageAccent)}>{getWorkspaceStageMeta(currentStage).label}</span>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {[
-          { label: "Identity", stage: "overview" as CardWorkspaceStage, region: "identity" as CardPreviewFocusRegion, subTab: "identity" as OverviewSubTab, forceSupportingStage: false },
-          { label: "Description", stage: "overview" as CardWorkspaceStage, region: "description" as CardPreviewFocusRegion, subTab: "identity" as OverviewSubTab, forceSupportingStage: false },
-          { label: "Effect", stage: "rules" as CardWorkspaceStage, region: "rules" as CardPreviewFocusRegion, subTab: "main-effect" as RulesSubTab, forceSupportingStage: false },
-          { label: "Tags", stage: "effects" as CardWorkspaceStage, region: "tags" as CardPreviewFocusRegion, subTab: "visible-fields" as EffectsSubTab, forceSupportingStage: false },
-          { label: "Tracker", stage: "effects" as CardWorkspaceStage, region: "tracking" as CardPreviewFocusRegion, subTab: "tracker" as EffectsSubTab, forceSupportingStage: false },
-          { label: "Delivery", stage: "delivery" as CardWorkspaceStage, region: "delivery" as CardPreviewFocusRegion, subTab: "players" as DeliverySubTab, forceSupportingStage: true },
-        ].map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            onClick={() => focusStage(item.stage, item.region, item.subTab, item.forceSupportingStage)}
-            className={`${retro.button} px-3 py-1.5 text-[10px]`}
-            style={sectionBadgeStyle(getWorkspaceStageAccent(item.stage))}
-          >
-            {item.label}
-          </button>
-        ))}
       </div>
 
       <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={previewSectionStyle("#4A7BFF", previewFocusRegion === "identity" || previewFocusRegion === "description" || previewFocusRegion === "rules" || previewFocusRegion === "scaling")}>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <button type="button" onClick={() => focusStage("overview", "identity", "identity")} className="text-left flex-1 min-w-0">
+          <button type="button" onClick={() => focusStage("basics", "identity", "identity")} className="text-left flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <span className="text-[22px] leading-tight" style={S_TEXT_BOLD}>{card.name || "Untitled Card"}</span>
               {card.actionCost && <span className="text-[10px] px-2 py-1" style={DM_ACTION_BADGE}>{card.actionCost}</span>}
@@ -1933,11 +1788,11 @@ function InteractiveCardPreview({
             </div>
           </button>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("overview", "identity", "identity", "identity"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#4A7BFF")}>
+            <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("basics", "identity", "identity", "identity"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#4A7BFF")}>
               Edit Identity
             </button>
-            <button type="button" onClick={() => focusStage("delivery", "delivery", "players", true)} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
-              Delivery
+            <button type="button" onClick={() => focusStage("access", "delivery", "players")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+              Access
             </button>
           </div>
         </div>
@@ -1956,7 +1811,7 @@ function InteractiveCardPreview({
               <button
                 key={fact.label}
                 type="button"
-                onClick={() => focusStage("overview", "identity", fact.label === "Level" ? "identity" : "profile")}
+                onClick={() => focusStage("basics", "identity", fact.label === "Level" ? "identity" : "profile")}
                 className={`${retro.raised} px-2.5 py-2 min-h-[52px] text-left`}
                 style={{ background: "rgba(12,18,46,0.94)", border: "1px solid #1A315A" }}
               >
@@ -2001,10 +1856,10 @@ function InteractiveCardPreview({
           <div className="space-y-4 min-w-0">
             <div className={`${retro.sunken} p-4`} style={previewSectionStyle("#6ABAFF", previewFocusRegion === "description" || previewEditField === "description")}>
               <div className="flex items-center justify-between gap-2 mb-2">
-                <button type="button" onClick={() => focusStage("overview", "description", "identity")} className="text-left">
+                <button type="button" onClick={() => focusStage("basics", "description", "identity")} className="text-left">
                   <div className="text-[10px] uppercase tracking-[0.1em]" style={{ color: "#7FA6FF", fontWeight: 700 }}>Description</div>
                 </button>
-                <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("overview", "description", "description", "identity"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>
+                <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("basics", "description", "description", "identity"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>
                   {hasFilledFieldValue(card.customFields[CARD_DESCRIPTION_KEY]) ? "Edit" : "Add Description"}
                 </button>
               </div>
@@ -2023,9 +1878,7 @@ function InteractiveCardPreview({
                   <div dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(card.customFields[CARD_DESCRIPTION_KEY]) }} />
                 </div>
               ) : (
-                <button type="button" onClick={() => beginEdit("overview", "description", "description", "identity")} className="w-full text-left text-[11px]" style={S_MUTED}>
-                  Add description
-                </button>
+                <div className="text-[11px]" style={S_MUTED}>No description</div>
               )}
             </div>
 
@@ -2059,9 +1912,7 @@ function InteractiveCardPreview({
                   <div dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(card.effect) }} />
                 </div>
               ) : (
-                <button type="button" onClick={() => beginEdit("rules", "rules", "effect", "main-effect")} className="w-full text-left text-[11px]" style={S_MUTED}>
-                  Add effect
-                </button>
+                <div className="text-[11px]" style={S_MUTED}>No effect</div>
               )}
             </div>
 
@@ -2089,18 +1940,16 @@ function InteractiveCardPreview({
               ) : hasFilledFieldValue(card.customFields[USE_PROFILE_UPCAST_KEY]) ? (
                 <div className="text-[11px]" style={S_TEXT}>{card.customFields[USE_PROFILE_UPCAST_KEY]}</div>
               ) : (
-                <button type="button" onClick={() => beginEdit("rules", "scaling", "scaling", "scaling")} className="w-full text-left text-[11px]" style={S_MUTED}>
-                  Add scaling
-                </button>
+                <div className="text-[11px]" style={S_MUTED}>No scaling</div>
               )}
             </div>
 
             <div className={`${retro.sunken} p-4`} style={previewSectionStyle("#FFD166", previewFocusRegion === "quick-rolls" || previewEditField === "quick-rolls")}>
               <div className="flex items-center justify-between gap-2 mb-2">
-                <button type="button" onClick={() => focusStage("effects", "quick-rolls", "quick-rolls")} className="text-left">
+                <button type="button" onClick={() => focusStage("rules", "quick-rolls", "quick-rolls")} className="text-left">
                   <div className="text-[10px] uppercase tracking-[0.1em]" style={{ color: "#FFD166", fontWeight: 700 }}>Quick Rolls</div>
                 </button>
-                <button type="button" onClick={(e) => { e.stopPropagation(); quickRollSlots.length === 0 ? onAddQuickRoll() : beginEdit("effects", "quick-rolls", "quick-rolls", "quick-rolls"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#FFD166")}>
+                <button type="button" onClick={(e) => { e.stopPropagation(); quickRollSlots.length === 0 ? onAddQuickRoll() : beginEdit("rules", "quick-rolls", "quick-rolls", "quick-rolls"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#FFD166")}>
                   {quickRollSlots.length === 0 ? "Add Quick Roll" : "Edit Quick Rolls"}
                 </button>
               </div>
@@ -2127,27 +1976,25 @@ function InteractiveCardPreview({
               ) : quickRollSlots.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {quickRollSlots.map((slot) => (
-                    <button key={slot.slotId} type="button" onClick={() => beginEdit("effects", "quick-rolls", "quick-rolls", "quick-rolls")} className={`${retro.button} px-3 py-2 text-[10px]`} style={sectionBadgeStyle("#FFD166")}>
+                    <button key={slot.slotId} type="button" onClick={() => beginEdit("rules", "quick-rolls", "quick-rolls", "quick-rolls")} className={`${retro.button} px-3 py-2 text-[10px]`} style={sectionBadgeStyle("#FFD166")}>
                       <Dices size={11} className="inline mr-1" /> {slot.label || "Roll"}: {slot.expression || "No expression"}
                     </button>
                   ))}
                 </div>
               ) : (
-                <button type="button" onClick={onAddQuickRoll} className="w-full text-left text-[11px]" style={S_MUTED}>
-                  Add quick roll
-                </button>
+                <div className="text-[11px]" style={S_MUTED}>No quick rolls</div>
               )}
             </div>
           </div>
 
           <div className="space-y-3 min-w-0">
-            <div className={`${retro.raised} p-3 space-y-3`} style={previewSectionStyle("#9A7ABB", previewFocusRegion === "tags" || previewEditField?.startsWith("tag:") || currentStage === "effects")}>
+            <div className={`${retro.raised} p-3 space-y-3`} style={previewSectionStyle("#9A7ABB", previewFocusRegion === "tags" || previewEditField?.startsWith("tag:"))}>
               <div className="flex items-center justify-between gap-2">
-                <button type="button" onClick={() => focusStage("effects", "tags", visibleCustomFieldGroups.length > 0 ? "visible-fields" : "tags")} className="text-left">
+                <button type="button" onClick={() => focusStage("rules", "tags", visibleCustomFieldGroups.length > 0 ? "visible-fields" : "tags")} className="text-left">
                   <div className="text-[10px]" style={S_SECTION_HDR}>VISIBLE TAG FIELDS</div>
                   <div className="text-[10px]" style={S_SUBTLE}>{visibleCustomFieldGroups.length > 0 ? `${visibleCustomFieldGroups.length} group${visibleCustomFieldGroups.length === 1 ? "" : "s"} visible` : `${card.tags.length} active tag${card.tags.length === 1 ? "" : "s"}`}</div>
                 </button>
-                <button type="button" onClick={() => focusStage("effects", "tags", visibleCustomFieldGroups.length > 0 ? "visible-fields" : "tags", visibleCustomFieldGroups.length === 0)} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
+                <button type="button" onClick={() => focusStage("rules", "tags", visibleCustomFieldGroups.length > 0 ? "visible-fields" : "tags")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
                   {visibleCustomFieldGroups.length > 0 ? "Manage Fields" : "Add Tags"}
                 </button>
               </div>
@@ -2172,11 +2019,11 @@ function InteractiveCardPreview({
                               </div>
                             ) : (
                               <div className="flex items-center justify-between gap-2">
-                                <button type="button" onClick={() => focusStage("effects", "tags", "visible-fields")} className="text-left min-w-0 flex-1">
+                                <button type="button" onClick={() => focusStage("rules", "tags", "visible-fields")} className="text-left min-w-0 flex-1">
                                   <div className="text-[10px]" style={S_MUTED}>{field.fieldName}</div>
                                   <div className="text-[11px] break-words" style={S_TEXT}>{card.customFields[field.key]}</div>
                                 </button>
-                                <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("effects", "tags", editKey, "visible-fields"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("rules", "tags", editKey, "visible-fields"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#9A7ABB")}>
                                   Edit
                                 </button>
                               </div>
@@ -2193,17 +2040,17 @@ function InteractiveCardPreview({
             {previewMeta.sidebarSections.map((section) => {
               const isTrackerSection = section.title === "Tracker" || section.title === "Status Tracker";
               return (
-                <div key={section.title} className={`${retro.raised} p-3 space-y-3`} style={previewSectionStyle(section.accent, isTrackerSection ? previewFocusRegion === "tracking" || previewEditField === "tracker" : currentStage === "overview")}>
+                <div key={section.title} className={`${retro.raised} p-3 space-y-3`} style={previewSectionStyle(section.accent, isTrackerSection ? previewFocusRegion === "tracking" || previewEditField === "tracker" : currentStage === "basics")}>
                   <div className="flex items-center justify-between gap-2">
                     <button
                       type="button"
-                      onClick={() => focusStage(isTrackerSection ? "effects" : "overview", isTrackerSection ? "tracking" : "identity", isTrackerSection ? "tracker" : "profile")}
+                      onClick={() => focusStage(isTrackerSection ? "rules" : "basics", isTrackerSection ? "tracking" : "identity", isTrackerSection ? "tracker" : "profile")}
                       className="text-left"
                     >
                       <div className="text-[10px]" style={S_SECTION_HDR}>{section.title.toUpperCase()}</div>
                     </button>
                     {isTrackerSection && (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("effects", "tracking", "tracker", "tracker"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle(section.accent)}>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); beginEdit("rules", "tracking", "tracker", "tracker"); }} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle(section.accent)}>
                         {trackerActive ? "Edit Tracker" : "Add Tracker"}
                       </button>
                     )}
@@ -2241,13 +2088,13 @@ function InteractiveCardPreview({
         </div>
       </div>
 
-      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#7ACA8A", previewFocusRegion === "delivery" || currentStage === "delivery")}>
+      <div className={`${retro.raised} p-4 space-y-3`} style={previewSectionStyle("#7ACA8A", previewFocusRegion === "delivery" || currentStage === "access")}>
         <div className="flex items-center justify-between gap-2">
-          <button type="button" onClick={() => focusStage("delivery", "delivery", "players", true)} className="text-left">
+          <button type="button" onClick={() => focusStage("access", "delivery", "players")} className="text-left">
             <div className="text-[10px]" style={S_SECTION_HDR}>DM DELIVERY SNAPSHOT</div>
             <div className="text-[10px]" style={S_SUBTLE}>{formatOwners(card.assignedTo, players)} | {selectedNodeLabel}</div>
           </button>
-          <button type="button" onClick={() => focusStage("delivery", "delivery", "players", true)} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
+          <button type="button" onClick={() => focusStage("access", "delivery", "players")} className={`${retro.button} px-2.5 py-1 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
             {card.assignedTo.length === 0 && !card.nodeTreeId ? "Add Assignment" : "Manage Delivery"}
           </button>
         </div>
@@ -2273,6 +2120,7 @@ export function DMCardManagerSection({
   nodeTrees,
   onPersistCards,
   onPersistNodeTrees,
+  onPersistTags,
   setDmError,
 }: DMCardManagerSectionProps) {
   const [dmCardsSubTab, setDmCardsSubTab] = useState<"cards" | "magic" | "levelabilities">("cards");
@@ -2282,28 +2130,31 @@ export function DMCardManagerSection({
   const [cardTagFilter, setCardTagFilter] = useState<string>("all");
   const [cardTypeFilter, setCardTypeFilter] = useState<string>("all");
   const [cardLibrarySort, setCardLibrarySort] = useState<CardLibrarySortMode>("manual");
-  const [editorPanel, setEditorPanel] = useState<CardEditorPanel>("preview");
-  const [workspaceStage, setWorkspaceStage] = useState<CardWorkspaceStage>("live");
-  const [overviewSubTab, setOverviewSubTab] = useState<OverviewSubTab>("identity");
+  const [workspaceStage, setWorkspaceStage] = useState<CardWorkspaceStage>("basics");
   const [rulesSubTab, setRulesSubTab] = useState<RulesSubTab>("main-effect");
   const [effectsSubTab, setEffectsSubTab] = useState<EffectsSubTab>("tags");
-  const [deliverySubTab, setDeliverySubTab] = useState<DeliverySubTab>("players");
+  const [rulesTool, setRulesTool] = useState<RulesWorkspaceTool>("main-effect");
   const [previewFocusRegion, setPreviewFocusRegion] = useState<CardPreviewFocusRegion>(null);
   const [previewEditField, setPreviewEditField] = useState<CardPreviewEditField>(null);
   const [isCardLibraryCollapsed, setIsCardLibraryCollapsed] = useState(false);
   const [isCardLibraryMobileOpen, setIsCardLibraryMobileOpen] = useState(false);
   const [showCardLibraryFilters, setShowCardLibraryFilters] = useState(false);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
-  const [pendingTemplate, setPendingTemplate] = useState<CardTemplateDef | null>(null);
+  const [newCardFamily, setNewCardFamily] = useState<Exclude<CardFamily, "">>("ability");
   const [mechanicsBuilder, setMechanicsBuilder] = useState<MechanicsBuilderState>(EMPTY_MECHANICS_BUILDER);
   const [cardSectionBlocks, setCardSectionBlocks] = useState<CardSectionBlock[]>([]);
   const [rulesMode, setRulesMode] = useState<CardRulesMode>("manual");
-  const [mechanicsView, setMechanicsView] = useState<MechanicsWorkspaceView>("rules");
   const [newSectionTitle, setNewSectionTitle] = useState("");
   const [newSectionTone, setNewSectionTone] = useState<CardSectionTone>("rules");
   const [tagSearch, setTagSearch] = useState("");
   const [tagFilterMode, setTagFilterMode] = useState<TagFilterMode>("all");
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [newTagDescription, setNewTagDescription] = useState("");
+  const [tagSaveError, setTagSaveError] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
   const [showAdvancedProfile, setShowAdvancedProfile] = useState(false);
+  const [showRulesAdvanced, setShowRulesAdvanced] = useState(false);
   const [showOptionalTagGroups, setShowOptionalTagGroups] = useState(false);
   const [showDeliveryDetails, setShowDeliveryDetails] = useState(false);
   const [magicSelectedPlayerId, setMagicSelectedPlayerId] = useState<string>("");
@@ -2349,20 +2200,23 @@ export function DMCardManagerSection({
       setMechanicsBuilder(EMPTY_MECHANICS_BUILDER);
       setCardSectionBlocks([]);
       setRulesMode("manual");
-      setMechanicsView("rules");
-      setWorkspaceStage("live");
-      setOverviewSubTab("identity");
+      setWorkspaceStage("basics");
       setRulesSubTab("main-effect");
       setEffectsSubTab("tags");
-      setDeliverySubTab("players");
+      setRulesTool("main-effect");
       setPreviewFocusRegion(null);
       setPreviewEditField(null);
       setNewSectionTitle("");
       setNewSectionTone("rules");
       setShowRequirementsField(false);
       setShowAdvancedProfile(false);
+      setShowRulesAdvanced(false);
       setShowOptionalTagGroups(false);
       setShowDeliveryDetails(false);
+      setCreatingTag(false);
+      setNewTagName("");
+      setNewTagDescription("");
+      setTagSaveError("");
       editorBaselineRef.current = "";
       return;
     }
@@ -2373,20 +2227,23 @@ export function DMCardManagerSection({
     setMechanicsBuilder(storedBuilder);
     setCardSectionBlocks(storedBlocks);
     setRulesMode(storedRulesMode);
-    setMechanicsView(storedRulesMode === "manual" ? "text" : "rules");
-    setWorkspaceStage("live");
-    setOverviewSubTab("identity");
+    setWorkspaceStage("basics");
     setRulesSubTab(storedRulesMode === "manual" ? "main-effect" : "builder");
     setEffectsSubTab("tags");
-    setDeliverySubTab("players");
+    setRulesTool("main-effect");
     setPreviewFocusRegion(null);
     setPreviewEditField(null);
     setNewSectionTitle("");
     setNewSectionTone("rules");
     setShowRequirementsField(!!(editingCard.customFields[USE_PROFILE_REQUIREMENTS_KEY] || "").trim());
     setShowAdvancedProfile(false);
+    setShowRulesAdvanced(false);
     setShowOptionalTagGroups(false);
     setShowDeliveryDetails(false);
+    setCreatingTag(false);
+    setNewTagName("");
+    setNewTagDescription("");
+    setTagSaveError("");
   }, [editingCard?.id]);
 
   const quickRollSlots = useMemo(() => editingCard ? buildQuickRollSlots(editingCard.customFields || {}) : [], [editingCard]);
@@ -2540,16 +2397,8 @@ export function DMCardManagerSection({
   }, [hasUnsavedChanges]);
 
   const handleAddCard = () => {
-    selectWorkspaceStage("live", null);
-    setShowTemplatePicker((prev) => {
-      const next = !prev;
-      if (!next) setPendingTemplate(null);
-      return next;
-    });
-  };
-
-  const handleSelectTemplate = (template: CardTemplateDef) => {
-    setPendingTemplate(template);
+    selectWorkspaceStage("basics", null);
+    setShowTemplatePicker((prev) => !prev);
   };
 
   const handleCreateCardFromTemplate = (template: CardTemplateDef, familyOverride?: Exclude<CardFamily, "">) => {
@@ -2567,10 +2416,7 @@ export function DMCardManagerSection({
     setMechanicsBuilder(nextBuilder);
     setCardSectionBlocks(nextBlocks);
     setRulesMode(nextRulesMode);
-    setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
-    selectWorkspaceStage("live", "identity");
-    setEditorPanel("preview");
-    setPendingTemplate(null);
+    selectWorkspaceStage("basics", "identity", "identity");
     setShowTemplatePicker(false);
     setIsCardLibraryMobileOpen(false);
     editorBaselineRef.current = buildEditorSnapshot(nextCard, nextBuilder, nextBlocks, nextRulesMode, true);
@@ -2587,29 +2433,10 @@ export function DMCardManagerSection({
     try {
       setDmError(null);
       const cardToSave = withPersistedEditorStructure(editingCard, mechanicsBuilder, cardSectionBlocks, rulesMode, cardTags);
-      const nextCards = isAddingNewCard
-        ? [...managedCards, cardToSave]
-        : managedCards.map((c) => (c.id === cardToSave.id ? cardToSave : c));
+      const nextCards = upsertManagedCard(managedCards, cardToSave, isAddingNewCard);
       await onPersistCards(nextCards);
 
-      let treesChanged = false;
-      const nextTrees = nodeTrees.map((tree) => {
-        const nextNodes = tree.nodes.map((node) => {
-          const hasCard = node.cardIds.includes(cardToSave.id);
-          const shouldHave = cardToSave.nodeTreeId === tree.id && cardToSave.nodeId === node.id;
-          if (shouldHave && !hasCard) {
-            if (getNodeCapacityState(node, cardToSave.id).isFullForSelection) return node;
-            treesChanged = true;
-            return { ...node, cardIds: [...node.cardIds, cardToSave.id] };
-          }
-          if (!shouldHave && hasCard) {
-            treesChanged = true;
-            return { ...node, cardIds: node.cardIds.filter((cid) => cid !== cardToSave.id) };
-          }
-          return node;
-        });
-        return { ...tree, nodes: nextNodes };
-      });
+      const { changed: treesChanged, nextTrees } = synchronizeCardNodeTrees(nodeTrees, cardToSave);
 
       if (treesChanged) {
         await onPersistNodeTrees(nextTrees);
@@ -2619,7 +2446,6 @@ export function DMCardManagerSection({
       editorBaselineRef.current = buildEditorSnapshot(cardToSave, mechanicsBuilder, cardSectionBlocks, rulesMode, false);
       setIsAddingNewCard(false);
       setShowTemplatePicker(false);
-      setPendingTemplate(null);
     } catch (err) {
       setDmError(getSaveError(err, "Failed to save card"));
     }
@@ -2634,7 +2460,6 @@ export function DMCardManagerSection({
         setEditingCard(null);
         setIsAddingNewCard(false);
         setShowTemplatePicker(false);
-        setPendingTemplate(null);
         editorBaselineRef.current = "";
       }
     } catch (err) {
@@ -2647,14 +2472,12 @@ export function DMCardManagerSection({
     setEditingCard(null);
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
-    setPendingTemplate(null);
-    selectWorkspaceStage("live", null);
-    setEditorPanel("preview");
+    selectWorkspaceStage("basics", null);
     editorBaselineRef.current = "";
   };
 
   const updateCardField = <K extends keyof ManagedCard>(key: K, value: ManagedCard[K]) => {
-    if (editingCard) setEditingCard({ ...editingCard, [key]: value });
+    setEditingCard((current) => current ? { ...current, [key]: value } : current);
   };
 
   const openCardEditor = (card: ManagedCard, nextPanel: CardEditorPanel = "preview") => {
@@ -2666,24 +2489,21 @@ export function DMCardManagerSection({
     setEditingCard(nextCard);
     setIsAddingNewCard(false);
     setShowTemplatePicker(false);
-    setPendingTemplate(null);
-    setEditorPanel(nextPanel);
     setMechanicsBuilder(nextBuilder);
     setCardSectionBlocks(nextBlocks);
     setRulesMode(nextRulesMode);
-    setMechanicsView(nextRulesMode === "manual" ? "text" : "rules");
     if (nextPanel === "assignment") {
-      selectWorkspaceStage("delivery", "delivery", "players");
+      selectWorkspaceStage("access", "delivery", "players");
     } else if (nextPanel === "progression") {
-      selectWorkspaceStage("delivery", "delivery", "node-trees");
+      selectWorkspaceStage("access", "delivery", "node-trees");
     } else if (nextPanel === "tags") {
-      selectWorkspaceStage("effects", "tags", "tags");
+      selectWorkspaceStage("rules", "tags", "tags");
     } else if (nextPanel === "mechanics") {
       selectWorkspaceStage("rules", "rules", nextRulesMode === "manual" ? "main-effect" : "builder");
     } else if (nextPanel === "preview") {
-      selectWorkspaceStage("live", "identity");
+      selectWorkspaceStage("basics", "identity", "identity");
     } else {
-      selectWorkspaceStage("overview", "identity", "identity");
+      selectWorkspaceStage("basics", "identity", "identity");
     }
     setIsCardLibraryMobileOpen(false);
     editorBaselineRef.current = buildEditorSnapshot(nextCard, nextBuilder, nextBlocks, nextRulesMode, false);
@@ -2697,16 +2517,62 @@ export function DMCardManagerSection({
       {
         ...editingCard,
         tags: nextTags,
-        customFields: stripInactiveTagCustomFields(editingCard.customFields || {}, nextTags, cardTags),
+        customFields: { ...editingCard.customFields },
       },
       buildStarterProfileFromTags(nextTags, cardTags),
     );
     setEditingCard(nextCard);
   };
 
+  const resetTagCreator = () => {
+    setCreatingTag(false);
+    setNewTagName("");
+    setNewTagDescription("");
+    setTagSaveError("");
+  };
+
+  const createCardTag = async () => {
+    if (!editingCard || !onPersistTags || tagSaving) return;
+    const name = newTagName.trim();
+    if (!name) {
+      setTagSaveError("Enter a tag name.");
+      return;
+    }
+
+    const existing = cardTags.find((tag) => tag.name.trim().toLowerCase() === name.toLowerCase());
+    if (existing) {
+      if (!editingCard.tags.includes(existing.name)) toggleCardTag(existing.name);
+      resetTagCreator();
+      return;
+    }
+
+    const nextTag: TagDefinition = {
+      id: `ctag-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      description: newTagDescription.trim(),
+      fields: [],
+    };
+
+    setTagSaving(true);
+    setTagSaveError("");
+    try {
+      await onPersistTags([...cardTags, nextTag]);
+      setEditingCard((current) => current && !current.tags.includes(nextTag.name)
+        ? { ...current, tags: [...current.tags, nextTag.name] }
+        : current);
+      setTagSearch("");
+      resetTagCreator();
+    } catch (error) {
+      setTagSaveError(error instanceof Error ? error.message : "Tag could not be saved.");
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
   const updateCardCustomField = (key: string, value: string) => {
-    if (!editingCard) return;
-    setEditingCard({ ...editingCard, customFields: { ...editingCard.customFields, [key]: value } });
+    setEditingCard((current) => current
+      ? { ...current, customFields: { ...current.customFields, [key]: value } }
+      : current);
   };
 
   const addQuickRollSlot = () => {
@@ -2717,14 +2583,8 @@ export function DMCardManagerSection({
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_EXPRESSION_KEY)] = "";
     nextCustomFields[getQuickRollFieldKey(slotId, QUICK_ROLL_POTENCY_KEY)] = "";
     setEditingCard({ ...editingCard, customFields: nextCustomFields });
-    if (workspaceStage === "live") {
-      selectWorkspaceStage("live", "quick-rolls");
-      setPreviewEditField("quick-rolls");
-    } else {
-      selectWorkspaceStage("effects", "quick-rolls", "quick-rolls");
-    }
-    setEditorPanel("mechanics");
-    setMechanicsView("automation");
+    selectWorkspaceStage("rules", "quick-rolls", "quick-rolls");
+    setPreviewEditField("quick-rolls");
   };
 
   const removeQuickRollSlot = (slotId: string) => {
@@ -2939,12 +2799,13 @@ export function DMCardManagerSection({
       );
     }
 
-    return renderTypedField(
-      cf.key,
-      cf.fieldDef,
-      editingCard.customFields[cf.key] || cf.fieldDef.defaultValue || "",
-      updateCardCustomField,
-      cfLabel,
+    const value = editingCard.customFields[cf.key] || cf.fieldDef.defaultValue || "";
+    const missingRequiredValue = !!cf.fieldDef.required && !value.trim();
+    return (
+      <div key={cf.key}>
+        {renderTypedField(cf.key, cf.fieldDef, value, updateCardCustomField, cfLabel)}
+        {missingRequiredValue && <div className="text-[9px] mt-1" style={S_RED}>{cf.fieldName} is required for {cf.tagName}.</div>}
+      </div>
     );
   };
 
@@ -3090,161 +2951,23 @@ export function DMCardManagerSection({
     () => (editingCard && hasBuiltInCardTracker(editingCard) ? trackerBucketLabel(currentTrackerBucket) : null),
     [editingCard, currentTrackerBucket],
   );
-  const workspaceStageCards = useMemo(() => {
-    if (!editingCard) return [];
-    return [
-      {
-        id: "live" as CardWorkspaceStage,
-        accent: "#5C8DFF",
-        title: "Live Edit",
-        summary: "Preview-first editing",
-        detail: stripHtml(editingCard.effect || editingCard.customFields[CARD_DESCRIPTION_KEY] || "").trim()
-          ? "Edit the visible card text directly in the live preview"
-          : "Start by clicking into the live preview to fill the visible card text",
-      },
-      {
-        id: "overview" as CardWorkspaceStage,
-        accent: currentFamilyDef?.accent || "#4A7BFF",
-        title: "Overview",
-        summary: currentFamilyDef ? `${currentFamilyDef.label} profile` : "Pick the card's family",
-        detail: editingCard.name.trim() ? editingCard.name.trim() : "Name and identity still blank",
-      },
-      {
-        id: "rules" as CardWorkspaceStage,
-        accent: rulesMode === "guided" ? "#6ABAFF" : "#FFD166",
-        title: "Rules",
-        summary: rulesMode === "guided" ? "Guided rules save" : "Manual rules save",
-        detail: rulesMode === "guided"
-          ? `${getFilledMechanicsCount(mechanicsBuilder)} structured steps`
-          : (stripHtml(editingCard.effect || "").trim() ? "Manual effect text ready" : "Manual effect text still blank"),
-      },
-      {
-        id: "effects" as CardWorkspaceStage,
-        accent: "#9A7ABB",
-        title: "Effects & Tags",
-        summary: `${selectedTagDefs.length} tag${selectedTagDefs.length === 1 ? "" : "s"} | ${quickRollSlots.length} quick roll${quickRollSlots.length === 1 ? "" : "s"}`,
-        detail: trackerStatusLabel || (missingRequiredTagFields.length > 0 ? `${missingRequiredTagFields.length} required field${missingRequiredTagFields.length === 1 ? "" : "s"} missing` : "No automation configured"),
-      },
-      {
-        id: "delivery" as CardWorkspaceStage,
-        accent: "#7ACA8A",
-        title: "Delivery",
-        summary: editingCard.assignedTo.includes("all") ? "All players" : editingCard.assignedTo.length > 0 ? `${editingCard.assignedTo.length} player${editingCard.assignedTo.length === 1 ? "" : "s"}` : "Unassigned",
-        detail: selectedNode ? `${selectedNode.label}${selectedNodeCapacity?.isFullForSelection ? " (full)" : ""}` : selectedNodeTree ? "Node not picked yet" : "No progression assignment",
-      },
-    ];
-  }, [
-    editingCard,
-    currentFamilyDef,
-    rulesMode,
-    mechanicsBuilder,
-    selectedTagDefs.length,
-    quickRollSlots.length,
-    trackerStatusLabel,
-    missingRequiredTagFields.length,
-    selectedNode,
-    selectedNodeCapacity?.isFullForSelection,
-    selectedNodeTree,
-  ]);
-  const workflowSnapshotCards = useMemo(() => {
-    if (!editingCard) return [];
-    return [
-      {
-        id: "core" as CardEditorPanel,
-        accent: currentFamilyDef?.accent || "#4A7BFF",
-        title: "Core",
-        summary: currentFamilyDef ? `${currentFamilyDef.label} profile` : "Choose a family",
-        detail: editingCard.name.trim() ? editingCard.name.trim() : "Name still blank",
-      },
-      {
-        id: "mechanics" as CardEditorPanel,
-        accent: rulesMode === "guided" ? "#6ABAFF" : "#FFD166",
-        title: "Mechanics",
-        summary: rulesMode === "guided" ? "Guided rules save" : "Manual text save",
-        detail: rulesMode === "guided"
-          ? `${getFilledMechanicsCount(mechanicsBuilder)} steps, ${cardSectionBlocks.length} blocks`
-          : (stripHtml(editingCard.effect || "").trim() ? `${stripHtml(editingCard.effect || "").slice(0, 42)}${stripHtml(editingCard.effect || "").length > 42 ? "..." : ""}` : "No manual rules yet"),
-      },
-      {
-        id: "tags" as CardEditorPanel,
-        accent: "#9A7ABB",
-        title: "Tags",
-        summary: selectedTagDefs.length === 0 ? "No tags selected" : `${selectedTagDefs.length} active tag${selectedTagDefs.length === 1 ? "" : "s"}`,
-        detail: missingRequiredTagFields.length > 0 ? `${missingRequiredTagFields.length} required field${missingRequiredTagFields.length === 1 ? "" : "s"} missing` : "Tag fields look clean",
-      },
-      {
-        id: "progression" as CardEditorPanel,
-        accent: "#FFD700",
-        title: "Progression",
-        summary: selectedNodeTree ? selectedNodeTree.name : "No node tree",
-        detail: selectedNode
-          ? `${selectedNode.label}${selectedNodeCapacity?.isFullForSelection ? " (full)" : ""}`
-          : selectedNodeTree ? "Node not picked yet" : "Optional assignment",
-      },
-      {
-        id: "assignment" as CardEditorPanel,
-        accent: "#7ACA8A",
-        title: "Assignment",
-        summary: editingCard.assignedTo.includes("all") ? "All players" : editingCard.assignedTo.length > 0 ? `${editingCard.assignedTo.length} player${editingCard.assignedTo.length === 1 ? "" : "s"}` : "Unassigned",
-        detail: blockingValidationIssues.length > 0 ? "Finish checklist before save" : "Ready for preview",
-      },
-    ];
-  }, [
-    editingCard,
-    currentFamilyDef,
-    rulesMode,
-    mechanicsBuilder,
-    cardSectionBlocks,
-    selectedTagDefs.length,
-    missingRequiredTagFields.length,
-    selectedNodeTree,
-    selectedNode,
-    selectedNodeCapacity?.isFullForSelection,
-    blockingValidationIssues.length,
-  ]);
-  const mechanicsWorkspaceCards = useMemo(() => ([
-    {
-      id: "rules" as MechanicsWorkspaceView,
-      accent: "#6ABAFF",
-      title: "Rules Builder",
-      detail: `${getFilledMechanicsCount(mechanicsBuilder)} steps and ${cardSectionBlocks.length} block${cardSectionBlocks.length === 1 ? "" : "s"}`,
-      helper: "Build the sequence and supporting rule blocks.",
-    },
-    {
-      id: "automation" as MechanicsWorkspaceView,
-      accent: "#4ACA6A",
-      title: "Automation",
-      detail: `${hasBuiltInCardTracker(editingCard) ? trackerBucketLabel(currentTrackerBucket) : "Tracker off"} | ${quickRollSlots.length} quick roll${quickRollSlots.length === 1 ? "" : "s"}`,
-      helper: "Configure status/card tracking and dice buttons.",
-    },
-    {
-      id: "text" as MechanicsWorkspaceView,
-      accent: "#FFD166",
-      title: "Text & Scaling",
-      detail: `${rulesMode === "guided" ? "Guided text preview" : "Manual effect editing"} | ${(editingCard?.customFields[USE_PROFILE_UPCAST_KEY] || "").trim() ? "Scaling set" : "Scaling blank"}`,
-      helper: "Description, saved effect text, and scaling notes.",
-    },
-  ]), [mechanicsBuilder, cardSectionBlocks.length, editingCard, currentTrackerBucket, quickRollSlots.length, rulesMode]);
-  const mechanicsWorkspaceIntro = useMemo(() => {
-    const activeView = mechanicsWorkspaceCards.find((view) => view.id === mechanicsView);
-    return activeView || mechanicsWorkspaceCards[0];
-  }, [mechanicsWorkspaceCards, mechanicsView]);
   const setStageSubTab = useCallback((
     stage: CardWorkspaceStage,
     subTab: OverviewSubTab | RulesSubTab | EffectsSubTab | DeliverySubTab,
   ) => {
-    if (stage === "overview") setOverviewSubTab(subTab as OverviewSubTab);
+    if (stage === "basics") return;
     if (stage === "rules") {
-      const next = subTab as RulesSubTab;
-      setRulesSubTab(next);
-      setMechanicsView(next === "builder" || next === "section-blocks" ? "rules" : "text");
+      setRulesTool(subTab as RulesWorkspaceTool);
+      if (["tags", "visible-fields", "tracker", "quick-rolls", "advanced"].includes(subTab)) {
+        const next = subTab as EffectsSubTab;
+        setEffectsSubTab(next);
+      } else {
+        const next = subTab as RulesSubTab;
+        setRulesSubTab(next);
+      }
+      return;
     }
-    if (stage === "effects") {
-      const next = subTab as EffectsSubTab;
-      setEffectsSubTab(next);
-      if (next === "tracker" || next === "quick-rolls") setMechanicsView("automation");
-    }
-    if (stage === "delivery") setDeliverySubTab(subTab as DeliverySubTab);
+    return;
   }, []);
 
   const selectWorkspaceStage = useCallback((
@@ -3255,16 +2978,14 @@ export function DMCardManagerSection({
     setWorkspaceStage(stage);
     setPreviewFocusRegion(focusRegion);
     setPreviewEditField(null);
-    if (stage === "live") return;
     if (subTab) {
       setStageSubTab(stage, subTab);
       return;
     }
-    if (stage === "overview") setStageSubTab(stage, "identity");
-    if (stage === "rules") setStageSubTab(stage, rulesMode === "guided" ? "builder" : "main-effect");
-    if (stage === "effects") setStageSubTab(stage, "tags");
-    if (stage === "delivery") setStageSubTab(stage, "players");
-  }, [rulesMode, setStageSubTab]);
+    if (stage === "basics") setStageSubTab(stage, "identity");
+    if (stage === "rules") setStageSubTab(stage, rulesTool);
+    if (stage === "access") setStageSubTab(stage, "players");
+  }, [rulesTool, setStageSubTab]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return undefined;
@@ -3278,47 +2999,25 @@ export function DMCardManagerSection({
 
   const applyCardFamily = (family: CardFamily) => {
     if (!editingCard) return;
-    setEditingCard(withCardFamilyDefaults(editingCard, family, { overwriteExisting: true }));
+    setEditingCard(withCardFamilyDefaults(editingCard, family));
   };
 
   const focusValidationIssue = (issue: CardValidationIssue) => {
-    setEditorPanel(issue.panel);
-    if (issue.panel === "mechanics" && issue.mechanicsView) {
-      setMechanicsView(issue.mechanicsView);
-    }
-    if (issue.panel === "mechanics" && issue.mechanicsView === "automation") {
-      selectWorkspaceStage("effects", "tracking", "tracker");
+    if (issue.panel === "core") {
+      selectWorkspaceStage("basics", "identity", "identity");
+    } else if (issue.panel === "tags") {
+      selectWorkspaceStage("rules", "tags", "visible-fields");
+    } else if (issue.panel === "mechanics" && issue.mechanicsView === "automation") {
+      const tool: EffectsSubTab = issue.id.startsWith("quick-roll-") ? "quick-rolls" : "tracker";
+      selectWorkspaceStage("rules", tool === "quick-rolls" ? "quick-rolls" : "tracking", tool);
+    } else if (issue.panel === "mechanics") {
+      selectWorkspaceStage("rules", "rules", issue.mechanicsView === "rules" ? "builder" : "main-effect");
+    } else if (issue.panel === "progression") {
+      selectWorkspaceStage("access", "delivery", "node-trees");
     } else {
-      const stage = getWorkspaceStageForPanel(issue.panel, issue.mechanicsView);
-      if (stage === "overview") {
-        selectWorkspaceStage("overview", "identity", "identity");
-      } else if (stage === "rules") {
-        selectWorkspaceStage("rules", issue.panel === "mechanics" ? "rules" : null, issue.mechanicsView === "rules" ? "builder" : "main-effect");
-      } else if (stage === "effects") {
-        selectWorkspaceStage("effects", issue.panel === "tags" ? "tags" : "tracking", issue.panel === "tags" ? "visible-fields" : "tracker");
-      } else {
-        selectWorkspaceStage("delivery", "delivery", issue.panel === "progression" ? "node-trees" : issue.panel === "assignment" ? "players" : "validation");
-      }
+      selectWorkspaceStage("access", "delivery", issue.panel === "assignment" ? "players" : "validation");
     }
     setPreviewEditField(null);
-  };
-
-  const editorPanels: { id: CardEditorPanel; label: string; icon: React.ComponentType<{ size?: number }>; accent: string; step: string }[] = [
-    { id: "core", label: "Core", icon: Settings, accent: "#4A7BFF", step: "1" },
-    { id: "mechanics", label: "Mechanics", icon: FileText, accent: "#6ABAFF", step: "2" },
-    { id: "tags", label: "Tags", icon: Tags, accent: "#9A7ABB", step: "3" },
-    { id: "progression", label: "Progression", icon: GitBranch, accent: "#FFD700", step: "4" },
-    { id: "assignment", label: "Assignment", icon: Users, accent: "#7ACA8A", step: "5" },
-    { id: "preview", label: "Preview", icon: Eye, accent: "#8AB8FF", step: "6" },
-  ];
-
-  const editorPanelDescriptions: Record<CardEditorPanel, string> = {
-    core: "Define the card's identity, family, and use profile.",
-    mechanics: "Choose one rules source, then handle automation and supporting text in smaller workspace views.",
-    tags: "Use helper tags and fill any tag-driven fields this card needs.",
-    progression: "Assign the card to a node tree and see node capacity before saving.",
-    assignment: "Choose which players receive the card.",
-    preview: "Review the exact card output that will be saved.",
   };
 
   const handleCardsSubTabChange = (nextTab: "cards" | "magic" | "levelabilities") => {
@@ -3367,76 +3066,80 @@ export function DMCardManagerSection({
     void saveMagicLists(nextLists);
   }, [magicLists, saveMagicLists]);
 
-  const renderOverviewStage = () => {
+  const renderBasicsStage = () => {
     if (!editingCard) return null;
+    const identityIssues = validationIssues.filter((issue) => issue.panel === "core");
+    const isSpell = currentFamily === "spell";
+    const isPassive = /passive/i.test(`${editingCard.type} ${editingCard.actionCost} ${editingCard.customFields[USE_PROFILE_PASSIVE_MODE_KEY] || ""}`);
+    const isReaction = /reaction/i.test(`${editingCard.type} ${editingCard.actionCost}`);
 
     return (
       <div className="space-y-4">
-        <WorkspaceSubTabBar tabs={OVERVIEW_SUB_TABS} activeTab={overviewSubTab} onSelect={setOverviewSubTab} />
+        <div className={`${retro.sunken} bg-[#081022] p-3 flex flex-wrap items-center justify-between gap-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#4A7BFF")}>
+          <div className="text-[12px]" style={S_SECTION_HDR}>BASICS</div>
+          <button
+            type="button"
+            onClick={() => setShowAdvancedProfile((visible) => !visible)}
+            className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+            style={showAdvancedProfile ? sectionBadgeStyle("#8AB8FF") : S_TEXT}
+            aria-expanded={showAdvancedProfile}
+          >
+            <Settings size={11} /> {showAdvancedProfile ? "Hide Advanced" : "Advanced Profile"}
+          </button>
+        </div>
 
-        {overviewSubTab === "identity" && (
+        {(
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#4A7BFF")}>
             <div className="grid grid-cols-1 gap-4">
               <div className="space-y-4">
-                <div className={`${retro.raised} bg-[#0E0E35] p-4`} style={editorSurfaceStyle("#4A7BFF")}>
-                  <div className="text-[12px] mb-1" style={S_SECTION_HDR}>PREVIEW-FIRST EDITING</div>
-                  <div className="text-[11px]" style={S_SUBTLE}>
-                    Use the live preview for the card's visible text first. This sub-tab keeps the same fields available in a wider supporting layout when you want a full form.
-                  </div>
-                </div>
                 <div className="grid grid-cols-1 2xl:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Card Name:</label>
                     <input type="text" value={editingCard.name} onChange={(e) => updateCardField("name", e.target.value)} placeholder="Enter card name..." className={inputClass} style={inputStyle} />
+                    {identityIssues.find((issue) => issue.id === "card-name") && <div className="text-[9px] mt-1" style={S_RED}>Card name is required.</div>}
                   </div>
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Card Type:</label>
                     <input type="text" value={editingCard.type} onChange={(e) => updateCardField("type", e.target.value)} placeholder="e.g., Combat, Utility..." className={inputClass} style={inputStyle} />
+                    {identityIssues.find((issue) => issue.id === "card-type") && <div className="text-[9px] mt-1" style={{ color: "#FFD700" }}>A type improves library search and filtering.</div>}
                   </div>
                   <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Action Cost:</label>
                     <input type="text" value={editingCard.actionCost} onChange={(e) => updateCardField("actionCost", e.target.value)} placeholder="e.g., 1 Action, Reaction, Passive..." className={inputClass} style={inputStyle} />
                   </div>
-                  <div>
+                  {isSpell && <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Level:</label>
                     <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => updateCardCustomField("Level", e.target.value)} placeholder="0" className={inputClass} style={inputStyle} />
-                  </div>
-                  <div>
+                  </div>}
+                  {isSpell && <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Source Type:</label>
                     <input type="text" value={editingCard.customFields["Source Type"] || ""} onChange={(e) => updateCardCustomField("Source Type", e.target.value)} placeholder="e.g., Light, Martial, Fairy Blood..." className={inputClass} style={inputStyle} />
-                  </div>
-                  <div>
+                  </div>}
+                  {isSpell && <div>
                     <label className="text-[10px] block mb-1" style={labelStyle}>Magic Nature:</label>
                     <input type="text" value={editingCard.customFields[USE_PROFILE_MAGIC_NATURE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_MAGIC_NATURE_KEY, e.target.value)} placeholder="e.g., Magical (Spell), Technique..." className={inputClass} style={inputStyle} />
-                  </div>
+                  </div>}
                 </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
-                  <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT SNAPSHOT</div>
-                  <div className="flex flex-wrap gap-2">
-                    {currentProfileBadges.length > 0 ? currentProfileBadges.map((badge, index) => (
-                      <span key={`${badge}-${index}`} className="text-[9px] px-2 py-1" style={sectionBadgeStyle(index === 0 && currentFamilyDef ? currentFamilyDef.accent : "#6ABAFF")}>{badge}</span>
-                    )) : <span className="text-[10px]" style={S_MUTED}>Pick a card family to start shaping the rules profile.</span>}
-                  </div>
-                  <div className="text-[11px]" style={S_SUBTLE}>
-                    {editingCard.name.trim()
-                      ? "The preview now acts as the fastest editor for name, description, effect text, scaling, quick rolls, and visible fields."
-                      : "Start by naming the card. Then move between the preview and the supporting subtabs as needed."}
-                  </div>
+                <div>
+                  <label className="text-[10px] block mb-1" style={labelStyle}>Description:</label>
+                  <RichTextEditor
+                    value={editingCard.customFields[CARD_DESCRIPTION_KEY] || ""}
+                    onChange={(html) => updateCardCustomField(CARD_DESCRIPTION_KEY, html)}
+                    placeholder="Short player-facing description..."
+                    minHeight={110}
+                  />
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {overviewSubTab === "profile" && (
+        {(
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#6ABAFF")}>
             <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
               <div>
                 <div className="text-[10px] mb-1" style={S_SECTION_HDR}>CARD FAMILY</div>
-                <div className="text-[10px]" style={S_SUBTLE}>Pick the family that should own the card's main use profile. Switching family overwrites the family-managed profile fields.</div>
+                {identityIssues.find((issue) => issue.id === "card-family") && <div className="text-[9px] mt-1" style={{ color: "#FFD700" }}>Choose a family for consistent card behavior.</div>}
               </div>
               <div className="flex flex-wrap gap-2">
                 {CARD_FAMILY_OPTIONS.map((family) => {
@@ -3453,18 +3156,6 @@ export function DMCardManagerSection({
                   );
                 })}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {CARD_FAMILY_OPTIONS.map((family) => (
-                  <div key={family.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(family.accent)}>
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <div className="text-[11px]" style={S_TEXT_BOLD}>{family.label}</div>
-                      <span className="text-[9px] px-2 py-0.5" style={sectionBadgeStyle(family.accent)}>{family.label}</span>
-                    </div>
-                    <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
-                    <div className="text-[10px] mt-2" style={S_MUTED}>{family.helper}</div>
-                  </div>
-                ))}
-              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4">
@@ -3477,50 +3168,64 @@ export function DMCardManagerSection({
                   <label className="text-[10px] block mb-1" style={labelStyle}>Primary Cost:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_PRIMARY_COST_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_PRIMARY_COST_KEY, e.target.value)} placeholder="e.g., 3 Fire Source..." className={inputClass} style={inputStyle} />
                 </div>
-                <div>
+                {!isSpell && <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Uses Per Long Rest:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_USES_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_USES_KEY, e.target.value)} placeholder="e.g., PB / Long Rest..." className={inputClass} style={inputStyle} />
-                </div>
-                <div>
+                </div>}
+                {!isPassive && <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Range:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_RANGE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_RANGE_KEY, e.target.value)} placeholder="e.g., Self, 30 feet..." className={inputClass} style={inputStyle} />
-                </div>
-                <div>
+                </div>}
+                {(isSpell || !isPassive) && <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Duration:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_DURATION_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_DURATION_KEY, e.target.value)} placeholder="e.g., Instant, 1 minute..." className={inputClass} style={inputStyle} />
-                </div>
-                <div>
+                </div>}
+                {!isSpell && <div>
                   <label className="text-[10px] block mb-1" style={labelStyle}>Origin:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_ORIGIN_KEY, e.target.value)} placeholder="e.g., Learned, Bloodline..." className={inputClass} style={inputStyle} />
-                </div>
-                <div className="md:col-span-2 xl:col-span-3">
-                  <label className="text-[10px] block mb-1" style={labelStyle}>Passive / Trigger Notes:</label>
+                </div>}
+                {(isPassive || isReaction) && <div className="md:col-span-2 xl:col-span-3">
+                  <label className="text-[10px] block mb-1" style={labelStyle}>{isReaction ? "Reaction Trigger" : "Passive Notes"}:</label>
                   <input type="text" value={editingCard.customFields[USE_PROFILE_PASSIVE_MODE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_PASSIVE_MODE_KEY, e.target.value)} placeholder="e.g., Activatable Passive, Triggered on damage..." className={inputClass} style={inputStyle} />
-                </div>
-              </div>
-
-              <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle(currentFamilyDef?.accent || "#273357")}>
-                <div className="text-[10px]" style={S_SECTION_HDR}>CURRENT RULE PROFILE</div>
-                <div className="flex flex-wrap gap-2">
-                  {currentProfileBadges.length > 0 ? currentProfileBadges.map((badge, index) => (
-                    <span key={`${badge}-${index}`} className="text-[9px] px-2 py-1" style={sectionBadgeStyle(index === 0 && currentFamilyDef ? currentFamilyDef.accent : "#6ABAFF")}>{badge}</span>
-                  )) : <span className="text-[10px]" style={S_MUTED}>No family summary yet.</span>}
-                </div>
-                <div className="space-y-2 text-[11px]">
-                  <div><span style={S_MUTED}>Cost Model:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_COST_MODEL_KEY] || "Not set"}</span></div>
-                  <div><span style={S_MUTED}>Primary Cost:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_PRIMARY_COST_KEY] || "Not set"}</span></div>
-                  <div><span style={S_MUTED}>Uses / Long Rest:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_USES_KEY] || "Not set"}</span></div>
-                  <div><span style={S_MUTED}>Origin:</span> <span style={S_TEXT}>{editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || "Not set"}</span></div>
-                </div>
+                </div>}
               </div>
             </div>
           </div>
         )}
 
-        {overviewSubTab === "advanced-profile" && (
+        {showAdvancedProfile && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={editorSurfaceStyle("#8AB8FF")}>
             <div className="grid grid-cols-1 gap-4">
               <div className="space-y-4">
+                <div>
+                  <div className="text-[10px] mb-2" style={S_SECTION_HDR}>PROFILE OVERRIDES</div>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    {!isSpell && <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Level:</label>
+                      <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => updateCardCustomField("Level", e.target.value)} placeholder="0" className={inputClass} style={inputStyle} />
+                    </div>}
+                    {!isSpell && <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Source Type:</label>
+                      <input type="text" value={editingCard.customFields["Source Type"] || ""} onChange={(e) => updateCardCustomField("Source Type", e.target.value)} placeholder="Optional source label" className={inputClass} style={inputStyle} />
+                    </div>}
+                    {isSpell && <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Uses Per Long Rest:</label>
+                      <input type="text" value={editingCard.customFields[USE_PROFILE_USES_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_USES_KEY, e.target.value)} placeholder="Optional use limit" className={inputClass} style={inputStyle} />
+                    </div>}
+                    {isSpell && <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Origin:</label>
+                      <input type="text" value={editingCard.customFields[USE_PROFILE_ORIGIN_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_ORIGIN_KEY, e.target.value)} placeholder="Optional origin" className={inputClass} style={inputStyle} />
+                    </div>}
+                    {isPassive && <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Range:</label>
+                      <input type="text" value={editingCard.customFields[USE_PROFILE_RANGE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_RANGE_KEY, e.target.value)} placeholder="Optional passive range" className={inputClass} style={inputStyle} />
+                    </div>}
+                    {!isSpell && <div>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>Magic Nature:</label>
+                      <input type="text" value={editingCard.customFields[USE_PROFILE_MAGIC_NATURE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_MAGIC_NATURE_KEY, e.target.value)} placeholder="Optional magic classification" className={inputClass} style={inputStyle} />
+                    </div>}
+                  </div>
+                </div>
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
                   <div className="md:col-span-2 xl:col-span-3">
                     <label className="text-[10px] block mb-2" style={labelStyle}>Components:</label>
@@ -3577,13 +3282,6 @@ export function DMCardManagerSection({
                   )}
                 </div>
               </div>
-
-              <div className={`${retro.raised} p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
-                <div className="text-[10px]" style={S_SECTION_HDR}>WHY THIS SUB-TAB STAYS HERE</div>
-                <div className="text-[11px]" style={S_SUBTLE}>
-                  Components, requirements, and deeper use-profile fields are still easier to manage in a form than directly on the player card preview. The preview remains the primary place for visible text edits.
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -3596,58 +3294,15 @@ export function DMCardManagerSection({
 
     return (
       <div className="space-y-4">
-        <WorkspaceSubTabBar tabs={RULES_SUB_TABS} activeTab={rulesSubTab} onSelect={setRulesSubTab} />
-
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
-          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>RULES WORKSPACE</div>
-                <div className="text-[10px]" style={S_SUBTLE}>
-                  The live preview is the fastest place to edit visible rules text. These subtabs hold source selection, structured authoring, and import tools.
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#6ABAFF")}>{getFilledMechanicsCount(mechanicsBuilder)} mechanics step{getFilledMechanicsCount(mechanicsBuilder) === 1 ? "" : "s"}</span>
-                <span className="text-[10px] px-2.5 py-1.5" style={sectionBadgeStyle("#FFD700")}>{cardSectionBlocks.length} section block{cardSectionBlocks.length === 1 ? "" : "s"}</span>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => { setRulesMode("guided"); setRulesSubTab("builder"); }}
-                className={`${rulesMode === "guided" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
-                style={panelButtonStyle(rulesMode === "guided", "#6ABAFF")}
-              >
-                Guided Builder
-              </button>
-              <button
-                type="button"
-                onClick={() => { setRulesMode("manual"); setRulesSubTab("main-effect"); }}
-                className={`${rulesMode === "manual" ? retro.sunken : retro.raised} px-3 py-2 text-[11px]`}
-                style={panelButtonStyle(rulesMode === "manual", "#FFD166")}
-              >
-                Manual Text
-              </button>
-            </div>
-          </div>
-
           {rulesSubTab === "main-effect" && (
-            <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-4">
+            <div className={`grid grid-cols-1 ${showRulesAdvanced ? "2xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]" : ""} gap-4`}>
               <div className="space-y-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle(rulesMode === "manual" ? "#FFD166" : "#6ABAFF")}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[12px] mb-1" style={S_SECTION_HDR}>SAVED RULES SOURCE</div>
-                      <div className="text-[10px]" style={S_SUBTLE}>
-                        {rulesMode === "guided"
-                          ? "Guided Builder writes the saved effect text when you save."
-                          : "Manual Text writes the saved effect text. The builder stays available as a draft and import tool."}
-                      </div>
-                    </div>
+                    <div className="text-[12px]" style={S_SECTION_HDR}>MAIN EFFECT</div>
                     <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle(rulesMode === "guided" ? "#6ABAFF" : "#FFD166")}>
-                      {rulesMode === "guided" ? "Guided Save" : "Manual Save"}
+                      {rulesMode === "guided" ? "Guided" : "Manual"}
                     </span>
                   </div>
                   {rulesMode === "manual" ? (
@@ -3664,7 +3319,7 @@ export function DMCardManagerSection({
                 </div>
               </div>
 
-              <div className="space-y-4">
+              {showRulesAdvanced && <div className="space-y-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
                   <div className="text-[12px]" style={S_SECTION_HDR}>STRUCTURED DRAFT TOOLS</div>
                   <div className="text-[11px]" style={S_SUBTLE}>
@@ -3694,17 +3349,14 @@ export function DMCardManagerSection({
                     </div>
                   )}
                 </div>
-              </div>
+              </div>}
             </div>
           )}
 
           {rulesSubTab === "builder" && (
             <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#6ABAFF")}>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-[12px] mb-1" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
-                  <div className="text-[10px]" style={S_SUBTLE}>Lay out the card's play sequence. These steps feed the generated rules output in order.</div>
-                </div>
+                <div className="text-[12px]" style={S_SECTION_HDR}>STRUCTURED MECHANICS BUILDER</div>
                 <button onClick={clearMechanicsBuilder} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_RED}>
                   Clear Builder
                 </button>
@@ -3885,32 +3537,9 @@ export function DMCardManagerSection({
 
     return (
       <div className="space-y-4">
-        <WorkspaceSubTabBar tabs={EFFECTS_SUB_TABS} activeTab={effectsSubTab} onSelect={setEffectsSubTab} />
-
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`}>
           {effectsSubTab === "tags" && (
             <div className="space-y-4">
-              <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#9A7ABB")}>
-                <div className="text-[12px] mb-1" style={S_SECTION_HDR}>TAGS AS HELPERS AND MODIFIERS</div>
-                <div className="text-[11px]" style={S_SUBTLE}>
-                  Use tags to classify the card, add light modifiers, and expose helper fields. Removing a tag also clears the tag-owned data it created.
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
-                {[
-                  { label: "Active Tags", value: String(selectedTagDefs.length), detail: selectedTagDefs.length === 0 ? "Nothing attached yet" : "Helper tags currently on this card", accent: "#9A7ABB" },
-                  { label: "Suggested Tags", value: String(suggestedTagDefs.length), detail: suggestedTagDefs.length === 0 ? "No strong suggestions" : "Possible helpers based on current rules", accent: "#6ABAFF" },
-                  { label: "Required Fields", value: String(missingRequiredTagFields.length), detail: missingRequiredTagFields.length === 0 ? "No missing required tag data" : "Required helper data still missing", accent: missingRequiredTagFields.length === 0 ? "#7ACA8A" : "#FF7A7A" },
-                ].map((card) => (
-                  <div key={card.label} className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle(card.accent)}>
-                    <div className="text-[10px]" style={S_SECTION_HDR}>{card.label}</div>
-                    <div className="text-[18px] mt-1" style={S_TEXT_BOLD}>{card.value}</div>
-                    <div className="text-[10px] mt-2" style={S_SUBTLE}>{card.detail}</div>
-                  </div>
-                ))}
-              </div>
-
               <div>
                 <div className="text-[12px] mb-2" style={S_SECTION_HDR}>ACTIVE TAGS</div>
                 {selectedTagDefs.length === 0 ? (
@@ -4131,10 +3760,12 @@ export function DMCardManagerSection({
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Button Label:</label>
                           <input type="text" value={slot.label} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_LABEL_KEY), e.target.value)} placeholder="Damage" className={inputClass} style={inputStyle} />
+                          {!slot.label.trim() && <div className="text-[9px] mt-1" style={S_RED}>A button label is required.</div>}
                         </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Roll Expression:</label>
                           <input type="text" value={slot.expression} onChange={(e) => updateCardCustomField(getQuickRollFieldKey(slot.slotId, QUICK_ROLL_EXPRESSION_KEY), e.target.value)} placeholder="2d6+P" className={inputClass} style={inputStyle} />
+                          {!slot.expression.trim() && <div className="text-[9px] mt-1" style={S_RED}>Enter a dice expression.</div>}
                         </div>
                         <div>
                           <label className="text-[10px] block mb-1" style={labelStyle}>Potency Override:</label>
@@ -4173,10 +3804,51 @@ export function DMCardManagerSection({
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#7A8AAA")}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px]" style={S_SECTION_HDR}>ALL CARD TAGS</div>
+                    {onPersistTags && <button
+                      type="button"
+                      onClick={() => {
+                        if (creatingTag) resetTagCreator();
+                        else {
+                          setCreatingTag(true);
+                          setNewTagName(tagSearch.trim());
+                          setTagSaveError("");
+                        }
+                      }}
+                      className={`${retro.button} px-2 py-1 text-[9px] flex items-center gap-1`}
+                      style={creatingTag ? S_RED : S_GREEN_BTN}
+                    >
+                      {creatingTag ? <X size={9} /> : <Plus size={9} />} {creatingTag ? "Cancel" : "Create Tag"}
+                    </button>}
+                  </div>
                   <div className="relative">
                     <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2" style={S_MUTED} />
                     <input type="text" value={tagSearch} onChange={(e) => setTagSearch(e.target.value)} placeholder="Search tag names or descriptions..." className={`${inputClass} pl-9`} style={inputStyle} />
                   </div>
+                  {creatingTag && <div className={`${retro.sunken} bg-[#0A0A28] p-3 space-y-2`}>
+                    <input
+                      autoFocus
+                      value={newTagName}
+                      onChange={(event) => setNewTagName(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter") void createCardTag(); }}
+                      placeholder="Tag name"
+                      className={inputClass}
+                      style={inputStyle}
+                    />
+                    <input
+                      value={newTagDescription}
+                      onChange={(event) => setNewTagDescription(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter") void createCardTag(); }}
+                      placeholder="Optional description"
+                      className={inputClass}
+                      style={inputStyle}
+                    />
+                    <button type="button" onClick={() => void createCardTag()} disabled={tagSaving} className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1`} style={tagSaving ? S_MUTED : S_GREEN_BTN}>
+                      <Save size={10} /> {tagSaving ? "Saving..." : "Save Tag"}
+                    </button>
+                    {tagSaveError && <div className="text-[9px]" style={S_RED}>{tagSaveError}</div>}
+                  </div>}
                   <div className="flex flex-wrap gap-2">
                     {visibleTagDefs.map((tag) => {
                       const active = editingCard.tags.includes(tag.name);
@@ -4211,9 +3883,6 @@ export function DMCardManagerSection({
                       </button>
                     )}
                   </div>
-                  <div className="text-[11px]" style={S_SUBTLE}>
-                    Preview-first editing keeps empty optional groups off the card. Use this area when you need to expose or prepare them anyway.
-                  </div>
                 </div>
               </div>
             </div>
@@ -4223,7 +3892,100 @@ export function DMCardManagerSection({
     );
   };
 
-  const renderDeliveryStage = () => {
+  const renderUnifiedRulesStage = () => {
+    if (!editingCard) return null;
+    const rulesIssues = validationIssues.filter((issue) => issue.panel === "mechanics" || issue.panel === "tags");
+    const openTool = (tool: RulesWorkspaceTool) => setStageSubTab("rules", tool);
+    const rulesEditorActive = ["main-effect", "builder", "section-blocks", "scaling"].includes(rulesTool);
+    const tools: Array<{ id: RulesWorkspaceTool; label: string; accent: string; icon: React.ComponentType<{ size?: number }> }> = [
+      { id: "main-effect", label: "Effect", accent: "#6ABAFF", icon: FileText },
+      { id: "tags", label: `Tags${selectedTagDefs.length ? ` (${selectedTagDefs.length})` : ""}`, accent: "#9A7ABB", icon: Tags },
+      { id: "quick-rolls", label: quickRollSlots.length ? `Rolls (${quickRollSlots.length})` : "Add Roll", accent: "#FFD166", icon: Dices },
+      { id: "tracker", label: hasBuiltInCardTracker(editingCard) ? "Tracker" : "Add Tracker", accent: "#4ACA6A", icon: Zap },
+      { id: "scaling", label: (editingCard.customFields[USE_PROFILE_UPCAST_KEY] || "").trim() ? "Scaling" : "Add Scaling", accent: "#FFCD4D", icon: ChevronUp },
+      { id: "section-blocks", label: cardSectionBlocks.length ? `Sections (${cardSectionBlocks.length})` : "Add Section", accent: "#FFD700", icon: Plus },
+    ];
+
+    return (
+      <div className="space-y-4">
+        <div className={`${retro.sunken} bg-[#081022] p-3 space-y-3`} style={editorSurfaceStyle("#6ABAFF")}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[12px]" style={S_SECTION_HDR}>RULES</div>
+            <button
+              type="button"
+              onClick={() => setShowRulesAdvanced((visible) => !visible)}
+              className={`${retro.button} px-3 py-1.5 text-[10px] flex items-center gap-1.5`}
+              style={showRulesAdvanced ? sectionBadgeStyle("#8AB8FF") : S_TEXT}
+              aria-expanded={showRulesAdvanced}
+            >
+              <Settings size={11} /> {showRulesAdvanced ? "Hide Advanced" : "Advanced"}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {tools.map((tool) => {
+              const active = rulesTool === tool.id;
+              const Icon = tool.icon;
+              return (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => {
+                    if (tool.id === "quick-rolls" && quickRollSlots.length === 0) {
+                      addQuickRollSlot();
+                      return;
+                    }
+                    if (tool.id === "tracker" && !hasBuiltInCardTracker(editingCard)) {
+                      updateCardCustomField(CARD_TRACKER_BUCKET_KEY, "ability");
+                    }
+                    if (tool.id === "section-blocks" && cardSectionBlocks.length === 0) {
+                      addPresetSectionBlock({ title: "New Section", tone: "rules", content: "" });
+                    }
+                    openTool(tool.id);
+                  }}
+                  className={`${active ? retro.sunken : retro.raised} px-3 py-2 text-[10px] flex items-center gap-1.5`}
+                  style={panelButtonStyle(active, tool.accent)}
+                >
+                  <Icon size={11} /> {tool.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {rulesIssues.length > 0 && (
+            <button
+              type="button"
+              onClick={() => focusValidationIssue(rulesIssues[0])}
+              className={`${retro.raised} w-full px-3 py-2 text-left flex items-center justify-between gap-3`}
+              style={editorSurfaceStyle(rulesIssues.some((issue) => issue.level === "error") ? "#FF7A7A" : "#FFD700")}
+            >
+              <span className="text-[10px]" style={S_TEXT}>{rulesIssues[0].message}</span>
+              <span className="text-[9px] shrink-0" style={S_MUTED}>{rulesIssues.length} issue{rulesIssues.length === 1 ? "" : "s"}</span>
+            </button>
+          )}
+
+          {showRulesAdvanced && (
+            <div className={`${retro.raised} bg-[#0E0E35] p-3 space-y-3`} style={editorSurfaceStyle("#8AB8FF")}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] mr-1" style={S_MUTED}>Rules source</span>
+                <button type="button" onClick={() => { setRulesMode("manual"); openTool("main-effect"); }} className={`${rulesMode === "manual" ? retro.sunken : retro.raised} px-3 py-1.5 text-[10px]`} style={panelButtonStyle(rulesMode === "manual", "#FFD166")}>Manual</button>
+                <button type="button" onClick={() => { setRulesMode("guided"); openTool("builder"); }} className={`${rulesMode === "guided" ? retro.sunken : retro.raised} px-3 py-1.5 text-[10px]`} style={panelButtonStyle(rulesMode === "guided", "#6ABAFF")}>Guided</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => openTool("builder")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#6ABAFF")}>Mechanics Builder</button>
+                <button type="button" onClick={() => openTool("visible-fields")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#B193FF")}>Tag Fields</button>
+                <button type="button" onClick={() => openTool("advanced")} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#7A8AAA")}>Browse All Tags</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {rulesEditorActive ? renderRulesStage() : renderEffectsStage()}
+      </div>
+    );
+  };
+
+  const renderAccessStage = () => {
     if (!editingCard) return null;
 
     const currentMagicPlacementCount = magicLists.reduce(
@@ -4242,76 +4004,22 @@ export function DMCardManagerSection({
 
     return (
       <div className="space-y-4">
-        <WorkspaceSubTabBar tabs={DELIVERY_SUB_TABS} activeTab={deliverySubTab} onSelect={setDeliverySubTab} />
-
-        <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#7ACA8A")}>
-              <div className="text-[10px]" style={S_SECTION_HDR}>DIRECT ASSIGNMENT</div>
-              <div className="text-[12px] mt-2" style={S_TEXT_BOLD}>
-                {editingCard.assignedTo.includes("all")
-                  ? "All players"
-                  : `${editingCard.assignedTo.length} player${editingCard.assignedTo.length === 1 ? "" : "s"}`}
-              </div>
-              <div className="text-[10px] mt-1" style={S_SUBTLE}>Controlled in the Players sub-tab below.</div>
-            </div>
-            <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#8AB8FF")}>
-              <div className="text-[10px]" style={S_SECTION_HDR}>MAGIC LISTS</div>
-              <div className="text-[12px] mt-2" style={S_TEXT_BOLD}>{currentMagicPlacementCount} current placement{currentMagicPlacementCount === 1 ? "" : "s"}</div>
-              <div className="text-[10px] mt-1 mb-2" style={S_SUBTLE}>Use Magic lists for spell-style grants that also appear in Personal Files Magic.</div>
-              <button onClick={() => { setMagicSelectedPlayerId(editingCard.assignedTo.find((id) => id !== "all") || players[0]?.id || ""); handleCardsSubTabChange("magic"); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#8AB8FF")}>Open Magic Manager</button>
-            </div>
-            <div className={`${retro.raised} bg-[#0E0E35] p-3`} style={editorSurfaceStyle("#FFD700")}>
-              <div className="text-[10px]" style={S_SECTION_HDR}>LEVEL</div>
-              <div className="text-[12px] mt-2" style={S_TEXT_BOLD}>{currentLevelPlacementCount} current placement{currentLevelPlacementCount === 1 ? "" : "s"}</div>
-              <div className="text-[10px] mt-1 mb-2" style={S_SUBTLE}>Use Level for level-up rewards, then choose Passive Only or Show in Cards.</div>
-              <button onClick={() => { setLaSelectedPlayerId(editingCard.assignedTo.find((id) => id !== "all") || players[0]?.id || ""); handleCardsSubTabChange("levelabilities"); }} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#FFD700")}>Open Level</button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="text-[12px]" style={S_SECTION_HDR}>DELIVERY</div>
-              <div className="text-[10px] mt-1" style={S_SUBTLE}>Choose who receives the card, where it lives in progression, and finish the save checklist.</div>
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5 flex flex-col gap-4`} style={editorSurfaceStyle("#7ACA8A")}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-[12px] mr-1" style={S_SECTION_HDR}>ACCESS</div>
+              <span className="text-[9px] px-2 py-1" style={sectionBadgeStyle("#7ACA8A")}>
+                {editingCard.assignedTo.includes("all") ? "All players" : `${editingCard.assignedTo.length} assigned`}
+              </span>
+              <button type="button" onClick={() => { setMagicSelectedPlayerId(editingCard.assignedTo.find((id) => id !== "all") || players[0]?.id || ""); handleCardsSubTabChange("magic"); }} className={`${retro.button} px-2.5 py-1.5 text-[9px]`} style={sectionBadgeStyle("#8AB8FF")}>Magic ({currentMagicPlacementCount})</button>
+              <button type="button" onClick={() => { setLaSelectedPlayerId(editingCard.assignedTo.find((id) => id !== "all") || players[0]?.id || ""); handleCardsSubTabChange("levelabilities"); }} className={`${retro.button} px-2.5 py-1.5 text-[9px]`} style={sectionBadgeStyle("#FFD700")}>Level ({currentLevelPlacementCount})</button>
             </div>
             <button onClick={() => setShowDeliveryDetails((prev) => !prev)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={sectionBadgeStyle("#7ACA8A")}>
-              {showDeliveryDetails ? "Hide Extra Status" : "Show Extra Status"}
+              {showDeliveryDetails ? "Hide Node Capacity" : "Node Capacity"}
             </button>
           </div>
 
-          {deliverySubTab === "validation" && (
-            <div className={`${retro.raised} bg-[#10103A] px-3 py-3 space-y-2`} style={{ border: "1px solid #2B3B6B" }}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-[10px]" style={S_SECTION_HDR}>EDITOR CHECKLIST</div>
-                <div className="text-[10px]" style={S_SUBTLE}>
-                  {blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} fix before save` : "No blocking save issues"}
-                </div>
-              </div>
-              {validationIssues.length === 0 ? (
-                <div className="text-[11px]" style={S_MUTED}>This card has no validation warnings right now.</div>
-              ) : (
-                <div className="space-y-2">
-                  {validationIssues.map((issue) => (
-                    <button
-                      key={issue.id}
-                      onClick={() => focusValidationIssue(issue)}
-                      className={`${retro.raised} w-full p-3 text-left`}
-                      style={editorSurfaceStyle(issue.level === "error" ? "#FF7A7A" : "#FFD700")}
-                    >
-                      <div className="text-[10px]" style={issue.level === "error" ? S_RED : { color: "#FFD700" }}>
-                        {issue.level === "error" ? "Error" : "Warning"}
-                      </div>
-                      <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{issue.message}</div>
-                      <div className="text-[10px] mt-2" style={S_SUBTLE}>Click to jump to the part of the editor that needs attention.</div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {deliverySubTab === "players" && (
-            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
+          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#7ACA8A")}>
               <div className="text-[12px]" style={S_SECTION_HDR}>PLAYER ASSIGNMENT</div>
               <div className={`${retro.sunken} bg-[#0A0A28] p-3`}>
                 <label className="flex items-center gap-2 cursor-pointer mb-2">
@@ -4335,11 +4043,9 @@ export function DMCardManagerSection({
                   ))}
                 </div>
               </div>
-            </div>
-          )}
+          </div>
 
-          {deliverySubTab === "node-trees" && (
-            <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#FFD700")}>
+          <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-4`} style={editorSurfaceStyle("#FFD700")}>
               <div className="text-[12px]" style={S_SECTION_HDR}>PROGRESSION / NODE TREE</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
@@ -4347,8 +4053,8 @@ export function DMCardManagerSection({
                   <select
                     value={editingCard.nodeTreeId || ""}
                     onChange={(e) => {
-                      updateCardField("nodeTreeId" as keyof ManagedCard, e.target.value as any);
-                      updateCardField("nodeId" as keyof ManagedCard, "" as any);
+                      updateCardField("nodeTreeId", e.target.value);
+                      updateCardField("nodeId", "");
                     }}
                     className={`${inputClass} cursor-pointer`}
                     style={inputStyle}
@@ -4363,7 +4069,7 @@ export function DMCardManagerSection({
                   <label className="text-[10px] block mb-1" style={labelStyle}>Node:</label>
                   <select
                     value={editingCard.nodeId || ""}
-                    onChange={(e) => updateCardField("nodeId" as keyof ManagedCard, e.target.value as any)}
+                    onChange={(e) => updateCardField("nodeId", e.target.value)}
                     className={`${inputClass} cursor-pointer`}
                     style={inputStyle}
                     disabled={!editingCard.nodeTreeId}
@@ -4410,52 +4116,85 @@ export function DMCardManagerSection({
                   ))}
                 </div>
               )}
+          </div>
+
+          <div className={`${retro.raised} bg-[#10103A] px-3 py-3 space-y-2`} style={{ border: "1px solid #2B3B6B" }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[10px]" style={S_SECTION_HDR}>FINAL CHECKLIST</div>
+              <div className="text-[10px]" style={S_SUBTLE}>
+                {blockingValidationIssues.length > 0 ? `${blockingValidationIssues.length} fix before save` : "No blocking save issues"}
+              </div>
             </div>
-          )}
+            {validationIssues.length === 0 ? (
+              <div className="text-[11px]" style={S_MUTED}>This card has no validation warnings right now.</div>
+            ) : (
+              <div className="space-y-2">
+                {validationIssues.map((issue) => (
+                  <button
+                    key={issue.id}
+                    onClick={() => focusValidationIssue(issue)}
+                    className={`${retro.raised} w-full p-3 text-left`}
+                    style={editorSurfaceStyle(issue.level === "error" ? "#FF7A7A" : "#FFD700")}
+                  >
+                    <div className="text-[10px]" style={issue.level === "error" ? S_RED : { color: "#FFD700" }}>
+                      {issue.level === "error" ? "Error" : "Warning"}
+                    </div>
+                    <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{issue.message}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );
   };
 
   const renderCardsWorkspace = () => {
-    const stageMeta = getWorkspaceStageMeta(workspaceStage);
-    const activeStageCard = workspaceStageCards.find((entry) => entry.id === workspaceStage);
-    const liveEditStageActive = workspaceStage === "live";
-
     return (
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-[12px]" style={S_SECTION_HDR}>CARD WORKSPACE</div>
-            <div className="text-[10px] mt-1" style={S_SUBTLE}>
-              A preview-first card editor with a wider DM workspace, a dedicated live edit mode, and a player-style preview that stays beside the work.
-            </div>
-          </div>
+        {!editingCard && <div className="flex flex-wrap items-center justify-end gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => setIsCardLibraryMobileOpen((prev) => !prev)} className={`xl:hidden ${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
+            <button type="button" onClick={() => setIsCardLibraryMobileOpen((prev) => !prev)} className={`xl:hidden ${retro.button} px-3 py-2 text-[11px] flex items-center gap-1.5`} style={S_ACCENT}>
               <CreditCard size={12} /> {isCardLibraryMobileOpen ? "Hide Library" : "Open Library"}
             </button>
-            <button onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
+            <button type="button" onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
               <Plus size={14} /> {showTemplatePicker ? "Hide Templates" : "New Card"}
             </button>
           </div>
-        </div>
+        </div>}
 
         {showTemplatePicker && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`}>
-            <div>
-              <div className="text-[12px]" style={S_SECTION_HDR}>CARD TEMPLATES</div>
-              <div className="text-[10px] mt-1" style={S_SUBTLE}>
-                Step 1: pick a template. Step 2: choose whether the new card is a Spell, Skill, or Ability.
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-[12px]" style={S_SECTION_HDR}>NEW CARD</div>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="New card family">
+                {CARD_FAMILY_OPTIONS.map((family) => {
+                  const active = newCardFamily === family.id;
+                  return (
+                    <button
+                      key={family.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setNewCardFamily(family.id)}
+                      className={`${active ? retro.sunken : retro.raised} px-3 py-1.5 text-[10px]`}
+                      style={panelButtonStyle(active, family.accent)}
+                    >
+                      {family.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
               {CARD_TEMPLATES.map((template) => (
                 <button
                   key={template.id}
-                  onClick={() => handleSelectTemplate(template)}
+                  type="button"
+                  onClick={() => handleCreateCardFromTemplate(template, newCardFamily)}
                   className={`${retro.raised} bg-[#0E0E35] p-3 text-left hover:bg-[#121244] transition-colors`}
-                  style={{ border: "1px solid #1A1A4B" }}
+                  style={editorSurfaceStyle(CARD_FAMILY_OPTIONS.find((family) => family.id === newCardFamily)?.accent || "#4A7BFF")}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="text-[12px]" style={S_TEXT_BOLD}>{template.label}</span>
@@ -4468,37 +4207,6 @@ export function DMCardManagerSection({
                 </button>
               ))}
             </div>
-            {pendingTemplate && (
-              <div className={`${retro.raised} bg-[#0E0E35] p-4 space-y-3`} style={editorSurfaceStyle("#4A7BFF")}>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[12px]" style={S_SECTION_HDR}>STEP 2: CHOOSE CARD CORE</div>
-                    <div className="text-[11px]" style={S_SUBTLE}>
-                      Template selected: <span style={S_TEXT_BOLD}>{pendingTemplate.label}</span>. Pick the starting family profile.
-                    </div>
-                  </div>
-                  <button onClick={() => setPendingTemplate(null)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={S_TEXT}>
-                    Clear Selection
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {CARD_FAMILY_OPTIONS.map((family) => (
-                    <button
-                      key={family.id}
-                      onClick={() => handleCreateCardFromTemplate(pendingTemplate, family.id)}
-                      className={`${retro.raised} p-3 text-left transition-colors hover:bg-[#121244]`}
-                      style={editorSurfaceStyle(family.accent)}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <span className="text-[12px]" style={S_TEXT_BOLD}>{family.label}</span>
-                        <span className="text-[8px] px-1.5 py-0.5" style={sectionBadgeStyle(family.accent)}>{family.label}</span>
-                      </div>
-                      <div className="text-[10px]" style={S_SUBTLE}>{family.description}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -4524,42 +4232,15 @@ export function DMCardManagerSection({
             allCardTagNames={allCardTagNames}
             onOpenCard={openCardEditor}
             onDeleteCard={(id) => { void handleDeleteCard(id); }}
-            onNewCard={handleAddCard}
             showFilters={showCardLibraryFilters}
             onToggleFilters={() => setShowCardLibraryFilters((prev) => !prev)}
           />
 
           {!editingCard ? (
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(620px,1.1fr)] gap-5">
-              <div className={`${retro.sunken} bg-[#0C0C2E] p-6 space-y-4`}>
-                <div className="flex items-center gap-3 mb-4">
-                  <Sparkles size={18} style={S_ACCENT} />
-                  <div className="text-[13px]" style={S_TEXT_BOLD}>Card Editor Workspace</div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
-                  {CARD_WORKSPACE_STAGES.map((stage) => (
-                    <div key={stage.id} className={`${retro.raised} p-3`} style={editorSurfaceStyle(stage.accent)}>
-                      <div className="flex items-center gap-2 mb-2">
-                        <stage.icon size={13} style={{ color: stage.accent }} />
-                        <div className="text-[12px]" style={S_TEXT_BOLD}>{stage.label}</div>
-                      </div>
-                      <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>{stage.helper}</div>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-[11px]" style={S_SUBTLE}>
-                  Create or reopen a card to get the full three-part workspace: library rail, supporting stage panel, and live card preview.
-                </div>
-              </div>
-
-              <div className={`${retro.sunken} bg-[#07101F] p-6 space-y-3`} style={editorSurfaceStyle("#4A7BFF")}>
-                <div className="text-[12px]" style={S_SECTION_HDR}>LIVE PREVIEW READY</div>
-                <div className="text-[11px]" style={S_SUBTLE}>
-                  Open or create a card to see the player-style live preview. Most visible card edits can be made directly there, while the center panel keeps the structured tools and deeper controls.
-                </div>
-                <button onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
-                  <Plus size={14} /> Open Template Picker
-                </button>
+            <div className={`${retro.sunken} bg-[#0C0C2E] p-6 flex items-center gap-3`}>
+              <div className="flex items-center gap-3">
+                <CreditCard size={18} style={S_ACCENT} />
+                <div className="text-[13px]" style={S_TEXT_BOLD}>Select a card to edit</div>
               </div>
             </div>
           ) : (
@@ -4580,110 +4261,19 @@ export function DMCardManagerSection({
                   onClose={handleCancelCardEdit}
                   onNewCard={handleAddCard}
                   onOpenLibrary={() => setIsCardLibraryMobileOpen(true)}
+                  onStageSelect={selectWorkspaceStage}
                 />
 
-                <div className={`${retro.sunken} bg-[#081022] p-3 space-y-3`} style={editorSurfaceStyle(stageMeta.accent)}>
-                  <div className="flex flex-wrap gap-2">
-                    {CARD_WORKSPACE_STAGES.map((stage) => {
-                      const active = workspaceStage === stage.id;
-                      const Icon = stage.icon;
-                      return (
-                        <button
-                          key={stage.id}
-                          onClick={() => selectWorkspaceStage(stage.id)}
-                          className={`${active ? retro.sunken + " bg-[#0A173A]" : retro.raised + " bg-[#161648] hover:bg-[#1E1E58]"} px-3 py-2 text-[11px] flex items-center gap-1.5 transition-colors`}
-                          style={{ color: active ? stage.accent : "#8A9ABB", fontWeight: active ? 600 : 400 }}
-                        >
-                          <Icon size={12} /> {stage.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className={liveEditStageActive ? "grid grid-cols-1 2xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-2.5" : "grid grid-cols-1 2xl:grid-cols-2 gap-2.5"}>
-                    <div className="grid grid-cols-1 2xl:grid-cols-2 gap-2.5">
-                      {[
-                        {
-                          label: "Current Stage",
-                          value: `${activeStageCard?.title || stageMeta.label}`,
-                          detail: activeStageCard?.summary || stageMeta.helper,
-                          accent: stageMeta.accent,
-                        },
-                        {
-                          label: "Workspace Status",
-                          value: activeStageCard?.detail || "Open a card section to begin editing.",
-                          detail: `${filteredCards.length} card${filteredCards.length === 1 ? "" : "s"} shown in the library`,
-                          accent: "#7ACA8A",
-                        },
-                      ].map((item) => (
-                        <div key={item.label} className={`${retro.raised} bg-[#0E0E35] p-3.5 space-y-2`} style={editorSurfaceStyle(item.accent)}>
-                          <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>{item.label}</div>
-                          <div className="text-[13px] leading-snug break-words" style={S_TEXT}>{item.value}</div>
-                          <div className="text-[11px] leading-relaxed break-words" style={S_SUBTLE}>{item.detail}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {liveEditStageActive && (
-                      <div className={`${retro.raised} bg-[#0E0E35] p-3.5 space-y-2.5`} style={editorSurfaceStyle(validationIssues.length > 0 ? (blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700") : "#7A8AAA")}>
-                        <div className="text-[9px] uppercase tracking-[0.06em]" style={S_SECTION_HDR}>Open Issues</div>
-                        {validationIssues.length === 0 ? (
-                          <div className="text-[11px] leading-relaxed" style={S_SUBTLE}>No open issues. The live preview is ready for direct editing.</div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => focusValidationIssue(validationIssues[0])}
-                            className={`${retro.sunken} w-full bg-[#0B1128] p-3 text-left`}
-                            style={editorSurfaceStyle(validationIssues[0].level === "error" ? "#FF7A7A" : "#FFD700")}
-                          >
-                            <div className="text-[10px]" style={validationIssues[0].level === "error" ? S_RED : { color: "#FFD700" }}>
-                              {validationIssues[0].level === "error" ? "Error" : "Warning"}
-                            </div>
-                            <div className="text-[12px] leading-relaxed mt-1" style={S_TEXT}>{validationIssues[0].message}</div>
-                            {validationIssues.length > 1 && (
-                              <div className="text-[10px] mt-2" style={S_SUBTLE}>+{validationIssues.length - 1} more issue{validationIssues.length - 1 === 1 ? "" : "s"}</div>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {!liveEditStageActive && validationIssues.length > 0 && (
-                  <div className={`${retro.sunken} bg-[#0B1128] p-3 space-y-2`} style={editorSurfaceStyle(blockingValidationIssues.length > 0 ? "#FF7A7A" : "#FFD700")}>
-                    <div className="text-[10px]" style={S_SECTION_HDR}>OPEN ISSUES</div>
-                    <div className="space-y-2">
-                      {validationIssues.slice(0, 4).map((issue) => (
-                        <button
-                          key={issue.id}
-                          type="button"
-                          onClick={() => focusValidationIssue(issue)}
-                          className={`${retro.raised} w-full p-3 text-left`}
-                          style={editorSurfaceStyle(issue.level === "error" ? "#FF7A7A" : "#FFD700")}
-                        >
-                          <div className="text-[10px]" style={issue.level === "error" ? S_RED : { color: "#FFD700" }}>
-                            {issue.level === "error" ? "Error" : "Warning"}
-                          </div>
-                          <div className="text-[11px] leading-relaxed mt-1" style={S_TEXT}>{issue.message}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
-              <div className={liveEditStageActive ? "space-y-4" : "grid grid-cols-1 xl:grid-cols-[minmax(520px,0.92fr)_minmax(780px,1.08fr)] gap-7 items-start"}>
-                {!liveEditStageActive && (
-                  <div className="space-y-4 order-2 xl:order-1">
-                    {workspaceStage === "overview" && renderOverviewStage()}
-                    {workspaceStage === "rules" && renderRulesStage()}
-                    {workspaceStage === "effects" && renderEffectsStage()}
-                    {workspaceStage === "delivery" && renderDeliveryStage()}
-                  </div>
-                )}
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-5 items-start min-w-0">
+                <div className="space-y-4 order-2 xl:order-1 min-w-0">
+                  {workspaceStage === "basics" && renderBasicsStage()}
+                  {workspaceStage === "rules" && renderUnifiedRulesStage()}
+                  {workspaceStage === "access" && renderAccessStage()}
+                </div>
 
-                <div className={liveEditStageActive ? "pb-6" : "order-1 xl:order-2"}>
+                <div className="order-1 xl:order-2 xl:sticky xl:top-4 min-w-0">
                   {livePreviewCard && (
                     <InteractiveCardPreview
                       card={livePreviewCard}
@@ -4705,13 +4295,10 @@ export function DMCardManagerSection({
                       onRulesModeChange={(mode) => {
                         setRulesMode(mode);
                         setRulesSubTab(mode === "guided" ? "builder" : "main-effect");
-                        if (mode === "guided") setMechanicsView("rules");
                       }}
                       renderTagFieldInput={renderCardTagFieldInput}
                       onAddQuickRoll={addQuickRollSlot}
                       onRemoveQuickRoll={removeQuickRollSlot}
-                      stickyPreview={false}
-                      panelClassName={liveEditStageActive ? "min-h-[calc(100vh-2rem)] 2xl:min-h-[calc(100vh+2rem)]" : ""}
                     />
                   )}
                 </div>
@@ -5069,27 +4656,6 @@ export function DMCardManagerSection({
         ))}
       </div>
 
-      {renderManagementSummaryCards(
-        dmCardsSubTab === "cards"
-          ? [
-              { label: "Library Cards", value: `${managedCards.length}`, accent: "#4A7BFF", helper: "Open, sort, and edit the full card library." },
-              { label: "Assigned Node Trees", value: `${nodeTrees.length}`, accent: "#FFD700", helper: "Use the delivery stage to place cards into progression trees." },
-              { label: "Players", value: `${players.length}`, accent: "#7ACA8A", helper: "Direct assignment, Magic, and Level rewards all route through these player profiles." },
-            ]
-          : dmCardsSubTab === "magic"
-            ? [
-                { label: "Selected Player", value: players.find((player) => player.id === magicSelectedPlayerId)?.name || "None", accent: "#8AB8FF", helper: "Magic lists are stored per player." },
-                { label: "Magic Lists", value: `${magicLists.length}`, accent: "#5A9AFF", helper: "Each list behaves like its own spell catalog." },
-                { label: "Placed Spells", value: `${magicLists.reduce((sum, list) => sum + MAGIC_TIER_ORDER.reduce((tierSum, tier) => tierSum + (list.tiers[tier]?.length || 0), 0), 0)}`, accent: "#FFD700", helper: "These spells can later appear in Personal Files Magic Lists." },
-              ]
-            : [
-                { label: "Selected Player", value: players.find((player) => player.id === laSelectedPlayerId)?.name || "None", accent: "#FFD700", helper: "Level sections are also stored per player." },
-                { label: "Sections", value: `${levelCategories.length}`, accent: "#5A9AFF", helper: "Race, Level 1, and later milestones all live here." },
-                { label: "Reward Cards", value: `${levelCategories.reduce((sum, level) => sum + getLevelCategoryEntries(level).length, 0)}`, accent: "#FF9A7A", helper: "Use passive-only or show-in-cards reward modes." },
-              ],
-        "grid grid-cols-1 md:grid-cols-3 gap-3",
-      )}
-
       {dmCardsSubTab === "cards" && renderCardsWorkspace()}
       {dmCardsSubTab === "magic" && renderMagicManager()}
 
@@ -5430,4 +4996,11 @@ export function DMCardManagerSection({
       })()}
     </div>
   );
+}
+
+if (import.meta.env.DEV) {
+  Object.defineProperty(DMCardManagerSection, "__cardEditorTestApi", {
+    configurable: true,
+    value: cardEditorTestApi,
+  });
 }

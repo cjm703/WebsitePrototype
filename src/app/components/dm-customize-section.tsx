@@ -7,7 +7,8 @@ import {
 } from "lucide-react";
 import { type MascotTrigger } from "./initial-data";
 import { initialMascotTriggers as sharedInitialMascotTriggers } from "./initial-data";
-import type { TagDefinition } from "./types";
+import { DMInterfaceStickerManager } from "./dm-interface-sticker-manager";
+import type { PlayerData, TagDefinition } from "./types";
 const INPUT_CLS = `${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-full outline-none`;
 
 const TRIGGER_TYPE_LABELS: Record<MascotTrigger["type"], string> = {
@@ -47,7 +48,7 @@ interface PartyColorStateDoc {
 
 
 
-export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[] }) {
+export function DMCustomizeSection({ statusTags, players }: { statusTags: TagDefinition[]; players: PlayerData[] }) {
   const [mascotTriggers, setMascotTriggers] = useState<MascotTrigger[]>(sharedInitialMascotTriggers);
   const [editingTrigger, setEditingTrigger] = useState<MascotTrigger | null>(null);
   const [isAddingNewTrigger, setIsAddingNewTrigger] = useState(false);
@@ -157,6 +158,8 @@ export function DMCustomizeSection({ statusTags }: { statusTags: TagDefinition[]
       <p className="text-[11px]" style={S_SUBTLE}>
         Configure the mascot popup that appears on the Personal Files page. Set what triggers it, the probability, and what messages it displays.
       </p>
+
+      <DMInterfaceStickerManager players={players} />
 
       {editingTrigger && (
         <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>

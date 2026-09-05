@@ -2007,6 +2007,7 @@ const handleSaveItem = async () => {
               nodeTrees={nodeTrees}
               onPersistCards={persistCards}
               onPersistNodeTrees={persistNodeTrees}
+              onPersistTags={(next) => persistTags("card", next)}
               setDmError={setDmError}
             />
           )}
@@ -2135,7 +2136,7 @@ const handleSaveItem = async () => {
           {/* ======================================================= */}
           {/* CUSTOMIZATION EDITING (extracted)                         */}
           {/* ======================================================= */}
-          {activeSection === "customize" && <DMCustomizeSection statusTags={statusTags} />}
+          {activeSection === "customize" && <DMCustomizeSection statusTags={statusTags} players={players} />}
 
 
           {/* ======================================================= */}
