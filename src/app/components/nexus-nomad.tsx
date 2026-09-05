@@ -50,7 +50,7 @@ import {
   type FacilityStats,
   type PersonalFund,
 } from "@/lib/facility-depth-model";
-import { loadCreditAccount, loadCreditAccounts, type CreditAccount } from "@/lib/credits-api";
+import { isCreditsServiceUnavailable, loadCreditAccount, loadCreditAccounts, type CreditAccount } from "@/lib/credits-api";
 import { normalizeFacilityOfficeState, normalizeFacilityRecord } from "@/lib/facility-office-state";
 import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
@@ -1622,6 +1622,8 @@ export function NexusNomad() {
   const [officeUpdatedBy, setOfficeUpdatedBy] = useState(initialStateRef.current.updatedBy);
   const [businessMapPlayers, setBusinessMapPlayers] = useState<BusinessMapPlayerOption[]>([]);
   const [creditAccounts, setCreditAccounts] = useState<CreditAccount[]>([]);
+  const [creditAccountsError, setCreditAccountsError] = useState("");
+  const creditAccountsLoadingRef = useRef(false);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newServiceName, setNewServiceName] = useState("");
@@ -1677,14 +1679,20 @@ export function NexusNomad() {
   }, []);
 
   const refreshCreditAccounts = useCallback(async () => {
+    if (creditAccountsLoadingRef.current) return;
+    creditAccountsLoadingRef.current = true;
     try {
       if (isDM) setCreditAccounts(await loadCreditAccounts());
       else if (currentUserId) {
         const detail = await loadCreditAccount();
         setCreditAccounts([detail.account]);
       }
+      setCreditAccountsError("");
     } catch (error) {
-      console.warn("Credits accounts could not be loaded", error);
+      setCreditAccountsError(error instanceof Error ? error.message : "Credits accounts could not be loaded.");
+      if (!isCreditsServiceUnavailable(error)) console.warn("Credits accounts could not be loaded", error);
+    } finally {
+      creditAccountsLoadingRef.current = false;
     }
   }, [currentUserId, isDM]);
 
@@ -1923,6 +1931,10 @@ export function NexusNomad() {
   }, [applyLoadedState, currentUserId, isDM, isStateHydrated, officeRevision, showSaveNotice]);
 
   useEffect(() => {
+    if (!isDM) {
+      setBusinessMapPlayers(currentUserId ? [{ id: currentUserId, name: currentUserId }] : []);
+      return;
+    }
     let cancelled = false;
     void appStore.listPlayers<Record<string, unknown> & { id: string }>()
       .then((rows) => {
@@ -1936,7 +1948,7 @@ export function NexusNomad() {
         if (!cancelled) setBusinessMapPlayers(currentUserId ? [{ id: currentUserId, name: currentUserId }] : []);
       });
     return () => { cancelled = true; };
-  }, [currentUserId]);
+  }, [currentUserId, isDM]);
 
   const handleFacilityAdditionAction = useCallback(async (action: FacilityAdditionAction) => {
     const saved = normalizeNexusNomadState(await applyFacilityAdditionServerAction<NexusNomadState>(action));
@@ -3173,7 +3185,7 @@ export function NexusNomad() {
                     <ChevronRight size={12} style={NS_SUBDIM} />
                   </div>
                   <div className="text-[20px] font-bold" style={NS_GOLD}>{creditAccounts.reduce((sum, account) => sum + account.balance, 0).toLocaleString()} CR</div>
-                  <div className="mt-1 text-[8px]" style={NS_SUBDIM}>{creditAccounts.length} visible account{creditAccounts.length === 1 ? "" : "s"}</div>
+                  <div className="mt-1 text-[8px]" style={NS_SUBDIM}>{creditAccountsError ? "Credits service unavailable" : `${creditAccounts.length} visible account${creditAccounts.length === 1 ? "" : "s"}`}</div>
                 </div>
               </div>
 
@@ -3441,10 +3453,10 @@ export function NexusNomad() {
 
                 {sectionHeader("Player Accounts", <Coins size={12} />)}
                 <div style={innerPanelStyle} className="p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div><div className="text-[10px] font-semibold" style={NS_PALE}>Unified Credits accounts</div><div className="mt-1 text-[8px]" style={NS_DIM}>Commerce, Workshop, facilities, and manual entries share one audited balance per player.</div></div>
+                  <div className="mb-3 flex justify-end">
                     <div className="text-[8px]" style={NS_SUBDIM}>{visibleAccounts.length} accounts</div>
                   </div>
+                  {creditAccountsError && <div className="mb-3 border border-[#5A3A26] bg-[#160E08] px-3 py-2 text-[9px]" style={NS_WARN}>{creditAccountsError}</div>}
                   <div className="space-y-2">
                     {visibleAccounts.map((account) => {
                       const ownedFacilities = facilities.filter((facility) => facility.ownerPlayerId === account.playerId);
@@ -3455,7 +3467,7 @@ export function NexusNomad() {
                         </button>
                       );
                     })}
-                    {visibleAccounts.length === 0 && <div className="py-5 text-center text-[9px]" style={NS_DIM}>No player accounts are available.</div>}
+                    {!creditAccountsError && visibleAccounts.length === 0 && <div className="py-5 text-center text-[9px]" style={NS_DIM}>No player accounts are available.</div>}
                   </div>
                 </div>
 

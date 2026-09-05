@@ -335,6 +335,18 @@ async function syncEntityRows(
       .upsert(payload, { onConflict: "id" });
 
     if (upsertError) throw new Error(upsertError.message);
+
+    if (table === "app_players") {
+      const playerRows = payload.filter((row) => row.id !== "dm");
+      const accountResults = await Promise.allSettled(
+        playerRows.map((row) => ensureCreditAccountRow(row.id)),
+      );
+      accountResults.forEach((result, index) => {
+        if (result.status === "rejected") {
+          console.error(`[credits] Could not provision account for ${playerRows[index]?.id || "player"}:`, result.reason);
+        }
+      });
+    }
   }
 
   if (idsToDelete.length > 0) {
@@ -2261,6 +2273,13 @@ function registerRoutes(prefix: string) {
 
       if (!stored || !stored.hash) {
         await clearAuthAttempts(c, profileId);
+        if (playerId !== "dm") {
+          try {
+            await ensureCreditAccountRow(playerId);
+          } catch (accountError) {
+            console.error(`[credits] Could not provision account during login for ${playerId}:`, accountError);
+          }
+        }
         const session = await createSession(playerId);
         return c.json({
           valid: true,
@@ -2282,6 +2301,13 @@ function registerRoutes(prefix: string) {
       }
 
       await clearAuthAttempts(c, profileId);
+      if (playerId !== "dm") {
+        try {
+          await ensureCreditAccountRow(playerId);
+        } catch (accountError) {
+          console.error(`[credits] Could not provision account during login for ${playerId}:`, accountError);
+        }
+      }
       const session = await createSession(playerId);
 
       return c.json({
@@ -3032,6 +3058,13 @@ function registerRoutes(prefix: string) {
       if (unauthorized) return unauthorized;
 
       const playerId = await resolveSessionPlayerId(c);
+      if (playerId !== "dm") {
+        try {
+          await ensureCreditAccountRow(playerId);
+        } catch (accountError) {
+          console.error(`[credits] Could not provision account during session validation for ${playerId}:`, accountError);
+        }
+      }
       return c.json({ playerId, isDM: playerId === "dm" });
     } catch (err) {
       return c.json({ error: String(err) }, 401);

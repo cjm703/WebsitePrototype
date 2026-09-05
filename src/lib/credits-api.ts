@@ -1,4 +1,38 @@
-import { sessionApiFetch } from "./api-client";
+import { ApiRequestError, sessionApiFetch } from "./api-client";
+
+const CREDIT_SERVICE_RETRY_DELAY_MS = 60_000;
+let creditsServiceRetryAfter = 0;
+
+function creditsServiceUnavailableError() {
+  return new ApiRequestError(
+    "Credits service update has not been deployed yet.",
+    503,
+    { code: "CREDITS_SERVICE_UNAVAILABLE" },
+  );
+}
+
+function isMissingCreditsRoute(error: unknown) {
+  return error instanceof ApiRequestError
+    && (error.status === 404 || error.status === 405)
+    && /^Request failed: (404|405)$/.test(error.message);
+}
+
+async function creditsApiFetch(path: string, init: RequestInit = {}) {
+  if (Date.now() < creditsServiceRetryAfter) throw creditsServiceUnavailableError();
+  try {
+    return await sessionApiFetch(path, init);
+  } catch (error) {
+    if (isMissingCreditsRoute(error)) {
+      creditsServiceRetryAfter = Date.now() + CREDIT_SERVICE_RETRY_DELAY_MS;
+      throw creditsServiceUnavailableError();
+    }
+    throw error;
+  }
+}
+
+export function isCreditsServiceUnavailable(error: unknown) {
+  return error instanceof ApiRequestError && error.code === "CREDITS_SERVICE_UNAVAILABLE";
+}
 
 export interface CreditAccount {
   playerId: string;
@@ -40,11 +74,11 @@ export async function loadCreditAccount(playerId?: string, before?: string): Pro
   const params = new URLSearchParams({ limit: "100" });
   if (playerId) params.set("playerId", playerId);
   if (before) params.set("before", before);
-  return sessionApiFetch(`/credits/account?${params.toString()}`, { method: "GET" }) as Promise<CreditAccountDetail>;
+  return creditsApiFetch(`/credits/account?${params.toString()}`, { method: "GET" }) as Promise<CreditAccountDetail>;
 }
 
 export async function loadCreditAccounts(): Promise<CreditAccount[]> {
-  const body = await sessionApiFetch("/credits/accounts", { method: "GET" });
+  const body = await creditsApiFetch("/credits/accounts", { method: "GET" });
   return Array.isArray(body?.accounts) ? body.accounts as CreditAccount[] : [];
 }
 
@@ -54,7 +88,7 @@ export async function adjustCredits(input: {
   reason: string;
   idempotencyKey?: string;
 }) {
-  return sessionApiFetch("/credits/adjust", {
+  return creditsApiFetch("/credits/adjust", {
     method: "POST",
     body: JSON.stringify({
       ...input,
@@ -68,7 +102,7 @@ export async function reverseCreditTransaction(input: {
   reason: string;
   idempotencyKey?: string;
 }) {
-  return sessionApiFetch("/credits/reverse", {
+  return creditsApiFetch("/credits/reverse", {
     method: "POST",
     body: JSON.stringify({
       ...input,
@@ -78,7 +112,7 @@ export async function reverseCreditTransaction(input: {
 }
 
 export async function purchaseCommerceCart(cart: Array<{ shopId: string; itemId: string; quantity: number }>, idempotencyKey: string) {
-  return sessionApiFetch("/commerce/purchase", {
+  return creditsApiFetch("/commerce/purchase", {
     method: "POST",
     body: JSON.stringify({ cart, idempotencyKey }),
   }) as Promise<{
@@ -96,7 +130,7 @@ export async function saveCommerceCatalog<T extends { id: string }>(
   changes: T[],
   deletions: Array<{ id: string; revision: number }>,
 ) {
-  return sessionApiFetch("/commerce/admin/catalog/save", {
+  return creditsApiFetch("/commerce/admin/catalog/save", {
     method: "POST",
     body: JSON.stringify({ changes, deletions }),
   }) as Promise<{ ok: true; shops: T[] }>;
