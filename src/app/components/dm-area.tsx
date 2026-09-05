@@ -117,6 +117,64 @@ const statMod = (val: number) => {
 
 const defaultStats: PlayerStats = { STR: 10, AGI: 10, CON: 10, KNOW: 10, WIS: 10, WILL: 10 };
 
+function finitePlayerNumber(value: unknown, fallback: number) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function playerText(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function normalizePlayerForEditor(player: PlayerData): PlayerData {
+  const rawStats = player.stats && typeof player.stats === "object"
+    ? player.stats as Partial<PlayerStats>
+    : {};
+  const stats: PlayerStats = {
+    STR: finitePlayerNumber(rawStats.STR, defaultStats.STR),
+    AGI: finitePlayerNumber(rawStats.AGI, defaultStats.AGI),
+    CON: finitePlayerNumber(rawStats.CON, defaultStats.CON),
+    KNOW: finitePlayerNumber(rawStats.KNOW, defaultStats.KNOW),
+    WIS: finitePlayerNumber(rawStats.WIS, defaultStats.WIS),
+    WILL: finitePlayerNumber(rawStats.WILL, defaultStats.WILL),
+  };
+  const autoMaxWeight = typeof player.autoMaxWeight === "boolean"
+    ? player.autoMaxWeight
+    : usesAutoMaxWeight({ ...player, stats });
+
+  return {
+    ...player,
+    id: playerText(player.id),
+    name: playerText(player.name, "Unnamed Player"),
+    race: playerText(player.race),
+    class: playerText(player.class, "Operative"),
+    level: Math.max(1, finitePlayerNumber(player.level, 1)),
+    tp: Math.max(0, finitePlayerNumber(player.tp, 0)),
+    hpIncreasePerLevel: playerText(player.hpIncreasePerLevel),
+    stats,
+    currentHP: Math.max(0, finitePlayerNumber(player.currentHP, 10)),
+    maxHP: Math.max(0, finitePlayerNumber(player.maxHP, 10)),
+    armorClass: Math.max(0, finitePlayerNumber(player.armorClass, 10)),
+    speed: playerText(player.speed, "30 ft"),
+    woundDice: playerText(player.woundDice, "1d6"),
+    currentWounds: Math.max(0, finitePlayerNumber(player.currentWounds, 0)),
+    totalWounds: Math.max(0, finitePlayerNumber(player.totalWounds, 3)),
+    damageReduction: Math.max(0, finitePlayerNumber(player.damageReduction, 0)),
+    tempHP: Math.max(0, finitePlayerNumber(player.tempHP, 0)),
+    currentWeight: Math.max(0, finitePlayerNumber(player.currentWeight, 0)),
+    maxWeight: autoMaxWeight
+      ? getAutoMaxWeightFromCon(stats.CON)
+      : Math.max(0, finitePlayerNumber(player.maxWeight, getAutoMaxWeightFromCon(stats.CON))),
+    autoMaxWeight,
+    insanityPoints: Math.max(0, finitePlayerNumber(player.insanityPoints, 0)),
+    inspirationPoints: Math.max(0, finitePlayerNumber(player.inspirationPoints, 0)),
+    foresight: Boolean(player.foresight),
+    exhaustion: Math.max(0, finitePlayerNumber(player.exhaustion, 0)),
+    maxExhaustion: Math.max(0, finitePlayerNumber(player.maxExhaustion, 6)),
+    authCode: "",
+  };
+}
+
 const cfKey = (tagName: string, fieldName: string) => `${tagName}::${fieldName}`;
 
 // Migrate legacy string assignedTo → string[] for backward compatibility
@@ -551,6 +609,8 @@ export function DMArea() {
   const [players, setPlayers] = useState<PlayerData[]>([]);
   const [editingPlayer, setEditingPlayer] = useState<PlayerData | null>(null);
   const [isAddingNewPlayer, setIsAddingNewPlayer] = useState(false);
+  const [playerEditorOpenRequest, setPlayerEditorOpenRequest] = useState(0);
+  const playerEditorRef = useRef<HTMLDivElement>(null);
 
   // Recently deleted players (reversible)
   const [deletedPlayers, setDeletedPlayers] = useState<PlayerData[]>([]);
@@ -1086,6 +1146,19 @@ async function persistCustomReactions(next: CustomReaction[]) {
   // ========================
   // Player handlers
   // ========================
+  useEffect(() => {
+    if (playerEditorOpenRequest === 0 || !editingPlayer || activeSection !== "players") return;
+
+    playerEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    playerEditorRef.current
+      ?.querySelector<HTMLInputElement>('input[name="player-name"]')
+      ?.focus({ preventScroll: true });
+  }, [activeSection, editingPlayer?.id, playerEditorOpenRequest]);
+
+  const revealPlayerEditor = () => {
+    setPlayerEditorOpenRequest((request) => request + 1);
+  };
+
   const handleAddPlayer = () => {
     setEditingPlayer({
       id: `player-${Date.now()}`, name: "New Agent", race: "", class: "Operative", level: 1, tp: 0, hpIncreasePerLevel: "",
@@ -1095,6 +1168,14 @@ async function persistCustomReactions(next: CustomReaction[]) {
       authCode: "",
     });
     setIsAddingNewPlayer(true);
+    setPendingAuthCode("");
+    revealPlayerEditor();
+  };
+  const handleEditPlayer = (player: PlayerData) => {
+    setEditingPlayer(normalizePlayerForEditor(player));
+    setIsAddingNewPlayer(false);
+    setPendingAuthCode("");
+    revealPlayerEditor();
   };
   const handleSavePlayer = async () => {
     if (!editingPlayer) return;
@@ -1567,7 +1648,12 @@ const handleSaveItem = async () => {
               </div>
 
               {editingPlayer && (
-                <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+                <div
+                  ref={playerEditorRef}
+                  className={`${retro.sunken} bg-[#0C0C2E] p-5 scroll-mt-4`}
+                  role="region"
+                  aria-label={isAddingNewPlayer ? "Add player" : `Edit ${editingPlayer.name}`}
+                >
                   <div className="flex items-center justify-between mb-4">
                     <div className="text-[12px]" style={S_SECTION_HDR}>
                       {isAddingNewPlayer ? "ADD NEW PLAYER" : `EDITING: ${editingPlayer.name}`}
@@ -1577,7 +1663,7 @@ const handleSaveItem = async () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Name:</label>
-                      <input type="text" value={editingPlayer.name} onChange={(e) => updatePlayerField("name", e.target.value)} className={inputClass} style={inputStyle} />
+                      <input name="player-name" type="text" value={editingPlayer.name} onChange={(e) => updatePlayerField("name", e.target.value)} className={inputClass} style={inputStyle} />
                     </div>
                     <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Race:</label>
@@ -1729,25 +1815,8 @@ const handleSaveItem = async () => {
                           </div>
                           <div className="flex items-center gap-2">
                             <button
-                              onClick={() => {
-                                setEditingPlayer({
-                                  damageReduction: 0,
-                                  tempHP: 0,
-                                  currentWeight: 0,
-                                  maxWeight: getBaseMaxWeight(player),
-                                  autoMaxWeight: usesAutoMaxWeight(player),
-                                  insanityPoints: 0,
-                                  inspirationPoints: 0,
-                                  foresight: false,
-                                  exhaustion: 0,
-                                  maxExhaustion: 6,
-                                  race: "",
-                                  tp: 0,
-                                  hpIncreasePerLevel: "",
-                                  ...player,
-                                });
-                                setIsAddingNewPlayer(false);
-                              }}
+                              type="button"
+                              onClick={() => handleEditPlayer(player)}
                               className={`${retro.button} px-3 py-1 text-[11px]`}
                               style={S_ACCENT}
                             >
