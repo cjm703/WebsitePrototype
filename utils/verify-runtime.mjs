@@ -298,6 +298,16 @@ async function testItemCombatRules() {
   assert.equal(rules.isWeaponItem(fieldOnlyShotgun), true);
   assert.equal(rules.getWeaponDamageExpression(fieldOnlyShotgun), "3d6");
   assert.equal(rules.getWeaponDamageAttribute(fieldOnlyShotgun), "WILL");
+  assert.equal(rules.usesWeaponDamageAttributeModifier(fieldOnlyShotgun), true);
+
+  const diceOnlyShotgun = {
+    ...fieldOnlyShotgun,
+    customFields: {
+      ...fieldOnlyShotgun.customFields,
+      "Info Field::1::Apply Damage Attribute Modifier": "0",
+    },
+  };
+  assert.equal(rules.usesWeaponDamageAttributeModifier(diceOnlyShotgun), false);
 
   const legacyFirearm = {
     name: "B&M Corp Ironeater Shotgun",
@@ -309,6 +319,7 @@ async function testItemCombatRules() {
   assert.equal(rules.isWeaponItem(legacyFirearm), true);
   assert.equal(rules.getWeaponDamageExpression(legacyFirearm), "3d6");
   assert.match(rules.getWeaponDamageDisplay(legacyFirearm), /3d6 piercing damage/);
+  assert.equal(rules.usesWeaponDamageAttributeModifier(legacyFirearm), true);
   assert.deepEqual(rules.extractDiceExpressions("Damage: 3d6 piercing / 2d6 distant"), ["3d6", "2d6"]);
   assert.deepEqual(rules.extractDiceExpressions("Roll <b>3d6 + 2</b> damage"), ["3d6 + 2"]);
   assert.deepEqual(rules.extractDiceExpressions("No roll configured"), []);

@@ -15,8 +15,10 @@ import {
 import {
   ITEM_EQUIPMENT_HANDS_KEY,
   ITEM_EQUIPMENT_SLOTS_KEY,
+  ITEM_INFO_APPLY_DAMAGE_MODIFIER_KEY,
   ITEM_INFO_DAMAGE_ATTRIBUTE_KEY,
   ITEM_INFO_WEAPON_DAMAGE_KEY,
+  ITEM_WEAPON_APPLY_DAMAGE_MODIFIER_KEY,
   ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
   ITEM_WEAPON_DAMAGE_KEY,
   isVersatileItem,
@@ -115,6 +117,7 @@ interface ItemInfoField {
   trackerBuffValue: string;
   weaponDamage: boolean;
   damageAttribute: "" | WeaponDamageAttribute;
+  applyDamageModifier: boolean;
 }
 
 interface ItemInfoFieldPreset {
@@ -169,6 +172,7 @@ const ITEM_INFO_FIELD_PRESETS: ItemInfoFieldPreset[] = [
       rollExpression: "1d6",
       weaponDamage: true,
       damageAttribute: "STR",
+      applyDamageModifier: true,
     },
   },
   {
@@ -237,6 +241,7 @@ const WEAPON_INFO_FIELD_SEEDS: Array<Partial<ItemInfoField>> = [
     rollExpression: "1d6",
     weaponDamage: true,
     damageAttribute: "STR",
+    applyDamageModifier: true,
   },
   { label: "Range", placement: "above" },
   { label: "Reload", placement: "above" },
@@ -289,6 +294,7 @@ const FIELD_KEYS = {
   equipmentHands: ITEM_EQUIPMENT_HANDS_KEY,
   weaponDamage: ITEM_WEAPON_DAMAGE_KEY,
   weaponDamageAttribute: ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY,
+  weaponApplyDamageModifier: ITEM_WEAPON_APPLY_DAMAGE_MODIFIER_KEY,
   attributeName: "Attribute Buff::Attribute",
   attributeAmount: "Attribute Buff::Amount",
   skillName: "Skill Buff::Skill",
@@ -320,6 +326,7 @@ const INFO_TRACKER_BUFF_TARGET = "Tracker Buff Target";
 const INFO_TRACKER_BUFF_VALUE = "Tracker Buff Value";
 const INFO_WEAPON_DAMAGE = ITEM_INFO_WEAPON_DAMAGE_KEY;
 const INFO_DAMAGE_ATTRIBUTE = ITEM_INFO_DAMAGE_ATTRIBUTE_KEY;
+const INFO_APPLY_DAMAGE_MODIFIER = ITEM_INFO_APPLY_DAMAGE_MODIFIER_KEY;
 
 function rarityColor(r: string) {
   switch (r) {
@@ -399,6 +406,7 @@ function buildInfoFields(customFields: Record<string, string>): ItemInfoField[] 
     damageAttribute: ATTRS.includes(customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] as WeaponDamageAttribute)
       ? customFields[getInfoFieldKey(fieldId, INFO_DAMAGE_ATTRIBUTE)] as WeaponDamageAttribute
       : "",
+    applyDamageModifier: customFields[getInfoFieldKey(fieldId, INFO_APPLY_DAMAGE_MODIFIER)] !== "0",
   }));
 }
 
@@ -430,6 +438,11 @@ function applyInfoFieldSeed(customFields: Record<string, string>, fieldId: strin
   setValue(INFO_TRACKER_BUFF_VALUE, seed.trackerBuffValue || "");
   setValue(INFO_WEAPON_DAMAGE, seed.weaponDamage || false);
   setValue(INFO_DAMAGE_ATTRIBUTE, seed.damageAttribute || "");
+  if (seed.weaponDamage) {
+    next[getInfoFieldKey(fieldId, INFO_APPLY_DAMAGE_MODIFIER)] = seed.applyDamageModifier === false ? "0" : "1";
+  } else {
+    delete next[getInfoFieldKey(fieldId, INFO_APPLY_DAMAGE_MODIFIER)];
+  }
   return next;
 }
 
@@ -460,9 +473,11 @@ function migrateLegacyWeaponDamage(item: ManagedItem) {
     damageAttribute: ATTRS.includes(item.customFields[FIELD_KEYS.weaponDamageAttribute] as WeaponDamageAttribute)
       ? item.customFields[FIELD_KEYS.weaponDamageAttribute] as WeaponDamageAttribute
       : "STR",
+    applyDamageModifier: item.customFields[FIELD_KEYS.weaponApplyDamageModifier] !== "0",
   });
   delete nextCustomFields[FIELD_KEYS.weaponDamage];
   delete nextCustomFields[FIELD_KEYS.weaponDamageAttribute];
+  delete nextCustomFields[FIELD_KEYS.weaponApplyDamageModifier];
   return { ...item, customFields: nextCustomFields };
 }
 
@@ -1681,9 +1696,23 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
                                 </select>
                               </div>
                             </div>
-                            <div className="max-w-sm">
-                              <label className="text-[10px] block mb-1" style={labelStyle}>Use Button Label</label>
-                              <input type="text" value={field.rollLabel} onChange={(event) => updateInfoField(field.fieldId, INFO_ROLL_LABEL, event.target.value)} placeholder="Use / Roll Damage" className={inputClass} style={inputStyle} />
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.8fr)]">
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Use Button Label</label>
+                                <input type="text" value={field.rollLabel} onChange={(event) => updateInfoField(field.fieldId, INFO_ROLL_LABEL, event.target.value)} placeholder="Use / Roll Damage" className={inputClass} style={inputStyle} />
+                              </div>
+                              <div>
+                                <label className="text-[10px] block mb-1" style={labelStyle}>Roll Formula</label>
+                                <label className={`${retro.sunken} flex min-h-[38px] cursor-pointer items-center gap-2 bg-[#0A0A28] px-3 py-2 text-[11px]`} style={{ color: field.applyDamageModifier ? "#FFD166" : "#8290AD" }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={field.applyDamageModifier}
+                                    onChange={(event) => updateInfoField(field.fieldId, INFO_APPLY_DAMAGE_MODIFIER, event.target.checked ? "1" : "0")}
+                                    className="h-3.5 w-3.5 accent-[#C99B35]"
+                                  />
+                                  {field.applyDamageModifier ? `Add ${field.damageAttribute || "STR"} modifier` : "Roll damage dice only"}
+                                </label>
+                              </div>
                             </div>
                             {isVersatileItem(editingItem) && (
                               <div className="text-[9px] mt-2" style={S_ACCENT}>

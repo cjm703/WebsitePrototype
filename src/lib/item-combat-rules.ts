@@ -2,9 +2,11 @@ export const ITEM_EQUIPMENT_SLOTS_KEY = "Equipment::Slots";
 export const ITEM_EQUIPMENT_HANDS_KEY = "Equipment::Hands";
 export const ITEM_WEAPON_DAMAGE_KEY = "Weapon::Damage";
 export const ITEM_WEAPON_DAMAGE_ATTRIBUTE_KEY = "Weapon::Damage Attribute";
+export const ITEM_WEAPON_APPLY_DAMAGE_MODIFIER_KEY = "Weapon::Apply Damage Attribute Modifier";
 export const ITEM_INFO_PREFIX = "Info Field::";
 export const ITEM_INFO_WEAPON_DAMAGE_KEY = "Weapon Damage";
 export const ITEM_INFO_DAMAGE_ATTRIBUTE_KEY = "Damage Attribute";
+export const ITEM_INFO_APPLY_DAMAGE_MODIFIER_KEY = "Apply Damage Attribute Modifier";
 
 const ITEM_INFO_LABEL_KEY = "Label";
 const ITEM_INFO_CONTENT_KEY = "Content";
@@ -152,6 +154,12 @@ export function getWeaponDamageAttribute(item: CombatItemLike | null | undefined
   return WEAPON_DAMAGE_ATTRIBUTES.has(stored as WeaponDamageAttribute)
     ? stored as WeaponDamageAttribute
     : "STR";
+}
+
+export function usesWeaponDamageAttributeModifier(item: CombatItemLike | null | undefined) {
+  const stored = getWeaponDamageInfoValue(item, ITEM_INFO_APPLY_DAMAGE_MODIFIER_KEY)
+    || fieldText(item?.customFields || {}, ITEM_WEAPON_APPLY_DAMAGE_MODIFIER_KEY);
+  return !["0", "false", "no", "off"].includes(stored.toLowerCase());
 }
 
 export function resolveWeaponDamageAttribute(

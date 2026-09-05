@@ -53,6 +53,7 @@ import {
   isTwoHandedItem as itemUsesTwoHands,
   isVersatileItem,
   resolveWeaponDamageAttribute,
+  usesWeaponDamageAttributeModifier,
   type WeaponDamageAttribute,
 } from "@/lib/item-combat-rules";
 import { renderTypedField as renderTypedFieldShared, type TagFieldDef } from "./tag-field-renderer";
@@ -2697,7 +2698,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       WILL: (player?.stats?.WILL ?? 10) + (equipBuffs.attrBuffs.WILL || 0) + (seBuffs.attrBuffs.WILL || 0),
     };
     const attribute = resolveWeaponDamageAttribute(item, effectiveStats);
-    const modifier = statModNum(effectiveStats[attribute]);
+    const appliesAttributeModifier = usesWeaponDamageAttributeModifier(item);
+    const attributeModifier = statModNum(effectiveStats[attribute]);
+    const modifier = appliesAttributeModifier ? attributeModifier : 0;
     const resolvedExpression = modifier === 0
       ? damageExpression
       : `(${damageExpression})${modifier > 0 ? "+" : ""}${modifier}`;
@@ -2713,19 +2716,23 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         <button
           type="button"
           onClick={() => handleInlineDiceRoll(rollKey, resolvedExpression)}
-          className={`${retro.button} inline-flex items-center justify-center gap-1.5 ${iconOnly ? "h-9 w-9 p-0" : compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
+          className={`${retro.button} inline-flex items-center justify-center gap-1.5 ${iconOnly ? "h-9 min-w-[92px] px-2.5 text-[10px] font-semibold" : compact ? "px-2 py-0.5 text-[9px]" : "px-3 py-1.5 text-[11px]"}`}
           style={iconOnly
             ? { color: "#FFD166", background: "rgba(68, 48, 8, 0.9)", border: "1px solid #9B7A28", boxShadow: "inset 0 0 0 1px rgba(255, 209, 102, 0.14)" }
             : { color: "#FFD166" }}
-          title={`${displayedDamage || damageExpression} + ${attributeLabel} modifier (${modifier >= 0 ? "+" : ""}${modifier})`}
-          aria-label={iconOnly ? actionLabel : undefined}
+          title={appliesAttributeModifier
+            ? `${displayedDamage || damageExpression} + ${attributeLabel} modifier (${attributeModifier >= 0 ? "+" : ""}${attributeModifier})`
+            : `${displayedDamage || damageExpression} without an attribute modifier`}
+          aria-label={iconOnly ? `${actionLabel}${appliesAttributeModifier ? ` with ${attributeLabel} modifier` : ""}` : undefined}
         >
           <Dices size={iconOnly ? 15 : compact ? 10 : 13} />
-          {!iconOnly && (compact ? actionLabel : `${actionLabel} - ${attributeLabel}${versatile ? " (Versatile)" : ""}`)}
+          {iconOnly
+            ? `ROLL${appliesAttributeModifier ? ` + ${attribute}` : ""}`
+            : (compact ? actionLabel : `${actionLabel}${appliesAttributeModifier ? ` - ${attributeLabel}${versatile ? " (Versatile)" : ""}` : ""}`)}
         </button>
         {!compact && (
           <span className="text-[9px]" style={S_MUTED}>
-            {damageExpression} {modifier >= 0 ? "+" : "-"} {Math.abs(modifier)} from {attributeLabel}
+            {damageExpression}{appliesAttributeModifier ? ` ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} from ${attributeLabel}` : " (no attribute modifier)"}
           </span>
         )}
         {result && <span className={compact ? "text-[10px]" : "text-[12px]"} style={{ color: "#FF6A6A", fontWeight: 700 }}>{result}</span>}
