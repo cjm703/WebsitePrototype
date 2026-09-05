@@ -205,7 +205,7 @@ const BUY_RESPONSES = [
 ];
 
 const NOT_ENOUGH_RESPONSES = [
-  "Not enough credits...",
+  "Not enough Arcade Credits...",
   "Come back with more!",
   "Play more games first!",
 ];
@@ -455,7 +455,7 @@ export function ArcadeStore() {
 
   const currentCategory = categories.find((c) => c.id === activeCategory) || categories[0];
   const bobY = Math.sin((bobFrame / 60) * Math.PI * 2) * 3;
-  const priceLabel = (price: number) => isDM ? "FREE" : `${price} CR`;
+  const priceLabel = (price: number) => isDM ? "FREE" : `${price} AC`;
   const dmCanAfford = (_price: number) => isDM ? true : credits >= _price;
 
   // ========================
@@ -1435,7 +1435,7 @@ export function ArcadeStore() {
               fontFamily: "'Courier New', monospace",
             }}
           >
-            Credits: {isDM ? "∞" : credits}
+            Arcade Credits: {isDM ? "∞" : credits}
           </div>
         </div>
       </div>

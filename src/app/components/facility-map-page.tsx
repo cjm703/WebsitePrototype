@@ -38,9 +38,9 @@ import {
   calculateFacilityEconomy,
   facilitySecurityRisk,
   facilityStatDelta,
-  personalFundBalance,
   type FacilityStats,
 } from "@/lib/facility-depth-model";
+import { loadCreditAccount, type CreditAccount } from "@/lib/credits-api";
 import { countInstalledFacilityAdditions, type FacilityAddition } from "@/lib/business-map-model";
 import { useInterfaceSession } from "./session-context";
 import { IntelliLoadingMark } from "./intelli-loading-mark";
@@ -57,7 +57,7 @@ function FacilityStatBar({ label, value, color }: { label: string; value: number
   return <div><div className="mb-1 flex items-center justify-between text-[8px]"><span style={MUTED}>{label.toUpperCase()}</span><span className="font-mono" style={{ color }}>{bounded}/100</span></div><div className="h-2 overflow-hidden border border-[#253047] bg-[#05080E]"><div className="h-full transition-[width]" style={{ width: `${bounded}%`, background: color }} /></div></div>;
 }
 
-function FacilityOperationsPanel({ facility, current, preview, fundBalance, ownerName, isOwner, isDM, onOpenFinances }: { facility: FacilityRecord; current: FacilityStats; preview: FacilityStats; fundBalance: number; ownerName: string; isOwner: boolean; isDM: boolean; onOpenFinances: () => void }) {
+function FacilityOperationsPanel({ facility, current, preview, fundBalance, ownerName, isOwner, isDM, onOpenFinances }: { facility: FacilityRecord; current: FacilityStats; preview: FacilityStats; fundBalance: number | null; ownerName: string; isOwner: boolean; isDM: boolean; onOpenFinances: () => void }) {
   const expansions = facility.businessMap?.expansions || [];
   const economy = calculateFacilityEconomy(current, facility.staffCostPerPerson);
   const risk = facilitySecurityRisk(current.security);
@@ -69,7 +69,7 @@ function FacilityOperationsPanel({ facility, current, preview, fundBalance, owne
         <div className="mt-2 flex items-center justify-between text-[9px]"><span style={DIM}>OWNER</span><span className="truncate" style={TEXT}>{ownerName || "Unassigned"}</span></div>
         <div className="mt-2 flex items-center justify-between text-[9px]"><span style={DIM}>ACCESS</span><span style={isDM || isOwner ? { color: "#62D6A6" } : MUTED}>{isDM ? "DM Control" : isOwner ? "Owner Control" : "Read Only"}</span></div>
         <div className="mt-2 border border-[#2B3549] bg-[#090E17] p-2.5">
-          <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 text-[9px]" style={MUTED}><Coins size={11} />Owner Personal Funds</span><strong className="text-[13px] font-mono text-[#F2D06B]">{fundBalance.toLocaleString()} CR</strong></div>
+          <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 text-[9px]" style={MUTED}><Coins size={11} />Owner Credits</span><strong className="text-[13px] font-mono text-[#F2D06B]">{fundBalance === null ? "Private" : `${fundBalance.toLocaleString()} CR`}</strong></div>
           <div className="mt-1 text-[7px]" style={DIM}>Current accounting period: Month {facility.currentMonth}</div>
         </div>
       </div>
@@ -114,6 +114,7 @@ export function FacilityMapPage() {
   const session = useInterfaceSession();
   const [office, setOffice] = useState<FacilityOfficeState | null>(null);
   const [players, setPlayers] = useState<BusinessMapPlayerOption[]>([]);
+  const [ownerCreditAccount, setOwnerCreditAccount] = useState<CreditAccount | null>(null);
   const [previewAddition, setPreviewAddition] = useState<FacilityAddition | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [error, setError] = useState("");
@@ -280,7 +281,15 @@ export function FacilityMapPage() {
   const isOwner = Boolean(facility?.ownerPlayerId && facility.ownerPlayerId === session.playerId);
   const canManage = session.isDM || isOwner;
   const ownerName = players.find((player) => player.id === facility?.ownerPlayerId)?.name || facility?.ownerPlayerId || "";
-  const fundBalance = office && facility ? personalFundBalance(office.personalFunds, facility.ownerPlayerId) : 0;
+  const fundBalance = session.isDM || isOwner ? ownerCreditAccount?.balance ?? 0 : null;
+  useEffect(() => {
+    const ownerId = facility?.ownerPlayerId || "";
+    if (!ownerId || (!session.isDM && ownerId !== session.playerId)) {
+      setOwnerCreditAccount(null);
+      return;
+    }
+    void loadCreditAccount(ownerId).then((detail) => setOwnerCreditAccount(detail.account)).catch(() => setOwnerCreditAccount(null));
+  }, [facility?.ownerPlayerId, session.isDM, session.playerId]);
   const usage = useMemo(() => office ? countInstalledFacilityAdditions(office.facilities.map((entry) => entry.businessMap)) : {}, [office]);
   const currentStats = useMemo(() => facility?.businessMap && office ? calculateFacilityStats(facility.baseStats, facility.businessMap, office.facilityAdditions) : facility?.baseStats || null, [facility, office]);
   const previewStats = useMemo(() => facilityStatDelta(previewAddition), [previewAddition]);
@@ -300,8 +309,11 @@ export function FacilityMapPage() {
     if (!facility) return;
     const saved = await applyFacilityExpansionAction<FacilityOfficeState>({ action, facilityId: facility.id, expansionId });
     applyState(saved);
+    if (facility.ownerPlayerId && (session.isDM || isOwner)) {
+      void loadCreditAccount(facility.ownerPlayerId).then((detail) => setOwnerCreditAccount(detail.account)).catch(() => undefined);
+    }
     void signalRef.current?.notify();
-  }, [applyState, facility]);
+  }, [applyState, facility, isOwner, session.isDM]);
 
   const handlePreview = useCallback((addition: FacilityAddition | null) => setPreviewAddition(addition), []);
 
@@ -343,7 +355,7 @@ export function FacilityMapPage() {
             onAdditionPreviewChange={handlePreview}
             onExpansionAction={handleExpansion}
             canFundExpansions={isOwner}
-            personalFundBalance={fundBalance}
+            personalFundBalance={fundBalance ?? 0}
             operationsPanel={currentStats ? <FacilityOperationsPanel facility={facility} current={currentStats} preview={previewStats} fundBalance={fundBalance} ownerName={ownerName} isOwner={isOwner} isDM={session.isDM} onOpenFinances={() => navigate(`/interface/nexus-nomad/facility/${encodeURIComponent(facility.id)}/finances`)} /> : undefined}
             onSave={saveNow}
             saveState={saveState}

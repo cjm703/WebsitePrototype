@@ -128,7 +128,7 @@ export interface WorkshopBootstrap {
   components: WorkshopComponent[];
   builds: WorkshopBuild[];
   storage: WorkshopStorage;
-  personalFunds: number;
+  credits: number;
   salvageRecipes: WorkshopSalvageRecipe[];
 }
 

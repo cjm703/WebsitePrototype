@@ -29,10 +29,10 @@ import {
   calculateFacilityEconomy,
   calculateFacilityStats,
   facilitySecurityRisk,
-  personalFundBalance,
   type FacilityMonthlyReport,
   type FacilityStats,
 } from "@/lib/facility-depth-model";
+import { loadCreditAccount, type CreditAccount } from "@/lib/credits-api";
 import { useInterfaceSession } from "./session-context";
 import { IntelliLoadingMark } from "./intelli-loading-mark";
 
@@ -70,7 +70,7 @@ function ReportRow({ label, value, color = "#E6EDF8", strong = false }: { label:
 
 function HistoryReport({ report }: { report: FacilityMonthlyReport }) {
   const positive = report.netIncome >= 0;
-  return <details className="border border-[#202B3E] bg-[#080C13] open:border-[#35506C]"><summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3"><span><span className="block text-[11px] font-semibold" style={TEXT}>{report.label}</span><span className="mt-1 block text-[8px]" style={DIM}>{reportDate(report.advancedAt)} · advanced by {report.advancedBy || "DM"}</span></span><span className="text-right"><span className="block text-[12px] font-mono font-semibold" style={{ color: positive ? "#62D6A6" : "#F29AA3" }}>{signedMoney(report.netIncome)}</span><span className="mt-1 block text-[7px]" style={DIM}>{report.fundTransfer ? `${signedMoney(report.fundTransfer)} transferred` : "No fund transfer"}</span></span></summary><div className="grid gap-x-8 border-t border-[#202B3E] px-4 py-3 md:grid-cols-2"><div><ReportRow label="Adjusted revenue" value={money(report.adjustedRevenue)} color="#62D6A6" /><ReportRow label="Monthly upkeep" value={`-${money(report.monthlyUpkeep)}`} color="#F29AA3" /><ReportRow label="Staff payroll" value={`-${money(report.staffPayroll)}`} color="#F29AA3" /></div><div><ReportRow label="Staff present / required" value={`${report.staffPresent} / ${report.staffRequired}`} /><ReportRow label="Event adjustment" value={signedMoney(report.eventAdjustment)} /><ReportRow label="DM adjustment" value={signedMoney(report.manualAdjustment)} /></div>{report.note && <div className="mt-3 border-l-2 border-[#35506C] pl-3 text-[9px] leading-5 md:col-span-2" style={MUTED}>{report.note}</div>}{report.unpaidCosts > 0 && <div className="mt-3 text-[9px] text-[#F2B36E] md:col-span-2">{money(report.unpaidCosts)} could not be deducted from Personal Funds and remains recorded as unpaid costs.</div>}</div></details>;
+  return <details className="border border-[#202B3E] bg-[#080C13] open:border-[#35506C]"><summary className="grid cursor-pointer list-none grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3"><span><span className="block text-[11px] font-semibold" style={TEXT}>{report.label}</span><span className="mt-1 block text-[8px]" style={DIM}>{reportDate(report.advancedAt)} · advanced by {report.advancedBy || "DM"}</span></span><span className="text-right"><span className="block text-[12px] font-mono font-semibold" style={{ color: positive ? "#62D6A6" : "#F29AA3" }}>{signedMoney(report.netIncome)}</span><span className="mt-1 block text-[7px]" style={DIM}>{report.fundTransfer ? `${signedMoney(report.fundTransfer)} transferred` : "No fund transfer"}</span></span></summary><div className="grid gap-x-8 border-t border-[#202B3E] px-4 py-3 md:grid-cols-2"><div><ReportRow label="Adjusted revenue" value={money(report.adjustedRevenue)} color="#62D6A6" /><ReportRow label="Monthly upkeep" value={`-${money(report.monthlyUpkeep)}`} color="#F29AA3" /><ReportRow label="Staff payroll" value={`-${money(report.staffPayroll)}`} color="#F29AA3" /></div><div><ReportRow label="Staff present / required" value={`${report.staffPresent} / ${report.staffRequired}`} /><ReportRow label="Event adjustment" value={signedMoney(report.eventAdjustment)} /><ReportRow label="DM adjustment" value={signedMoney(report.manualAdjustment)} /></div>{report.note && <div className="mt-3 border-l-2 border-[#35506C] pl-3 text-[9px] leading-5 md:col-span-2" style={MUTED}>{report.note}</div>}{report.unpaidCosts > 0 && <div className="mt-3 text-[9px] text-[#F2B36E] md:col-span-2">{money(report.unpaidCosts)} could not be deducted from the owner&apos;s Credits and remains recorded as unpaid costs.</div>}</div></details>;
 }
 
 export function FacilityFinancePage() {
@@ -79,6 +79,7 @@ export function FacilityFinancePage() {
   const session = useInterfaceSession();
   const [office, setOffice] = useState<FacilityOfficeState | null>(null);
   const [players, setPlayers] = useState<Array<{ id: string; name: string }>>([]);
+  const [ownerCreditAccount, setOwnerCreditAccount] = useState<CreditAccount | null>(null);
   const [draftStats, setDraftStats] = useState<FacilityStats | null>(null);
   const [draftStaffCost, setDraftStaffCost] = useState(50);
   const [dirty, setDirty] = useState(false);
@@ -121,6 +122,15 @@ export function FacilityFinancePage() {
   }, [loadRemote]);
 
   const facility = office?.facilities.find((entry) => entry.id === facilityId) || null;
+  const canViewOwnerCredits = Boolean(facility?.ownerPlayerId && (session.isDM || facility.ownerPlayerId === session.playerId));
+  useEffect(() => {
+    const ownerId = facility?.ownerPlayerId || "";
+    if (!ownerId || !canViewOwnerCredits) {
+      setOwnerCreditAccount(null);
+      return;
+    }
+    void loadCreditAccount(ownerId).then((detail) => setOwnerCreditAccount(detail.account)).catch(() => setOwnerCreditAccount(null));
+  }, [canViewOwnerCredits, facility?.ownerPlayerId]);
   useEffect(() => {
     if (!facility || dirty) return;
     setDraftStats({ ...facility.baseStats });
@@ -128,7 +138,7 @@ export function FacilityFinancePage() {
   }, [dirty, facility]);
 
   const ownerName = players.find((player) => player.id === facility?.ownerPlayerId)?.name || facility?.ownerPlayerId || "Unassigned";
-  const fundBalance = office && facility ? personalFundBalance(office.personalFunds, facility.ownerPlayerId) : 0;
+  const fundBalance = ownerCreditAccount?.balance || 0;
   const effectiveBaseStats = session.isDM && draftStats ? draftStats : facility?.baseStats || null;
   const currentStats = useMemo(() => facility?.businessMap && office && effectiveBaseStats ? calculateFacilityStats(effectiveBaseStats, facility.businessMap, office.facilityAdditions) : effectiveBaseStats, [effectiveBaseStats, facility, office]);
   const economy = useMemo(() => currentStats && facility ? calculateFacilityEconomy(currentStats, session.isDM ? draftStaffCost : facility.staffCostPerPerson, eventAdjustment, manualAdjustment) : null, [currentStats, draftStaffCost, eventAdjustment, facility, manualAdjustment, session.isDM]);
@@ -182,7 +192,7 @@ export function FacilityFinancePage() {
     if (!latestOffice) return;
     const latestFacility = latestOffice.facilities.find((entry) => entry.id === facility.id);
     if (!latestFacility) return;
-    const confirmed = window.confirm(`Close Month ${latestFacility.currentMonth} for ${latestFacility.name}? The report will be saved and ${signedMoney(projectedTransfer)} will be applied to ${ownerName}'s Personal Funds.`);
+    const confirmed = window.confirm(`Close Month ${latestFacility.currentMonth} for ${latestFacility.name}? The report will be saved and ${signedMoney(projectedTransfer)} will be applied to ${ownerName}'s Credits account.`);
     if (!confirmed) return;
     setAdvancing(true);
     busyRef.current = true;
@@ -196,6 +206,7 @@ export function FacilityFinancePage() {
       setNote("");
       setDirty(false);
       setMessage(`Month ${latestFacility.currentMonth} closed. Month ${advancedFacility?.currentMonth || latestFacility.currentMonth + 1} is now active.`);
+      if (latestFacility.ownerPlayerId) void loadCreditAccount(latestFacility.ownerPlayerId).then((detail) => setOwnerCreditAccount(detail.account)).catch(() => undefined);
       void signalRef.current?.notify();
     } catch (advanceError) {
       setError(advanceError instanceof Error ? advanceError.message : "The facility month could not be advanced.");
@@ -220,7 +231,7 @@ export function FacilityFinancePage() {
           ["Monthly Upkeep", money(currentStats.monthlyUpkeep), "#F29AA3"],
           ["Staff Payroll", money(economy.staffPayroll), "#E7B66A"],
           ["Projected Net", signedMoney(economy.netIncome), economy.netIncome >= 0 ? "#62D6A6" : "#F29AA3"],
-          ["Owner Funds", money(fundBalance), "#F2D06B"],
+          ["Owner Credits", canViewOwnerCredits ? money(fundBalance) : "Private", "#F2D06B"],
         ].map(([label, value, color], index) => <div key={label} className={`p-4 ${index ? "border-t border-[#202B3E] sm:border-l sm:border-t-0" : ""}`}><div className="text-[8px] uppercase" style={DIM}>{label}</div><div className="mt-2 text-[16px] font-mono font-semibold" style={{ color }}>{value}</div></div>)}
       </section>
 
@@ -235,7 +246,7 @@ export function FacilityFinancePage() {
           <section><div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-[11px] font-semibold" style={TEXT}><CalendarClock size={13} color="#79B8FF" />Monthly Report History</div><span className="text-[8px]" style={DIM}>{facility.monthlyReports.length} reports</span></div><div className="space-y-2">{[...facility.monthlyReports].reverse().map((report) => <HistoryReport key={report.id} report={report} />)}{facility.monthlyReports.length === 0 && <div className="border border-[#202B3E] bg-[#070B12] py-10 text-center text-[9px]" style={DIM}>No months have been advanced for this facility.</div>}</div></section>
         </div>
 
-        <aside className="self-start border border-[#2A3850] bg-[#080D16] p-4 xl:sticky xl:top-4"><div className="flex items-center gap-2 text-[11px] font-semibold" style={TEXT}><CalendarClock size={13} color="#79B8FF" />Advance Accounting Month</div>{session.isDM ? <><div className="mt-4 space-y-3"><NumberField label="Session Event Adjustment" value={eventAdjustment} min={-1000000000} suffix="CR" onChange={setEventAdjustment} /><NumberField label="DM Adjustment" value={manualAdjustment} min={-1000000000} suffix="CR" onChange={setManualAdjustment} /><label className="block"><span className="mb-1 block text-[8px] uppercase" style={MUTED}>Report Note</span><textarea value={note} onChange={(event) => setNote(event.target.value.slice(0, 500))} rows={4} placeholder="Security events, unusual income, closures..." className="w-full resize-y border px-2 py-2 text-[10px] outline-none" style={FIELD} /></label></div><div className="mt-4 border-t border-[#263148] pt-3"><ReportRow label="Final net income" value={signedMoney(economy.netIncome)} color={economy.netIncome >= 0 ? "#62D6A6" : "#F29AA3"} strong /><ReportRow label="Personal Funds transfer" value={signedMoney(projectedTransfer)} color={projectedTransfer >= 0 ? "#F2D06B" : "#F29AA3"} />{projectedUnpaid > 0 && <ReportRow label="Projected unpaid costs" value={money(projectedUnpaid)} color="#F2B36E" />}</div><button type="button" onClick={() => void advanceMonth()} disabled={saving || advancing} className="mt-4 flex w-full items-center justify-center gap-2 border border-[#315C49] bg-[#0A1B13] px-3 py-3 text-[10px] font-semibold text-[#73D5A8] hover:bg-[#0D2419] disabled:opacity-40">{advancing ? <LoaderCircle size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}{advancing ? "Advancing Month" : `Advance to Month ${facility.currentMonth + 1}`}</button><div className="mt-2 text-[7px] leading-4" style={DIM}>This closes Month {facility.currentMonth}, saves an immutable report, and applies the confirmed transfer once.</div></> : <div className="mt-4 border border-[#202B3E] bg-[#070B12] p-3 text-[9px] leading-5" style={MUTED}>Only the DM can close the current month. Players can view the live preview and every completed report.</div>}<div className="mt-4 border-t border-[#263148] pt-3"><div className="flex items-center justify-between text-[8px]"><span className="flex items-center gap-1" style={MUTED}><Coins size={9} />Owner Personal Funds</span><span className="font-mono text-[#F2D06B]">{money(fundBalance)}</span></div></div></aside>
+        <aside className="self-start border border-[#2A3850] bg-[#080D16] p-4 xl:sticky xl:top-4"><div className="flex items-center gap-2 text-[11px] font-semibold" style={TEXT}><CalendarClock size={13} color="#79B8FF" />Advance Accounting Month</div>{session.isDM ? <><div className="mt-4 space-y-3"><NumberField label="Session Event Adjustment" value={eventAdjustment} min={-1000000000} suffix="CR" onChange={setEventAdjustment} /><NumberField label="DM Adjustment" value={manualAdjustment} min={-1000000000} suffix="CR" onChange={setManualAdjustment} /><label className="block"><span className="mb-1 block text-[8px] uppercase" style={MUTED}>Report Note</span><textarea value={note} onChange={(event) => setNote(event.target.value.slice(0, 500))} rows={4} placeholder="Security events, unusual income, closures..." className="w-full resize-y border px-2 py-2 text-[10px] outline-none" style={FIELD} /></label></div><div className="mt-4 border-t border-[#263148] pt-3"><ReportRow label="Final net income" value={signedMoney(economy.netIncome)} color={economy.netIncome >= 0 ? "#62D6A6" : "#F29AA3"} strong /><ReportRow label="Credits transfer" value={signedMoney(projectedTransfer)} color={projectedTransfer >= 0 ? "#F2D06B" : "#F29AA3"} />{projectedUnpaid > 0 && <ReportRow label="Projected unpaid costs" value={money(projectedUnpaid)} color="#F2B36E" />}</div><button type="button" onClick={() => void advanceMonth()} disabled={saving || advancing} className="mt-4 flex w-full items-center justify-center gap-2 border border-[#315C49] bg-[#0A1B13] px-3 py-3 text-[10px] font-semibold text-[#73D5A8] hover:bg-[#0D2419] disabled:opacity-40">{advancing ? <LoaderCircle size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}{advancing ? "Advancing Month" : `Advance to Month ${facility.currentMonth + 1}`}</button><div className="mt-2 text-[7px] leading-4" style={DIM}>This closes Month {facility.currentMonth}, saves an immutable report, and applies the confirmed transfer once.</div></> : <div className="mt-4 border border-[#202B3E] bg-[#070B12] p-3 text-[9px] leading-5" style={MUTED}>Only the DM can close the current month. Players can view the live preview and every completed report.</div>}<div className="mt-4 border-t border-[#263148] pt-3"><div className="flex items-center justify-between text-[8px]"><span className="flex items-center gap-1" style={MUTED}><Coins size={9} />Owner Credits</span><span className="font-mono text-[#F2D06B]">{canViewOwnerCredits ? money(fundBalance) : "Private"}</span></div></div></aside>
       </div>
     </div>
   </main>;

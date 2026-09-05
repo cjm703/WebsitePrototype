@@ -55,6 +55,7 @@ import PersonalFilesInformationPanel from "./personal-files-information-panel";
 import { PersonalFilesWorkshop } from "./personal-files-workshop";
 import { loadWorkshopBootstrap } from "@/lib/workshop-api";
 import type { WorkshopBootstrap } from "@/lib/workshop-model";
+import { loadCreditAccount, type CreditAccount } from "@/lib/credits-api";
 import {
   sanitizeInfoDocumentsForLoad,
   sanitizeInfoSubTabsForLoad,
@@ -146,6 +147,28 @@ const getDisplayCardTagName = (tag: string) =>
     ? USE_BUTTON_ENABLED_TAG
     : tag;
 
+const PLAYER_DETAIL_HIDDEN_TAGS = new Set([
+  "effect",
+  "equipment",
+  "quantity",
+  LEGACY_USE_BUTTON_TAG,
+  USE_BUTTON_ENABLED_TAG.toLowerCase(),
+]);
+
+const ITEM_MECHANICS_LABEL_PATTERN = /\b(damage|armor|defen[cs]e|protection|range|charge|capacity|ammunition|ammo|condition|duration|healing|bonus|save|attack|accuracy|critical|resistance|reload|shot|effect|tracker|potency|buff|penalty|speed|movement|source points?)\b/i;
+
+function getPlayerFacingDetailTags(tags: string[], formatter: (tag: string) => string = (tag) => tag): string[] {
+  const seen = new Set<string>();
+  return tags.reduce<string[]>((result, rawTag) => {
+    const displayTag = String(formatter(rawTag) || "").trim();
+    const normalized = displayTag.toLowerCase();
+    if (!displayTag || PLAYER_DETAIL_HIDDEN_TAGS.has(normalized) || seen.has(normalized)) return result;
+    seen.add(normalized);
+    result.push(displayTag);
+    return result;
+  }, []);
+}
+
 interface QuickRollSlot {
   slotId: string;
   label: string;
@@ -172,6 +195,23 @@ interface ItemInfoField {
   trackerBuffType: "attribute" | "skill" | "resource" | "";
   trackerBuffTarget: string;
   trackerBuffValue: string;
+}
+
+function isMechanicalItemInfoField(field: ItemInfoField): boolean {
+  return Boolean(
+    field.rollExpression.trim()
+    || field.equippedEffect
+    || field.trackerMode
+    || ITEM_MECHANICS_LABEL_PATTERN.test(field.label),
+  );
+}
+
+function isMechanicalCustomField(key: string): boolean {
+  const [group = "", field = ""] = key.split("::");
+  if (["Equipment", "Quantity", "Attribute Buff", "Skill Buff", "Resources Buff", "Disadvantageous", "Source"].includes(group)) {
+    return true;
+  }
+  return ITEM_MECHANICS_LABEL_PATTERN.test(`${group} ${field}`);
 }
 
 
@@ -607,6 +647,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [statusTags, setStatusTags] = useState<TagDefinition[]>([]);
   const [infoSubTabs, setInfoSubTabs] = useState<InfoSubTab[]>([]);
   const [workshopBootstrap, setWorkshopBootstrap] = useState<WorkshopBootstrap | null>(null);
+  const [creditAccount, setCreditAccount] = useState<CreditAccount | null>(null);
 
   const hydratePersonalFiles = useCallback(async () => {
     if (!currentUserId) {
@@ -625,6 +666,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         infoSubTabRows,
         playerState,
         workshopState,
+        creditsState,
       ] = await Promise.all([
         appStore.listItems<ManagedItem>(),
         appStore.listCards<ManagedCard>(),
@@ -634,6 +676,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         appStore.listInfoSubTabs<InfoSubTab>(),
         loadPlayerState(),
         loadWorkshopBootstrap().catch(() => null),
+        loadCreditAccount().catch(() => null),
       ]);
 
       const normalizedInfoSubTabs = sanitizeInfoSubTabsForLoad(infoSubTabRows);
@@ -647,6 +690,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setStatusTags(statusTagRows);
       setInfoSubTabs(normalizedInfoSubTabs);
       setWorkshopBootstrap(workshopState);
+      setCreditAccount(creditsState?.account || null);
 
       setQuickItems(playerState.quickItems ?? []);
       setSourceUsed(playerState.sourceUsage ?? []);
@@ -827,7 +871,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
 
   const playerItems = useMemo(
-    () => player ? allItems.filter((i) => isAssignedTo(i.assignedTo, player.id)) : [],
+    () => player ? allItems.filter((i) => isAssignedTo(i.assignedTo, player.id) && i.name.trim().toLowerCase() !== "credits") : [],
     [allItems, player]
   );
 
@@ -1145,6 +1189,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   const [invSearch, setInvSearch] = useState("");
   const [invActiveTags, setInvActiveTags] = useState<string[]>([]);
   const [selectedItem, setSelectedItem] = useState<ManagedItem | null>(null);
+  const [expandedDetailTags, setExpandedDetailTags] = useState<Record<string, boolean>>({});
 
   // Player item creation and editing
   const [editingPlayerItem, setEditingPlayerItem] = useState<ManagedItem | null>(null);
@@ -1444,7 +1489,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     return "consumable";
   }, []);
   const sourceItems = useMemo(() => consumableItems.filter(i => subCategorizeConsumable(i) === "source"), [consumableItems, subCategorizeConsumable]);
-  const moneyItems = useMemo(() => consumableItems.filter(i => subCategorizeConsumable(i) === "money"), [consumableItems, subCategorizeConsumable]);
+  const moneyItems = useMemo(() => consumableItems.filter(i => subCategorizeConsumable(i) === "money" && i.name.trim().toLowerCase() !== "credits"), [consumableItems, subCategorizeConsumable]);
   const pureConsumableItems = useMemo(() => consumableItems.filter(i => subCategorizeConsumable(i) === "consumable"), [consumableItems, subCategorizeConsumable]);
 
   // Full Inventory shows all items, filtered by search/tags when active
@@ -1996,17 +2041,65 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     </button>
   );
 
+  const renderDetailTags = (
+    detailKey: string,
+    tags: string[],
+    formatter: (tag: string) => string = (tag) => tag,
+  ) => {
+    const playerFacingTags = getPlayerFacingDetailTags(tags, formatter);
+    if (playerFacingTags.length === 0) return null;
+
+    const expanded = Boolean(expandedDetailTags[detailKey]);
+    const visibleTags = expanded ? playerFacingTags : playerFacingTags.slice(0, 4);
+    const hiddenCount = playerFacingTags.length - visibleTags.length;
+
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        {visibleTags.map((tag) => (
+          <span
+            key={tag}
+            className="text-[10px] px-2 py-0.5 flex items-center gap-1"
+            style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
+          >
+            <Tag size={8} />
+            {tag}
+          </span>
+        ))}
+        {playerFacingTags.length > 4 && (
+          <button
+            type="button"
+            onClick={() => setExpandedDetailTags((current) => ({ ...current, [detailKey]: !expanded }))}
+            className="text-[9px] px-2 py-0.5 inline-flex items-center gap-1 hover:brightness-110"
+            style={{ color: theme.accentColor, background: theme.inputBg, border: `1px solid ${bc(theme.panelBorder)}` }}
+            aria-expanded={expanded}
+          >
+            {expanded ? "Show fewer" : `+${hiddenCount} more`}
+            <ChevronDown size={9} style={{ transform: expanded ? "rotate(180deg)" : undefined }} />
+          </button>
+        )}
+      </div>
+    );
+  };
+
   // --- Custom fields display ---
   const SLOT_LABELS: Record<string, string> = Object.fromEntries(
     EQUIP_SLOT_DEFS.map(s => [s.id, s.label])
   );
   SLOT_LABELS["ring"] = "Ring (any)";
 
-  const renderCustomFields = (customFields: Record<string, string>) => {
-    const entries = Object.entries(customFields).filter(([k, v]) => v && !k.startsWith("Effect::") && !k.startsWith(QUICK_ROLL_PREFIX) && !k.startsWith(ITEM_INFO_PREFIX));
+  const renderCustomFields = (
+    customFields: Record<string, string>,
+    section: "lore" | "mechanics",
+    excludedKeys: Set<string> = new Set(),
+  ) => {
+    const entries = Object.entries(customFields).filter(([key, value]) => {
+      if (!value || excludedKeys.has(key)) return false;
+      if (key.startsWith("Effect::") || key.startsWith(QUICK_ROLL_PREFIX) || key.startsWith(ITEM_INFO_PREFIX) || isPlayerHiddenCustomFieldKey(key)) return false;
+      return isMechanicalCustomField(key) === (section === "mechanics");
+    });
     if (entries.length === 0) return null;
     return (
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
         {entries.map(([key, value]) => {
           const [tagName, fieldName] = key.split("::");
           let displayValue = value;
@@ -2127,7 +2220,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
         {!visibleViewingQuickItem && panelDefs.map((panel) => {
           const PanelIcon = panel.icon;
-          const myQuickItems = quickItems.filter((item) => item.category === panel.id);
+          const myQuickItems = quickItems.filter((item) => item.category === panel.id && item.name.trim().toLowerCase() !== "credits");
           const isAdding = addingQuickCategory === panel.id;
           const totalCount = panel.dmItems.length + myQuickItems.length;
           return (
@@ -2431,158 +2524,162 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   };
 
   // --- Item Detail Screen ---
-  const renderItemDetail = (item: ManagedItem) => (
-    <div className="space-y-4">
-      <button
-        onClick={() => setSelectedItem(null)}
-        className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
-        style={ts(theme.accentColor)}
-      >
-        <ArrowLeft size={14} />
-        BACK TO INVENTORY
-      </button>
+  const renderItemDetail = (item: ManagedItem) => {
+    const itemWeight = getItemWeightValue(item);
+    const allowedSlots = getAllowedEquipSlots(item.customFields || {});
+    const infoFields = getItemInfoFields(item.customFields || {});
+    const effectKeys = Object.keys(item.customFields ?? {})
+      .filter((key) => key.startsWith("Effect::") && item.customFields[key]?.trim())
+      .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]));
+    const summaryExcludedKeys = new Set<string>();
+    const facts: Array<{ label: string; value: string }> = [];
+    const factLabels = new Set<string>();
+    const addFact = (label: string, value: string, sourceKey?: string) => {
+      const cleanLabel = label.trim();
+      const cleanValue = stripHtml(value).replace(/\s+/g, " ").trim();
+      if (!cleanLabel || !cleanValue || factLabels.has(cleanLabel.toLowerCase()) || facts.length >= 6) return;
+      factLabels.add(cleanLabel.toLowerCase());
+      facts.push({ label: cleanLabel, value: cleanValue });
+      if (sourceKey) summaryExcludedKeys.add(sourceKey);
+    };
 
-      <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
-        {(() => {
-          const itemWeight = getItemWeightValue(item);
-          return (
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
-              {item.name}
-            </h2>
-            <div className="text-[12px] flex items-center gap-2" style={S_LABEL}>
-              {item.type}
-              {item.rarity && (
-                <span
-                  className="px-2 py-0.5 text-[10px]"
-                  style={{
-                    background: item.rarity === "Rare" ? "#4A2A7B" : item.rarity === "Uncommon" ? "#2A5A3B" : "#2A2A5B",
-                    color: item.rarity === "Rare" ? theme.rarityRare : item.rarity === "Uncommon" ? theme.rarityUncommon : theme.rarityCommon,
-                    border: `1px solid ${item.rarity === "Rare" ? "#6A3A9B" : item.rarity === "Uncommon" ? "#3A7A4B" : "#3A3A6B"}`,
-                  }}
-                >
-                  {item.rarity}
-                </span>
-              )}
-              {item.locked && (
-                <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
-                  <Lock size={8} /> DM LOCKED
-                </span>
-              )}
-              {itemWeight !== null && (
-                <span
-                  className="px-2 py-0.5 text-[10px]"
-                  style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}
-                >
-                  Weight {formatItemWeight(item)}
-                </span>
-              )}
-            </div>
-          </div>
-          {canPlayerEdit(item) && (
-            <button
-              onClick={() => { setSelectedItem(null); setInventorySubTab("general"); startEditItem(item); }}
-              className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5 shrink-0`}
-              style={{ color: "#5A9AFF" }}
-            >
-              <Edit size={12} /> Edit Item
-            </button>
-          )}
-        </div>
-          );
-        })()}
+    addFact("Type", item.type || "General");
+    if (item.customFields?.["Quantity::Amount"]) addFact("Quantity", item.customFields["Quantity::Amount"], "Quantity::Amount");
+    if (itemWeight !== null) addFact("Weight", formatItemWeight(item));
+    if (allowedSlots.length > 0) {
+      addFact("Equip", allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", "));
+      summaryExcludedKeys.add(EQUIPMENT_SLOTS_KEY);
+      summaryExcludedKeys.add("Equipment::Slot");
+    }
+    infoFields
+      .filter((field) => isMechanicalItemInfoField(field) && ITEM_MECHANICS_LABEL_PATTERN.test(field.label))
+      .forEach((field) => addFact(field.label || "Effect", field.rollExpression || field.trackerDamage || field.content));
+    Object.entries(item.customFields || {})
+      .filter(([key, value]) => value && isMechanicalCustomField(key) && !key.startsWith(ITEM_INFO_PREFIX))
+      .forEach(([key, value]) => {
+        const [group, field = ""] = key.split("::");
+        const label = field || group;
+        if (ITEM_MECHANICS_LABEL_PATTERN.test(label)) addFact(label, value, key);
+      });
 
-        {/* Tags */}
-        <div className="flex flex-wrap gap-1.5 mb-4">
-          {item.tags.map((tag) => (
-            <span
-              key={tag}
-              className="text-[10px] px-2 py-0.5 flex items-center gap-1"
-              style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-            >
-              <Tag size={8} />
-              {tag}
-            </span>
-          ))}
-        </div>
+    const hasLoreFields = infoFields.some((field) => !isMechanicalItemInfoField(field))
+      || Object.keys(item.customFields || {}).some((key) => !isPlayerHiddenCustomFieldKey(key) && !isMechanicalCustomField(key) && !key.startsWith("Effect::"));
+    const hasMechanics = infoFields.some(isMechanicalItemInfoField)
+      || effectKeys.length > 0
+      || getQuickRollSlots(item.customFields || {}).some((slot) => slot.expression.trim())
+      || Object.keys(item.customFields || {}).some((key) => !summaryExcludedKeys.has(key) && !isPlayerHiddenCustomFieldKey(key) && isMechanicalCustomField(key) && !key.startsWith("Effect::"));
+    const rarityAccent = rarityColor(item.rarity || "Common");
 
-        {/* Divider */}
-        <div
-          className="h-[1px] w-full mb-4"
-          style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
-        />
+    return (
+      <div className="space-y-4">
+        <button
+          onClick={() => setSelectedItem(null)}
+          className="flex items-center gap-1 text-[12px] hover:opacity-80 mb-2"
+          style={ts(theme.accentColor)}
+        >
+          <ArrowLeft size={14} />
+          BACK TO INVENTORY
+        </button>
 
-        {(() => {
-          const allowedSlots = getAllowedEquipSlots(item.customFields || {});
-          const infoFields = getItemInfoFields(item.customFields || {});
-          const quickRollCount = getQuickRollSlots(item.customFields || {}).filter((slot) => slot.expression.trim()).length + infoFields.filter((field) => field.rollExpression.trim()).length;
-          const trackerCount = infoFields.filter((field) => field.trackerMode).length;
-          const equippedEffectCount = infoFields.filter((field) => field.equippedEffect && stripHtml(field.equippedEffectText || field.content || "").trim()).length;
-          const effectCount = Object.keys(item.customFields || {}).filter((key) => key.startsWith("Effect::") && String(item.customFields?.[key] || "").trim()).length;
-          const itemWeight = getItemWeightValue(item);
-          return (
-            <div className={`grid grid-cols-2 md:grid-cols-3 ${itemWeight !== null ? "xl:grid-cols-7" : "xl:grid-cols-6"} gap-2 mb-4`}>
-              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Type</div><div className="text-[11px]" style={{ color: theme.textColor }}>{item.type || "None"}</div></div>
-              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Rarity</div><div className="text-[11px]" style={{ color: theme.textColor }}>{item.rarity || "Common"}</div></div>
-              {itemWeight !== null && <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Weight</div><div className="text-[11px]" style={{ color: theme.textColor }}>{formatItemWeight(item)}</div></div>}
-              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Allowed Slots</div><div className="text-[11px]" style={{ color: theme.textColor }}>{allowedSlots.length > 0 ? allowedSlots.map((slot) => SLOT_LABELS[slot] || slot).join(", ") : "Not equippable"}</div></div>
-              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Information Fields</div><div className="text-[11px]" style={{ color: theme.textColor }}>{infoFields.length}</div></div>
-              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Quick Rolls</div><div className="text-[11px]" style={{ color: theme.textColor }}>{quickRollCount}</div></div>
-              <div className={`${retro.raised} bg-[#101038] px-3 py-2`}><div className="text-[8px] uppercase tracking-[0.06em]" style={S_MUTED}>Effects / Trackers</div><div className="text-[11px]" style={{ color: theme.textColor }}>{effectCount + equippedEffectCount + trackerCount}</div></div>
-            </div>
-          );
-        })()}
-
-        {renderItemInfoFields(item, "above")}
-
-        {/* Description */}
-        <div className="mb-4">
-          <div className="text-[11px] mb-2" style={{ color: "#5A7ABB", fontWeight: 600 }}>
-            DESCRIPTION
-          </div>
-          <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
-          {renderDiceRollControls(`item:${item.id}:description`, item.description, "")}
-          {renderStoredQuickRollButtons(item.customFields || {}, `item:${item.id}:quick`, "")}
-        </div>
-
-        {renderItemInfoFields(item, "below")}
-
-        {/* Effect areas */}
-        {item.tags.includes("Effect") && (() => {
-          const effectKeys = Object.keys(item.customFields ?? {})
-            .filter(k => k.startsWith("Effect::"))
-            .sort((a, b) => parseInt(a.split("::")[1]) - parseInt(b.split("::")[1]))
-            .filter(k => item.customFields[k]?.trim());
-          if (effectKeys.length === 0) return null;
-          return (
-            <div className="mb-4">
-              <div className="text-[11px] mb-2" style={{ color: "#C4A0FF", fontWeight: 600 }}>
-                <Sparkles size={12} className="inline mr-1" style={{ verticalAlign: "-1px" }} />
-                EFFECTS
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={{ borderLeft: `4px solid ${rarityAccent}` }}>
+          <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-[9px] uppercase tracking-[0.1em] mb-1 flex items-center gap-1.5" style={{ color: rarityAccent, fontWeight: 700 }}>
+                <Package size={11} /> Item Record
               </div>
-              <div className="space-y-1.5">
-                {effectKeys.map((key, i) => (
-                  <div key={key} className={`${retro.sunken} p-3`} style={{ background: theme.inputBg }}>
-                    {effectKeys.length > 1 && (
-                      <div className="text-[9px] mb-1" style={{ color: "#7A6ABB", fontWeight: 600 }}>Effect #{i + 1}</div>
-                    )}
-                    <div className="text-[12px]" style={{ color: theme.textColor }}>
-                      <RenderFormattedText text={item.customFields[key]} color={theme.textColor} baseSize={12} />
-                    </div>
-                    {renderDiceRollControls(`item:${item.id}:effect:${key}`, item.customFields[key] || "", "")}
+              <h2 className="text-[21px] leading-tight mb-2 break-words" style={{ color: theme.textColor, fontWeight: 700 }}>
+                {item.name}
+              </h2>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="px-2 py-0.5 text-[10px]" style={{ color: theme.accentColor, background: theme.inputBg, border: `1px solid ${bc(theme.panelBorder)}` }}>
+                  {item.type || "General Item"}
+                </span>
+                <span className="px-2 py-0.5 text-[10px]" style={{ color: rarityAccent, background: `${rarityAccent}12`, border: `1px solid ${rarityAccent}55` }}>
+                  {item.rarity || "Common"}
+                </span>
+                {itemWeight !== null && (
+                  <span className="px-2 py-0.5 text-[10px]" style={{ background: "#10203F", color: "#8AB8FF", border: "1px solid #274274" }}>
+                    Weight {formatItemWeight(item)}
+                  </span>
+                )}
+                {item.locked && (
+                  <span className="text-[9px] px-1.5 py-0.5 inline-flex items-center gap-0.5" style={{ background: "rgba(255,106,106,0.08)", color: "#FF6A6A", border: "1px solid rgba(255,106,106,0.2)" }}>
+                    <Lock size={8} /> DM Locked
+                  </span>
+                )}
+              </div>
+            </div>
+            {canPlayerEdit(item) && (
+              <button
+                onClick={() => { setSelectedItem(null); setInventorySubTab("general"); startEditItem(item); }}
+                className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1.5 shrink-0`}
+                style={{ color: "#5A9AFF" }}
+              >
+                <Edit size={12} /> Edit Item
+              </button>
+            )}
+          </div>
+
+          <div className="mb-4">{renderDetailTags(`item:${item.id}`, item.tags)}</div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-5">
+            {facts.map((fact) => (
+              <div key={fact.label} className="px-3 py-2 min-h-[48px]" style={{ background: "rgba(16,16,56,0.8)", borderTop: `2px solid ${rarityAccent}88` }}>
+                <div className="text-[8px] uppercase tracking-[0.06em] mb-0.5" style={S_MUTED}>{fact.label}</div>
+                <div className="text-[11px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="h-[1px] w-full mb-5" style={{ background: `linear-gradient(90deg, ${rarityAccent}66, ${bc(theme.dividerColor)}, transparent)` }} />
+
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] gap-5 items-start">
+            <section className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#7FA6FF", fontWeight: 700 }}>
+                <Info size={12} /> Description &amp; Lore
+              </div>
+              {item.description?.trim() ? (
+                <div className="mb-4">
+                  <RenderFormattedText text={item.description} color={theme.textColor} baseSize={12} />
+                  {renderDiceRollControls(`item:${item.id}:description`, item.description, "")}
+                </div>
+              ) : !hasLoreFields ? (
+                <div className="text-[11px] italic" style={S_MUTED}>No description has been added.</div>
+              ) : null}
+              {renderItemInfoFields(item, "lore")}
+              {renderCustomFields(item.customFields, "lore", summaryExcludedKeys)}
+            </section>
+
+            <section className="min-w-0 xl:border-l xl:pl-5" style={{ borderColor: bc(theme.dividerColor) }}>
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#C4A0FF", fontWeight: 700 }}>
+                <Sword size={12} /> Gameplay
+              </div>
+              {renderItemInfoFields(item, "mechanics")}
+              {renderStoredQuickRollButtons(item.customFields || {}, `item:${item.id}:quick`, "")}
+              {effectKeys.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-[10px] uppercase tracking-[0.08em] mb-2 flex items-center gap-1" style={{ color: "#C4A0FF", fontWeight: 700 }}>
+                    <Sparkles size={11} /> Effects
                   </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Custom Fields */}
-        {renderCustomFields(item.customFields)}
+                  <div className="space-y-2">
+                    {effectKeys.map((key, index) => (
+                      <div key={key} className="border-l-2 pl-3 py-1" style={{ borderColor: "#9A72E8" }}>
+                        {effectKeys.length > 1 && <div className="text-[8px] mb-1" style={S_MUTED}>Effect {index + 1}</div>}
+                        <RenderFormattedText text={item.customFields[key]} color={theme.textColor} baseSize={12} />
+                        {renderDiceRollControls(`item:${item.id}:effect:${key}`, item.customFields[key] || "", "")}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {renderCustomFields(item.customFields, "mechanics", summaryExcludedKeys)}
+              {!hasMechanics && <div className="text-[11px] italic" style={S_MUTED}>No gameplay details have been configured.</div>}
+            </section>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ── Use Card (Use Button Enabled tag) ──
   const [useCardFlash, setUseCardFlash] = useState<string | null>(null);
@@ -2719,24 +2816,24 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     setLastAddedStatusEffect(effectName);
   }, []);
 
-  const renderItemInfoFields = useCallback((item: ManagedItem, placement: "above" | "below") => {
+  const renderItemInfoFields = useCallback((item: ManagedItem, section: "lore" | "mechanics") => {
     const infoFields = getItemInfoFields(item.customFields || {}).filter((field) => {
       const hasVisibleContent = stripHtml(field.content || "").trim();
       const hasUtility = field.rollExpression.trim() || field.equippedEffect || field.trackerMode;
-      return field.placement === placement && (field.label.trim() || hasVisibleContent || hasUtility);
-    });
+      return isMechanicalItemInfoField(field) === (section === "mechanics") && (field.label.trim() || hasVisibleContent || hasUtility);
+    }).sort((a, b) => (a.placement === b.placement ? 0 : a.placement === "above" ? -1 : 1));
 
     if (infoFields.length === 0) return null;
 
     return (
-      <div className="space-y-3 mb-4">
+      <div className="space-y-3 mb-3">
         {infoFields.map((field) => {
           const visibleContent = stripHtml(field.content || "").trim();
           const rollExpression = field.rollExpression.trim();
           const rollPotency = field.rollPotency.trim();
           const canApplyTracker = !!field.trackerMode;
           return (
-            <div key={field.fieldId} className={`${retro.sunken} p-3`} style={{ background: theme.inputBg }}>
+            <div key={field.fieldId} className="border-l-2 pl-3 py-1" style={{ borderColor: section === "mechanics" ? "#7D64C6" : "#42649B" }}>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                 <div className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "#8AB8FF", fontWeight: 700 }}>
                   {field.label.trim() || "Field"}
@@ -2957,13 +3054,22 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const requirementsValue = (card.customFields?.["Use Profile::Requirements"] || "").trim();
     const componentsOrRequirementsLabel = componentValue ? "Components" : requirementsValue ? "Requirements" : "";
     const componentsOrRequirementsValue = componentValue || requirementsValue;
+    const rangeValue = (card.customFields?.["Use Profile::Range"] || "").trim();
+    const durationValue = (
+      card.customFields?.["Use Profile::Duration"]
+      || card.customFields?.[CARD_TRACKER_DURATION_KEY]
+      || card.customFields?.["Timed Effect::Duration"]
+      || ""
+    ).trim();
+    const damageValue = (card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || card.customFields?.["Timed Effect::Damage"] || "").trim();
+    const potencyValue = (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || card.customFields?.["Timed Effect::Potency"] || "").trim();
 
     const primaryFacts = [
-      card.customFields["Level"] ? { label: "Level", value: `Lv. ${card.customFields["Level"]}` } : null,
-      familyLabel ? { label: "Type", value: familyLabel } : null,
-      (card.customFields?.["Use Profile::Range"] || "").trim() ? { label: "Range", value: card.customFields["Use Profile::Range"].trim() } : null,
+      rangeValue ? { label: "Range", value: rangeValue } : null,
+      durationValue ? { label: "Duration", value: durationValue } : null,
+      damageValue ? { label: "Damage", value: damageValue } : null,
+      potencyValue ? { label: "Potency", value: potencyValue } : null,
       componentsOrRequirementsLabel && componentsOrRequirementsValue ? { label: componentsOrRequirementsLabel, value: componentsOrRequirementsValue } : null,
-      (card.customFields?.["Use Profile::Duration"] || "").trim() ? { label: "Duration", value: card.customFields["Use Profile::Duration"].trim() } : null,
     ].filter(Boolean) as Array<{ label: string; value: string }>;
 
     const hiddenKeys = new Set<string>([
@@ -2983,17 +3089,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
 
     const trackerFields = [
-      formatCardDetailField(CARD_TRACKER_NAME_KEY, card.customFields?.[CARD_TRACKER_NAME_KEY] || card.name || ""),
-      formatCardDetailField(CARD_TRACKER_DURATION_KEY, card.customFields?.[CARD_TRACKER_DURATION_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_POTENCY_KEY, card.customFields?.[CARD_TRACKER_POTENCY_KEY] || ""),
-      formatCardDetailField(CARD_TRACKER_DAMAGE_KEY, card.customFields?.[CARD_TRACKER_DAMAGE_KEY] || ""),
+      formatCardDetailField(CARD_TRACKER_DESCRIPTION_KEY, card.customFields?.[CARD_TRACKER_DESCRIPTION_KEY] || ""),
       formatCardDetailField(CARD_TRACKER_BUFF_TYPE_KEY, card.customFields?.[CARD_TRACKER_BUFF_TYPE_KEY] || ""),
       formatCardDetailField(CARD_TRACKER_BUFF_TARGET_KEY, card.customFields?.[CARD_TRACKER_BUFF_TARGET_KEY] || ""),
       formatCardDetailField(CARD_TRACKER_BUFF_VALUE_KEY, card.customFields?.[CARD_TRACKER_BUFF_VALUE_KEY] || ""),
     ].filter(Boolean) as Array<{ key: string; label: string; value: string }>;
 
     const timedEffectFields = Object.entries(card.customFields || {})
-      .filter(([key, value]) => String(value || "").trim() && key.startsWith("Timed Effect::") && !isPlayerHiddenCustomFieldKey(key))
+      .filter(([key, value]) => {
+        if (!String(value || "").trim() || !key.startsWith("Timed Effect::") || isPlayerHiddenCustomFieldKey(key)) return false;
+        return !["Timed Effect::Effect Name", "Timed Effect::Duration", "Timed Effect::Potency", "Timed Effect::Damage"].includes(key);
+      })
       .map(([key, value]) => formatCardDetailField(key, String(value)))
       .filter(Boolean) as Array<{ key: string; label: string; value: string }>;
 
@@ -3017,6 +3123,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       timedEffectFields.length > 0 ? { title: "Timed Effect", accent: "#4ADE80", fields: timedEffectFields } : null,
       otherDetailFields.length > 0 ? { title: "More Details", accent: "#9A8CFF", fields: otherDetailFields } : null,
     ].filter(Boolean) as Array<{ title: string; accent: string; fields: Array<{ key: string; label: string; value: string }> }>;
+    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : theme.accentColor;
 
     return (
       <div className="space-y-4">
@@ -3031,15 +3138,32 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           </button>
         )}
 
-        <div className={`${retro.sunken} bg-[#0C0C2E] p-5`}>
+        <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={{ borderLeft: `4px solid ${cardAccent}` }}>
           <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
-            <div>
-              <h2 className="text-[20px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+            <div className="min-w-0">
+              <div className="text-[9px] uppercase tracking-[0.1em] mb-1 flex items-center gap-1.5" style={{ color: cardAccent, fontWeight: 700 }}>
+                <CreditCard size={11} /> Card Record
+              </div>
+              <h2 className="text-[21px] leading-tight mb-2 break-words" style={{ color: theme.textColor, fontWeight: 700 }}>
                 {card.name}
               </h2>
-              <div className="text-[12px]" style={S_LABEL}>
-                {card.type || "No type"} | {card.actionCost || "No action cost"}
-                {card.customFields["Level"] && <div style={DISPLAY_CONTENTS}> | <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></div>}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="px-2 py-0.5 text-[10px]" style={{ color: cardAccent, background: `${cardAccent}12`, border: `1px solid ${cardAccent}55` }}>
+                  {familyLabel || card.type || "General Card"}
+                </span>
+                {familyLabel && card.type && familyLabel.toLowerCase() !== card.type.toLowerCase() && (
+                  <span className="px-2 py-0.5 text-[10px]" style={{ color: theme.accentColor, background: theme.inputBg, border: `1px solid ${bc(theme.panelBorder)}` }}>
+                    {card.type}
+                  </span>
+                )}
+                <span className="px-2 py-0.5 text-[10px]" style={{ color: "#7FA6FF", background: theme.inputBg, border: `1px solid ${bc(theme.panelBorder)}` }}>
+                  {card.actionCost || "No action cost"}
+                </span>
+                {card.customFields["Level"] && (
+                  <span className="px-2 py-0.5 text-[10px]" style={{ color: "#FFD96A", background: "rgba(255,217,106,0.07)", border: "1px solid rgba(255,217,106,0.28)" }}>
+                    Level {card.customFields["Level"]}
+                  </span>
+                )}
               </div>
             </div>
             {isUseButtonEnabled && (
@@ -3058,73 +3182,59 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {card.tags.map((tag) => (
-              <span
-                key={tag}
-                className="text-[10px] px-2 py-0.5 flex items-center gap-1"
-                style={{ background: theme.tagBg, color: theme.tagText, border: `1px solid ${bc(theme.panelBorder)}` }}
-              >
-                <Tag size={8} />
-                {getDisplayCardTagName(tag)}
-              </span>
-            ))}
-          </div>
-
-          {primaryFacts.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
-              {primaryFacts.map((fact) => (
-                <div
-                  key={fact.label}
-                  className={`${retro.raised} px-2.5 py-2 min-h-[46px]`}
-                  style={{ background: "rgba(12,18,46,0.94)", border: `1px solid ${bc(theme.panelBorder)}` }}
-                >
-                  <div className="text-[8px] uppercase tracking-[0.07em] mb-0.5" style={S_MUTED}>{fact.label}</div>
-                  <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="mb-4">{renderDetailTags(`card:${card.id}`, card.tags, getDisplayCardTagName)}</div>
 
           <div
             className="h-[1px] w-full mb-4"
             style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
           />
 
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,2.08fr)_minmax(210px,0.72fr)] gap-4 items-start">
-            <div className="space-y-4 min-w-0">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5 items-start">
+            <section className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#7FA6FF", fontWeight: 700 }}>
+                <Info size={12} /> Description &amp; Lore
+              </div>
               {descriptionText && (
-                <div
-                  className={`${retro.sunken} p-4`}
-                  style={{ background: "linear-gradient(180deg, rgba(13,18,43,0.96) 0%, rgba(10,10,40,0.96) 100%)", border: `1px solid ${bc(theme.panelBorder)}` }}
-                >
-                  <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: "#7FA6FF", fontWeight: 700 }}>
-                    Description
-                  </div>
+                <div className="mb-4">
                   <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
                   {renderDiceRollControls(`card:${card.id}:description`, descriptionText, detailRollPotency)}
                 </div>
               )}
+              {!descriptionText && <div className="text-[11px] italic" style={S_MUTED}>No description has been added.</div>}
+            </section>
 
-              <div
-                className={`${retro.sunken} p-4`}
-                style={{ background: "linear-gradient(180deg, rgba(14,17,48,0.98) 0%, rgba(10,10,40,0.98) 100%)", border: `1px solid ${bc(theme.panelBorder)}` }}
-              >
+            <section className="space-y-3 min-w-0 xl:border-l xl:pl-5" style={{ borderColor: bc(theme.dividerColor) }}>
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#C4A0FF", fontWeight: 700 }}>
+                <Zap size={12} /> Gameplay
+              </div>
+              {primaryFacts.length > 0 && (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+                  {primaryFacts.map((fact) => (
+                    <div key={fact.label} className="px-2.5 py-2 min-h-[46px]" style={{ background: "rgba(12,18,46,0.94)", borderTop: `2px solid ${cardAccent}88` }}>
+                      <div className="text-[8px] uppercase tracking-[0.07em] mb-0.5" style={S_MUTED}>{fact.label}</div>
+                      <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="border-l-2 pl-3 py-1" style={{ borderColor: cardAccent }}>
                 <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: "#8AB8FF", fontWeight: 700 }}>
                   Effect
                 </div>
-                <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
-                {renderDiceRollControls(`card:${card.id}:effect`, card.effect, detailRollPotency)}
+                {card.effect?.trim() ? (
+                  <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
+                ) : (
+                  <div className="text-[11px] italic" style={S_MUTED}>No effect text has been added.</div>
+                )}
+                {card.effect?.trim() && renderDiceRollControls(`card:${card.id}:effect`, card.effect, detailRollPotency)}
                 {renderStoredQuickRollButtons(card.customFields || {}, `card:${card.id}:quick`, detailRollPotency)}
               </div>
-            </div>
-
-            <div className="space-y-3 min-w-0">
               {sidebarSections.map((section) => (
                 <div
                   key={section.title}
-                  className={`${retro.raised} p-2.5`}
-                  style={{ background: "rgba(11,14,40,0.92)", border: `1px solid ${section.accent}33` }}
+                  className="border-l-2 pl-3 py-1"
+                  style={{ borderColor: `${section.accent}88` }}
                 >
                   <div className="text-[9px] uppercase tracking-[0.07em] mb-1.5" style={{ color: section.accent, fontWeight: 700 }}>
                     {section.title}
@@ -3140,7 +3250,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   </div>
                 </div>
               ))}
-            </div>
+            </section>
           </div>
         </div>
       </div>
@@ -5140,21 +5250,35 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     {/* ═══ SOURCES / MONEY: 2-panel layout ═══ */}
 
                     {/* ═══ GENERAL: Original list layout ═══ */}
-                    {inventorySubTab === "consumables" && renderTrackerPanels(
-                      [
+                    {inventorySubTab === "consumables" && <div className="space-y-4">
+                      <button
+                        type="button"
+                        onClick={() => navigate("/interface/credits")}
+                        className={`${retro.raised} flex w-full items-center justify-between gap-4 p-4 text-left transition-[filter] hover:brightness-110`}
+                        style={{ background: "linear-gradient(135deg, #171509, #0C1020)", border: "1px solid #665A2B" }}
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center border border-[#7B6A2D] bg-[#211D09] text-[#F1D46B]"><Coins size={18} /></span>
+                          <span className="min-w-0"><span className="block text-[13px] font-semibold text-[#F1D46B]">Credits</span><span className="mt-1 block text-[9px]" style={S_MUTED}>Open purchases, income, adjustments, and the complete audit trail</span></span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2"><strong className="text-[18px] font-mono text-[#F1D46B]">{(creditAccount?.balance || 0).toLocaleString()} CR</strong><ChevronRight size={14} style={S_DIM} /></span>
+                      </button>
+                      {renderTrackerPanels(
+                        [
+                          {
+                            id: "money",
+                            label: "Physical Currencies & Tokens",
+                            icon: Banknote,
+                            accent: "#D7B95B",
+                            dmItems: moneyItems,
+                            emptyHint: "Gold, coins, tokens, and other physical currencies remain inventory items.",
+                          },
+                        ],
                         {
-                          id: "money",
-                          label: "Money",
-                          icon: Banknote,
-                          accent: "#FFD700",
-                          dmItems: moneyItems,
-                          emptyHint: "Items tagged \"Money\" or typed Currency, Gold, Coin, etc.",
+                          activityCategories: ["money"],
                         },
-                      ],
-                      {
-                        activityCategories: ["money"],
-                      },
-                    )}
+                      )}
+                    </div>}
 
                     {inventorySubTab === "general" && (
                       <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>

@@ -17,8 +17,17 @@ export interface WorkshopAdminBootstrap extends WorkshopBootstrap {
   sampleBuild: WorkshopBuild;
 }
 
-export const loadWorkshopBootstrap = () => sessionApiFetch("/workshop/bootstrap", { method: "GET" }) as Promise<WorkshopBootstrap>;
-export const loadWorkshopAdminBootstrap = () => sessionApiFetch("/workshop/admin/bootstrap", { method: "GET" }) as Promise<WorkshopAdminBootstrap>;
+const normalizeWorkshopCredits = <T extends Record<string, unknown>>(body: T) => ({
+  ...body,
+  credits: Math.max(0, Math.round(Number(body.credits ?? body.personalFunds) || 0)),
+});
+
+export const loadWorkshopBootstrap = async () => normalizeWorkshopCredits(
+  await sessionApiFetch("/workshop/bootstrap", { method: "GET" }),
+) as WorkshopBootstrap;
+export const loadWorkshopAdminBootstrap = async () => normalizeWorkshopCredits(
+  await sessionApiFetch("/workshop/admin/bootstrap", { method: "GET" }),
+) as WorkshopAdminBootstrap;
 
 export const saveWorkshopBlueprint = (blueprint: WorkshopBlueprint) => sessionApiFetch("/workshop/admin/blueprint/save", { method: "POST", body: JSON.stringify({ blueprint }) });
 export const saveWorkshopComponent = (component: WorkshopComponent) => sessionApiFetch("/workshop/admin/component/save", { method: "POST", body: JSON.stringify({ component }) });

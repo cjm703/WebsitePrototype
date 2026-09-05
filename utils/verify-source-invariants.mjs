@@ -111,7 +111,8 @@ for (const filePath of sourceFiles) {
 }
 
 assert.match(commerce, /useState<Shop\[]>\(\[\]\)/);
-assert.match(commerce, /setShops\(Array\.isArray\(shopsData\) \? shopsData : \[\]\)/);
+assert.match(commerce, /normalizeCommerceShops\(shopsData\)/);
+assert.doesNotMatch(commerce, /deductCurrencyFromInventoryState|addPurchasesToInventoryState/);
 assert.doesNotMatch(initialData, /testItemDefaults|testCardDefaults|Insert funny joke/);
 assert.doesNotMatch(initialData, /missing = defaults\.filter/);
 
@@ -188,7 +189,8 @@ assert.match(nexusNomad, /createFacilityBusinessMap\(fac\.name\)/);
 assert.match(nexusNomad, /onMoveUp=\{\(\) => moveFacCategory\(cat\.id, -1\)\}/);
 assert.match(nexusNomad, /Open Facility Map/);
 assert.match(nexusNomad, /assignFacilityOwner/);
-assert.match(nexusNomad, /Personal Funds/);
+assert.match(nexusNomad, /Player Accounts/);
+assert.doesNotMatch(nexusNomad, />Personal Funds</);
 assert.match(nexusNomad, /facilityAdditions: facilityState\.facilityAdditions/);
 assert.match(nexusNomad, /countInstalledFacilityAdditions/);
 assert.match(nexusNomad, /countInstalledFacilityAdditionSlots\(fac\.businessMap\)/);

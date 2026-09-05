@@ -29,6 +29,21 @@ for (const [componentId, expectedType, expectedName] of frameCases) {
   assert.equal(model.workshopFirearmFrameType(frame), expectedType, `${componentId} must control the firearm silhouette and output type`);
 }
 
+const firearmBalanceCases = [
+  ["component-pistol-frame", 350, "2d6 piercing damage", "Capacity 10", 1150],
+  ["component-revolver-frame", 400, "2d8 piercing damage", "Capacity 6", 1200],
+  ["component-shotgun-frame", 650, "3d6 piercing within 15 ft", "Capacity 2", 1450],
+  ["component-rifle-frame", 1000, "2d10 piercing damage", "Capacity 5", 1800],
+  ["component-automatic-frame", 900, "2d6 piercing damage", "Capacity 15", 1700],
+];
+for (const [componentId, expectedPrice, damageText, capacityText, requiredBuildCost] of firearmBalanceCases) {
+  const frame = model.STARTER_WORKSHOP_COMPONENTS.find((entry) => entry.id === componentId);
+  assert.equal(frame?.price, expectedPrice, `${componentId} must use its balanced frame price`);
+  assert.ok(frame?.effects.some((entry) => entry.kind === "dice" && entry.text.includes(damageText)), `${componentId} must define its own damage profile`);
+  assert.ok(frame?.effects.some((entry) => entry.text.includes(capacityText)), `${componentId} must define capacity and reload behavior`);
+  assert.equal(500 + expectedPrice + 80 + 220, requiredBuildCost, `${componentId} required build cost must match the balance sheet`);
+}
+
 const componentById = (id) => model.STARTER_WORKSHOP_COMPONENTS.find((entry) => entry.id === id);
 const robotSlot = (id) => robot.slots.find((entry) => entry.id === id);
 const firearmSlot = (id) => firearm.slots.find((entry) => entry.id === id);
@@ -41,6 +56,13 @@ assert.equal(model.isWorkshopComponentCompatible(robotSlot("robot-aux-chest"), c
 assert.equal(model.isWorkshopComponentCompatible(robotSlot("robot-back"), componentById("component-heavy-chest-mount")), false, "Large firearm mount must not fit the back bay");
 
 const suppressor = componentById("component-suppressor");
+const standardAmmo = componentById("component-9mm-ammo");
+const standardBarrel = componentById("component-9mm-barrel");
+assert.equal(standardAmmo?.name, "Standard Crystal Ammunition System", "Standard ammunition must work with every frame family");
+assert.ok(standardAmmo?.effects.every((entry) => entry.kind !== "dice"), "Standard ammunition must not add a second base damage roll");
+assert.equal(standardBarrel?.name, "Standard Modular Barrel", "The starter barrel must not imply one caliber for every frame");
+assert.ok(standardBarrel?.effects.some((entry) => entry.value === 30 && entry.text.includes("normal and maximum")), "The standard barrel must state how it changes both ranges");
+assert.ok(suppressor?.effects.some((entry) => entry.text.includes("Reduce normal range by 10 ft")), "The suppressor must include its range tradeoff");
 assert.deepEqual(firearmSlot("gun-muzzle")?.acceptedCategories, ["Muzzle Attachment"], "Muzzle attachments need a distinct compatibility category");
 assert.deepEqual(firearmSlot("gun-underbarrel")?.acceptedCategories, ["Underbarrel Attachment"], "Underbarrel attachments need a distinct compatibility category");
 assert.deepEqual(firearmSlot("gun-side")?.acceptedCategories, ["Side Attachment"], "Side attachments need a distinct compatibility category");
@@ -78,12 +100,12 @@ assert.deepEqual(quote.storageReservation, { "component-pistol-frame": 1 }, "Own
 
 const unavailableComponents = model.STARTER_WORKSHOP_COMPONENTS.map((entry) => entry.id === "component-9mm-barrel" ? { ...entry, orderable: false } : entry);
 const unavailableQuote = model.calculateWorkshopQuote(firearmBuild, firearm, unavailableComponents, storage);
-assert.deepEqual(unavailableQuote.unavailable, ["Standard 9mm Barrel"], "A missing unorderable part must block construction instead of becoming a purchase");
+assert.deepEqual(unavailableQuote.unavailable, ["Standard Modular Barrel"], "A missing unorderable part must block construction instead of becoming a purchase");
 
 const rebuildQuote = model.calculateWorkshopQuote({ ...firearmBuild, isRebuild: true }, firearm, model.STARTER_WORKSHOP_COMPONENTS, storage);
 assert.equal(rebuildQuote.baseCost, 75, "Rebuilds should use the blueprint rebuild fee rather than its base construction price");
 
-const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles, interfaceUi, catalogAlignmentMigration, workshopApi] = await Promise.all([
+const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, personalFiles, interfaceUi, catalogAlignmentMigration, firearmBalanceMigration, firearmBalanceSheet, workshopApi] = await Promise.all([
   fs.readFile(path.join(root, "supabase", "migrations", "20260901000000_workshop_system.sql"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "index.ts"), "utf8"),
   fs.readFile(path.join(root, "supabase", "functions", "make-server-8a5950b5", "workshop.ts"), "utf8"),
@@ -93,6 +115,8 @@ const [migration, edge, serverWorkshop, dmUi, playerUi, blueprintVisual, persona
   fs.readFile(path.join(root, "src", "app", "components", "personal-files.tsx"), "utf8"),
   fs.readFile(path.join(root, "src", "app", "components", "intelli-interface.tsx"), "utf8"),
   fs.readFile(path.join(root, "supabase", "migrations", "20260901020000_workshop_catalog_alignment.sql"), "utf8"),
+  fs.readFile(path.join(root, "supabase", "migrations", "20260901030000_workshop_firearm_balance.sql"), "utf8"),
+  fs.readFile(path.join(root, "docs", "modular-firearm-balance.md"), "utf8"),
   fs.readFile(path.join(root, "src", "lib", "workshop-api.ts"), "utf8"),
 ]);
 const salvageSafetyMigration = await fs.readFile(path.join(root, "supabase", "migrations", "20260901010000_workshop_salvage_assignment_safety.sql"), "utf8");
@@ -128,6 +152,13 @@ assert.doesNotMatch(blueprintVisual, /stroke="transparent" strokeWidth="7"/, "Co
 assert.doesNotMatch(interfaceUi, /Personal Files now sits ahead of Commerce/, "The temporary System Modules notice must be removed");
 assert.match(catalogAlignmentMigration, /component-heavy-chest-mount.*Robot Chest Auxiliary/, "Existing chest-mount catalog data must migrate without deleting builds");
 assert.match(catalogAlignmentMigration, /gun-underbarrel.*Underbarrel Attachment/, "Existing firearm slots must migrate to distinct attachment categories");
+for (const [componentId] of firearmBalanceCases) {
+  assert.match(firearmBalanceMigration, new RegExp(componentId), `${componentId} must be updated for existing Supabase catalogs`);
+}
+assert.match(firearmBalanceMigration, /Custom components, Workshop builds, storage, assignments, and salvage data are untouched/, "Balance migration must document its data-preserving scope");
+assert.match(firearmBalanceSheet, /## Starter Frame Baselines/, "The firearm balance sheet must document frame baselines");
+assert.match(firearmBalanceSheet, /## Part Influence/, "The firearm balance sheet must document module influence");
+assert.match(firearmBalanceSheet, /## Stacking Rules/, "The firearm balance sheet must document effect stacking");
 assert.match(serverWorkshop, /Workshop::Firearm Type/, "Completed firearm items must retain their frame-defined type");
 assert.match(personalFiles, /workshopBootstrap\?\.enabled/, "Personal Files must hide Workshop unless server-granted access is enabled");
 

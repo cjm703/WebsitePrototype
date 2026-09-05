@@ -55,6 +55,9 @@ interface DMItemManagerSectionProps {
   managedItems: ManagedItem[];
   itemTags: TagDefinition[];
   onPersistItems: (next: ManagedItem[]) => Promise<void>;
+  creationOnly?: boolean;
+  onCreatedItem?: (item: ManagedItem) => void;
+  onCancelCreation?: () => void;
 }
 
 type ItemEditorPanel = "basics" | "assignment" | "tags" | "details" | "effects" | "preview";
@@ -474,11 +477,11 @@ function getSuggestedTags(editingItem: ManagedItem | null, itemTags: TagDefiniti
   }).slice(0, 8);
 }
 
-export function DMItemManagerSection({ players, managedItems, itemTags, onPersistItems }: DMItemManagerSectionProps) {
+export function DMItemManagerSection({ players, managedItems, itemTags, onPersistItems, creationOnly = false, onCreatedItem, onCancelCreation }: DMItemManagerSectionProps) {
   const [itemFilterTab, setItemFilterTab] = useState<string>("all");
   const [itemSearch, setItemSearch] = useState("");
-  const [editingItem, setEditingItem] = useState<ManagedItem | null>(null);
-  const [isAddingNewItem, setIsAddingNewItem] = useState(false);
+  const [editingItem, setEditingItem] = useState<ManagedItem | null>(() => creationOnly ? makeItemFromTemplate(ITEM_TEMPLATES[0], itemTags) : null);
+  const [isAddingNewItem, setIsAddingNewItem] = useState(creationOnly);
   const [editorPanel, setEditorPanel] = useState<ItemEditorPanel>("basics");
   const [tagSearch, setTagSearch] = useState("");
   const originalAssignedToRef = useRef<string[]>([]);
@@ -647,6 +650,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
   const handleCancelItemEdit = () => {
     setEditingItem(null);
     setIsAddingNewItem(false);
+    onCancelCreation?.();
   };
 
   const handleSaveItem = async () => {
@@ -657,10 +661,12 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
       name: editingItem.name.trim(),
       type: editingItem.type.trim(),
       description: editingItem.description,
+      assignedTo: creationOnly ? [] : editingItem.assignedTo,
     });
 
     if (isAddingNewItem) {
       await onPersistItems([...managedItems, trimmedItem]);
+      onCreatedItem?.(trimmedItem);
     } else {
       const originalPlayers = originalAssignedToRef.current;
       const resolveIds = (arr: string[]) => arr.includes("all") ? players.map((p) => p.id) : arr;
@@ -776,7 +782,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      {!creationOnly && <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-[16px]" style={S_ACCENT_HDR}>Manage Player Items</h2>
           <div className="text-[11px] mt-1" style={S_MUTED}>
@@ -786,7 +792,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
         <button onClick={() => handleAddItem("blank")} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
           <Plus size={14} /> Add Item
         </button>
-      </div>
+      </div>}
 
       <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
         <div className="flex items-center gap-2 mb-3">
@@ -841,7 +847,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
           </div>
 
           <div className="flex gap-2 mb-4 flex-wrap">
-            {EDITOR_PANELS.map((panel) => {
+            {EDITOR_PANELS.filter((panel) => !creationOnly || panel.id !== "assignment").map((panel) => {
               const Icon = panel.icon;
               const active = editorPanel === panel.id;
               return (
@@ -1534,7 +1540,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
         </div>
       )}
 
-      <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
+      {!creationOnly && <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
         <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
           <div>
             <div className="text-[12px]" style={S_SECTION_HDR}>ITEM LIBRARY ({filteredItems.length})</div>
@@ -1611,7 +1617,7 @@ export function DMItemManagerSection({ players, managedItems, itemTags, onPersis
             })}
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

@@ -612,7 +612,7 @@ export function createMysticLandsParkFacility() {
     statusColor: "#4ACA6A",
     capacity: "1200 guests",
     condition: "Excellent",
-    notes: "The DM advances this facility's accounting month manually. Confirmed net income is recorded in the monthly ledger and applied to the owner's Personal Funds.",
+    notes: "The DM advances this facility's accounting month manually. Confirmed net income is recorded in the monthly ledger and applied to the owner's Credits account.",
     revenue: String(MYSTIC_BASE_STATS.revenue),
     expenses: String(MYSTIC_BASE_STATS.monthlyUpkeep),
     employeesOnSite: String(MYSTIC_BASE_STATS.staffProvided),

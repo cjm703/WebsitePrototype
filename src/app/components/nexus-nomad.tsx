@@ -39,7 +39,6 @@ import {
   applyFacilityAdditionAction as applyFacilityAdditionServerAction,
   saveOfficeState,
   subscribeToOfficeStateSignals,
-  updateOfficePersonalFund,
   type FacilityAdditionAction,
 } from "@/lib/office-state-api";
 import {
@@ -47,11 +46,11 @@ import {
   calculateFacilityEconomy,
   calculateFacilityStats,
   ensureMysticLandsAdditions,
-  ensurePersonalFund,
   type FacilityMonthlyReport,
   type FacilityStats,
   type PersonalFund,
 } from "@/lib/facility-depth-model";
+import { loadCreditAccount, loadCreditAccounts, type CreditAccount } from "@/lib/credits-api";
 import { normalizeFacilityOfficeState, normalizeFacilityRecord } from "@/lib/facility-office-state";
 import {
   NS_MUTED, NS_DIM, NS_TEXT, NS_ACCENT_GREEN, NS_INPUT_STYLE, NS_BORDER_B,
@@ -208,27 +207,24 @@ const INVENTORY_KEY = "inet-office-inventory";
 
 const DEFAULT_INVENTORY: InvSubTab[] = [
   {
-    id: "inv-currency", name: "Currency", icon: "coins",
-    items: [
-      { id: "ic-1", name: "Credits", description: "Standard digital currency used across the city. Accepted at most shops and vendors.", price: 0, currency: "Credits", quantity: 1000, rarity: "Common", notes: "", hidden: false, tags: ["Currency"] },
-    ],
+    id: "inv-currency", name: "Currency Items", icon: "coins", items: [],
   },
   {
     id: "inv-weapons", name: "Weapons Cache", icon: "swords",
     items: [
-      { id: "iw-1", name: "Standard Pistols", description: "Reliable sidearms for field agents.", price: 50, currency: "gp", quantity: 15, rarity: "Common", notes: "", hidden: false },
-      { id: "iw-2", name: "Assault Rifles", description: "Military-grade automatic weapons.", price: 200, currency: "gp", quantity: 8, rarity: "Common", notes: "", hidden: false },
-      { id: "iw-3", name: "Sniper Rifles", description: "Precision long-range rifles.", price: 500, currency: "gp", quantity: 3, rarity: "Uncommon", notes: "", hidden: false },
-      { id: "iw-4", name: "Stun Grenades", description: "Non-lethal flashbang grenades.", price: 25, currency: "gp", quantity: 24, rarity: "Common", notes: "", hidden: false },
+      { id: "iw-1", name: "Standard Pistols", description: "Reliable sidearms for field agents.", price: 50, currency: "Credits", quantity: 15, rarity: "Common", notes: "", hidden: false },
+      { id: "iw-2", name: "Assault Rifles", description: "Military-grade automatic weapons.", price: 200, currency: "Credits", quantity: 8, rarity: "Common", notes: "", hidden: false },
+      { id: "iw-3", name: "Sniper Rifles", description: "Precision long-range rifles.", price: 500, currency: "Credits", quantity: 3, rarity: "Uncommon", notes: "", hidden: false },
+      { id: "iw-4", name: "Stun Grenades", description: "Non-lethal flashbang grenades.", price: 25, currency: "Credits", quantity: 24, rarity: "Common", notes: "", hidden: false },
     ],
   },
   {
     id: "inv-equipment", name: "Equipment & Supplies", icon: "shield",
     items: [
-      { id: "ie-1", name: "Kevlar Vests", description: "Standard body armor for field ops.", price: 150, currency: "gp", quantity: 20, rarity: "Common", notes: "", hidden: false },
-      { id: "ie-2", name: "Night Vision Goggles", description: "Enhanced low-light optics.", price: 300, currency: "gp", quantity: 10, rarity: "Uncommon", notes: "", hidden: false },
-      { id: "ie-3", name: "Medical Kits", description: "Field medical supplies and tools.", price: 75, currency: "gp", quantity: 18, rarity: "Common", notes: "", hidden: false },
-      { id: "ie-4", name: "Lockpick Sets", description: "Professional infiltration tools.", price: 100, currency: "gp", quantity: 12, rarity: "Common", notes: "", hidden: false },
+      { id: "ie-1", name: "Kevlar Vests", description: "Standard body armor for field ops.", price: 150, currency: "Credits", quantity: 20, rarity: "Common", notes: "", hidden: false },
+      { id: "ie-2", name: "Night Vision Goggles", description: "Enhanced low-light optics.", price: 300, currency: "Credits", quantity: 10, rarity: "Uncommon", notes: "", hidden: false },
+      { id: "ie-3", name: "Medical Kits", description: "Field medical supplies and tools.", price: 75, currency: "Credits", quantity: 18, rarity: "Common", notes: "", hidden: false },
+      { id: "ie-4", name: "Lockpick Sets", description: "Professional infiltration tools.", price: 100, currency: "Credits", quantity: 12, rarity: "Common", notes: "", hidden: false },
     ],
   },
 ];
@@ -239,6 +235,10 @@ function loadInventory(): InvSubTab[] {
 
 function saveInventory(_tabs: InvSubTab[]) {
   // Persisted through the Supabase-backed Nexus Nomad state document.
+}
+
+function isLegacyCreditInventoryItem(item: InvItem) {
+  return item.name.trim().toLowerCase() === "credits" && item.tags?.includes("Currency");
 }
 
 const OFFICE_INFO_KEY = "office_info";
@@ -1621,6 +1621,7 @@ export function NexusNomad() {
   const [officeUpdatedAt, setOfficeUpdatedAt] = useState(initialStateRef.current.updatedAt);
   const [officeUpdatedBy, setOfficeUpdatedBy] = useState(initialStateRef.current.updatedBy);
   const [businessMapPlayers, setBusinessMapPlayers] = useState<BusinessMapPlayerOption[]>([]);
+  const [creditAccounts, setCreditAccounts] = useState<CreditAccount[]>([]);
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newServiceName, setNewServiceName] = useState("");
@@ -1674,6 +1675,25 @@ export function NexusNomad() {
       }, autoHideMs);
     }
   }, []);
+
+  const refreshCreditAccounts = useCallback(async () => {
+    try {
+      if (isDM) setCreditAccounts(await loadCreditAccounts());
+      else if (currentUserId) {
+        const detail = await loadCreditAccount();
+        setCreditAccounts([detail.account]);
+      }
+    } catch (error) {
+      console.warn("Credits accounts could not be loaded", error);
+    }
+  }, [currentUserId, isDM]);
+
+  useEffect(() => {
+    void refreshCreditAccounts();
+    const onFocus = () => void refreshCreditAccounts();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshCreditAccounts]);
 
   const applyLoadedState = useCallback((state: NexusNomadState) => {
     officeNameCache = state.officeName || DEFAULT_OFFICE_NAME;
@@ -1925,19 +1945,6 @@ export function NexusNomad() {
     setStateSaveError(null);
     showSaveNotice("saved", "Facility map updated.", 1400);
     void officeStateSignalRef.current?.notify();
-  }, [applyLoadedState, showSaveNotice]);
-
-  const handlePersonalFundUpdate = useCallback(async (playerId: string, update: { balance?: number; delta?: number; note?: string }) => {
-    try {
-      showSaveNotice("saving", "Updating Personal Funds...");
-      const saved = normalizeNexusNomadState(await updateOfficePersonalFund<NexusNomadState>({ playerId, ...update }));
-      lastSavedStateJsonRef.current = JSON.stringify(saved);
-      applyLoadedState(saved);
-      showSaveNotice("saved", "Personal Funds updated.", 1600);
-      void officeStateSignalRef.current?.notify();
-    } catch (error) {
-      showSaveNotice("error", error instanceof Error ? error.message : "Personal Funds could not be updated.", 4500);
-    }
   }, [applyLoadedState, showSaveNotice]);
 
   const saveRep = useCallback((v: number) => {
@@ -2224,7 +2231,6 @@ export function NexusNomad() {
       },
     } : undefined;
     editFacility(facility.id, { ownerPlayerId, revenueDestination: "owner-personal-fund", businessMap });
-    if (ownerPlayerId) setPersonalFunds((current) => ensurePersonalFund(current, ownerPlayerId));
   }, [editFacility]);
 
   const selectedFacility = selectedFacilityId ? facilities.find(f => f.id === selectedFacilityId) : null;
@@ -2429,7 +2435,7 @@ export function NexusNomad() {
       name,
       description: invItemDraft.description?.trim() || "",
       price: invItemDraft.price || 0,
-      currency: invItemDraft.currency || "gp",
+      currency: "Credits",
       quantity: invItemDraft.quantity ?? 1,
       rarity: (invItemDraft.rarity as InvItemRarity) || "Common",
       notes: invItemDraft.notes?.trim() || "",
@@ -2487,7 +2493,7 @@ export function NexusNomad() {
         name: invItemDraft.name?.trim() || i.name,
         description: invItemDraft.description?.trim() ?? i.description,
         price: invItemDraft.price ?? i.price,
-        currency: invItemDraft.currency || i.currency,
+        currency: "Credits",
         quantity: invItemDraft.quantity ?? i.quantity,
         rarity: (invItemDraft.rarity as InvItemRarity) || i.rarity,
         notes: invItemDraft.notes?.trim() ?? i.notes,
@@ -3162,11 +3168,12 @@ export function NexusNomad() {
                       <div className="w-6 h-6 rounded flex items-center justify-center" style={nsColorBox("#CAAA3A")}>
                         <Gem size={12} style={NS_GOLD} />
                       </div>
-                      <span className="text-[10px] uppercase tracking-wider" style={NS_DIM}>Company Funds</span>
+                      <span className="text-[10px] uppercase tracking-wider" style={NS_DIM}>Player Accounts</span>
                     </div>
                     <ChevronRight size={12} style={NS_SUBDIM} />
                   </div>
-                  <div className="text-[20px] font-bold" style={NS_GOLD}>{companyFunds.toLocaleString()} CR</div>
+                  <div className="text-[20px] font-bold" style={NS_GOLD}>{creditAccounts.reduce((sum, account) => sum + account.balance, 0).toLocaleString()} CR</div>
+                  <div className="mt-1 text-[8px]" style={NS_SUBDIM}>{creditAccounts.length} visible account{creditAccounts.length === 1 ? "" : "s"}</div>
                 </div>
               </div>
 
@@ -3383,7 +3390,7 @@ export function NexusNomad() {
             const totalRevenue = Array.from(facilityEconomies.values()).reduce((sum, economy) => sum + economy.adjustedRevenue, 0);
             const totalExpenses = Array.from(facilityEconomies.values()).reduce((sum, economy) => sum + economy.totalMonthlyCosts, 0);
             const netIncome = totalRevenue - totalExpenses;
-            const visibleFundPlayers = isDM ? businessMapPlayers : businessMapPlayers.filter((player) => player.id === currentUserId);
+            const visibleAccounts = isDM ? creditAccounts : creditAccounts.filter((account) => account.playerId === currentUserId);
 
             return (
               <div className="space-y-6">
@@ -3432,29 +3439,23 @@ export function NexusNomad() {
                   </div>
                 </div>
 
-                {sectionHeader("Personal Funds", <Coins size={12} />)}
+                {sectionHeader("Player Accounts", <Coins size={12} />)}
                 <div style={innerPanelStyle} className="p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div><div className="text-[10px] font-semibold" style={NS_PALE}>Player-owned business funds</div><div className="mt-1 text-[8px]" style={NS_DIM}>Facility revenue is directed here conceptually. The DM applies income and other adjustments manually.</div></div>
-                    <div className="text-[8px]" style={NS_SUBDIM}>{visibleFundPlayers.length} accounts</div>
+                    <div><div className="text-[10px] font-semibold" style={NS_PALE}>Unified Credits accounts</div><div className="mt-1 text-[8px]" style={NS_DIM}>Commerce, Workshop, facilities, and manual entries share one audited balance per player.</div></div>
+                    <div className="text-[8px]" style={NS_SUBDIM}>{visibleAccounts.length} accounts</div>
                   </div>
                   <div className="space-y-2">
-                    {visibleFundPlayers.map((player) => {
-                      const fund = personalFunds.find((entry) => entry.playerId === player.id);
-                      const balance = fund?.balance || 0;
-                      const ownedFacilities = facilities.filter((facility) => facility.ownerPlayerId === player.id);
+                    {visibleAccounts.map((account) => {
+                      const ownedFacilities = facilities.filter((facility) => facility.ownerPlayerId === account.playerId);
                       return (
-                        <div key={player.id} className="grid grid-cols-1 gap-3 border border-[#1A1A2B] bg-[#06060A] p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                          <div className="min-w-0"><div className="flex items-center gap-2"><UserPlus size={10} style={NS_ICON_GOLD_SOFT} /><span className="truncate text-[11px] font-semibold" style={NS_TEXT}>{player.name}</span></div><div className="mt-1 truncate text-[8px]" style={NS_DIM}>{ownedFacilities.length ? ownedFacilities.map((facility) => facility.name).join(", ") : "No assigned facilities"}</div></div>
-                          <div className="flex items-center gap-2">
-                            {isDM && <button type="button" onClick={() => void handlePersonalFundUpdate(player.id, { delta: -100 })} disabled={balance <= 0} className="h-7 w-7 border border-[#3A2730] text-[11px] text-[#E67A86] disabled:opacity-30" title="Remove 100 CR">−</button>}
-                            {isDM ? <input key={`${player.id}-${balance}`} type="number" min="0" defaultValue={balance} onBlur={(event) => { const next = Math.max(0, Math.round(Number(event.target.value) || 0)); if (next !== balance) void handlePersonalFundUpdate(player.id, { balance: next }); }} className="w-32 border border-[#39314B] bg-[#090912] px-2 py-1.5 text-right text-[12px] font-mono outline-none" style={NS_GOLD} aria-label={`${player.name} personal funds`} /> : <div className="w-32 text-right text-[13px] font-mono font-bold" style={NS_GOLD}>{balance.toLocaleString()} CR</div>}
-                            {isDM && <button type="button" onClick={() => void handlePersonalFundUpdate(player.id, { delta: 100 })} className="h-7 w-7 border border-[#244234] text-[11px] text-[#62C68D]" title="Add 100 CR">+</button>}
-                          </div>
-                        </div>
+                        <button type="button" onClick={() => navigate(`/interface/credits/${encodeURIComponent(account.playerId)}`)} key={account.playerId} className="grid w-full grid-cols-1 gap-3 border border-[#1A1A2B] bg-[#06060A] p-3 text-left transition-colors hover:border-[#4B4325] md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                          <div className="min-w-0"><div className="flex items-center gap-2"><UserPlus size={10} style={NS_ICON_GOLD_SOFT} /><span className="truncate text-[11px] font-semibold" style={NS_TEXT}>{account.playerName}</span></div><div className="mt-1 truncate text-[8px]" style={NS_DIM}>{ownedFacilities.length ? ownedFacilities.map((facility) => facility.name).join(", ") : "No assigned facilities"}</div></div>
+                          <div className="flex items-center justify-between gap-3 md:justify-end"><div className="text-right"><div className="text-[13px] font-mono font-bold" style={NS_GOLD}>{account.balance.toLocaleString()} CR</div><div className="mt-1 text-[7px]" style={NS_SUBDIM}>Open account history</div></div><ChevronRight size={12} style={NS_SUBDIM} /></div>
+                        </button>
                       );
                     })}
-                    {visibleFundPlayers.length === 0 && <div className="py-5 text-center text-[9px]" style={NS_DIM}>No player accounts are available.</div>}
+                    {visibleAccounts.length === 0 && <div className="py-5 text-center text-[9px]" style={NS_DIM}>No player accounts are available.</div>}
                   </div>
                 </div>
 
@@ -3537,7 +3538,7 @@ export function NexusNomad() {
 
           {activeTab === "inventory" && (() => {
             const tab = activeInvTabData;
-            const visibleItems = tab ? (isDM ? tab.items : tab.items.filter(i => !i.hidden)) : [];
+            const visibleItems = tab ? tab.items.filter((item) => !isLegacyCreditInventoryItem(item) && (isDM || !item.hidden)) : [];
             const TabIcon = tab ? getIconComponent(tab.icon) : Package;
 
             return (
@@ -3547,7 +3548,7 @@ export function NexusNomad() {
                 {invTabs.map(t => {
                   const TIcon = getIconComponent(t.icon);
                   const isActive = tab?.id === t.id;
-                  const itemCount = isDM ? t.items.length : t.items.filter(i => !i.hidden).length;
+                  const itemCount = t.items.filter((item) => !isLegacyCreditInventoryItem(item) && (isDM || !item.hidden)).length;
                   return (
                     <button
                       key={t.id}
@@ -3663,7 +3664,7 @@ export function NexusNomad() {
                     {item.price > 0 && (
                       <div className="flex items-center gap-1 mt-1.5">
                         <DollarSign size={9} style={NS_GOLD} />
-                        <span className="text-[10px] font-mono" style={NS_GOLD}>{item.price} {item.currency}</span>
+                        <span className="text-[10px] font-mono" style={NS_GOLD}>{item.price} CR</span>
                       </div>
                     )}
                     {isDM && item.notes && (
@@ -3775,7 +3776,7 @@ export function NexusNomad() {
                       </div>
                       <div>
                         <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={NS_DIM}>Currency</label>
-                        <input value={invItemDraft.currency || "gp"} onChange={e => setInvItemDraft(p => ({ ...p, currency: e.target.value }))} className="w-full text-[12px] bg-transparent outline-none px-2 py-1 rounded" style={NS_INPUT_STYLE} maxLength={10} />
+                        <div className="w-full px-2 py-1 text-[12px]" style={NS_INPUT_STYLE}>Credits (CR)</div>
                       </div>
                       <div>
                         <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={NS_DIM}>Quantity</label>
@@ -3829,7 +3830,7 @@ export function NexusNomad() {
                           else { const idx = tags.indexOf("Currency"); if (idx >= 0) tags.splice(idx, 1); }
                           setInvItemDraft(p => ({ ...p, tags }));
                         }} className="accent-[#C8B060]" />
-                        💰 Currency — Can be used as shop payment
+                        Currency item - inventory classification only
                       </label>
                     </div>
                     <label className="flex items-center gap-2 text-[10px] cursor-pointer" style={NS_MUTED}>
@@ -3923,7 +3924,7 @@ export function NexusNomad() {
                   {/* DM: Add item */}
                   {isDM && !addingInvItem && !editingInvItemId && (
                     <button
-                      onClick={() => { setAddingInvItem(true); setInvItemDraft({ rarity: "Common", currency: "gp", quantity: 1 }); setDraftEffects([]); }}
+                      onClick={() => { setAddingInvItem(true); setInvItemDraft({ rarity: "Common", currency: "Credits", quantity: 1 }); setDraftEffects([]); }}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded text-[10px] font-medium hover:opacity-80 transition-opacity"
                       style={nsAccentBtn(accent)}
                     >
@@ -4141,7 +4142,8 @@ export function NexusNomad() {
             const fac = selectedFacility;
             const meta = FACILITY_TYPE_META[fac.type] || FACILITY_TYPE_META.Facility;
             const owner = businessMapPlayers.find((player) => player.id === fac.ownerPlayerId);
-            const ownerFund = personalFunds.find((fund) => fund.playerId === fac.ownerPlayerId);
+            const ownerAccount = creditAccounts.find((account) => account.playerId === fac.ownerPlayerId);
+            const canViewOwnerCredits = isDM || fac.ownerPlayerId === currentUserId;
             const liveFacilityStats = fac.baseStats ? (fac.businessMap ? calculateFacilityStats(fac.baseStats, fac.businessMap, facilityAdditions) : fac.baseStats) : null;
             const liveFacilityEconomy = liveFacilityStats ? calculateFacilityEconomy(liveFacilityStats, fac.staffCostPerPerson ?? 50) : null;
 
@@ -4266,10 +4268,10 @@ export function NexusNomad() {
                     <div style={innerPanelStyle} className="p-3">
                       <div className="mb-2 flex items-center gap-1.5">
                         <Coins size={10} style={NS_ICON_GREEN_SOFT} />
-                        <span className="text-[9px] font-semibold uppercase tracking-wider" style={NS_DIM}>Personal Funds</span>
+                        <span className="text-[9px] font-semibold uppercase tracking-wider" style={NS_DIM}>Owner Credits</span>
                       </div>
                       <p className="font-mono text-[12px] font-semibold" style={NS_ACCENT_GREEN}>
-                        {fac.ownerPlayerId ? `${(ownerFund?.balance || 0).toLocaleString()} CR` : "Not assigned"}
+                        {!fac.ownerPlayerId ? "Not assigned" : canViewOwnerCredits ? `${(ownerAccount?.balance || 0).toLocaleString()} CR` : "Private"}
                       </p>
                     </div>
                   </div>

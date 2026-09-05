@@ -9,11 +9,14 @@ import {
   ShoppingCart, Search, Scroll, Eye, Check, Pencil, MapPin,
   Users, SortAsc, SortDesc, Settings, EyeOff, MessageSquare,
   Upload, Building2, Sparkles, RotateCcw, GripVertical,
-  Sun, Moon, ChevronLeft, ChevronRight,
+  Sun, Moon, ChevronLeft, ChevronRight, LoaderCircle, Save,
 } from "lucide-react";
 import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
-import { loadDMItems, saveDMItems } from "@/lib/player-state-api";
+import { loadDMItems, loadDMTags, saveDMItems } from "@/lib/player-state-api";
+import { creditRequestId, loadCreditAccount, purchaseCommerceCart, saveCommerceCatalog, type CreditAccount } from "@/lib/credits-api";
+import type { ManagedItem, TagDefinition } from "./types";
+import { DMItemManagerSection } from "./dm-item-manager-section";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 
 // ════════════════════════════════════════════
@@ -36,6 +39,11 @@ interface ShopItem {
   addsToInventory?: boolean; // when purchased, adds to player inventory
   inventoryItemId?: string; // which DM player item to add/update
   inventoryQuantity?: number; // quantity to add per purchase unit
+  subtitle?: string;
+  imageUrl?: string;
+  tags?: string[];
+  purchaseLimit?: number; // 0/undefined = unlimited per player
+  deliveryNote?: string;
 }
 
 interface Shop {
@@ -74,6 +82,9 @@ interface Shop {
   mascotAreaBg?: string;
   bgGradientType?: "linear" | "radial";
   lightMode?: boolean;
+  revision?: number;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 interface CartItem {
@@ -114,26 +125,117 @@ function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// ── Inventory integration ──
-interface InvItemCompat {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  currency: string;
-  quantity: number;
-  rarity: string;
-  notes: string;
-  hidden: boolean;
-  tags?: string[];
+function wholeNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
 
-interface InvSubTabCompat {
-  id: string;
-  name: string;
-  icon: string;
-  items: InvItemCompat[];
-  groups?: { id: string; name: string; itemIds: string[] }[];
+function stockNumber(value: unknown) {
+  const parsed = wholeNumber(value, -1);
+  return parsed < 0 ? -1 : parsed;
+}
+
+function normalizeCommerceShops(rows: Shop[]): Shop[] {
+  return (Array.isArray(rows) ? rows : []).map((shop) => ({
+    ...shop,
+    revision: Math.max(0, Math.floor(Number(shop.revision) || 0)),
+    items: (Array.isArray(shop.items) ? shop.items : []).map((item) => ({
+      ...item,
+      price: Math.max(0, wholeNumber(item.price)),
+      currency: "Credits",
+      quantity: stockNumber(item.quantity),
+      inventoryQuantity: item.inventoryQuantity === undefined ? undefined : Math.max(1, wholeNumber(item.inventoryQuantity, 1)),
+      purchaseLimit: Math.max(0, wholeNumber(item.purchaseLimit)),
+    })),
+  }));
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !["revision", "updatedAt", "updatedBy"].includes(key))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function mergeCommerceItem(remote: ShopItem, base: ShopItem, local: ShopItem): ShopItem {
+  const result = { ...remote } as ShopItem;
+  for (const [key, localValue] of Object.entries(local)) {
+    const baseValue = (base as unknown as Record<string, unknown>)[key];
+    if (stableJson(localValue) !== stableJson(baseValue)) {
+      (result as unknown as Record<string, unknown>)[key] = localValue;
+    }
+  }
+  return result;
+}
+
+function mergeCommerceShop(remote: Shop, base: Shop | undefined, local: Shop): Shop {
+  if (!base) return { ...local, revision: remote.revision, updatedAt: remote.updatedAt, updatedBy: remote.updatedBy };
+  const result = { ...remote } as Shop;
+  for (const [key, localValue] of Object.entries(local)) {
+    if (["revision", "updatedAt", "updatedBy", "items"].includes(key)) continue;
+    const baseValue = (base as unknown as Record<string, unknown>)[key];
+    if (stableJson(localValue) !== stableJson(baseValue)) {
+      (result as unknown as Record<string, unknown>)[key] = localValue;
+    }
+  }
+
+  const remoteItems = new Map((remote.items || []).map((item) => [item.id, item]));
+  const baseItems = new Map((base.items || []).map((item) => [item.id, item]));
+  result.items = [];
+  for (const localItem of local.items || []) {
+    const baseItem = baseItems.get(localItem.id);
+    const remoteItem = remoteItems.get(localItem.id);
+    if (!baseItem) result.items.push(localItem);
+    else if (!remoteItem) {
+      if (stableJson(localItem) !== stableJson(baseItem)) result.items.push(localItem);
+    } else result.items.push(mergeCommerceItem(remoteItem, baseItem, localItem));
+  }
+  for (const remoteItem of remote.items || []) {
+    if (!baseItems.has(remoteItem.id) && !(local.items || []).some((item) => item.id === remoteItem.id)) result.items.push(remoteItem);
+  }
+  result.revision = remote.revision;
+  result.updatedAt = remote.updatedAt;
+  result.updatedBy = remote.updatedBy;
+  return result;
+}
+
+function commerceCatalogDelta(current: Shop[], saved: Shop[]) {
+  const currentIds = new Set(current.map((shop) => shop.id));
+  const savedById = new Map(saved.map((shop) => [shop.id, shop]));
+  return {
+    changes: current.filter((shop) => {
+      const baseline = savedById.get(shop.id);
+      return !baseline || stableJson(shop) !== stableJson(baseline);
+    }),
+    deletions: saved
+      .filter((shop) => !currentIds.has(shop.id))
+      .map((shop) => ({ id: shop.id, revision: Math.max(0, Math.floor(Number(shop.revision) || 0)) })),
+  };
+}
+
+function rebaseCommerceCatalog(remote: Shop[], base: Shop[], local: Shop[]) {
+  const baseById = new Map(base.map((shop) => [shop.id, shop]));
+  const localById = new Map(local.map((shop) => [shop.id, shop]));
+  const remoteIds = new Set(remote.map((shop) => shop.id));
+  const merged: Shop[] = [];
+
+  for (const remoteShop of remote) {
+    const baseShop = baseById.get(remoteShop.id);
+    const localShop = localById.get(remoteShop.id);
+    if (baseShop && !localShop) continue;
+    merged.push(localShop ? mergeCommerceShop(remoteShop, baseShop, localShop) : remoteShop);
+  }
+  for (const localShop of local) {
+    if (remoteIds.has(localShop.id)) continue;
+    const baseShop = baseById.get(localShop.id);
+    if (!baseShop || stableJson(localShop) !== stableJson(baseShop)) merged.push(localShop);
+  }
+  return merged;
 }
 
 type DmManagedItemCompat = {
@@ -147,121 +249,6 @@ type DmManagedItemCompat = {
   description?: string;
   locked?: boolean;
 };
-
-type NexusNomadInventoryState = {
-  id: string;
-  version: number;
-  invTabs: InvSubTabCompat[];
-  [key: string]: unknown;
-};
-
-const NEXUS_NOMAD_STATE_ID = "default";
-const NEXUS_NOMAD_STATE_VERSION = 1;
-
-function cloneInvTabs(tabs: InvSubTabCompat[]): InvSubTabCompat[] {
-  return tabs.map((tab) => ({
-    ...tab,
-    items: (tab.items || []).map((item) => ({ ...item })),
-    groups: (tab.groups || []).map((group) => ({ ...group, itemIds: [...group.itemIds] })),
-  }));
-}
-
-function defaultNexusNomadInventoryState(): NexusNomadInventoryState {
-  return {
-    id: NEXUS_NOMAD_STATE_ID,
-    version: NEXUS_NOMAD_STATE_VERSION,
-    invTabs: [],
-  };
-}
-
-function normalizeNexusNomadInventoryState(raw: unknown): NexusNomadInventoryState {
-  if (!raw || typeof raw !== "object") return defaultNexusNomadInventoryState();
-  const candidate = raw as Partial<NexusNomadInventoryState>;
-  return {
-    ...candidate,
-    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : NEXUS_NOMAD_STATE_ID,
-    version: typeof candidate.version === "number" ? candidate.version : NEXUS_NOMAD_STATE_VERSION,
-    invTabs: Array.isArray(candidate.invTabs) ? cloneInvTabs(candidate.invTabs) : [],
-  } as NexusNomadInventoryState;
-}
-
-
-function getCurrencyItems(
-  invTabs: InvSubTabCompat[],
-  dmItems: DmManagedItemCompat[],
-  currentUserId: string,
-): { name: string; quantity: number; tabId: string; itemId: string }[] {
-  const results: { name: string; quantity: number; tabId: string; itemId: string }[] = [];
-  for (const tab of invTabs) {
-    for (const item of tab.items || []) {
-      if (item.tags?.includes("Currency")) {
-        results.push({ name: item.name, quantity: item.quantity, tabId: tab.id, itemId: item.id });
-      }
-    }
-  }
-  if (currentUserId) {
-    for (const item of dmItems) {
-      if (item.tags?.includes("Currency") && item.assignedTo?.includes(currentUserId)) {
-        const qty = parseInt(item.customFields?.["Quantity::Amount"] || "0", 10);
-        if (!results.some((result) => result.name === item.name)) {
-          results.push({ name: item.name, quantity: qty, tabId: "dm-items", itemId: item.id });
-        }
-      }
-    }
-  }
-  return results;
-}
-
-function deductCurrencyFromInventoryState(
-  invTabs: InvSubTabCompat[],
-  currencyName: string,
-  amount: number,
-): InvSubTabCompat[] | null {
-  const nextTabs = cloneInvTabs(invTabs);
-  for (const tab of nextTabs) {
-    for (const item of tab.items || []) {
-      if (item.tags?.includes("Currency") && item.name === currencyName) {
-        if (item.quantity < amount && item.quantity !== -1) return null;
-        if (item.quantity !== -1) item.quantity -= amount;
-        return nextTabs;
-      }
-    }
-  }
-  return null;
-}
-
-function addPurchasesToInventoryState(
-  invTabs: InvSubTabCompat[],
-  purchases: { name: string; description: string; price: number; currency: string; quantity: number; rarity: string }[],
-): InvSubTabCompat[] {
-  const nextTabs = cloneInvTabs(invTabs);
-  let purchTab = nextTabs.find((tab) => tab.id === "inv-purchases");
-  if (!purchTab) {
-    purchTab = { id: "inv-purchases", name: "Purchases", icon: "shopping-bag", items: [], groups: [] };
-    nextTabs.push(purchTab);
-  }
-
-  for (const purchase of purchases) {
-    const existing = purchTab.items.find((item) => item.name === purchase.name);
-    if (existing) {
-      existing.quantity = (existing.quantity || 1) + purchase.quantity;
-    } else {
-      purchTab.items.push({
-        id: uid(),
-        name: purchase.name,
-        description: purchase.description,
-        price: purchase.price,
-        currency: purchase.currency,
-        quantity: purchase.quantity,
-        rarity: purchase.rarity,
-        notes: "",
-        hidden: false,
-      });
-    }
-  }
-
-  return nextTabs;
-}
 
 function handleImageUpload(maxSizeKB: number, cb: (dataUrl: string) => void, acceptGif = false) {
   const input = document.createElement("input");
@@ -653,7 +640,7 @@ export function CommercePage() {
   const theme = getPlayerTheme();
   const currentUser = safeGetItem("inet-user") || "";
   const currentUserId = safeGetItem("inet-user-id") || "";
-  const isDM = currentUser === "DM";
+  const isDM = currentUserId === "dm" || currentUser === "DM";
 
   const accent = theme.accentColor;
 
@@ -661,11 +648,17 @@ export function CommercePage() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
-  const [nexusNomadState, setNexusNomadState] = useState<NexusNomadInventoryState>(defaultNexusNomadInventoryState);
   const [dmItemsCache, setDmItemsCache] = useState<DmManagedItemCompat[]>([]);
+  const [itemTags, setItemTags] = useState<TagDefinition[]>([]);
+  const [creditAccount, setCreditAccount] = useState<CreditAccount | null>(null);
   const [commerceLoading, setCommerceLoading] = useState(true);
   const [commerceError, setCommerceError] = useState<string | null>(null);
   const hasLoadedCommerceRef = useRef(false);
+  const shopsRef = useRef<Shop[]>([]);
+  const savedShopsRef = useRef<Shop[]>([]);
+  const catalogSavePromiseRef = useRef<Promise<void> | null>(null);
+  const [catalogSaving, setCatalogSaving] = useState(false);
+  const [catalogDirty, setCatalogDirty] = useState(false);
 
   // UI state
   const [selectedShopId, setSelectedShopId] = useState<string | null>(null);
@@ -682,12 +675,69 @@ export function CommercePage() {
   const [showLedger, setShowLedger] = useState(false);
   const [showShopSettings, setShowShopSettings] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
+  const [purchaseMessage, setPurchaseMessage] = useState("");
+  const [showItemCreator, setShowItemCreator] = useState(false);
+  const [itemCreatorTarget, setItemCreatorTarget] = useState<{ shopId?: string; itemId?: string } | null>(null);
+  const purchaseRequestRef = useRef("");
 
   const [draftShop, setDraftShop] = useState<Partial<Shop>>({});
   const [draftItem, setDraftItem] = useState<Partial<ShopItem>>({});
   const [newCategoryDraft, setNewCategoryDraft] = useState("");
 
-  const nexusInvTabs = useMemo(() => nexusNomadState.invTabs || [], [nexusNomadState]);
+  const persistCommerceCatalog = useCallback(() => {
+    if (!isDM || !hasLoadedCommerceRef.current) return Promise.resolve();
+    if (catalogSavePromiseRef.current) return catalogSavePromiseRef.current;
+
+    const run = async () => {
+      const snapshot = shopsRef.current;
+      const baseline = savedShopsRef.current;
+      const delta = commerceCatalogDelta(snapshot, baseline);
+      if (delta.changes.length === 0 && delta.deletions.length === 0) {
+        setCatalogDirty(false);
+        return;
+      }
+
+      setCatalogSaving(true);
+      try {
+        const result = await saveCommerceCatalog<Shop>(delta.changes, delta.deletions);
+        const remote = normalizeCommerceShops(result.shops);
+        const merged = rebaseCommerceCatalog(remote, snapshot, shopsRef.current);
+        savedShopsRef.current = remote;
+        shopsRef.current = merged;
+        setShops(merged);
+        const remaining = commerceCatalogDelta(merged, remote);
+        setCatalogDirty(remaining.changes.length > 0 || remaining.deletions.length > 0);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The Commerce catalog could not be saved.";
+        if (/conflict/i.test(message)) {
+          try {
+            const remote = normalizeCommerceShops(await appStore.listCommerceShops<Shop>());
+            const merged = rebaseCommerceCatalog(remote, baseline, shopsRef.current);
+            savedShopsRef.current = remote;
+            shopsRef.current = merged;
+            setShops(merged);
+            setPurchaseMessage("The catalog changed during editing. Your unsaved changes were rebased onto the latest stock and will be saved again.");
+            setCommerceError(null);
+            const remaining = commerceCatalogDelta(merged, remote);
+            setCatalogDirty(remaining.changes.length > 0 || remaining.deletions.length > 0);
+          } catch (reloadError) {
+            setCommerceError(reloadError instanceof Error ? reloadError.message : message);
+          }
+        } else {
+          setCommerceError(message);
+        }
+      } finally {
+        setCatalogSaving(false);
+      }
+    };
+
+    const promise = run().finally(() => {
+      catalogSavePromiseRef.current = null;
+    });
+    catalogSavePromiseRef.current = promise;
+    return promise;
+  }, [isDM]);
 
   useEffect(() => {
     let cancelled = false;
@@ -697,19 +747,22 @@ export function CommercePage() {
         setCommerceLoading(true);
         setCommerceError(null);
 
-        const [shopsData, cartData, ledgerData, nexusStateData] = await Promise.all([
+        const [shopsData, cartData, ledgerData, creditsState] = await Promise.all([
           appStore.listCommerceShops<Shop>().catch(() => [] as Shop[]),
           currentUserId ? appStore.loadPlayerCommerceCart<CartItem[]>(currentUserId, []) : Promise.resolve([] as CartItem[]),
           appStore.listCommerceLedger<LedgerEntry>().catch(() => [] as LedgerEntry[]),
-          appStore.loadNexusNomadState<NexusNomadInventoryState>(NEXUS_NOMAD_STATE_ID, defaultNexusNomadInventoryState()),
+          !isDM && currentUserId ? loadCreditAccount().catch(() => null) : Promise.resolve(null),
         ]);
 
         if (cancelled) return;
 
-        setShops(Array.isArray(shopsData) ? shopsData : []);
+        const normalizedShops = normalizeCommerceShops(shopsData);
+        savedShopsRef.current = normalizedShops;
+        shopsRef.current = normalizedShops;
+        setShops(normalizedShops);
         setCart(Array.isArray(cartData) ? cartData : []);
         setLedger(Array.isArray(ledgerData) ? ledgerData : []);
-        setNexusNomadState(normalizeNexusNomadInventoryState(nexusStateData));
+        setCreditAccount(creditsState?.account || null);
 
         if (isDM) {
           try {
@@ -717,6 +770,8 @@ export function CommercePage() {
             if (!cancelled && Array.isArray(remoteItems)) {
               setDmItemsCache(remoteItems as unknown as DmManagedItemCompat[]);
             }
+            const tags = await loadDMTags<TagDefinition>("item");
+            if (!cancelled) setItemTags(tags);
           } catch (err) {
             if (!cancelled) {
               setDmItemsCache([]);
@@ -747,14 +802,17 @@ export function CommercePage() {
   }, [currentUserId, isDM]);
 
   useEffect(() => {
-    if (!hasLoadedCommerceRef.current) return;
-    const timeout = window.setTimeout(() => {
-      appStore.saveCommerceShops<Shop>(shops).catch((err) => {
-        console.warn("Failed to save commerce shops", err);
-      });
-    }, 350);
+    shopsRef.current = shops;
+    if (!hasLoadedCommerceRef.current || !isDM) return;
+    const delta = commerceCatalogDelta(shops, savedShopsRef.current);
+    setCatalogDirty(delta.changes.length > 0 || delta.deletions.length > 0);
+  }, [isDM, shops]);
+
+  useEffect(() => {
+    if (!catalogDirty || catalogSaving || !isDM) return;
+    const timeout = window.setTimeout(() => void persistCommerceCatalog(), 500);
     return () => window.clearTimeout(timeout);
-  }, [shops]);
+  }, [catalogDirty, catalogSaving, isDM, persistCommerceCatalog]);
 
   useEffect(() => {
     if (!hasLoadedCommerceRef.current || !currentUserId) return;
@@ -767,34 +825,27 @@ export function CommercePage() {
   }, [cart, currentUserId]);
 
   useEffect(() => {
-    if (!hasLoadedCommerceRef.current) return;
-    const timeout = window.setTimeout(() => {
-      appStore.saveCommerceLedger<LedgerEntry>(ledger).catch((err) => {
-        console.warn("Failed to save commerce ledger", err);
-      });
-    }, 350);
-    return () => window.clearTimeout(timeout);
-  }, [ledger]);
-
-  useEffect(() => {
-    if (!hasLoadedCommerceRef.current) return;
-    const timeout = window.setTimeout(() => {
-      appStore.saveNexusNomadState<NexusNomadInventoryState>(nexusNomadState).catch((err) => {
-        console.warn("Failed to save office inventory state from commerce", err);
-      });
-    }, 350);
-    return () => window.clearTimeout(timeout);
-  }, [nexusNomadState]);
-
-  const availableCurrencies = useMemo(
-    () => getCurrencyItems(nexusInvTabs, dmItemsCache, currentUserId).map((currency) => ({ name: currency.name, quantity: currency.quantity })),
-    [currentUserId, dmItemsCache, nexusInvTabs],
-  );
+    if (isDM || !currentUserId) return;
+    const refreshBalance = () => {
+      loadCreditAccount()
+        .then((result) => setCreditAccount(result.account))
+        .catch((error) => console.warn("Credits balance could not be refreshed", error));
+    };
+    window.addEventListener("focus", refreshBalance);
+    return () => window.removeEventListener("focus", refreshBalance);
+  }, [currentUserId, isDM]);
 
   const dmPlayerItems = useMemo(
-    () => dmItemsCache.map((item) => ({ id: item.id, name: item.name, tags: item.tags || [] })),
+    () => dmItemsCache
+      .filter((item) => item.name.trim().toLowerCase() !== "credits")
+      .map((item) => ({ id: item.id, name: item.name, tags: item.tags || [] })),
     [dmItemsCache],
   );
+
+  const persistCommerceItems = useCallback(async (next: ManagedItem[]) => {
+    await saveDMItems(next as unknown as Record<string, unknown>[]);
+    setDmItemsCache(next as unknown as DmManagedItemCompat[]);
+  }, []);
 
   const selectedShop = useMemo(() => shops.find(s => s.id === selectedShopId) || null, [shops, selectedShopId]);
 
@@ -876,16 +927,21 @@ export function CommercePage() {
       id: uid(),
       name: draftItem.name?.trim() || "New Item",
       description: draftItem.description?.trim() || "",
-      price: Number(draftItem.price) || 0,
-      currency: draftItem.currency?.trim() || "Credits",
-      quantity: draftItem.quantity !== undefined ? Number(draftItem.quantity) : -1,
+      price: Math.max(0, wholeNumber(draftItem.price)),
+      currency: "Credits",
+      quantity: stockNumber(draftItem.quantity),
       rarity: (draftItem.rarity as ItemRarity) || "Common",
       category: draftItem.category?.trim() || "Misc",
       notes: draftItem.notes?.trim() || "",
       hidden: false,
       addsToInventory: draftItem.addsToInventory ?? false,
       inventoryItemId: draftItem.inventoryItemId || undefined,
-      inventoryQuantity: draftItem.inventoryQuantity !== undefined ? Number(draftItem.inventoryQuantity) : undefined,
+      inventoryQuantity: draftItem.inventoryQuantity !== undefined ? Math.max(1, wholeNumber(draftItem.inventoryQuantity, 1)) : undefined,
+      subtitle: draftItem.subtitle?.trim() || undefined,
+      imageUrl: draftItem.imageUrl?.trim() || undefined,
+      tags: Array.isArray(draftItem.tags) ? draftItem.tags.map((tag) => tag.trim()).filter(Boolean) : [],
+      purchaseLimit: Math.max(0, Math.floor(Number(draftItem.purchaseLimit) || 0)),
+      deliveryNote: draftItem.deliveryNote?.trim() || undefined,
     };
     setShops(prev => prev.map(s => s.id === selectedShopId ? { ...s, items: [...s.items, item] } : s));
     setCreatingItem(false);
@@ -900,6 +956,34 @@ export function CommercePage() {
     ));
   }, []);
 
+  const handleCommerceItemCreated = useCallback((item: ManagedItem) => {
+    if (item.name.trim().toLowerCase() === "credits") {
+      setCommerceError("Credits are account balance and cannot be delivered as an inventory item.");
+      setShowItemCreator(false);
+      setItemCreatorTarget(null);
+      return;
+    }
+    if (itemCreatorTarget?.shopId && itemCreatorTarget.itemId) {
+      updateItem(itemCreatorTarget.shopId, itemCreatorTarget.itemId, {
+        addsToInventory: true,
+        inventoryItemId: item.id,
+        inventoryQuantity: 1,
+      });
+    } else {
+      setDraftItem((current) => ({
+        ...current,
+        name: current.name || item.name,
+        description: current.description || item.description,
+        rarity: (current.rarity || item.rarity) as ItemRarity,
+        addsToInventory: true,
+        inventoryItemId: item.id,
+        inventoryQuantity: 1,
+      }));
+    }
+    setShowItemCreator(false);
+    setItemCreatorTarget(null);
+  }, [itemCreatorTarget, updateItem]);
+
   const deleteItem = useCallback((shopId: string, itemId: string) => {
     setShops(prev => prev.map(s =>
       s.id === shopId
@@ -911,12 +995,19 @@ export function CommercePage() {
 
   // ── Cart ──
   const addToCart = useCallback((shopId: string, itemId: string) => {
+    const item = shops.find((shop) => shop.id === shopId)?.items.find((entry) => entry.id === itemId);
+    if (!item) return;
+    const maximum = Math.min(
+      item.quantity >= 0 ? item.quantity : 999,
+      item.purchaseLimit && item.purchaseLimit > 0 ? item.purchaseLimit : 999,
+    );
+    if (maximum < 1) return;
     setCart(prev => {
       const existing = prev.find(c => c.shopId === shopId && c.itemId === itemId);
-      if (existing) return prev.map(c => c.shopId === shopId && c.itemId === itemId ? { ...c, quantity: c.quantity + 1 } : c);
+      if (existing) return prev.map(c => c.shopId === shopId && c.itemId === itemId ? { ...c, quantity: Math.min(maximum, c.quantity + 1) } : c);
       return [...prev, { shopId, itemId, quantity: 1 }];
     });
-  }, []);
+  }, [shops]);
 
   const removeFromCart = useCallback((shopId: string, itemId: string) => {
     setCart(prev => prev.filter(c => !(c.shopId === shopId && c.itemId === itemId)));
@@ -924,176 +1015,51 @@ export function CommercePage() {
 
   const updateCartQty = useCallback((shopId: string, itemId: string, qty: number) => {
     if (qty <= 0) { removeFromCart(shopId, itemId); return; }
-    setCart(prev => prev.map(c => c.shopId === shopId && c.itemId === itemId ? { ...c, quantity: qty } : c));
-  }, [removeFromCart]);
+    const item = shops.find((shop) => shop.id === shopId)?.items.find((entry) => entry.id === itemId);
+    if (!item) return;
+    const maximum = Math.min(
+      item.quantity >= 0 ? item.quantity : 999,
+      item.purchaseLimit && item.purchaseLimit > 0 ? item.purchaseLimit : 999,
+    );
+    if (maximum < 1) { removeFromCart(shopId, itemId); return; }
+    setCart(prev => prev.map(c => c.shopId === shopId && c.itemId === itemId ? { ...c, quantity: Math.max(1, Math.min(maximum, Math.floor(qty))) } : c));
+  }, [removeFromCart, shops]);
 
   const clearCart = useCallback(() => setCart([]), []);
 
-  const cartTotal = useMemo(() => {
-    let total = 0;
-    cart.forEach(ci => {
-      const shop = shops.find(s => s.id === ci.shopId);
-      const item = shop?.items.find(i => i.id === ci.itemId);
-      if (item) total += item.price * ci.quantity;
-    });
-    return total;
-  }, [cart, shops]);
-
   const checkout = useCallback(async () => {
-    const entries: LedgerEntry[] = [];
-    const shopUpdates = new Map<string, ShopItem[]>();
-    cart.forEach((cartItem) => {
-      const shop = shops.find((shopRow) => shopRow.id === cartItem.shopId);
-      const item = shop?.items.find((shopItem) => shopItem.id === cartItem.itemId);
-      if (!shop || !item) return;
-      entries.push({
-        id: uid(),
-        shopId: shop.id,
-        shopName: shop.name,
-        itemName: item.name,
-        quantity: cartItem.quantity,
-        unitPrice: item.price,
-        currency: item.currency,
-        buyerName: currentUser,
-        buyerId: currentUserId,
-        timestamp: Date.now(),
-      });
-      if (item.quantity >= 0) {
-        const updatedItems = shopUpdates.get(shop.id) || [...shop.items];
-        const idx = updatedItems.findIndex((shopItem) => shopItem.id === item.id);
-        if (idx >= 0) {
-          updatedItems[idx] = {
-            ...updatedItems[idx],
-            quantity: Math.max(0, updatedItems[idx].quantity - cartItem.quantity),
-          };
-        }
-        shopUpdates.set(shop.id, updatedItems);
-      }
-    });
-
-    const inventoryPurchases: { name: string; description: string; price: number; currency: string; quantity: number; rarity: string }[] = [];
-    const dmItemUpdates: { itemId: string; addQty: number }[] = [];
-    cart.forEach((cartItem) => {
-      const shop = shops.find((shopRow) => shopRow.id === cartItem.shopId);
-      const item = shop?.items.find((shopItem) => shopItem.id === cartItem.itemId);
-      if (!shop || !item) return;
-      if (item.addsToInventory) {
-        if (item.inventoryItemId) {
-          const perUnit = item.inventoryQuantity || 1;
-          dmItemUpdates.push({ itemId: item.inventoryItemId, addQty: perUnit * cartItem.quantity });
-        } else {
-          inventoryPurchases.push({
-            name: item.name,
-            description: item.description,
-            price: item.price,
-            currency: item.currency,
-            quantity: cartItem.quantity,
-            rarity: item.rarity,
-          });
-        }
-      }
-    });
-
-    if (entries.length === 0) return;
-
-    const currencyItems = getCurrencyItems(nexusInvTabs, dmItemsCache, currentUserId);
-    const currencyTotals = new Map<string, number>();
-    cart.forEach((cartItem) => {
-      const shop = shops.find((shopRow) => shopRow.id === cartItem.shopId);
-      const item = shop?.items.find((shopItem) => shopItem.id === cartItem.itemId);
-      if (!shop || !item) return;
-      const isCurrencyItem = currencyItems.some((currency) => currency.name === item.currency);
-      if (isCurrencyItem) {
-        currencyTotals.set(item.currency, (currencyTotals.get(item.currency) || 0) + item.price * cartItem.quantity);
-      }
-    });
-
-    for (const [currencyName, totalCost] of currencyTotals) {
-      const currency = currencyItems.find((item) => item.name === currencyName);
-      if (!currency || (currency.quantity !== -1 && currency.quantity < totalCost)) {
-        alert(`Not enough ${currencyName}! You have ${currency?.quantity ?? 0} but need ${totalCost}.`);
-        return;
-      }
+    if (cart.length === 0 || purchasing) return;
+    if (isDM) {
+      setCommerceError("The DM profile does not use a player Credits account.");
+      return;
     }
-
-    let nextInvTabs = cloneInvTabs(nexusInvTabs);
-    for (const [currencyName, totalCost] of currencyTotals) {
-      const updatedTabs = deductCurrencyFromInventoryState(nextInvTabs, currencyName, totalCost);
-      if (!updatedTabs) {
-        alert(`Not enough ${currencyName}!`);
-        return;
-      }
-      nextInvTabs = updatedTabs;
-    }
-
-    if (inventoryPurchases.length > 0) {
-      nextInvTabs = addPurchasesToInventoryState(nextInvTabs, inventoryPurchases);
-    }
-
-    const nextLedger = [...ledger, ...entries];
-    const nextShops = shops.map((shop) => {
-      const updatedItems = shopUpdates.get(shop.id);
-      return updatedItems ? { ...shop, items: updatedItems } : shop;
-    });
-    const nextCart: CartItem[] = [];
-    const nextNexusNomadState: NexusNomadInventoryState = {
-      ...nexusNomadState,
-      id: nexusNomadState.id || NEXUS_NOMAD_STATE_ID,
-      version: nexusNomadState.version || NEXUS_NOMAD_STATE_VERSION,
-      invTabs: nextInvTabs,
-    };
-
-    setLedger(nextLedger);
-    setShops(nextShops);
-    setCart(nextCart);
-    setShowCart(false);
-    setNexusNomadState(nextNexusNomadState);
-
-    if (dmItemUpdates.length > 0) {
-      try {
-        const allDmItems = [...dmItemsCache];
-        for (const update of dmItemUpdates) {
-          const template = allDmItems.find((item) => item.id === update.itemId);
-          if (!template) continue;
-          const existingCopy = allDmItems.find((item) => (
-            item.name === template.name
-            && item.assignedTo.includes(currentUserId)
-            && item.id !== template.id
-          ));
-          if (existingCopy && existingCopy.tags.includes("Quantity")) {
-            const currentQty = parseInt(existingCopy.customFields?.["Quantity::Amount"] || "0", 10);
-            existingCopy.customFields["Quantity::Amount"] = String(currentQty + update.addQty);
-          } else {
-            const newItem: DmManagedItemCompat = {
-              ...template,
-              id: uid(),
-              assignedTo: [currentUserId],
-              customFields: { ...template.customFields },
-            };
-            if (newItem.tags.includes("Quantity")) {
-              newItem.customFields["Quantity::Amount"] = String(update.addQty);
-            }
-            allDmItems.push(newItem);
-          }
-        }
-        setDmItemsCache(allDmItems);
-        await saveDMItems(allDmItems as unknown as any);
-      } catch (err) {
-        console.warn("Failed to persist DM-linked purchased items", err);
-      }
-    }
-
+    const requestId = purchaseRequestRef.current || creditRequestId("commerce-checkout");
+    purchaseRequestRef.current = requestId;
+    setPurchasing(true);
+    setCommerceError(null);
+    setPurchaseMessage("");
     try {
-      await Promise.all([
-        appStore.saveCommerceShops<Shop>(nextShops),
-        appStore.saveCommerceLedger<LedgerEntry>(nextLedger),
-        currentUserId ? appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, nextCart) : Promise.resolve(),
-        appStore.saveNexusNomadState<NexusNomadInventoryState>(nextNexusNomadState),
+      const result = await purchaseCommerceCart(cart, requestId);
+      const [nextShops, nextLedger] = await Promise.all([
+        appStore.listCommerceShops<Shop>(),
+        appStore.listCommerceLedger<LedgerEntry>(),
       ]);
+      const normalizedShops = normalizeCommerceShops(nextShops);
+      shopsRef.current = normalizedShops;
+      setShops(normalizedShops);
+      setLedger(nextLedger);
+      setCreditAccount(result.account);
+      setCart([]);
+      setShowCart(false);
+      setPurchaseMessage(`Purchase complete. ${result.total.toLocaleString()} CR paid${result.grantedItems.length ? ` and ${result.grantedItems.length} inventory delivery received` : ""}.`);
+      purchaseRequestRef.current = "";
+      if (currentUserId) await appStore.savePlayerCommerceCart<CartItem[]>(currentUserId, []);
     } catch (err) {
-      console.warn("Failed to persist checkout immediately", err);
+      setCommerceError(err instanceof Error ? err.message : "The purchase could not be completed.");
+    } finally {
+      setPurchasing(false);
     }
-  }, [cart, currentUser, currentUserId, dmItemsCache, ledger, nexusInvTabs, nexusNomadState, shops]);
+  }, [cart, currentUserId, isDM, purchasing]);
 
   // ── Reorder shops within a group ──
   const reorderShop = useCallback((dragIdx: number, hoverIdx: number, groupType: string) => {
@@ -1223,6 +1189,11 @@ export function CommercePage() {
           </button>
           <div className="flex-1" />
           {!isDM && (
+            <button onClick={() => navigate("/interface/credits")} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold ${retro.button}`} style={{ color: STEEL.gold }} title="Open Credits account">
+              <Coins size={12} />{(creditAccount?.balance || 0).toLocaleString()} CR
+            </button>
+          )}
+          {!isDM && (
             <button onClick={() => setShowCart(true)} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold relative ${retro.button}`} style={{ color: "#E0E4F0" }}>
               <ShoppingCart size={12} />
               Cart
@@ -1233,6 +1204,9 @@ export function CommercePage() {
           )}
           {isDM && (
             <div style={DISPLAY_CONTENTS}>
+              <button disabled={!catalogDirty || catalogSaving} onClick={() => void persistCommerceCatalog()} className={`flex items-center gap-1 px-2.5 py-1 text-[10px] font-semibold disabled:opacity-60 ${retro.button}`} style={{ color: catalogDirty ? "#F0D36B" : "#78C99A" }} title="Save Commerce catalog">
+                {catalogSaving ? <LoaderCircle size={11} className="animate-spin" /> : <Save size={11} />}{catalogSaving ? "Saving" : catalogDirty ? "Save" : "Saved"}
+              </button>
               <button onClick={() => setShowShopSettings(!showShopSettings)} className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }} title="Shop Settings">
                 <Settings size={11} />
                 Customize
@@ -1651,24 +1625,22 @@ export function CommercePage() {
                       </select>
                     </div>
                   </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <div><label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Subtitle</label><input value={draftItem.subtitle || ""} onChange={e => setDraftItem(p => ({ ...p, subtitle: e.target.value }))} placeholder="Short product summary" className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} maxLength={100} /></div>
+                    <div><label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Image URL</label><input value={draftItem.imageUrl || ""} onChange={e => setDraftItem(p => ({ ...p, imageUrl: e.target.value }))} placeholder="https://..." className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} /></div>
+                  </div>
                   <div className="grid grid-cols-4 gap-2">
                     <div>
                       <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Price</label>
-                      <input type="number" value={draftItem.price ?? ""} onChange={e => setDraftItem(p => ({ ...p, price: Number(e.target.value) }))} className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} min={0} />
+                      <input type="number" value={draftItem.price ?? ""} onChange={e => setDraftItem(p => ({ ...p, price: Math.max(0, wholeNumber(e.target.value)) }))} className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} min={0} step={1} />
                     </div>
                     <div>
                       <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Currency</label>
-                      <select value={draftItem.currency || "Credits"} onChange={e => setDraftItem(p => ({ ...p, currency: e.target.value }))} className="w-full text-[12px] outline-none px-2 py-1 cursor-pointer" style={inputStyle}>
-                        {availableCurrencies.map(c => <option key={c.name} value={c.name}>{c.name} ({c.quantity === -1 ? "∞" : c.quantity})</option>)}
-                        {!availableCurrencies.some(c => c.name === (draftItem.currency || "Credits")) && draftItem.currency && <option value={draftItem.currency}>{draftItem.currency}</option>}
-                        <option value="gp">gp (no deduction)</option>
-                        <option value="sp">sp (no deduction)</option>
-                        <option value="cp">cp (no deduction)</option>
-                      </select>
+                      <div className="w-full px-2 py-1 text-[12px]" style={inputStyle}>Credits (CR)</div>
                     </div>
                     <div>
                       <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Qty (-1={"\u221E"})</label>
-                      <input type="number" value={draftItem.quantity ?? -1} onChange={e => setDraftItem(p => ({ ...p, quantity: Number(e.target.value) }))} className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} min={-1} />
+                      <input type="number" value={draftItem.quantity ?? -1} onChange={e => setDraftItem(p => ({ ...p, quantity: stockNumber(e.target.value) }))} className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} min={-1} step={1} />
                     </div>
                     <div>
                       <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Rarity</label>
@@ -1681,6 +1653,11 @@ export function CommercePage() {
                     <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Description</label>
                     <textarea value={draftItem.description || ""} onChange={e => setDraftItem(p => ({ ...p, description: e.target.value }))} className="w-full text-[12px] outline-none px-2 py-1 resize-y min-h-[40px]" style={inputStyle} />
                   </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_120px]">
+                    <div><label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Product Tags</label><input value={(draftItem.tags || []).join(", ")} onChange={e => setDraftItem(p => ({ ...p, tags: e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) }))} placeholder="firearm, limited, utility" className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} /></div>
+                    <div><label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Limit / Player</label><input type="number" min="0" step={1} value={draftItem.purchaseLimit ?? 0} onChange={e => setDraftItem(p => ({ ...p, purchaseLimit: Math.max(0, wholeNumber(e.target.value)) }))} className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} /></div>
+                  </div>
+                  <div><label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Delivery Note</label><input value={draftItem.deliveryNote || ""} onChange={e => setDraftItem(p => ({ ...p, deliveryNote: e.target.value }))} placeholder="What the buyer receives" className="w-full text-[12px] outline-none px-2 py-1" style={inputStyle} /></div>
                   <div>
                     <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>DM Notes</label>
                     <input value={draftItem.notes || ""} onChange={e => setDraftItem(p => ({ ...p, notes: e.target.value }))} className="w-full text-[12px] outline-none px-2 py-1" style={{ ...inputStyle, borderColor: "#2A1515" }} />
@@ -1695,13 +1672,14 @@ export function CommercePage() {
                       <div className="flex-1">
                         <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Player Item</label>
                         <select value={draftItem.inventoryItemId || ""} onChange={e => setDraftItem(p => ({ ...p, inventoryItemId: e.target.value || undefined }))} className="w-full text-[11px] outline-none px-2 py-1 cursor-pointer" style={inputStyle}>
-                          <option value="">— Office Inventory (legacy) —</option>
+                          <option value="">Select a reusable item...</option>
                           {dmPlayerItems.map(di => <option key={di.id} value={di.id}>{di.name}{di.tags.includes("Quantity") ? " [Qty]" : ""}{di.tags.includes("Currency") ? " [$]" : ""}</option>)}
                         </select>
                       </div>
+                      <button type="button" onClick={() => { setItemCreatorTarget({}); setShowItemCreator(true); }} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[10px]`} style={{ color: "#4AE0C0" }}><Plus size={10} />Create Item</button>
                       <div className="w-16">
                         <label className="text-[9px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Qty</label>
-                        <input type="number" value={draftItem.inventoryQuantity ?? 1} onChange={e => setDraftItem(p => ({ ...p, inventoryQuantity: Number(e.target.value) || 1 }))} min={1} className="w-full text-[11px] outline-none px-2 py-1 text-center" style={inputStyle} />
+                        <input type="number" value={draftItem.inventoryQuantity ?? 1} onChange={e => setDraftItem(p => ({ ...p, inventoryQuantity: Math.max(1, wholeNumber(e.target.value, 1)) }))} min={1} step={1} className="w-full text-[11px] outline-none px-2 py-1 text-center" style={inputStyle} />
                       </div>
                     </div>
                   )}
@@ -1739,16 +1717,12 @@ export function CommercePage() {
                           /* Inline edit */
                           <div className="space-y-2" onClick={e => e.stopPropagation()}>
                             <input value={item.name} onChange={e => updateItem(shop.id, item.id, { name: e.target.value })} className="w-full text-[12px] outline-none px-2 py-1 font-semibold" style={inputStyle} maxLength={60} />
+                            <input value={item.subtitle || ""} onChange={e => updateItem(shop.id, item.id, { subtitle: e.target.value })} placeholder="Product subtitle" className="w-full text-[10px] outline-none px-2 py-1" style={inputStyle} maxLength={100} />
+                            <input value={item.imageUrl || ""} onChange={e => updateItem(shop.id, item.id, { imageUrl: e.target.value })} placeholder="Image URL" className="w-full text-[10px] outline-none px-2 py-1" style={inputStyle} />
                             <div className="grid grid-cols-3 gap-1">
-                              <input type="number" value={item.price} onChange={e => updateItem(shop.id, item.id, { price: Number(e.target.value) })} className="text-[11px] outline-none px-1 py-0.5" style={inputStyle} min={0} />
-                              <select value={item.currency} onChange={e => updateItem(shop.id, item.id, { currency: e.target.value })} className="text-[11px] outline-none px-1 py-0.5 cursor-pointer" style={inputStyle}>
-                                {availableCurrencies.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                                {!availableCurrencies.some(c => c.name === item.currency) && <option value={item.currency}>{item.currency}</option>}
-                                <option value="gp">gp</option>
-                                <option value="sp">sp</option>
-                                <option value="cp">cp</option>
-                              </select>
-                              <input type="number" value={item.quantity} onChange={e => updateItem(shop.id, item.id, { quantity: Number(e.target.value) })} className="text-[11px] outline-none px-1 py-0.5" style={inputStyle} min={-1} />
+                              <input type="number" value={item.price} onChange={e => updateItem(shop.id, item.id, { price: Math.max(0, wholeNumber(e.target.value)) })} className="text-[11px] outline-none px-1 py-0.5" style={inputStyle} min={0} step={1} />
+                              <div className="px-1 py-0.5 text-[11px]" style={inputStyle}>Credits</div>
+                              <input type="number" value={item.quantity} onChange={e => updateItem(shop.id, item.id, { quantity: stockNumber(e.target.value) })} className="text-[11px] outline-none px-1 py-0.5" style={inputStyle} min={-1} step={1} />
                             </div>
                             <div className="grid grid-cols-2 gap-1">
                               <select value={item.rarity} onChange={e => updateItem(shop.id, item.id, { rarity: e.target.value as ItemRarity })} className="text-[11px] outline-none px-1 py-0.5 cursor-pointer" style={inputStyle}>
@@ -1760,6 +1734,8 @@ export function CommercePage() {
                               </select>
                             </div>
                             <textarea value={item.description} onChange={e => updateItem(shop.id, item.id, { description: e.target.value })} className="w-full text-[11px] outline-none px-1.5 py-1 resize-y min-h-[35px]" style={inputStyle} />
+                            <div className="grid grid-cols-[1fr_95px] gap-1"><input value={(item.tags || []).join(", ")} onChange={e => updateItem(shop.id, item.id, { tags: e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} placeholder="Product tags" className="w-full text-[10px] outline-none px-1.5 py-0.5" style={inputStyle} /><input type="number" min="0" step={1} value={item.purchaseLimit || 0} onChange={e => updateItem(shop.id, item.id, { purchaseLimit: Math.max(0, wholeNumber(e.target.value)) })} title="Purchase limit per player; zero is unlimited" className="w-full text-[10px] outline-none px-1.5 py-0.5" style={inputStyle} /></div>
+                            <input value={item.deliveryNote || ""} onChange={e => updateItem(shop.id, item.id, { deliveryNote: e.target.value })} placeholder="Delivery note" className="w-full text-[10px] outline-none px-1.5 py-0.5" style={inputStyle} />
                             <input value={item.notes} onChange={e => updateItem(shop.id, item.id, { notes: e.target.value })} placeholder="DM notes..." className="w-full text-[10px] outline-none px-1.5 py-0.5" style={{ ...inputStyle, borderColor: "#2A1515" }} />
                             <label className="flex items-center gap-1.5 cursor-pointer select-none py-0.5">
                               <input type="checkbox" checked={!!item.addsToInventory} onChange={e => updateItem(shop.id, item.id, { addsToInventory: e.target.checked, ...(!e.target.checked ? { inventoryItemId: undefined, inventoryQuantity: undefined } : {}) })} className="accent-[#4AE0C0]" />
@@ -1771,24 +1747,27 @@ export function CommercePage() {
                                 <div className="flex-1">
                                   <label className="text-[8px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Player Item</label>
                                   <select value={item.inventoryItemId || ""} onChange={e => updateItem(shop.id, item.id, { inventoryItemId: e.target.value || undefined })} className="w-full text-[10px] outline-none px-1.5 py-0.5 cursor-pointer" style={inputStyle}>
-                                    <option value="">— Office Inventory (legacy) —</option>
+                                    <option value="">Select a reusable item...</option>
                                     {dmPlayerItems.map(di => <option key={di.id} value={di.id}>{di.name}{di.tags.includes("Quantity") ? " [Qty]" : ""}{di.tags.includes("Currency") ? " [$]" : ""}</option>)}
                                   </select>
                                 </div>
                                 <div className="w-14">
                                   <label className="text-[8px] uppercase tracking-wider block mb-0.5" style={{ color: STEEL.dmLabel }}>Qty</label>
-                                  <input type="number" value={item.inventoryQuantity ?? 1} onChange={e => updateItem(shop.id, item.id, { inventoryQuantity: Number(e.target.value) || 1 })} min={1} className="w-full text-[10px] outline-none px-1.5 py-0.5 text-center" style={inputStyle} />
+                                  <input type="number" value={item.inventoryQuantity ?? 1} onChange={e => updateItem(shop.id, item.id, { inventoryQuantity: Math.max(1, wholeNumber(e.target.value, 1)) })} min={1} step={1} className="w-full text-[10px] outline-none px-1.5 py-0.5 text-center" style={inputStyle} />
                                 </div>
+                                <button type="button" onClick={() => { setItemCreatorTarget({ shopId: shop.id, itemId: item.id }); setShowItemCreator(true); }} className={`${retro.button} flex items-center gap-1 px-2 py-1 text-[9px]`} style={{ color: "#4AE0C0" }}><Plus size={9} />Create</button>
                               </div>
                             )}
                             <button onClick={() => setEditingItemId(null)} className={`flex items-center gap-1 px-2 py-1 text-[10px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Check size={10} />Done</button>
                           </div>
                         ) : (
                           <div style={DISPLAY_CONTENTS}>
+                            {item.imageUrl && <div className="mb-3 aspect-[16/7] overflow-hidden border" style={{ borderColor: borderShop, background: STEEL.bg2 }}><img src={item.imageUrl} alt="" className="h-full w-full object-cover" /></div>}
                             {/* Item header */}
                             <div className="flex items-start justify-between gap-2 mb-1">
                               <div className="flex-1 min-w-0">
                                 <span className="text-[12px] font-semibold block truncate" style={{ color: RARITY_COLORS[item.rarity] }}>{item.name}</span>
+                                {item.subtitle && <span className="mt-0.5 block truncate text-[9px]" style={{ color: shopTextMuted }}>{item.subtitle}</span>}
                                 <div className="flex items-center gap-1.5 mt-0.5">
                                   {renderRarityBadge(item.rarity)}
                                   {item.addsToInventory && (() => {
@@ -1813,6 +1792,8 @@ export function CommercePage() {
                             {item.description && (
                               <p className="text-[11px] leading-relaxed mb-2" style={{ color: shopTextMuted }}>{item.description}</p>
                             )}
+                            {(item.tags || []).length > 0 && <div className="mb-2 flex flex-wrap gap-1">{(item.tags || []).slice(0, 5).map((tag) => <span key={tag} className="border px-1.5 py-0.5 text-[8px]" style={{ borderColor: `${sc}35`, color: shopTextMuted }}>{tag}</span>)}</div>}
+                            {item.deliveryNote && <div className="mb-2 flex items-start gap-1.5 border border-[#275344] bg-[#07130F] px-2 py-1.5 text-[9px] text-[#72CF9F]"><Package size={10} className="mt-0.5 shrink-0" />{item.deliveryNote}</div>}
 
                             {/* DM notes */}
                             {isDM && item.notes && (
@@ -1825,6 +1806,7 @@ export function CommercePage() {
                             <div className="flex items-center justify-between mt-auto pt-1" style={{ borderTop: `1px solid ${borderShop}` }}>
                               <span className="text-[9px] font-mono" style={{ color: outOfStock ? "#FF5A5A" : shopTextMuted }}>
                                 {item.quantity < 0 ? "In Stock" : item.quantity === 0 ? "OUT OF STOCK" : `Qty: ${item.quantity}`}
+                                {item.purchaseLimit ? ` · Limit ${item.purchaseLimit}` : ""}
                               </span>
                               <div className="flex items-center gap-1">
                                 {!isDM && !outOfStock && shop.status !== "Closed" && (
@@ -1859,6 +1841,34 @@ export function CommercePage() {
   };
 
   // ═══════════════════════════════════════════
+  const renderCommerceNotice = () => {
+    if (!commerceError && !purchaseMessage) return null;
+    const failed = Boolean(commerceError);
+    return <div className="fixed left-1/2 top-3 z-[90] flex w-[min(92vw,560px)] -translate-x-1/2 items-center gap-3 border px-4 py-3 shadow-2xl" style={{ background: failed ? "#1B0A10" : "#081B12", borderColor: failed ? "#653443" : "#315B48", color: failed ? "#FF9AA8" : "#77D7A8" }}>
+      {failed ? <X size={14} className="shrink-0" /> : <Check size={14} className="shrink-0" />}
+      <span className="min-w-0 flex-1 text-[10px] leading-4">{commerceError || purchaseMessage}</span>
+      <button type="button" onClick={() => { setCommerceError(null); setPurchaseMessage(""); }} className="flex h-7 w-7 shrink-0 items-center justify-center border border-current/30" title="Dismiss message"><X size={11} /></button>
+    </div>;
+  };
+
+  const renderItemCreator = () => {
+    if (!showItemCreator || !isDM) return null;
+    return <div className="fixed inset-0 z-[70] overflow-y-auto bg-black/80 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowItemCreator(false); setItemCreatorTarget(null); } }}>
+      <div className="mx-auto max-w-[1400px] border border-[#39436A] bg-[#080820] p-4 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between border-b border-[#24244D] pb-3"><div><div className="text-[13px] font-semibold text-[#DCE5FF]">Create Reusable Commerce Item</div><div className="mt-1 text-[9px] text-[#737FA4]">This uses the same item authoring workflow as the DM Area and links the saved item to this product.</div></div><button type="button" onClick={() => { setShowItemCreator(false); setItemCreatorTarget(null); }} className="flex h-8 w-8 items-center justify-center border border-[#3A2A3A] text-[#FF8A99]" title="Close"><X size={14} /></button></div>
+        <DMItemManagerSection
+          players={[]}
+          managedItems={dmItemsCache as unknown as ManagedItem[]}
+          itemTags={itemTags}
+          onPersistItems={persistCommerceItems}
+          creationOnly
+          onCreatedItem={handleCommerceItemCreated}
+          onCancelCreation={() => { setShowItemCreator(false); setItemCreatorTarget(null); }}
+        />
+      </div>
+    </div>;
+  };
+
   // Cart sidebar
   // ═══════════════════════════════════════════
   const renderCart = () => {
@@ -1907,36 +1917,18 @@ export function CommercePage() {
             ))}
           </div>
           {cartItems.length > 0 && (() => {
-            // Compute per-currency totals
-            const currTotals = new Map<string, number>();
-            cartItems.forEach(ci => {
-              if (ci.item) currTotals.set(ci.item.currency, (currTotals.get(ci.item.currency) || 0) + ci.item.price * ci.quantity);
-            });
+            const total = cartItems.reduce((sum, entry) => sum + (entry.item?.price || 0) * entry.quantity, 0);
+            const canAfford = Boolean(creditAccount && creditAccount.balance >= total);
             return (
             <div className="px-4 py-3 space-y-3" style={{ borderTop: `1px solid ${STEEL.border}` }}>
-              <div className="space-y-1">
-                {Array.from(currTotals.entries()).map(([curr, total]) => {
-                  const invCurr = availableCurrencies.find(c => c.name === curr);
-                  const isInventoryCurrency = !!invCurr;
-                  const canAfford = !isInventoryCurrency || invCurr.quantity === -1 || invCurr.quantity >= total;
-                  return (
-                    <div key={curr} className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold" style={{ color: STEEL.text }}>{curr}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-mono font-bold" style={{ color: canAfford ? STEEL.gold : "#FF5A5A" }}>{total.toLocaleString()} {curr}</span>
-                        {isInventoryCurrency && (
-                          <span className="text-[9px] font-mono px-1 py-0.5" style={{ background: canAfford ? "#0A1A0A" : "#1A0808", border: `1px solid ${canAfford ? "#1A2A1A" : "#2A1515"}`, color: canAfford ? "#6ACA8A" : "#FF5A5A" }}>
-                            bal: {invCurr.quantity === -1 ? "∞" : invCurr.quantity.toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between"><span className="text-[10px]" style={{ color: STEEL.textMuted }}>Available</span><span className="text-[11px] font-mono" style={{ color: STEEL.gold }}>{(creditAccount?.balance || 0).toLocaleString()} CR</span></div>
+                <div className="flex items-center justify-between"><span className="text-[11px] font-semibold" style={{ color: STEEL.text }}>Order total</span><span className="text-[14px] font-mono font-bold" style={{ color: canAfford ? STEEL.gold : "#FF5A5A" }}>{total.toLocaleString()} CR</span></div>
+                {!canAfford && <div className="text-[9px] text-[#FF7777]">Insufficient Credits for this order.</div>}
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={checkout} className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Coins size={11} />Purchase</button>
-                <button onClick={clearCart} className={`flex items-center gap-1 px-3 py-2 text-[11px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Trash2 size={10} />Clear</button>
+                <button disabled={!canAfford || purchasing} onClick={() => void checkout()} className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-[11px] font-semibold disabled:opacity-40 ${retro.button}`} style={{ color: "#E0E4F0" }}>{purchasing ? <LoaderCircle size={11} className="animate-spin" /> : <Coins size={11} />}{purchasing ? "Processing" : "Purchase"}</button>
+                <button disabled={purchasing} onClick={clearCart} className={`flex items-center gap-1 px-3 py-2 text-[11px] font-semibold disabled:opacity-40 ${retro.button}`} style={{ color: "#E0E4F0" }}><Trash2 size={10} />Clear</button>
               </div>
             </div>
           ); })()}
@@ -1990,10 +1982,10 @@ export function CommercePage() {
   // ═══════════════════════════════════════════
 
   // Ledger view
-  if (showLedger) return <DndProvider backend={HTML5Backend} key="ledger"><div style={DISPLAY_CONTENTS}>{renderLedger()}{renderCart()}</div></DndProvider>;
+  if (showLedger) return <DndProvider backend={HTML5Backend} key="ledger"><div style={DISPLAY_CONTENTS}>{renderLedger()}{renderCart()}{renderItemCreator()}{renderCommerceNotice()}</div></DndProvider>;
 
   // Shop sub-page view
-  if (selectedShop) return <DndProvider backend={HTML5Backend} key="shop-sub"><div style={DISPLAY_CONTENTS}>{renderShopSubPage(selectedShop)}{renderCart()}</div></DndProvider>;
+  if (selectedShop) return <DndProvider backend={HTML5Backend} key="shop-sub"><div style={DISPLAY_CONTENTS}>{renderShopSubPage(selectedShop)}{renderCart()}{renderItemCreator()}{renderCommerceNotice()}</div></DndProvider>;
 
   // ── Shop listing (main page) ──
   return (
@@ -2023,6 +2015,11 @@ export function CommercePage() {
           <span className="text-[14px] font-bold tracking-wide" style={{ color: STEEL.accentBright }}>Commerce</span>
           <div className="flex-1" />
           {!isDM && (
+            <button onClick={() => navigate("/interface/credits")} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold ${retro.button}`} style={{ color: STEEL.gold }} title="Open Credits account">
+              <Coins size={12} />{(creditAccount?.balance || 0).toLocaleString()} CR
+            </button>
+          )}
+          {!isDM && (
             <button onClick={() => setShowCart(true)} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold relative ${retro.button}`} style={{ color: "#E0E4F0" }}>
               <ShoppingCart size={12} />Cart
               {cart.length > 0 && <span className="absolute -top-1.5 -right-1.5 w-4 h-4 flex items-center justify-center text-[8px] font-bold rounded-full" style={{ background: "#FF5A5A", color: "#fff" }}>{cart.length}</span>}
@@ -2030,7 +2027,12 @@ export function CommercePage() {
           )}
           <button onClick={() => setShowLedger(true)} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Scroll size={12} />Ledger</button>
           {isDM && (
-            <button onClick={() => { setCreatingShop(true); setDraftShop({}); }} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Plus size={12} />New Shop</button>
+            <div className="flex items-center gap-2">
+              <button disabled={!catalogDirty || catalogSaving} onClick={() => void persistCommerceCatalog()} className={`flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-semibold disabled:opacity-60 ${retro.button}`} style={{ color: catalogDirty ? "#F0D36B" : "#78C99A" }} title="Save Commerce catalog">
+                {catalogSaving ? <LoaderCircle size={11} className="animate-spin" /> : <Save size={11} />}{catalogSaving ? "Saving" : catalogDirty ? "Save" : "Saved"}
+              </button>
+              <button onClick={() => { setCreatingShop(true); setDraftShop({}); }} className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold ${retro.button}`} style={{ color: "#E0E4F0" }}><Plus size={12} />New Shop</button>
+            </div>
           )}
         </div>
 
@@ -2144,6 +2146,8 @@ export function CommercePage() {
         </div>
 
         {renderCart()}
+        {renderItemCreator()}
+        {renderCommerceNotice()}
         </div>
       </div>
     </DndProvider>

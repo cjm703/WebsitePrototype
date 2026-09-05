@@ -395,8 +395,8 @@ const APP_COLLECTIONS: Record<string, { write: AppWriteAccess; read?: AppWriteAc
   app_sites: { write: "dm" },
   app_custom_panel_styles: { write: "dm" },
   community_custom_reactions: { write: "dm" },
-  app_commerce_shops: { write: "authenticated" },
-  app_commerce_ledger: { write: "authenticated" },
+  app_commerce_shops: { write: "dm" },
+  app_commerce_ledger: { write: "dm" },
 };
 
 const APP_SINGLETONS: Record<string, { write: AppWriteAccess }> = {
@@ -908,21 +908,6 @@ function playerCanModifyBusinessMap(map: JsonRecord, playerId: string, action: "
   return action === "install" ? permissions.playerCanInstall !== false : permissions.playerCanRemove === true;
 }
 
-function officePersonalFunds(state: JsonRecord) {
-  if (!Array.isArray(state.personalFunds)) state.personalFunds = [];
-  return state.personalFunds as JsonRecord[];
-}
-
-function officePersonalFund(state: JsonRecord, playerId: string, create = false) {
-  const funds = officePersonalFunds(state);
-  let fund = funds.find((entry: any) => String(entry?.playerId || "") === playerId) || null;
-  if (!fund && create) {
-    fund = { playerId, balance: 0, currency: "CR", note: "", updatedAt: "", updatedBy: "" };
-    funds.push(fund);
-  }
-  return fund;
-}
-
 function boundedFacilityNumber(value: unknown, fallback = 0, min = -1000000000, max = 1000000000) {
   const number = Number(value);
   return Math.min(max, Math.max(min, Number.isFinite(number) ? number : fallback));
@@ -1132,10 +1117,78 @@ async function workshopStorageFor(playerId: string) {
   return normalizeWorkshopStorage(data?.data, playerId);
 }
 
-async function workshopPersonalFundsFor(playerId: string) {
-  const office = await loadOfficeStateRecord();
-  const fund = Array.isArray(office?.personalFunds) ? office.personalFunds.find((entry: any) => String(entry?.playerId || "") === playerId) : null;
-  return Math.max(0, Math.round(Number(fund?.balance) || 0));
+async function workshopCreditsFor(playerId: string) {
+  if (!playerId || playerId === "dm") return 0;
+  const { account } = await ensureCreditAccountRow(playerId);
+  return Math.max(0, Math.round(Number(account.balance) || 0));
+}
+
+function creditAccountResponse(row: any, player?: any) {
+  return {
+    playerId: String(row?.player_id || player?.id || ""),
+    playerName: String(player?.data?.name || player?.name || row?.player_id || "Player"),
+    balance: Math.max(0, Math.round(Number(row?.balance) || 0)),
+    currency: "CR",
+    updatedAt: String(row?.updated_at || ""),
+  };
+}
+
+function creditTransactionResponse(row: any) {
+  return {
+    id: String(row?.id || ""),
+    playerId: String(row?.player_id || ""),
+    amount: Math.round(Number(row?.amount) || 0),
+    balanceBefore: Math.max(0, Math.round(Number(row?.balance_before) || 0)),
+    balanceAfter: Math.max(0, Math.round(Number(row?.balance_after) || 0)),
+    category: String(row?.category || "adjustment"),
+    source: String(row?.source || "manual"),
+    reason: String(row?.reason || "Credit adjustment"),
+    actorId: String(row?.actor_id || "system"),
+    relatedId: String(row?.related_id || ""),
+    reversalOf: String(row?.reversal_of || ""),
+    metadata: row?.metadata && typeof row.metadata === "object" ? row.metadata : {},
+    createdAt: String(row?.created_at || ""),
+  };
+}
+
+async function ensureCreditAccountRow(playerId: string) {
+  const supabase = admin();
+  const { data: player, error: playerError } = await supabase
+    .from("app_players")
+    .select("id, data")
+    .eq("id", playerId)
+    .maybeSingle();
+  if (playerError) throw new Error(playerError.message);
+  if (!player || playerId === "dm") throw new Error("Player account was not found");
+  const { error: migrationError } = await supabase.rpc("wallet_migrate_player_legacy", { p_player_id: playerId });
+  if (migrationError) throw new Error(migrationError.message);
+  const { data, error } = await supabase
+    .from("player_credit_accounts")
+    .upsert({ player_id: playerId, currency: "CR" }, { onConflict: "player_id", ignoreDuplicates: true })
+    .select("player_id, balance, currency, updated_at")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data) return { account: data, player };
+  const { data: existing, error: readError } = await supabase
+    .from("player_credit_accounts")
+    .select("player_id, balance, currency, updated_at")
+    .eq("player_id", playerId)
+    .single();
+  if (readError) throw new Error(readError.message);
+  return { account: existing, player };
+}
+
+async function creditAccountBalance(playerId: string) {
+  const { account } = await ensureCreditAccountRow(playerId);
+  return Math.max(0, Math.round(Number(account.balance) || 0));
+}
+
+function creditFailureStatus(message: string) {
+  if (/session/i.test(message)) return 401;
+  if (/DM access only|Cannot view|permission/i.test(message)) return 403;
+  if (/not found/i.test(message)) return 404;
+  if (/Insufficient|negative|already been reversed|cannot be reversed|changed in another session|conflict|amount|reason|required|too large/i.test(message)) return 409;
+  return 500;
 }
 
 function workshopReservations(builds: WorkshopRecord[], excludedBuildId: string) {
@@ -1199,7 +1252,7 @@ function workshopFailureStatus(message: string) {
   if (/session/i.test(message)) return 401;
   if (/DM access only|not been granted|not assigned to this player/i.test(message)) return 403;
   if (/not found|not available/i.test(message)) return 404;
-  if (/changed on another client|only .* can|does not have enough|no longer available|not compatible|missing|required|must be/i.test(message)) return 409;
+  if (/changed on another client|only .* can|does not have enough|Insufficient Credits|no longer available|not compatible|missing|required|must be/i.test(message)) return 409;
   return 500;
 }
 
@@ -1216,6 +1269,179 @@ function registerRoutes(prefix: string) {
     return c.json({ status: "ok", prefix });
   });
 
+  app.get(`${prefix}/credits/account`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const requesterId = await resolveSessionPlayerId(c);
+      const requestedId = String(c.req.query("playerId") || requesterId).trim();
+      if (requesterId !== "dm" && requestedId !== requesterId) throw new Error("Cannot view another player's account");
+      const { account, player } = await ensureCreditAccountRow(requestedId);
+      const limit = Math.max(1, Math.min(200, Math.floor(Number(c.req.query("limit")) || 100)));
+      let query = admin()
+        .from("player_credit_transactions")
+        .select("*")
+        .eq("player_id", requestedId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      const before = String(c.req.query("before") || "").trim();
+      if (before) query = query.lt("created_at", before);
+      const { data: transactions, error } = await query;
+      if (error) throw new Error(error.message);
+      return c.json({
+        account: creditAccountResponse(account, player),
+        transactions: (transactions || []).map(creditTransactionResponse),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.get(`${prefix}/credits/accounts`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      await requireDMSession(c);
+      const supabase = admin();
+      const [{ data: players, error: playersError }, { data: accounts, error: accountsError }] = await Promise.all([
+        supabase.from("app_players").select("id, data").neq("id", "dm").order("id"),
+        supabase.from("player_credit_accounts").select("player_id, balance, currency, updated_at"),
+      ]);
+      if (playersError) throw new Error(playersError.message);
+      if (accountsError) throw new Error(accountsError.message);
+      const accountMap = new Map((accounts || []).map((row: any) => [row.player_id, row]));
+      const rows = [];
+      for (const player of players || []) {
+        let account = accountMap.get(player.id);
+        if (!account) account = (await ensureCreditAccountRow(player.id)).account;
+        rows.push(creditAccountResponse(account, player));
+      }
+      return c.json({ accounts: rows });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/credits/adjust`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const requesterId = await resolveSessionPlayerId(c);
+      const body = await c.req.json();
+      const targetId = String(body?.playerId || requesterId).trim();
+      if (requesterId !== "dm" && targetId !== requesterId) throw new Error("Cannot modify another player's account");
+      const amount = Math.trunc(Number(body?.amount));
+      const reason = String(body?.reason || "").trim();
+      if (!Number.isSafeInteger(amount) || amount === 0 || Math.abs(amount) > 1000000000000) throw new Error("A valid non-zero Credit amount is required");
+      if (reason.length < 2) throw new Error("A transaction reason is required");
+      await ensureCreditAccountRow(targetId);
+      const idempotencyKey = String(body?.idempotencyKey || `manual:${requesterId}:${crypto.randomUUID()}`).slice(0, 200);
+      const { data, error } = await admin().rpc("wallet_apply_transaction", {
+        p_player_id: targetId,
+        p_amount: amount,
+        p_category: requesterId === "dm" ? "dm-adjustment" : "player-adjustment",
+        p_source: "money-tracker",
+        p_reason: reason,
+        p_actor_id: requesterId,
+        p_related_id: null,
+        p_idempotency_key: idempotencyKey,
+        p_metadata: { selfReported: requesterId !== "dm" },
+      });
+      if (error) throw new Error(error.message);
+      return c.json({
+        ok: true,
+        account: creditAccountResponse(data?.account),
+        transaction: creditTransactionResponse(data?.transaction),
+        duplicate: Boolean(data?.duplicate),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/credits/reverse`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await requireDMSession(c);
+      const body = await c.req.json();
+      const transactionId = String(body?.transactionId || "").trim();
+      if (!transactionId) throw new Error("A transaction is required");
+      const reason = String(body?.reason || "DM reversal").trim();
+      const idempotencyKey = String(body?.idempotencyKey || `reversal:${transactionId}:${crypto.randomUUID()}`).slice(0, 200);
+      const { data, error } = await admin().rpc("wallet_reverse_transaction", {
+        p_transaction_id: transactionId,
+        p_actor_id: dmId,
+        p_reason: reason,
+        p_idempotency_key: idempotencyKey,
+      });
+      if (error) throw new Error(error.message);
+      return c.json({
+        ok: true,
+        account: creditAccountResponse(data?.account),
+        transaction: creditTransactionResponse(data?.transaction),
+        duplicate: Boolean(data?.duplicate),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/commerce/admin/catalog/save`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const dmId = await requireDMSession(c);
+      const body = await c.req.json();
+      const changes = Array.isArray(body?.changes) ? sanitizeStoredValue(body.changes) : [];
+      const deletions = Array.isArray(body?.deletions) ? sanitizeStoredValue(body.deletions) : [];
+      const { data, error } = await admin().rpc("wallet_save_commerce_catalog", {
+        p_changes: changes,
+        p_deletions: deletions,
+        p_actor_id: dmId,
+      });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, shops: Array.isArray(data?.shops) ? data.shops : [] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
+  app.post(`${prefix}/commerce/purchase`, async (c) => {
+    try {
+      const unauthorized = requireApiKey(c);
+      if (unauthorized) return unauthorized;
+      const playerId = await resolveSessionPlayerId(c);
+      if (playerId === "dm") throw new Error("The DM profile does not use a player Credits account");
+      const body = await c.req.json();
+      const cart = Array.isArray(body?.cart) ? body.cart.map((line: any) => ({
+        shopId: String(line?.shopId || "").trim().slice(0, 160),
+        itemId: String(line?.itemId || "").trim().slice(0, 160),
+        quantity: Math.min(999, Math.max(0, Math.floor(Number(line?.quantity) || 0))),
+      })) : [];
+      const idempotencyKey = String(body?.idempotencyKey || "").trim().slice(0, 200);
+      const { data: player, error: playerError } = await admin().from("app_players").select("data").eq("id", playerId).single();
+      if (playerError) throw new Error(playerError.message);
+      await ensureCreditAccountRow(playerId);
+      const { data, error } = await admin().rpc("wallet_commerce_purchase", {
+        p_player_id: playerId,
+        p_buyer_name: String(player?.data?.name || playerId),
+        p_cart: cart,
+        p_idempotency_key: idempotencyKey,
+      });
+      if (error) throw new Error(error.message);
+      return c.json(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, creditFailureStatus(message));
+    }
+  });
+
   app.get(`${prefix}/workshop/bootstrap`, async (c) => {
     try {
       const unauthorized = requireApiKey(c);
@@ -1223,12 +1449,12 @@ function registerRoutes(prefix: string) {
       const playerId = await resolveSessionPlayerId(c);
       await ensureWorkshopStarterCatalog();
       const access = await workshopAccessFor(playerId);
-      const [allBlueprints, allComponents, builds, storage, personalFunds, allRecipes] = await Promise.all([
+      const [allBlueprints, allComponents, builds, storage, credits, allRecipes] = await Promise.all([
         workshopDataRows("app_workshop_blueprints").then((rows) => rows.map(normalizeWorkshopBlueprint)),
         workshopDataRows("app_workshop_components").then((rows) => rows.map(normalizeWorkshopComponent)),
         workshopBuildRows(playerId),
         workshopStorageFor(playerId),
-        workshopPersonalFundsFor(playerId),
+        workshopCreditsFor(playerId),
         workshopDataRows("app_workshop_salvage_recipes").then((rows) => rows.map(normalizeWorkshopRecipe)),
       ]);
       return c.json({
@@ -1238,7 +1464,7 @@ function registerRoutes(prefix: string) {
         components: access.enabled ? allComponents.filter((entry) => entry.active) : [],
         builds: access.enabled ? builds : [],
         storage,
-        personalFunds,
+        credits,
         salvageRecipes: access.enabled ? allRecipes.filter((entry) => entry.active) : [],
       });
     } catch (err) {
@@ -1275,7 +1501,7 @@ function registerRoutes(prefix: string) {
         components,
         builds,
         storage: normalizeWorkshopStorage({}, "dm"),
-        personalFunds: await workshopPersonalFundsFor("dm"),
+        credits: await workshopCreditsFor("dm"),
         salvageRecipes: recipes,
         players,
         accessRows,
@@ -1483,6 +1709,7 @@ function registerRoutes(prefix: string) {
       if (!current) return c.json({ error: "Workshop build was not found" }, 404);
       if (current.status !== "building") return c.json({ error: "Only Building work orders can be completed" }, 409);
       if (current.revision !== expectedRevision) return c.json({ error: "Workshop build changed on another client", currentRevision: current.revision }, 409);
+      await ensureCreditAccountRow(current.playerId);
       const context = await workshopQuoteContext(current, false);
       if (!context.quote.ready) return c.json({ error: workshopBuildNeedsMessage(context.quote), quote: context.quote }, 409);
       const now = new Date().toISOString();
@@ -1498,7 +1725,7 @@ function registerRoutes(prefix: string) {
       return c.json({ ok: true, ...data });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, workshopFailureStatus(message));
+      return c.json({ error: /Insufficient Credits/i.test(message) ? "Player does not have enough Credits." : message }, workshopFailureStatus(message));
     }
   });
 
@@ -1700,28 +1927,30 @@ function registerRoutes(prefix: string) {
       const body = await c.req.json();
       const targetPlayerId = String(body?.playerId || "").trim();
       if (!targetPlayerId || targetPlayerId === "dm") return c.json({ error: "A valid player is required" }, 400);
-
-      const current = await loadOfficeStateRecord();
-      if (!current) return c.json({ error: "Office state is not available" }, 404);
-      const next = JSON.parse(JSON.stringify(current)) as JsonRecord;
-      const fund = officePersonalFund(next, targetPlayerId, true)!;
-      const currentBalance = Math.max(0, Math.round(Number(fund.balance) || 0));
+      const currentBalance = await creditAccountBalance(targetPlayerId);
       const hasBalance = Number.isFinite(Number(body?.balance));
       const hasDelta = Number.isFinite(Number(body?.delta));
-      if (!hasBalance && !hasDelta && typeof body?.note !== "string") {
-        return c.json({ error: "Provide a balance, adjustment, or note" }, 400);
-      }
+      if (!hasBalance && !hasDelta) return c.json({ error: "Provide a balance or adjustment" }, 400);
       const requested = hasBalance ? Number(body.balance) : currentBalance + Number(body.delta || 0);
-      fund.balance = Math.max(0, Math.min(1000000000, Math.round(requested)));
-      fund.currency = "CR";
-      if (typeof body?.note === "string") fund.note = String(body.note).slice(0, 300);
-      fund.updatedAt = new Date().toISOString();
-      fund.updatedBy = playerId;
-
-      const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
-      const stamped = stampOfficeState(next, playerId, currentRevision);
-      await persistOfficeStateRecord(stamped);
-      return c.json({ ok: true, state: stamped });
+      const nextBalance = Math.max(0, Math.min(9007199254740991, Math.round(requested)));
+      const amount = nextBalance - currentBalance;
+      if (amount === 0) {
+        return c.json({ ok: true, state: await loadOfficeStateRecord(), account: { playerId: targetPlayerId, balance: currentBalance, currency: "CR" } });
+      }
+      const reason = String(body?.note || "DM account adjustment").trim();
+      const { data, error } = await admin().rpc("wallet_apply_transaction", {
+        p_player_id: targetPlayerId,
+        p_amount: amount,
+        p_category: "dm-adjustment",
+        p_source: "company-accounts",
+        p_reason: reason,
+        p_actor_id: playerId,
+        p_related_id: null,
+        p_idempotency_key: `legacy-personal-funds:${targetPlayerId}:${crypto.randomUUID()}`,
+        p_metadata: { legacyEndpoint: true },
+      });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, state: await loadOfficeStateRecord(), account: creditAccountResponse(data?.account), transaction: creditTransactionResponse(data?.transaction) });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
@@ -1760,21 +1989,16 @@ function registerRoutes(prefix: string) {
       const ownerPlayerId = String(facility.ownerPlayerId || "").trim();
       let fundTransfer = 0;
       let unpaidCosts = 0;
+      let ownerBalance = 0;
       if (ownerPlayerId && ownerPlayerId !== "dm") {
-        const fund = officePersonalFund(next, ownerPlayerId, true)!;
-        const balance = Math.max(0, Math.round(Number(fund.balance) || 0));
+        ownerBalance = await creditAccountBalance(ownerPlayerId);
         if (netIncome >= 0) {
           fundTransfer = netIncome;
-          fund.balance = Math.min(1000000000, balance + netIncome);
         } else {
-          const debit = Math.min(balance, Math.abs(netIncome));
+          const debit = Math.min(ownerBalance, Math.abs(netIncome));
           fundTransfer = -debit;
           unpaidCosts = Math.max(0, Math.abs(netIncome) - debit);
-          fund.balance = balance - debit;
         }
-        fund.currency = "CR";
-        fund.updatedAt = new Date().toISOString();
-        fund.updatedBy = playerId;
       } else if (netIncome < 0) {
         unpaidCosts = Math.abs(netIncome);
       }
@@ -1819,12 +2043,25 @@ function registerRoutes(prefix: string) {
 
       const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
       const stamped = stampOfficeState(next, playerId, currentRevision);
-      await persistOfficeStateRecord(stamped);
-      return c.json({ ok: true, state: stamped, report });
+      const { data, error } = await admin().rpc("wallet_commit_office_state", {
+        p_expected_revision: currentRevision,
+        p_next_state: stamped,
+        p_player_id: ownerPlayerId,
+        p_amount: fundTransfer,
+        p_expected_balance: ownerBalance,
+        p_category: netIncome >= 0 ? "facility-income" : "facility-expense",
+        p_source: "facility-month",
+        p_reason: `${facility.name || "Facility"} Month ${currentMonth} accounting`,
+        p_actor_id: playerId,
+        p_related_id: report.id,
+        p_idempotency_key: `facility-month:${facilityId}:${currentMonth}`,
+        p_metadata: { facilityId, monthNumber: currentMonth, netIncome, unpaidCosts },
+      });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, state: data?.state || stamped, report, account: data?.wallet?.account ? creditAccountResponse(data.wallet.account) : null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
-      return c.json({ error: message }, status);
+      return c.json({ error: message }, creditFailureStatus(message));
     }
   });
 
@@ -1850,16 +2087,17 @@ function registerRoutes(prefix: string) {
         : null;
       if (!expansion) return c.json({ error: "Expansion project was not found" }, 404);
 
+      let walletAmount = 0;
+      let walletBalance = 0;
+      let walletReason = "Facility expansion completed";
       if (action === "fund") {
         if (String(facility.ownerPlayerId || "") !== playerId) return c.json({ error: "Only the assigned facility owner can fund this expansion" }, 403);
         if (expansion.status !== "available") return c.json({ error: "This expansion has already been funded" }, 409);
         const cost = Math.max(0, Math.round(Number(expansion.cost) || 0));
-        const fund = officePersonalFund(next, playerId, false);
-        const balance = Math.max(0, Math.round(Number(fund?.balance) || 0));
-        if (!fund || balance < cost) return c.json({ error: "Insufficient Personal Funds" }, 409);
-        fund.balance = balance - cost;
-        fund.updatedAt = new Date().toISOString();
-        fund.updatedBy = playerId;
+        walletBalance = await creditAccountBalance(playerId);
+        if (walletBalance < cost) return c.json({ error: "Insufficient Credits" }, 409);
+        walletAmount = -cost;
+        walletReason = `${facility.name || "Facility"}: ${expansion.name || "expansion"} funded`;
         expansion.status = "funded";
         expansion.fundedBy = playerId;
         expansion.fundedAt = new Date().toISOString();
@@ -1879,12 +2117,25 @@ function registerRoutes(prefix: string) {
 
       const currentRevision = Math.max(0, Math.floor(Number(current.revision) || 0));
       const stamped = stampOfficeState(next, playerId, currentRevision);
-      await persistOfficeStateRecord(stamped);
-      return c.json({ ok: true, state: stamped });
+      const { data, error } = await admin().rpc("wallet_commit_office_state", {
+        p_expected_revision: currentRevision,
+        p_next_state: stamped,
+        p_player_id: String(facility.ownerPlayerId || playerId),
+        p_amount: walletAmount,
+        p_expected_balance: walletBalance,
+        p_category: "facility-expansion",
+        p_source: "facility-expansion",
+        p_reason: walletReason,
+        p_actor_id: playerId,
+        p_related_id: expansionId,
+        p_idempotency_key: action === "fund" ? `facility-expansion:${facilityId}:${expansionId}:fund` : `facility-expansion:${facilityId}:${expansionId}:complete`,
+        p_metadata: { facilityId, expansionId, action },
+      });
+      if (error) throw new Error(error.message);
+      return c.json({ ok: true, state: data?.state || stamped, account: data?.wallet?.account ? creditAccountResponse(data.wallet.account) : null });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = /session/i.test(message) ? 401 : /DM access only/i.test(message) ? 403 : 500;
-      return c.json({ error: message }, status);
+      return c.json({ error: message }, creditFailureStatus(message));
     }
   });
 

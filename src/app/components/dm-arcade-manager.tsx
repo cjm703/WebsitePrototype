@@ -301,7 +301,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
   const inputStyle = { color: "#C0D0F0" } as const;
 
   const tabs: { id: ArcadeTab; label: string; icon: React.ElementType }[] = [
-    { id: "credits", label: "Credits", icon: Coins },
+    { id: "credits", label: "Arcade Credits", icon: Coins },
     { id: "colors", label: "Colors [C]", icon: Palette },
     { id: "colorpacks", label: "Color Packs [CP]", icon: Layers },
     { id: "stickers", label: "Badges [B]", icon: Sticker },
@@ -504,7 +504,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
         <div className="space-y-4">
           <div className={`${retro.raised} bg-[#0C0C30] p-4`}>
             <div className="text-[13px] font-bold mb-3" style={{ color: "#FFD700" }}>
-              <Coins size={14} className="inline mr-1.5" />{selectedPlayer?.name}'s Credits
+              <Coins size={14} className="inline mr-1.5" />{selectedPlayer?.name}'s Arcade Credits
             </div>
             <div className="flex items-center gap-3 mb-3">
               <label className="text-[11px]" style={labelStyle}>Balance:</label>
@@ -515,7 +515,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                 className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[13px] w-40 outline-none`}
                 style={{ color: "#FFD700", fontFamily: "'Courier New', monospace" }}
               />
-              <span className="text-[11px]" style={{ color: "#5A6A8A" }}>CR</span>
+              <span className="text-[11px]" style={{ color: "#5A6A8A" }}>AC</span>
             </div>
             <div className="flex gap-2 flex-wrap">
               <button onClick={() => updateCredits(credits + 100)} className={`${retro.button} px-3 py-1.5 text-[10px]`} style={{ color: "#4AE04A" }}>+100</button>
@@ -546,7 +546,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
               </div>
               <div className={`${retro.sunken} bg-[#0A0A28] p-2 text-center`}>
                 <div style={{ color: "#FFD700", fontSize: 16, fontWeight: 700 }}>{credits}</div>
-                <div>Credits</div>
+                <div>Arcade Credits</div>
               </div>
             </div>
           </div>
@@ -580,7 +580,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                     <span className="text-[11px] flex-1 min-w-0" style={{ color: isHidden ? "#5A4A4A" : "#C0D0F0" }}>
                       {color.name} <span style={{ color: "#5A6A8A", fontSize: 9 }}>{color.hex}</span>
                     </span>
-                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{color.price}CR</span>
+                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{color.price} AC</span>
                     <button onClick={() => toggleOwnedColor(color.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0" disabled={isHidden}
                       style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>
                       {isOwned ? "OWNED" : "GRANT"}
@@ -622,7 +622,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                   <div key={color.id} className="flex items-center gap-2 py-1 px-2 rounded" style={{ background: "#0A0A28" }}>
                     <div style={{ width: 16, height: 16, borderRadius: 3, background: color.hex, border: "1px solid rgba(255,255,255,0.15)", flexShrink: 0 }} />
                     <span className="text-[11px] flex-1" style={S_TEXT}>{color.name} <span style={{ color: "#5A6A8A", fontSize: 9 }}>{color.hex}</span></span>
-                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{color.price}CR</span>
+                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{color.price} AC</span>
                     <button onClick={() => toggleOwnedColor(color.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0"
                       style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>
                       {isOwned ? "OWNED" : "GRANT"}
@@ -661,7 +661,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                       {pack.colors.map((hex, i) => <div key={i} style={{ flex: 1, background: hex }} />)}
                     </div>
                     <span className="text-[11px] flex-1 min-w-0" style={{ color: isHidden ? "#5A4A4A" : "#C0D0F0" }}>{pack.name}</span>
-                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{pack.price}CR</span>
+                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{pack.price} AC</span>
                     <button onClick={() => toggleOwnedPack(pack.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0" disabled={isHidden}
                       style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>
                       {isOwned ? "OWNED" : "GRANT"}
@@ -702,7 +702,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                       {pack.colors.map((hex, i) => <div key={i} style={{ flex: 1, background: hex }} />)}
                     </div>
                     <span className="text-[11px] flex-1" style={S_TEXT}>{pack.name}</span>
-                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{pack.price}CR</span>
+                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{pack.price} AC</span>
                     <button onClick={() => toggleOwnedPack(pack.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0"
                       style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>
                       {isOwned ? "OWNED" : "GRANT"}
@@ -737,7 +737,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                   <div key={sticker.id} className="flex items-center gap-2 py-1.5 px-2 rounded" style={{ background: isHidden ? "#1A0A0A" : "#0A0A28", opacity: isHidden ? 0.5 : 1 }}>
                     <Sticker size={14} className="shrink-0" style={{ color: "#8A7A6A" }} />
                     <span className="text-[11px] flex-1 min-w-0" style={{ color: isHidden ? "#5A4A4A" : "#C0D0F0" }}>{sticker.name}</span>
-                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{sticker.price}CR</span>
+                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{sticker.price} AC</span>
                     <button onClick={() => toggleOwnedSticker(sticker.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0" disabled={isHidden}
                       style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>
                       {isOwned ? "OWNED" : "GRANT"}
@@ -772,7 +772,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                   <div key={sticker.id} className="flex items-center gap-2 py-1.5 px-2 rounded" style={{ background: "#0A0A28" }}>
                     <Sticker size={14} className="shrink-0" style={{ color: "#FFD700" }} />
                     <span className="text-[11px] flex-1" style={S_TEXT}>{sticker.name}</span>
-                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{sticker.price}CR</span>
+                    <span className="text-[9px] shrink-0" style={{ color: "#FFD700" }}>{sticker.price} AC</span>
                     <button onClick={() => toggleOwnedSticker(sticker.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0"
                       style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>
                       {isOwned ? "OWNED" : "GRANT"}
@@ -825,7 +825,7 @@ export function DMArcadeManager({ players }: DMArcadeManagerProps) {
                         <div className="text-[11px] font-bold" style={{ color: "#DA70D6" }}>{item.name}</div>
                         {item.description && <div className="text-[10px] mt-0.5" style={{ color: "#8A9ABF" }}>{item.description}</div>}
                       </div>
-                      <span className="text-[10px] shrink-0" style={{ color: "#FFD700" }}>{item.price} CR</span>
+                      <span className="text-[10px] shrink-0" style={{ color: "#FFD700" }}>{item.price} AC</span>
                       {selectedPlayerId && (
                         <button onClick={() => toggleOwnedMystery(item.id)} className="text-[9px] px-2 py-0.5 rounded shrink-0"
                           style={{ background: isOwned ? "#4AE04A20" : "#2A2A50", color: isOwned ? "#4AE04A" : "#5A6A8A", border: `1px solid ${isOwned ? "#4AE04A50" : "#3A3A5A"}` }}>

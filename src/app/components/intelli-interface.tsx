@@ -392,7 +392,7 @@ export function IntelliInterface() {
       name: "Commerce",
       path: "/interface/commerce",
       icon: Store,
-      description: "Shops, trade, and currency exchange",
+      description: "Shops, purchases, and item delivery",
       details: `Marketplace for buying and selling goods.`,
     },
     {

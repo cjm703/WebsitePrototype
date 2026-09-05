@@ -132,8 +132,8 @@ export const initialItemTags: TagDefinition[] = [
   { id: "itag-18", name: "Source Type: Ice", description: "Designates this source item as Ice-type source. Used for matching when cards consume source by type.", fields: [] },
   { id: "itag-19", name: "Source Type: Arcane", description: "Designates this source item as Arcane-type source. Used for matching when cards consume source by type.", fields: [] },
   { id: "itag-20", name: "Source Type: Divine", description: "Designates this source item as Divine-type source. Used for matching when cards consume source by type.", fields: [] },
-  { id: "itag-21", name: "Currency", description: "Marks this item as a currency. Currency items appear in shop currency selectors and can be spent at shops. The item's Quantity tag value represents the player's balance.", fields: [] },
-  { id: "itag-22", name: "Quantity", description: "Tracks a numeric quantity for this item. Used for stackable items, currency balances, and consumable counts.", fields: [{ id: "f-qty-1", name: "Amount", type: "number", min: 0, required: true, placeholder: "e.g. 1000" }] },
+  { id: "itag-21", name: "Currency", description: "Marks a physical currency or token kept as inventory. Player Credits use the separate audited account balance.", fields: [] },
+  { id: "itag-22", name: "Quantity", description: "Tracks a numeric quantity for stackable items, physical tokens, and consumable counts.", fields: [{ id: "f-qty-1", name: "Amount", type: "number", min: 0, required: true, placeholder: "e.g. 1000" }] },
 ];
 
 export const initialCardTags: TagDefinition[] = [

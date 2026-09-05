@@ -947,13 +947,13 @@ export function CustomizationPage() {
           </p>
         </div>
 
-        {/* Credits banner */}
+        {/* Arcade Credits banner */}
         <div className={`${retro.raised} p-3 mb-4 flex items-center gap-4 flex-wrap`} style={{ background: theme.panelBg }}>
           <Coins size={18} style={{ color: "#FFD700" }} />
           <div>
-            <div className="text-[10px]" style={{ color: theme.labelColor }}>Credits</div>
+            <div className="text-[10px]" style={{ color: theme.labelColor }}>Arcade Credits</div>
             <div className="text-[18px] font-bold" style={{ color: "#FFD700", fontFamily: "'Courier New', monospace" }}>
-              {isDM ? "∞" : credits.toLocaleString()} CR
+              {isDM ? "∞" : credits.toLocaleString()} AC
             </div>
           </div>
           {isDM && (
@@ -1755,7 +1755,7 @@ export function CustomizationPage() {
                         </div>
                         {!allOwned && (
                           <div className="text-[9px] mt-2" style={{ color: "#FFD700" }}>
-                            {pack.price} CR in Arcade Shop
+                            {pack.price} AC in Arcade Shop
                           </div>
                         )}
                       </div>
