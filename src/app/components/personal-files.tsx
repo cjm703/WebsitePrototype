@@ -18,6 +18,7 @@ import {
   collectLearnedMagicCardIds,
   collectLevelCardsForCards,
   collectMagicCardIds,
+  collectUnlockedNodeCardIds,
   getLevelCategoryCardIds,
   getLevelCategoryEntries,
   getLevelCategoryNumber,
@@ -607,6 +608,7 @@ export function PersonalFiles() {
   const [progressionSubTab, setProgressionSubTab] = useState<"level" | "magic">("level");
   const [cardsSubTab, setCardsSubTab] = useState<"cards" | "nodetrees">("cards");
   const [playerNodeTrees, setPlayerNodeTrees] = useState<NodeTree[]>([]);
+  const [nodeUnlocks, setNodeUnlocks] = useState<Record<string, string[]>>({});
   const currentUser = safeGetItem("inet-user") || "";
   const currentUserId = safeGetItem("inet-user-id") || "";
 
@@ -720,6 +722,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       setStatusEffects(playerState.statusEffects ?? []);
       setLevelCategories(normalizeLevelCategories(playerState.levelCategories ?? [], cards));
       setMagicLists(normalizeMagicLists(playerState.magicLists ?? []));
+      setNodeUnlocks((playerState.nodeUnlocks ?? {}) as Record<string, string[]>);
     } finally {
       setIsHydrating(false);
     }
@@ -930,16 +933,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
 
   const nodeGrantedCardIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const tree of playerAssignedNodeTrees) {
-      for (const node of tree.nodes) {
-        for (const cardId of node.cardIds) {
-          ids.add(cardId);
-        }
-      }
-    }
-    return ids;
-  }, [playerAssignedNodeTrees]);
+    return collectUnlockedNodeCardIds(playerAssignedNodeTrees, nodeUnlocks);
+  }, [nodeUnlocks, playerAssignedNodeTrees]);
 
   const allMagicCardIds = useMemo(
     () => collectMagicCardIds(normalizedMagicLists),
@@ -1366,16 +1361,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
   );
 
   const nodeTreeCardCount = useMemo(() => {
-    const ids = new Set<string>();
-    for (const tree of playerAssignedNodeTrees) {
-      for (const node of tree.nodes) {
-        for (const cardId of node.cardIds) {
-          if (allCardsById.has(cardId)) ids.add(cardId);
-        }
-      }
-    }
-    return ids.size;
-  }, [allCardsById, playerAssignedNodeTrees]);
+    return Array.from(nodeGrantedCardIds).filter((cardId) => allCardsById.has(cardId)).length;
+  }, [allCardsById, nodeGrantedCardIds]);
 
   const getCardSourceLabels = useCallback((cardId: string) => {
     return Array.from(cardSourceMap.get(cardId) || []);
@@ -6142,6 +6129,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         panelBorder: theme.panelBorder,
                       }}
                       cards={allCards.map(c => ({ id: c.id, name: c.name, type: c.type, effect: c.effect, actionCost: c.actionCost }))}
+                      onUnlocksChange={setNodeUnlocks}
                     />
                   )}
                 </div>

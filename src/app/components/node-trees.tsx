@@ -160,9 +160,10 @@ interface PlayerNodeTreeViewerProps {
     panelBorder: string;
   };
   cards: CardRef[];
+  onUnlocksChange?: (unlocks: Record<string, string[]>) => void;
 }
 
-export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeViewerProps) {
+export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }: PlayerNodeTreeViewerProps) {
   const [trees, setTrees] = useState<NodeTree[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +191,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
 
         setTrees(treeData);
         setUnlocks(unlockData);
+        onUnlocksChange?.(unlockData);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load node trees");
@@ -206,7 +208,7 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
     return () => {
       cancelled = true;
     };
-  }, [playerId]);
+  }, [playerId, onUnlocksChange]);
 
   const myTrees = useMemo(
     () => trees.filter((t) => t.assignedTo.includes(playerId) || t.assignedTo.includes("all")),
@@ -258,11 +260,12 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards }: PlayerNodeTreeV
         setError(null);
         await savePlayerState({ nodeUnlocks: newUnlocks });
         setUnlocks(newUnlocks);
+        onUnlocksChange?.(newUnlocks);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to unlock node");
       }
     },
-    [unlocks, selectedTreeId, playerId],
+    [unlocks, selectedTreeId, playerId, onUnlocksChange],
   );
 
   const selectedNode = activeTree?.nodes.find((n) => n.id === selectedNodeId) || null;
@@ -1544,4 +1547,3 @@ useEffect(() => {
     </div>
   );
 }
-

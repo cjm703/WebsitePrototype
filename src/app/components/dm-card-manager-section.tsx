@@ -6,11 +6,13 @@ import { renderTypedField as renderTypedFieldShared } from "./tag-field-renderer
 import {
   loadDMPlayerLevelCategories,
   loadDMPlayerMagicLists,
+  removeCardReferencesFromLocalDMPlacements,
   saveDMPlayerLevelCategories,
   saveDMPlayerMagicLists,
 } from "@/lib/player-state-api";
 import {
   createEmptyMagicList,
+  collectUnlockedNodeCardIds,
   getLevelCategoryEntries,
   getLevelCategoryNumber,
   isRaceLevelCategory,
@@ -540,6 +542,34 @@ function synchronizeCardNodeTrees(trees: NodeTree[], card: ManagedCard) {
     return { ...tree, nodes: nextNodes };
   });
   return { changed, nextTrees };
+}
+
+function removeCardFromNodeTrees(trees: NodeTree[], cardId: string) {
+  return trees.map((tree) => ({
+    ...tree,
+    nodes: tree.nodes.map((node) => ({
+      ...node,
+      cardIds: node.cardIds.filter((id) => id !== cardId),
+    })),
+  }));
+}
+
+function removeCardFromMagicLists(lists: PlayerMagicList[], cardId: string) {
+  return lists.map((list) => ({
+    ...list,
+    tiers: Object.fromEntries(
+      MAGIC_TIER_ORDER.map((tier) => [tier, (list.tiers[tier] || []).filter((id) => id !== cardId)]),
+    ) as PlayerMagicList["tiers"],
+    learnedCardIds: (list.learnedCardIds || []).filter((id) => id !== cardId),
+  }));
+}
+
+function removeCardFromLevelCategories(levels: LevelCategory[], cardId: string) {
+  return levels.map((level) => ({
+    ...level,
+    cardEntries: getLevelCategoryEntries(level).filter((entry) => entry.cardId !== cardId),
+    cardIds: Array.isArray(level.cardIds) ? level.cardIds.filter((id) => id !== cardId) : undefined,
+  }));
 }
 
 function getCardSummary(card: ManagedCard) {
@@ -1253,7 +1283,11 @@ const cardEditorTestApi = {
   getStoredRulesMode,
   parseStoredMechanicsBuilder,
   parseStoredSectionBlocks,
+  removeCardFromLevelCategories,
+  removeCardFromMagicLists,
+  removeCardFromNodeTrees,
   synchronizeCardNodeTrees,
+  collectUnlockedNodeCardIds,
   upsertManagedCard,
   withCardFamilyDefaults,
   withPersistedEditorStructure,
@@ -2174,6 +2208,14 @@ export function DMCardManagerSection({
   const [laCopyConfirm, setLaCopyConfirm] = useState(false);
   const [showRequirementsField, setShowRequirementsField] = useState(false);
   const editorBaselineRef = useRef("");
+  const magicSelectedPlayerIdRef = useRef("");
+  const levelSelectedPlayerIdRef = useRef("");
+  const magicSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const levelSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const magicTextSaveTimerRef = useRef<number | null>(null);
+  const levelTextSaveTimerRef = useRef<number | null>(null);
+  const pendingMagicTextSaveRef = useRef<{ playerId: string; lists: PlayerMagicList[] } | null>(null);
+  const pendingLevelTextSaveRef = useRef<{ playerId: string; categories: LevelCategory[] } | null>(null);
 
   const renderTypedField = useCallback((
     key: string,
@@ -2253,39 +2295,115 @@ export function DMCardManagerSection({
   );
   const hasUnsavedChanges = !!editingCard && currentEditorSnapshot !== editorBaselineRef.current;
 
+  const persistMagicListsForPlayer = useCallback((playerId: string, lists: PlayerMagicList[]) => {
+    const normalized = normalizeMagicLists(lists);
+    if (magicSelectedPlayerIdRef.current === playerId) setMagicLists(normalized);
+    const operation = magicSaveChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          setDmError(null);
+          await saveDMPlayerMagicLists(playerId, normalized);
+        } catch (err) {
+          setDmError(getSaveError(err, "Failed to save magic lists"));
+        }
+      });
+    magicSaveChainRef.current = operation;
+    return operation;
+  }, [setDmError]);
+
+  const flushMagicTextSave = useCallback(() => {
+    if (magicTextSaveTimerRef.current !== null) {
+      window.clearTimeout(magicTextSaveTimerRef.current);
+      magicTextSaveTimerRef.current = null;
+    }
+    const pending = pendingMagicTextSaveRef.current;
+    pendingMagicTextSaveRef.current = null;
+    if (pending) void persistMagicListsForPlayer(pending.playerId, pending.lists);
+  }, [persistMagicListsForPlayer]);
+
   const saveMagicLists = useCallback(async (lists: PlayerMagicList[]) => {
     if (!magicSelectedPlayerId) return;
-    try {
-      setDmError(null);
-      const normalized = normalizeMagicLists(lists);
-      await saveDMPlayerMagicLists(magicSelectedPlayerId, normalized);
-      setMagicLists(normalized);
-    } catch (err) {
-      setDmError(getSaveError(err, "Failed to save magic lists"));
-      throw err;
+    if (pendingMagicTextSaveRef.current?.playerId === magicSelectedPlayerId) {
+      if (magicTextSaveTimerRef.current !== null) window.clearTimeout(magicTextSaveTimerRef.current);
+      magicTextSaveTimerRef.current = null;
+      pendingMagicTextSaveRef.current = null;
     }
-  }, [magicSelectedPlayerId, setDmError]);
+    await persistMagicListsForPlayer(magicSelectedPlayerId, lists);
+  }, [magicSelectedPlayerId, persistMagicListsForPlayer]);
+
+  const queueMagicTextSave = useCallback((lists: PlayerMagicList[]) => {
+    if (!magicSelectedPlayerId) return;
+    setMagicLists(lists);
+    pendingMagicTextSaveRef.current = { playerId: magicSelectedPlayerId, lists };
+    if (magicTextSaveTimerRef.current !== null) window.clearTimeout(magicTextSaveTimerRef.current);
+    magicTextSaveTimerRef.current = window.setTimeout(flushMagicTextSave, 600);
+  }, [flushMagicTextSave, magicSelectedPlayerId]);
+
+  const persistLevelCategoriesForPlayer = useCallback((playerId: string, cats: LevelCategory[]) => {
+    const normalized = normalizeLevelCategories(
+      sortLevelCategories(cats).map((level, index) => ({ ...level, order: index })),
+      managedCards,
+    );
+    if (levelSelectedPlayerIdRef.current === playerId) setLevelCategories(normalized);
+    const operation = levelSaveChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          setDmError(null);
+          await saveDMPlayerLevelCategories(playerId, normalized);
+        } catch (err) {
+          setDmError(getSaveError(err, "Failed to save level categories"));
+        }
+      });
+    levelSaveChainRef.current = operation;
+    return operation;
+  }, [managedCards, setDmError]);
+
+  const flushLevelTextSave = useCallback(() => {
+    if (levelTextSaveTimerRef.current !== null) {
+      window.clearTimeout(levelTextSaveTimerRef.current);
+      levelTextSaveTimerRef.current = null;
+    }
+    const pending = pendingLevelTextSaveRef.current;
+    pendingLevelTextSaveRef.current = null;
+    if (pending) void persistLevelCategoriesForPlayer(pending.playerId, pending.categories);
+  }, [persistLevelCategoriesForPlayer]);
 
   const saveLevelCategories = useCallback(async (cats: LevelCategory[]) => {
     if (!laSelectedPlayerId) return;
-    try {
-      setDmError(null);
-      const normalized = normalizeLevelCategories(
-        sortLevelCategories(cats).map((level, index) => ({ ...level, order: index })),
-        managedCards,
-      );
-      await saveDMPlayerLevelCategories(laSelectedPlayerId, normalized);
-      setLevelCategories(normalized);
-    } catch (err) {
-      setDmError(getSaveError(err, "Failed to save level categories"));
-      throw err;
+    if (pendingLevelTextSaveRef.current?.playerId === laSelectedPlayerId) {
+      if (levelTextSaveTimerRef.current !== null) window.clearTimeout(levelTextSaveTimerRef.current);
+      levelTextSaveTimerRef.current = null;
+      pendingLevelTextSaveRef.current = null;
     }
-  }, [laSelectedPlayerId, managedCards, setDmError]);
+    await persistLevelCategoriesForPlayer(laSelectedPlayerId, cats);
+  }, [laSelectedPlayerId, persistLevelCategoriesForPlayer]);
+
+  const queueLevelTextSave = useCallback((cats: LevelCategory[]) => {
+    if (!laSelectedPlayerId) return;
+    setLevelCategories(cats);
+    pendingLevelTextSaveRef.current = { playerId: laSelectedPlayerId, categories: cats };
+    if (levelTextSaveTimerRef.current !== null) window.clearTimeout(levelTextSaveTimerRef.current);
+    levelTextSaveTimerRef.current = window.setTimeout(flushLevelTextSave, 600);
+  }, [flushLevelTextSave, laSelectedPlayerId]);
+
+  useEffect(() => {
+    magicSelectedPlayerIdRef.current = magicSelectedPlayerId;
+    return flushMagicTextSave;
+  }, [flushMagicTextSave, magicSelectedPlayerId]);
+
+  useEffect(() => {
+    levelSelectedPlayerIdRef.current = laSelectedPlayerId;
+    return flushLevelTextSave;
+  }, [flushLevelTextSave, laSelectedPlayerId]);
 
   const copyLevelCategoriesToAllPlayers = useCallback(async () => {
     if (!laSelectedPlayerId) return;
     try {
       setDmError(null);
+      flushLevelTextSave();
+      await levelSaveChainRef.current;
       const currentCats = normalizeLevelCategories(
         await loadDMPlayerLevelCategories(laSelectedPlayerId) as LevelCategory[],
         managedCards,
@@ -2299,7 +2417,7 @@ export function DMCardManagerSection({
     } catch (err) {
       setDmError(getSaveError(err, "Failed to copy level categories to all players"));
     }
-  }, [laSelectedPlayerId, managedCards, players, setDmError]);
+  }, [flushLevelTextSave, laSelectedPlayerId, managedCards, players, setDmError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2454,8 +2572,19 @@ export function DMCardManagerSection({
   const handleDeleteCard = async (id: string) => {
     try {
       setDmError(null);
+      flushMagicTextSave();
+      flushLevelTextSave();
+      await Promise.all([magicSaveChainRef.current, levelSaveChainRef.current]);
+
       const next = managedCards.filter((c) => c.id !== id);
       await onPersistCards(next);
+      const cleanedNodeTrees = removeCardFromNodeTrees(nodeTrees, id);
+      if (nodeTrees.some((tree) => tree.nodes.some((node) => node.cardIds.includes(id)))) {
+        await onPersistNodeTrees(cleanedNodeTrees);
+      }
+      setMagicLists((current) => removeCardFromMagicLists(current, id));
+      setLevelCategories((current) => removeCardFromLevelCategories(current, id));
+      removeCardReferencesFromLocalDMPlacements(id);
       if (editingCard?.id === id) {
         setEditingCard(null);
         setIsAddingNewCard(false);
@@ -4494,9 +4623,9 @@ export function DMCardManagerSection({
                                 <input
                                   value={list.name}
                                   onClick={(e) => e.stopPropagation()}
-                                  onChange={(e) => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, name: e.target.value } : entry))}
-                                  onBlur={() => setMagicEditingList(null)}
-                                  onKeyDown={(e) => { if (e.key === "Enter") setMagicEditingList(null); }}
+                                  onChange={(e) => queueMagicTextSave(magicLists.map((entry) => entry.id === list.id ? { ...entry, name: e.target.value } : entry))}
+                                  onBlur={() => { flushMagicTextSave(); setMagicEditingList(null); }}
+                                  onKeyDown={(e) => { if (e.key === "Enter") { flushMagicTextSave(); setMagicEditingList(null); } }}
                                   className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[13px] flex-1 outline-none`}
                                   style={{ color: "#8AB8FF" }}
                                   autoFocus
@@ -4535,13 +4664,13 @@ export function DMCardManagerSection({
                                 <div className="space-y-2">
                                   <textarea
                                     value={list.description || ""}
-                                    onChange={(e) => void saveMagicLists(magicLists.map((entry) => entry.id === list.id ? { ...entry, description: e.target.value } : entry))}
+                                    onChange={(e) => queueMagicTextSave(magicLists.map((entry) => entry.id === list.id ? { ...entry, description: e.target.value } : entry))}
                                     placeholder="Add notes for this magic list..."
                                     className={`${retro.sunken} bg-[#0A0A28] px-3 py-2 text-[11px] w-full outline-none resize-y min-h-[60px]`}
                                     style={{ color: "#C0D0F0" }}
                                     rows={3}
                                   />
-                                  <button onClick={() => setMagicEditingDesc(null)} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_ACCENT}>Done</button>
+                                  <button onClick={() => { flushMagicTextSave(); setMagicEditingDesc(null); }} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_ACCENT}>Done</button>
                                 </div>
                               ) : (
                                 <div className="text-[11px] cursor-pointer px-2 py-1.5 hover:bg-[#0A0A28] transition-colors" style={{ color: list.description ? "#C0D0F0" : "#4A5A7A", border: "1px dashed #1A1A4B" }} onClick={() => setMagicEditingDesc(list.id)}>
@@ -4865,9 +4994,9 @@ export function DMCardManagerSection({
                                   <input
                                     value={level.name}
                                     onClick={(e) => e.stopPropagation()}
-                                    onChange={(e) => void saveLevelCategories(levelCategories.map((lc) => lc.id === level.id ? { ...lc, name: e.target.value } : lc))}
-                                    onBlur={() => setLaEditingLevel(null)}
-                                    onKeyDown={async (e) => { if (e.key === "Enter") setLaEditingLevel(null); }}
+                                    onChange={(e) => queueLevelTextSave(levelCategories.map((lc) => lc.id === level.id ? { ...lc, name: e.target.value } : lc))}
+                                    onBlur={() => { flushLevelTextSave(); setLaEditingLevel(null); }}
+                                    onKeyDown={(e) => { if (e.key === "Enter") { flushLevelTextSave(); setLaEditingLevel(null); } }}
                                     className={`${retro.sunken} bg-[#0A0A28] px-2 py-1 text-[13px] flex-1 outline-none`}
                                     style={{ color: "#FFD700" }}
                                     autoFocus
@@ -4904,11 +5033,11 @@ export function DMCardManagerSection({
                                       <div className="space-y-2">
                                         <RichTextEditor
                                           value={level.description || ""}
-                                          onChange={(html) => void saveLevelCategories(levelCategories.map((lc) => lc.id === level.id ? { ...lc, description: html } : lc))}
+                                          onChange={(html) => queueLevelTextSave(levelCategories.map((lc) => lc.id === level.id ? { ...lc, description: html } : lc))}
                                           placeholder="Add a description, list, or progression notes for this section..."
                                           minHeight={140}
                                         />
-                                        <button onClick={() => setLaEditingDesc(null)} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_ACCENT}>Done</button>
+                                        <button onClick={() => { flushLevelTextSave(); setLaEditingDesc(null); }} className={`${retro.button} px-3 py-1 text-[10px]`} style={S_ACCENT}>Done</button>
                                       </div>
                                     ) : (
                                       <div className="text-[11px] cursor-pointer px-2 py-1.5 hover:bg-[#0A0A28] transition-colors" style={{ color: level.description ? "#C0D0F0" : "#4A5A7A", border: "1px dashed #1A1A4B" }} onClick={() => setLaEditingDesc(level.id)}>

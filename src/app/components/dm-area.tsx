@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useState, useEffect, useMemo, useCallback, useRe
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { appStore } from "@/lib/app-store";
-import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCards, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
+import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayers, loadDMItems, saveDMItems, loadDMCardsState, saveDMCards, loadDMInfos, saveDMInfos, loadDMNodeTrees, saveDMNodeTrees, loadDMNotifications, saveDMNotifications, loadDMInfoSubTabs, saveDMInfoSubTabs, loadDMCustomReactions, saveDMCustomReactions, loadDMTags, saveDMTags, deleteDMPlayer, purgeDMDeletedPlayer, clearDMDeletedPlayers } from "@/lib/player-state-api";
 import {
   ShieldAlert, Package, CreditCard, FileText, Users,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, ArrowLeft, ArrowRight,
@@ -674,7 +674,7 @@ useEffect(() => {
         statusTagData,
         wikiTagData,
         itemsData,
-        cardsData,
+        cardsState,
         infosData,
         infoSubTabData,
         notificationData,
@@ -689,7 +689,7 @@ useEffect(() => {
         loadDMTags<TagDefinition>("status"),
         loadDMTags<TagDefinition>("wiki"),
         loadDMItems() as Promise<ManagedItem[]>,
-        loadDMCards() as Promise<ManagedCard[]>,
+        loadDMCardsState<ManagedCard>(),
         loadDMInfos() as Promise<ManagedInfo[]>,
         loadDMInfoSubTabs() as Promise<InfoSubTab[]>,
         loadDMNotifications() as Promise<DMNotification[]>,
@@ -707,7 +707,9 @@ useEffect(() => {
       setStatusTags(statusTagData.length ? statusTagData : initialStatusTags);
       setWikiTags(wikiTagData.length ? wikiTagData : initialWikiTags);
       const nextManagedItems = itemsData.length ? itemsData : migrateAssignedTo(initialItems as ManagedItem[]);
-      const nextManagedCards = cardsData.length ? cardsData : migrateAssignedTo(initialCards as ManagedCard[]);
+      const nextManagedCards = cardsState.initialized
+        ? migrateAssignedTo(cardsState.cards)
+        : migrateAssignedTo(initialCards as ManagedCard[]);
       const rawManagedInfos = infosData.length ? infosData : migrateAssignedTo(initialInfos as ManagedInfo[]);
       const normalizedInfoSubTabs = sanitizeInfoSubTabsForLoad(infoSubTabData);
       const normalizedManagedInfos = sanitizeInfoDocumentsForLoad(rawManagedInfos, normalizedInfoSubTabs) as ManagedInfo[];

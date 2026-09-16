@@ -190,6 +190,7 @@ const authAttemptKey = (profileId: string, clientId: string) =>
   `inet-authattempt::${profileId}::${clientId}`;
 const pfpKey = (userId: string) => `inet-pfp::${userId}`;
 const playerMagicListsKey = (playerId: string) => `inet-player-magic-lists::${playerId}`;
+const dmCollectionInitializedKey = (collection: string) => `inet-dm-collection-initialized::${collection}`;
 const imageStorageKey = "inet-image-storage";
 const wikiBlockPresetsKey = "inet-wiki-block-presets";
 const wikiArticleRevisionsKey = "inet-wiki-article-revisions";
@@ -592,6 +593,108 @@ async function syncCollectionRows(
   }
 
   return now;
+}
+
+function withoutDeletedCardIds(values: unknown, deletedCardIds: Set<string>) {
+  return Array.isArray(values)
+    ? values.filter((value) => typeof value !== "string" || !deletedCardIds.has(value))
+    : values;
+}
+
+function cleanMagicListsCardReferences(raw: unknown, deletedCardIds: Set<string>) {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((list: any) => {
+    const sourceTiers = list?.tiers && typeof list.tiers === "object" ? list.tiers : {};
+    const tiers = Object.fromEntries(
+      Object.entries(sourceTiers).map(([tier, values]) => [
+        tier,
+        withoutDeletedCardIds(values, deletedCardIds),
+      ]),
+    );
+    return {
+      ...list,
+      tiers,
+      learnedCardIds: withoutDeletedCardIds(list?.learnedCardIds, deletedCardIds),
+    };
+  });
+}
+
+function cleanLevelCategoryCardReferences(raw: unknown, deletedCardIds: Set<string>) {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((category: any) => ({
+    ...category,
+    cardEntries: Array.isArray(category?.cardEntries)
+      ? category.cardEntries.filter((entry: any) => {
+          const cardId = typeof entry === "string" ? entry : entry?.cardId;
+          return typeof cardId !== "string" || !deletedCardIds.has(cardId);
+        })
+      : category?.cardEntries,
+    cardIds: withoutDeletedCardIds(category?.cardIds, deletedCardIds),
+  }));
+}
+
+async function cascadeDeletedCardReferences(cardIds: string[]) {
+  const deletedCardIds = new Set(cardIds.filter(Boolean));
+  if (deletedCardIds.size === 0) return;
+
+  const treeRows = await listCollectionRows("app_node_trees");
+  const changedTreeRows = treeRows
+    .map((tree: any) => {
+      let changed = false;
+      const nodes = Array.isArray(tree?.nodes)
+        ? tree.nodes.map((node: any) => {
+            const cardIds = withoutDeletedCardIds(node?.cardIds, deletedCardIds);
+            if (JSON.stringify(cardIds) !== JSON.stringify(node?.cardIds)) changed = true;
+            return { ...node, cardIds };
+          })
+        : tree?.nodes;
+      return changed ? { ...tree, nodes } : null;
+    })
+    .filter(Boolean) as Array<{ id: string; [key: string]: any }>;
+
+  if (changedTreeRows.length > 0) {
+    await syncCollectionRows("app_node_trees", changedTreeRows, []);
+  }
+
+  const supabase = admin();
+  const { data: levelRows, error: levelError } = await supabase
+    .from("player_level_categories")
+    .select("player_id, data");
+  if (levelError) throw new Error(levelError.message);
+
+  const now = new Date().toISOString();
+  const changedLevelRows = (levelRows ?? [])
+    .map((row: any) => {
+      const nextData = cleanLevelCategoryCardReferences(row.data, deletedCardIds);
+      return JSON.stringify(nextData) === JSON.stringify(row.data)
+        ? null
+        : { player_id: row.player_id, data: sanitizeStoredValue(nextData), updated_at: now };
+    })
+    .filter(Boolean);
+
+  if (changedLevelRows.length > 0) {
+    const { error } = await supabase
+      .from("player_level_categories")
+      .upsert(changedLevelRows, { onConflict: "player_id" });
+    if (error) throw new Error(error.message);
+  }
+
+  const { data: players, error: playersError } = await supabase.from("app_players").select("id");
+  if (playersError) throw new Error(playersError.message);
+  const magicKeys = (players ?? []).map((player: any) => playerMagicListsKey(player.id));
+  if (magicKeys.length === 0) return;
+
+  const magicValues = await kv.mget(magicKeys);
+  const changedMagicKeys: string[] = [];
+  const changedMagicValues: unknown[] = [];
+  magicValues.forEach((value, index) => {
+    const nextValue = cleanMagicListsCardReferences(value, deletedCardIds);
+    if (JSON.stringify(nextValue) !== JSON.stringify(value)) {
+      changedMagicKeys.push(magicKeys[index]);
+      changedMagicValues.push(nextValue);
+    }
+  });
+  if (changedMagicKeys.length > 0) await kv.mset(changedMagicKeys, changedMagicValues);
 }
 
 async function listWikiSiteRows() {
@@ -2815,6 +2918,14 @@ function registerRoutes(prefix: string) {
       const filteredDeleteIds =
         table === "app_players" ? deleteIds.filter((id: string) => id !== "dm") : deleteIds;
       const updatedAt = await syncCollectionRows(table, rows, filteredDeleteIds);
+      if (table === "app_cards") {
+        const requestedDeleteIds = explicitDeleteIds(
+          filteredDeleteIds,
+          rows.map((row: any) => typeof row?.id === "string" ? row.id.trim() : "").filter(Boolean),
+        );
+        await kv.set(dmCollectionInitializedKey("cards"), true);
+        await cascadeDeletedCardReferences(requestedDeleteIds);
+      }
       return c.json({ ok: true, updatedAt });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -4650,6 +4761,10 @@ function registerRoutes(prefix: string) {
       }
 
       const rows = await listCollectionRows(meta.table);
+      if (collection === "cards") {
+        const initialized = rows.length > 0 || await kv.get(dmCollectionInitializedKey(collection)) === true;
+        return c.json({ [meta.responseKey]: rows, initialized });
+      }
       return c.json({ [meta.responseKey]: rows });
     } catch (err) {
       return c.json({ error: String(err) }, 403);
@@ -4706,12 +4821,21 @@ function registerRoutes(prefix: string) {
         return c.json({ error: `${meta.requestKey} must be an array` }, 400);
       }
 
+      const requestedDeleteIds = explicitDeleteIds(
+        body?.deleteIds,
+        rows.map((row: any) => typeof row?.id === "string" ? row.id.trim() : "").filter(Boolean),
+      );
+
       await syncCollectionRows(
         meta.table,
         rows,
         body?.deleteIds,
         { revokeSessions: meta.revokeSessions },
       );
+      if (collection === "cards") {
+        await kv.set(dmCollectionInitializedKey(collection), true);
+        await cascadeDeletedCardReferences(requestedDeleteIds);
+      }
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

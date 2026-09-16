@@ -166,6 +166,30 @@ assert.deepEqual(synchronized.nextTrees[0].nodes[1].cardIds, ["other-card", "leg
 assert.equal(editor.getNodeCapacityState({ ...trees[0].nodes[1], cardIds: ["a", "b", "c"] }, "new-card").isFullForSelection, true, "A different card cannot enter a full node");
 assert.equal(editor.getNodeCapacityState({ ...trees[0].nodes[1], cardIds: ["a", "b", "legacy-card"] }, "legacy-card").isFullForSelection, false, "A card may keep its current full node assignment");
 
+const cleanedTrees = editor.removeCardFromNodeTrees(trees, "legacy-card");
+assert.deepEqual(cleanedTrees[0].nodes[0].cardIds, [], "Deleting a card must release its node-tree slot");
+
+const cleanedMagicLists = editor.removeCardFromMagicLists([{
+  id: "magic-a",
+  name: "Magic A",
+  order: 0,
+  tiers: { cantrip: ["legacy-card"], "1": [], "2": [], "3": [], "4": [], "5": [], "6": [], "7": [], "8": [] },
+  learnedCardIds: ["legacy-card"],
+}], "legacy-card");
+assert.deepEqual(cleanedMagicLists[0].tiers.cantrip, [], "Deleting a card must remove it from magic tiers");
+assert.deepEqual(cleanedMagicLists[0].learnedCardIds, [], "Deleting a card must remove its learned-magic reference");
+
+const cleanedLevels = editor.removeCardFromLevelCategories([{
+  id: "level-1",
+  name: "Level 1",
+  order: 0,
+  cardEntries: [{ cardId: "legacy-card", showInCards: true }],
+}], "legacy-card");
+assert.deepEqual(cleanedLevels[0].cardEntries, [], "Deleting a card must remove it from level rewards");
+
+const unlockedNodeCards = editor.collectUnlockedNodeCardIds(trees, { "tree-a": ["node-b"] });
+assert.deepEqual(Array.from(unlockedNodeCards), ["other-card"], "Only cards on unlocked nodes may be granted to a player");
+
 const invalid = makeCard({
   name: "",
   tags: ["Attack"],
@@ -193,4 +217,4 @@ const repaired = makeCard({
 const repairedIssues = editor.collectCardValidationIssues(repaired, emptyBuilder(), [], "manual", [], tags);
 assert.equal(repairedIssues.filter((issue) => issue.level === "error").length, 0, "A complete manual card with tags, rolls, and tracker must be saveable");
 
-console.log("Card editor verification passed: creation, editing, saves, tags, rolls, trackers, assignment, progression, and legacy data are intact.");
+console.log("Card editor verification passed: creation, editing, saves, tags, rolls, trackers, assignment, deletion cleanup, unlock gating, progression, and legacy data are intact.");
