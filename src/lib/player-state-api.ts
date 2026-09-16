@@ -9,8 +9,10 @@ import {
 export { ApiRequestError };
 const LOCAL_DM_LEVEL_CATEGORIES_KEY = "inet-dm-player-level-categories";
 const LEVEL_CATEGORIES_FALLBACK_STATE_KEY = "inet-dm-player-level-categories-fallback";
+const LEVEL_CATEGORIES_DIRTY_PLAYERS_KEY = "inet-dm-player-level-categories-dirty";
 const LOCAL_DM_MAGIC_LISTS_KEY = "inet-dm-player-magic-lists";
 const MAGIC_LISTS_FALLBACK_STATE_KEY = "inet-dm-player-magic-lists-fallback";
+const MAGIC_LISTS_DIRTY_PLAYERS_KEY = "inet-dm-player-magic-lists-dirty";
 const LOCAL_WIKI_BLOCK_PRESETS_KEY = "inet-wiki-block-presets";
 const LOCAL_WIKI_ARTICLE_REVISIONS_KEY = "inet-wiki-article-revisions";
 const IMAGE_STORAGE_FALLBACK_STATE_KEY = "inet-dm-image-storage-fallback";
@@ -22,6 +24,7 @@ const IMAGE_STORAGE_DEPLOYMENT_FALLBACK_COOLDOWN_MS = 5 * 60 * 1000;
 type DMTagKind = "item" | "card" | "info" | "status" | "wiki";
 type LocalLevelCategoryMap = Record<string, Record<string, unknown>[]>;
 type LocalMagicListMap = Record<string, Record<string, unknown>[]>;
+type LocalDirtyPlayerMap = Record<string, boolean>;
 type LocalCollectionFallbackState = {
   mode: "local";
   reason: "deployment" | "transient";
@@ -144,6 +147,15 @@ export const saveDMItems = (items: Record<string, unknown>[]) =>
   saveDMCollection("/dm/items/save", "items", items);
 
 export const loadDMCards = <T>() => loadDMCollection<T>("/dm/cards", "cards");
+export async function loadDMCardsState<T>() {
+  const body = await apiFetch("/dm/cards", { method: "GET" });
+  const cards = (body?.cards ?? []) as T[];
+  rememberCollectionSnapshot("/dm/cards", cards as Record<string, unknown>[]);
+  return {
+    cards,
+    initialized: body?.initialized === true || cards.length > 0,
+  };
+}
 export const saveDMCards = (cards: Record<string, unknown>[]) =>
   saveDMCollection("/dm/cards/save", "cards", cards);
 
@@ -267,6 +279,75 @@ function loadLocalDMPlayerLevelCategories(playerId: string) {
 function loadLocalDMPlayerMagicLists(playerId: string) {
   const stored = safeGetJson<LocalMagicListMap>(LOCAL_DM_MAGIC_LISTS_KEY, {});
   return Array.isArray(stored[playerId]) ? stored[playerId] : [];
+}
+
+function hasLocalPlayerRows(storageKey: string, playerId: string) {
+  const stored = safeGetJson<Record<string, unknown>>(storageKey, {});
+  return Array.isArray(stored[playerId]);
+}
+
+function isLocalPlayerDirty(
+  dirtyStorageKey: string,
+  fallbackStateKey: string,
+  localStorageKey: string,
+  playerId: string,
+) {
+  const dirtyPlayers = safeGetJson<LocalDirtyPlayerMap>(dirtyStorageKey, {});
+  if (dirtyPlayers[playerId]) return true;
+
+  // Backward compatibility: before dirty-player tracking existed, the only
+  // reason these local maps were populated was a fallback save. Preserve and
+  // upload those edits instead of silently replacing them with remote data.
+  const legacyFallbackState = safeGetJson<LocalCollectionFallbackState | null>(fallbackStateKey, null);
+  return legacyFallbackState?.mode === "local" && hasLocalPlayerRows(localStorageKey, playerId);
+}
+
+function setLocalPlayerDirty(storageKey: string, playerId: string, dirty: boolean) {
+  const current = safeGetJson<LocalDirtyPlayerMap>(storageKey, {});
+  if (dirty) {
+    safeSetJson(storageKey, { ...current, [playerId]: true });
+    return;
+  }
+
+  if (!(playerId in current)) return;
+  const next = { ...current };
+  delete next[playerId];
+  if (Object.keys(next).length === 0) safeRemoveItem(storageKey);
+  else safeSetJson(storageKey, next);
+}
+
+function isLevelCategoriesLocalDirty(playerId: string) {
+  return isLocalPlayerDirty(
+    LEVEL_CATEGORIES_DIRTY_PLAYERS_KEY,
+    LEVEL_CATEGORIES_FALLBACK_STATE_KEY,
+    LOCAL_DM_LEVEL_CATEGORIES_KEY,
+    playerId,
+  );
+}
+
+function isMagicListsLocalDirty(playerId: string) {
+  return isLocalPlayerDirty(
+    MAGIC_LISTS_DIRTY_PLAYERS_KEY,
+    MAGIC_LISTS_FALLBACK_STATE_KEY,
+    LOCAL_DM_MAGIC_LISTS_KEY,
+    playerId,
+  );
+}
+
+function markLevelCategoriesLocalDirty(playerId: string) {
+  setLocalPlayerDirty(LEVEL_CATEGORIES_DIRTY_PLAYERS_KEY, playerId, true);
+}
+
+function markMagicListsLocalDirty(playerId: string) {
+  setLocalPlayerDirty(MAGIC_LISTS_DIRTY_PLAYERS_KEY, playerId, true);
+}
+
+function clearLevelCategoriesLocalDirty(playerId: string) {
+  setLocalPlayerDirty(LEVEL_CATEGORIES_DIRTY_PLAYERS_KEY, playerId, false);
+}
+
+function clearMagicListsLocalDirty(playerId: string) {
+  setLocalPlayerDirty(MAGIC_LISTS_DIRTY_PLAYERS_KEY, playerId, false);
 }
 
 function loadLocalDMImageStorage() {
@@ -447,6 +528,61 @@ function saveLocalDMPlayerMagicLists(
   });
 }
 
+function removeCardFromLocalMagicRows(rows: Record<string, unknown>[], cardId: string) {
+  return rows.map((row) => {
+    const sourceTiers = row?.tiers && typeof row.tiers === "object"
+      ? row.tiers as Record<string, unknown>
+      : {};
+    const tiers = Object.fromEntries(
+      Object.entries(sourceTiers).map(([tier, values]) => [
+        tier,
+        Array.isArray(values) ? values.filter((value) => value !== cardId) : values,
+      ]),
+    );
+    const learnedCardIds = Array.isArray(row?.learnedCardIds)
+      ? row.learnedCardIds.filter((value) => value !== cardId)
+      : row?.learnedCardIds;
+    return { ...row, tiers, learnedCardIds };
+  });
+}
+
+function removeCardFromLocalLevelRows(rows: Record<string, unknown>[], cardId: string) {
+  return rows.map((row) => ({
+    ...row,
+    cardEntries: Array.isArray(row?.cardEntries)
+      ? row.cardEntries.filter((entry) => {
+          if (typeof entry === "string") return entry !== cardId;
+          return !entry || typeof entry !== "object" || (entry as { cardId?: unknown }).cardId !== cardId;
+        })
+      : row?.cardEntries,
+    cardIds: Array.isArray(row?.cardIds)
+      ? row.cardIds.filter((value) => value !== cardId)
+      : row?.cardIds,
+  }));
+}
+
+export function removeCardReferencesFromLocalDMPlacements(cardId: string) {
+  if (!cardId) return;
+
+  const magicByPlayer = safeGetJson<LocalMagicListMap>(LOCAL_DM_MAGIC_LISTS_KEY, {});
+  const nextMagicByPlayer = Object.fromEntries(
+    Object.entries(magicByPlayer).map(([playerId, rows]) => [
+      playerId,
+      removeCardFromLocalMagicRows(Array.isArray(rows) ? rows : [], cardId),
+    ]),
+  );
+  safeSetJson(LOCAL_DM_MAGIC_LISTS_KEY, nextMagicByPlayer);
+
+  const levelsByPlayer = safeGetJson<LocalLevelCategoryMap>(LOCAL_DM_LEVEL_CATEGORIES_KEY, {});
+  const nextLevelsByPlayer = Object.fromEntries(
+    Object.entries(levelsByPlayer).map(([playerId, rows]) => [
+      playerId,
+      removeCardFromLocalLevelRows(Array.isArray(rows) ? rows : [], cardId),
+    ]),
+  );
+  safeSetJson(LOCAL_DM_LEVEL_CATEGORIES_KEY, nextLevelsByPlayer);
+}
+
 function saveLocalDMImageStorage(images: Record<string, unknown>[]) {
   safeSetJson(IMAGE_STORAGE_LOCAL_KEY, images);
 }
@@ -569,6 +705,9 @@ export function getWikiBlockPresetsFallbackState() {
 
 export async function loadDMPlayerLevelCategories(playerId: string) {
   if (shouldUseLocalLevelCategoriesFallback()) {
+    if (hasLocalPlayerRows(LOCAL_DM_LEVEL_CATEGORIES_KEY, playerId)) {
+      markLevelCategoriesLocalDirty(playerId);
+    }
     return loadLocalDMPlayerLevelCategories(playerId);
   }
 
@@ -576,15 +715,31 @@ export async function loadDMPlayerLevelCategories(playerId: string) {
     const body = await apiFetch(`/dm/player-level-categories/${playerId}`, {
       method: "GET",
     });
+    const remoteRows = (body?.levelCategories ?? []) as Record<string, unknown>[];
 
+    if (isLevelCategoriesLocalDirty(playerId)) {
+      const localRows = loadLocalDMPlayerLevelCategories(playerId);
+      await apiFetch("/dm/player-level-categories/save", {
+        method: "POST",
+        body: JSON.stringify({ playerId, levelCategories: localRows }),
+      });
+      clearLevelCategoriesLocalDirty(playerId);
+      clearLocalLevelCategoriesFallback();
+      return localRows;
+    }
+
+    saveLocalDMPlayerLevelCategories(playerId, remoteRows);
     clearLocalLevelCategoriesFallback();
-    return (body?.levelCategories ?? []) as Record<string, unknown>[];
+    return remoteRows;
   } catch (err) {
     if (!shouldFallbackPlayerLevelCategories(err)) throw err;
     activateLocalLevelCategoriesFallback(
       isDeploymentLevelCategoriesFailure(err) ? "deployment" : "transient",
     );
     logLevelCategoriesFallback("load", err);
+    if (hasLocalPlayerRows(LOCAL_DM_LEVEL_CATEGORIES_KEY, playerId)) {
+      markLevelCategoriesLocalDirty(playerId);
+    }
     return loadLocalDMPlayerLevelCategories(playerId);
   }
 }
@@ -595,6 +750,7 @@ export async function saveDMPlayerLevelCategories(
 ) {
   if (shouldUseLocalLevelCategoriesFallback()) {
     saveLocalDMPlayerLevelCategories(playerId, levelCategories);
+    markLevelCategoriesLocalDirty(playerId);
     return;
   }
 
@@ -603,6 +759,8 @@ export async function saveDMPlayerLevelCategories(
       method: "POST",
       body: JSON.stringify({ playerId, levelCategories }),
     });
+    saveLocalDMPlayerLevelCategories(playerId, levelCategories);
+    clearLevelCategoriesLocalDirty(playerId);
     clearLocalLevelCategoriesFallback();
   } catch (err) {
     if (!shouldFallbackPlayerLevelCategories(err)) throw err;
@@ -611,11 +769,15 @@ export async function saveDMPlayerLevelCategories(
     );
     logLevelCategoriesFallback("save", err);
     saveLocalDMPlayerLevelCategories(playerId, levelCategories);
+    markLevelCategoriesLocalDirty(playerId);
   }
 }
 
 export async function loadDMPlayerMagicLists(playerId: string) {
   if (shouldUseLocalMagicListsFallback()) {
+    if (hasLocalPlayerRows(LOCAL_DM_MAGIC_LISTS_KEY, playerId)) {
+      markMagicListsLocalDirty(playerId);
+    }
     return loadLocalDMPlayerMagicLists(playerId);
   }
 
@@ -623,15 +785,31 @@ export async function loadDMPlayerMagicLists(playerId: string) {
     const body = await apiFetch(`/dm/player-magic-lists/${playerId}`, {
       method: "GET",
     });
+    const remoteRows = (body?.magicLists ?? []) as Record<string, unknown>[];
 
+    if (isMagicListsLocalDirty(playerId)) {
+      const localRows = loadLocalDMPlayerMagicLists(playerId);
+      await apiFetch("/dm/player-magic-lists/save", {
+        method: "POST",
+        body: JSON.stringify({ playerId, magicLists: localRows }),
+      });
+      clearMagicListsLocalDirty(playerId);
+      clearLocalMagicListsFallback();
+      return localRows;
+    }
+
+    saveLocalDMPlayerMagicLists(playerId, remoteRows);
     clearLocalMagicListsFallback();
-    return (body?.magicLists ?? []) as Record<string, unknown>[];
+    return remoteRows;
   } catch (err) {
     if (!shouldFallbackPlayerMagicLists(err)) throw err;
     activateLocalMagicListsFallback(
       isDeploymentMagicListsFailure(err) ? "deployment" : "transient",
     );
     logMagicListsFallback("load", err);
+    if (hasLocalPlayerRows(LOCAL_DM_MAGIC_LISTS_KEY, playerId)) {
+      markMagicListsLocalDirty(playerId);
+    }
     return loadLocalDMPlayerMagicLists(playerId);
   }
 }
@@ -642,6 +820,7 @@ export async function saveDMPlayerMagicLists(
 ) {
   if (shouldUseLocalMagicListsFallback()) {
     saveLocalDMPlayerMagicLists(playerId, magicLists);
+    markMagicListsLocalDirty(playerId);
     return;
   }
 
@@ -650,6 +829,8 @@ export async function saveDMPlayerMagicLists(
       method: "POST",
       body: JSON.stringify({ playerId, magicLists }),
     });
+    saveLocalDMPlayerMagicLists(playerId, magicLists);
+    clearMagicListsLocalDirty(playerId);
     clearLocalMagicListsFallback();
   } catch (err) {
     if (!shouldFallbackPlayerMagicLists(err)) throw err;
@@ -658,6 +839,7 @@ export async function saveDMPlayerMagicLists(
     );
     logMagicListsFallback("save", err);
     saveLocalDMPlayerMagicLists(playerId, magicLists);
+    markMagicListsLocalDirty(playerId);
   }
 }
 

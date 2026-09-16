@@ -270,3 +270,18 @@ export function collectLevelCardsForCards(levels: LevelCategory[]) {
   }
   return ids;
 }
+
+export function collectUnlockedNodeCardIds(
+  trees: Array<{ id: string; nodes: Array<{ id: string; cardIds: string[] }> }>,
+  unlocks: Record<string, string[]>,
+) {
+  const ids = new Set<string>();
+  for (const tree of trees) {
+    const unlockedNodeIds = new Set(unlocks[tree.id] || []);
+    for (const node of tree.nodes) {
+      if (!unlockedNodeIds.has(node.id)) continue;
+      for (const cardId of node.cardIds) ids.add(cardId);
+    }
+  }
+  return ids;
+}
