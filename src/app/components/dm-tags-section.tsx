@@ -18,7 +18,7 @@ import {
 } from "./initial-data";
 import type { TagField, TagDefinition } from "./types";
 
-type CardFamilyHint = "spell" | "skill" | "ability";
+type CardFamilyHint = "spell" | "skill" | "ability" | "sin";
 type CardPurposeHint = "attack" | "heal" | "support" | "utility" | "control" | "reaction" | "passive";
 type CardTargetHint = "self" | "ally" | "enemy" | "area";
 type CardCostHint = "source" | "exhaustion" | "uses-rest" | "passive";
@@ -188,6 +188,7 @@ const CARD_FAMILY_HINT_OPTIONS: Array<{ id: CardFamilyHint; label: string; accen
   { id: "spell", label: "Spell", accent: "#8AD4FF" },
   { id: "skill", label: "Skill", accent: "#4ACA6A" },
   { id: "ability", label: "Ability", accent: "#FF9A4A" },
+  { id: "sin", label: "SIN", accent: "#FF5A7A" },
 ];
 
 const CARD_PURPOSE_HINT_OPTIONS: Array<{ id: CardPurposeHint; label: string; accent: string }> = [
@@ -242,7 +243,7 @@ const CARD_PRESENTATION_VISIBILITY_OPTIONS: Array<{ id: CardPresentationVisibili
 
 function sanitizeCardFamilyHints(values: unknown): CardFamilyHint[] | undefined {
   if (!Array.isArray(values)) return undefined;
-  const valid = values.filter((value): value is CardFamilyHint => value === "spell" || value === "skill" || value === "ability");
+  const valid = values.filter((value): value is CardFamilyHint => value === "spell" || value === "skill" || value === "ability" || value === "sin");
   return valid.length ? Array.from(new Set(valid)) : undefined;
 }
 
@@ -761,6 +762,7 @@ function inferCardBridgeHints(tag: RichTagDefinition) {
   const textValue = `${tag.name} ${tag.description} ${tag.meta?.collection || ""} ${tag.meta?.group || ""}`.toLowerCase();
   const families = new Set<CardFamilyHint>();
   const purposes = new Set<CardPurposeHint>();
+  const isSin = /\bsin\b|emotional affinity|falsification/.test(textValue);
 
   if (/\battack\b|\bstrike\b|\bshot\b|\bblast\b|\bslash\b/.test(textValue)) purposes.add("attack");
   if (/\bheal\b|\brestore\b|\brecovery\b|\brevive\b/.test(textValue)) purposes.add("heal");
@@ -770,9 +772,10 @@ function inferCardBridgeHints(tag: RichTagDefinition) {
   if (/\breaction\b|\bcounter\b|\briposte\b/.test(textValue)) purposes.add("reaction");
   if (/\bpassive\b|\baura\b|\balways on\b/.test(textValue)) purposes.add("passive");
 
-  if (/\bspell\b|\bsource\b|\bmagic\b|\barcane\b|\blight\b|\bshadow\b|\btwilight\b|\bfire\b|\bice\b/.test(textValue)) families.add("spell");
-  if (/\bskill\b|\bmartial\b|\btechnique\b|\bstance\b|\btraining\b/.test(textValue)) families.add("skill");
-  if (/\bability\b|\binnate\b|\bblood\b|\blineage\b|\bgift\b|\bblessing\b/.test(textValue)) families.add("ability");
+  if (isSin) families.add("sin");
+  if (!isSin && /\bspell\b|\bsource\b|\bmagic\b|\barcane\b|\blight\b|\bshadow\b|\btwilight\b|\bfire\b|\bice\b/.test(textValue)) families.add("spell");
+  if (!isSin && /\bskill\b|\bmartial\b|\btechnique\b|\bstance\b|\btraining\b/.test(textValue)) families.add("skill");
+  if (!isSin && /\bability\b|\binnate\b|\bblood\b|\blineage\b|\bgift\b|\bblessing\b/.test(textValue)) families.add("ability");
 
   return {
     families: [...families],
@@ -782,6 +785,7 @@ function inferCardBridgeHints(tag: RichTagDefinition) {
 
 function inferCardCreationPreset(tag: RichTagDefinition) {
   const textValue = `${tag.name} ${tag.description} ${tag.meta?.collection || ""} ${tag.meta?.group || ""} ${(tag.meta?.recommendedCardFamilies || []).join(" ")} ${(tag.meta?.recommendedCardPurposes || []).join(" ")}`.toLowerCase();
+  const isSin = /\bsin\b|emotional affinity|falsification/.test(textValue) || (tag.meta?.recommendedCardFamilies || []).includes("sin");
   let targeting: CardTargetHint | undefined;
   let costModel: CardCostHint | undefined;
 
@@ -790,10 +794,11 @@ function inferCardCreationPreset(tag: RichTagDefinition) {
   else if (/\benemy\b|\bhostile\b|\battack\b|\bcontrol\b/.test(textValue)) targeting = "enemy";
   else if (/\barea\b|\bzone\b|\bradius\b|\bfield\b/.test(textValue)) targeting = "area";
 
-  if (/\bpassive\b|\baura\b|\balways on\b/.test(textValue) || (tag.meta?.recommendedCardPurposes || []).includes("passive")) costModel = "passive";
+  if (isSin) costModel = "uses-rest";
+  else if (/\bpassive\b|\baura\b|\balways on\b/.test(textValue) || (tag.meta?.recommendedCardPurposes || []).includes("passive")) costModel = "passive";
   else if (/\bsource\b|\bspell\b|\bmagic\b|\barcane\b/.test(textValue) || (tag.meta?.recommendedCardFamilies || []).includes("spell")) costModel = "source";
   else if (/\bexhaustion\b|\bmartial\b|\bskill\b|\btechnique\b/.test(textValue) || (tag.meta?.recommendedCardFamilies || []).includes("skill")) costModel = "exhaustion";
-  else if (/\buses per\b|\bper rest\b|\bability\b|\binnate\b|\bgift\b/.test(textValue) || (tag.meta?.recommendedCardFamilies || []).includes("ability")) costModel = "uses-rest";
+  else if (/\buses per\b|\bper rest\b|\bability\b|\binnate\b|\bgift\b|\bsin\b|emotional affinity/.test(textValue) || (tag.meta?.recommendedCardFamilies || []).some((family) => family === "ability" || family === "sin")) costModel = "uses-rest";
 
   let note = "";
   if ((tag.meta?.recommendedCardFamilies || []).length || (tag.meta?.recommendedCardPurposes || []).length) {
@@ -887,6 +892,7 @@ function inferPlayerSortOrder(tag: RichTagDefinition, profile: ReturnType<typeof
   if (profile.families.includes("spell")) return 80;
   if (profile.families.includes("skill")) return 90;
   if (profile.families.includes("ability")) return 100;
+  if (profile.families.includes("sin")) return 110;
   return tag.meta?.isDeprecated ? 999 : 120;
 }
 

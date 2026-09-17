@@ -1,6 +1,6 @@
 import type { ManagedCard, TagDefinition } from "./types";
 
-export type CardFamilyHint = "spell" | "skill" | "ability";
+export type CardFamilyHint = "spell" | "skill" | "ability" | "sin";
 export type CardPurposeHint = "attack" | "heal" | "support" | "utility" | "control" | "reaction" | "passive";
 export type CardTargetHint = "self" | "ally" | "enemy" | "area";
 export type CardCostHint = "source" | "exhaustion" | "uses-rest" | "passive";
@@ -133,6 +133,7 @@ function inferFamiliesAndPurposes(tag: RichTagDefinition) {
   const textValue = `${tag.name} ${tag.description} ${tag.meta?.collection || ""} ${tag.meta?.group || ""}`.toLowerCase();
   const families = new Set<CardFamilyHint>(tag.meta?.recommendedCardFamilies || []);
   const purposes = new Set<CardPurposeHint>(tag.meta?.recommendedCardPurposes || []);
+  const isSin = /\bsin\b|emotional affinity|falsification/.test(textValue);
 
   if (/\battack\b|\bstrike\b|\bshot\b|\bblast\b|\bslash\b/.test(textValue)) purposes.add("attack");
   if (/\bheal\b|\brestore\b|\brecovery\b|\brevive\b/.test(textValue)) purposes.add("heal");
@@ -142,9 +143,10 @@ function inferFamiliesAndPurposes(tag: RichTagDefinition) {
   if (/\breaction\b|\bcounter\b|\briposte\b/.test(textValue)) purposes.add("reaction");
   if (/\bpassive\b|\baura\b|\balways on\b/.test(textValue)) purposes.add("passive");
 
-  if (/\bspell\b|\bsource\b|\bmagic\b|\barcane\b|\blight\b|\bshadow\b|\btwilight\b|\bfire\b|\bice\b/.test(textValue)) families.add("spell");
-  if (/\bskill\b|\bmartial\b|\btechnique\b|\bstance\b|\btraining\b/.test(textValue)) families.add("skill");
-  if (/\bability\b|\binnate\b|\bblood\b|\blineage\b|\bgift\b|\bblessing\b/.test(textValue)) families.add("ability");
+  if (isSin) families.add("sin");
+  if (!isSin && /\bspell\b|\bsource\b|\bmagic\b|\barcane\b|\blight\b|\bshadow\b|\btwilight\b|\bfire\b|\bice\b/.test(textValue)) families.add("spell");
+  if (!isSin && /\bskill\b|\bmartial\b|\btechnique\b|\bstance\b|\btraining\b/.test(textValue)) families.add("skill");
+  if (!isSin && /\bability\b|\binnate\b|\bblood\b|\blineage\b|\bgift\b|\bblessing\b/.test(textValue)) families.add("ability");
 
   return { families: [...families], purposes: [...purposes] };
 }

@@ -106,7 +106,7 @@ interface SourceUsageEntry { id: string; cardName: string; sourceType: string; a
 interface ActivityLogEntry { id: string; action: "use" | "add" | "remove" | "balance"; category: "source" | "money" | "consumable"; itemName: string; detail: string; timestamp: number; }
 type CardSourceFilter = "all" | "direct" | "node" | "magic" | "level";
 type CardSourceLabel = "Direct" | "Node" | "Magic" | "Level";
-type CardPrimarySort = "all" | "spell" | "skill" | "ability";
+type CardPrimarySort = "all" | "spell" | "skill" | "ability" | "sin";
 type CardSecondarySort =
   | "default"
   | "level"
@@ -1370,7 +1370,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const getCardPrimaryFamily = useCallback((card: ManagedCard): CardPrimarySort => {
     const family = String(card.customFields["Card Family"] || "").trim().toLowerCase();
-    if (family === "spell" || family === "skill" || family === "ability") {
+    if (family === "spell" || family === "skill" || family === "ability" || family === "sin") {
       return family as CardPrimarySort;
     }
 
@@ -1378,6 +1378,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const type = String(card.type || "").trim().toLowerCase();
     const text = `${card.name} ${card.effect} ${card.tags.join(" ")}`.toLowerCase();
 
+    if (/\bsin\b|emotional affinity|falsification/.test(`${sourceType} ${type} ${text}`)) return "sin";
     if (/spell|cantrip|ritual/.test(sourceType) || /spell|cantrip|ritual/.test(type)) return "spell";
     if (/skill|technique|maneuver/.test(sourceType) || /skill|technique|maneuver/.test(type)) return "skill";
     if (/ability|passive|talent|feat/.test(sourceType) || /ability|passive|talent|feat/.test(type) || /passive|innate/.test(text)) return "ability";
@@ -2973,7 +2974,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
     // ── Source usage tracking ──
     const cardLevel = parseInt(card.customFields["Level"] || "0", 10);
-    if (cardLevel > 0) {
+    if (cardLevel > 0 && getCardPrimaryFamily(card) !== "sin") {
       // Determine source type from card tags: look for "Source Type: X" tag
       let usedSourceType = "All";
       for (const t of card.tags) {
@@ -2998,11 +2999,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
   const getPlayerCardFamilyLabel = (card: ManagedCard) => {
     const stored = (card.customFields?.["Card Family"] || "").trim().toLowerCase();
-    if (stored === "spell" || stored === "skill" || stored === "ability") return stored[0].toUpperCase() + stored.slice(1);
+    if (stored === "spell" || stored === "skill" || stored === "ability" || stored === "sin") return stored === "sin" ? "SIN" : stored[0].toUpperCase() + stored.slice(1);
     const blob = `${card.type || ""} ${card.effect || ""} ${card.tags.join(" ")}`.toLowerCase();
-    if (/(magical \(spell\)|spell|source magic)/.test(blob)) return "Spell";
-    if (/(ability|passive|innate|granted|lineage|blood)/.test(blob)) return "Ability";
-    if (/(skill|martial|technique|learned)/.test(blob)) return "Skill";
+    if (/\bsin\b|emotional affinity|falsification/.test(blob)) return "SIN";
+    if (/(magical \(spell\)|\bspell\b|source magic)/.test(blob)) return "Spell";
+    if (/(\bability\b|passive|innate|granted|lineage|blood)/.test(blob)) return "Ability";
+    if (/(\bskill\b|martial|technique|learned)/.test(blob)) return "Skill";
     return "";
   };
 
@@ -3114,7 +3116,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       timedEffectFields.length > 0 ? { title: "Timed Effect", accent: "#4ADE80", fields: timedEffectFields } : null,
       otherDetailFields.length > 0 ? { title: "More Details", accent: "#9A8CFF", fields: otherDetailFields } : null,
     ].filter(Boolean) as Array<{ title: string; accent: string; fields: Array<{ key: string; label: string; value: string }> }>;
-    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : theme.accentColor;
+    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : familyLabel === "SIN" ? "#FF5A7A" : theme.accentColor;
 
     return (
       <div className="space-y-4">
@@ -5213,7 +5215,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       <div className="flex items-center gap-2 mb-2">
                         <CreditCard size={18} style={{ color: "#FF7A5A" }} />
                         <h2 className="text-[16px]" style={{ color: "#FF7A5A", fontWeight: 600 }}>
-                          Ability Cards
+                          Character Cards
                         </h2>
                         <span className="text-[10px] px-1.5 py-0.5 ml-1" style={SUNKEN_INPUT_DIM}>
                           {filteredCards.length} card{filteredCards.length !== 1 ? "s" : ""}
@@ -5287,7 +5289,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       )}
 
-                      {renderSearchBar(cardSearch, setCardSearch, [], [], () => undefined, "Search ability cards...")}
+                      {renderSearchBar(cardSearch, setCardSearch, [], [], () => undefined, "Search cards...")}
 
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-4">
                         <div className={`${retro.sunken} bg-[#0C0C2E] p-3 space-y-3`}>
@@ -5299,6 +5301,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 { id: "spell" as const, label: "Spell" },
                                 { id: "skill" as const, label: "Skill" },
                                 { id: "ability" as const, label: "Ability" },
+                                { id: "sin" as const, label: "SIN" },
                               ]).map((option) => (
                                 <button
                                   key={option.id}
@@ -5463,7 +5466,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                       {filteredCards.length === 0 ? (
                         <div className="text-[12px] text-center py-6" style={S_MUTED}>
                           {playerCards.length === 0
-                            ? "No ability cards are available on this profile yet."
+                            ? "No character cards are available on this profile yet."
                             : "No cards match your search or filters."}
                         </div>
                       ) : (

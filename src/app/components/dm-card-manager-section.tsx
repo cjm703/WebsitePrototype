@@ -75,6 +75,7 @@ import {
 } from "./dm-styles";
 import { DISPLAY_CONTENTS } from "./shared-styles";
 import { applyStarterProfileToCard, buildStarterProfileFromTags, buildVisibleCardTagBadges } from "./tag-profile-integration";
+import { campaignAbilityPack, CAMPAIGN_ABILITY_PACK_VERSION } from "../data/campaign-ability-pack";
 
 interface DMCardManagerSectionProps {
   players: PlayerData[];
@@ -98,7 +99,7 @@ type DeliverySubTab = "players" | "node-trees" | "validation";
 type RulesWorkspaceTool = RulesSubTab | EffectsSubTab;
 type CardTemplateId = "blank" | "attack" | "heal" | "buff" | "debuff" | "reaction" | "passive" | "utility";
 type TagFilterMode = "all" | "active" | "withFields" | "simple";
-type CardFamily = "" | "spell" | "skill" | "ability";
+type CardFamily = "" | "spell" | "skill" | "ability" | "sin";
 type CardLibrarySortMode = "manual" | "name" | "player";
 type CardPreviewFocusRegion = "identity" | "description" | "rules" | "scaling" | "tags" | "tracking" | "quick-rolls" | "delivery" | null;
 type CardPreviewEditField = "identity" | "description" | "effect" | "scaling" | "tracker" | "quick-rolls" | `tag:${string}` | null;
@@ -238,6 +239,11 @@ const CARD_FAMILY_OPTIONS: CardFamilyDef[] = [
     label: "Ability",
     accent: "#C4A0FF",
   },
+  {
+    id: "sin",
+    label: "SIN",
+    accent: "#FF5A7A",
+  },
 ];
 
 const EMPTY_MECHANICS_BUILDER: MechanicsBuilderState = {
@@ -299,7 +305,7 @@ const CARD_TEMPLATES: CardTemplateDef[] = [
     type: "",
     actionCost: "",
     effect: "",
-    familyHints: ["spell", "skill", "ability"],
+    familyHints: ["spell", "skill", "ability", "sin"],
   },
   {
     id: "attack",
@@ -640,10 +646,11 @@ function isPlayerHiddenCustomFieldKey(key: string) {
 
 function getPlayerFacingCardFamilyLabel(card: ManagedCard) {
   const stored = (card.customFields?.[CARD_FAMILY_KEY] || "").trim().toLowerCase();
-  if (stored === "spell" || stored === "skill" || stored === "ability") {
-    return stored[0].toUpperCase() + stored.slice(1);
+  if (stored === "spell" || stored === "skill" || stored === "ability" || stored === "sin") {
+    return stored === "sin" ? "SIN" : stored[0].toUpperCase() + stored.slice(1);
   }
   const blob = `${card.type || ""} ${card.effect || ""} ${card.tags.join(" ")}`.toLowerCase();
+  if (/\bsin\b|emotional affinity|falsification/.test(blob)) return "SIN";
   if (/(magical \(spell\)|\bspell\b|source magic)/.test(blob)) return "Spell";
   if (/\bability\b|passive|innate|granted|lineage|blood/.test(blob)) return "Ability";
   if (/\bskill\b|martial|technique|learned/.test(blob)) return "Skill";
@@ -795,9 +802,10 @@ function getTemplateTags(cardTags: TagDefinition[], suggestedTags: string[] = []
 function getCardFamily(card: ManagedCard | null): CardFamily {
   if (!card) return "";
   const stored = (card.customFields?.[CARD_FAMILY_KEY] || "").trim().toLowerCase();
-  if (stored === "spell" || stored === "skill" || stored === "ability") return stored as CardFamily;
+  if (stored === "spell" || stored === "skill" || stored === "ability" || stored === "sin") return stored as CardFamily;
 
   const hintBlob = `${card.type} ${card.customFields?.["Source Type"] || ""} ${stripHtml(card.effect || "")}`.toLowerCase();
+  if (/\bsin\b|emotional affinity|falsification/.test(hintBlob)) return "sin";
   if (/(magical \(spell\)|spell|source magic)/.test(hintBlob)) return "spell";
   if (/(ability|passive|innate|granted|lineage|blood)/.test(hintBlob)) return "ability";
   if (/(skill|martial|technique|learned)/.test(hintBlob)) return "skill";
@@ -809,10 +817,48 @@ function getCardFamilyDef(family: CardFamily): CardFamilyDef | null {
 }
 
 function withCardFamilyDefaults(card: ManagedCard, family: CardFamily): ManagedCard {
+  const previousFamily = getCardFamily(card);
   const nextCustomFields: Record<string, string> = {
     ...card.customFields,
     [CARD_FAMILY_KEY]: family,
   };
+
+  // Replace only editor-generated profile values when changing families; authored values stay intact.
+  if (previousFamily && previousFamily !== family) {
+    const previousDefaults: Partial<Record<Exclude<CardFamily, "">, Record<string, string[]>>> = {
+      spell: {
+        [USE_PROFILE_MAGIC_NATURE_KEY]: ["Magical (Spell)"],
+        [USE_PROFILE_COST_MODEL_KEY]: ["Source"],
+        [USE_PROFILE_PRIMARY_COST_KEY]: ["Matching source", "Matching source equal to spell level", `${nextCustomFields["Level"] || ""} matching source`],
+        [USE_PROFILE_COMPONENTS_KEY]: ["V, S", "V, S, M"],
+        [USE_PROFILE_UPCAST_KEY]: ["Can spend additional matching source to raise the spell's level when allowed."],
+      },
+      skill: {
+        [USE_PROFILE_MAGIC_NATURE_KEY]: ["Non-magical or Magical (Non-spell)", "Non-spell Technique"],
+        [USE_PROFILE_COST_MODEL_KEY]: ["Exhaustion / Uses"],
+        [USE_PROFILE_PRIMARY_COST_KEY]: ["Usually 1-2 exhaustion", `Level ${nextCustomFields["Level"] || ""} technique cost`],
+        [USE_PROFILE_ORIGIN_KEY]: ["Learned / Taught"],
+      },
+      ability: {
+        [USE_PROFILE_MAGIC_NATURE_KEY]: ["Inherent or Granted (Non-spell)"],
+        [USE_PROFILE_COST_MODEL_KEY]: ["Uses / Exhaustion"],
+        [USE_PROFILE_PRIMARY_COST_KEY]: ["Often uses per long rest", "Usually limited uses per long rest"],
+        [USE_PROFILE_USES_KEY]: ["Usually proficiency-based or fixed uses per long rest"],
+        [USE_PROFILE_ORIGIN_KEY]: ["Innate / Granted"],
+        [USE_PROFILE_PASSIVE_MODE_KEY]: ["Passive, activatable passive, or triggered ability"],
+      },
+      sin: {
+        [USE_PROFILE_MAGIC_NATURE_KEY]: ["SIN (Neither Spell, Skill, nor Ability)"],
+        [USE_PROFILE_COST_MODEL_KEY]: ["Emotional activation / Uses"],
+        [USE_PROFILE_PRIMARY_COST_KEY]: ["Truthful emotional alignment and control"],
+        [USE_PROFILE_USES_KEY]: ["Defined by the individual SIN"],
+        [USE_PROFILE_ORIGIN_KEY]: ["Emotional awakening"],
+      },
+    };
+    for (const [key, values] of Object.entries(previousDefaults[previousFamily] || {})) {
+      if (values.includes(nextCustomFields[key])) delete nextCustomFields[key];
+    }
+  }
 
   const setFamilyDefault = (key: string, value: string) => {
     const existing = (nextCustomFields[key] || "").trim();
@@ -843,6 +889,14 @@ function withCardFamilyDefaults(card: ManagedCard, family: CardFamily): ManagedC
     setFamilyDefault(USE_PROFILE_USES_KEY, "Usually proficiency-based or fixed uses per long rest");
     setFamilyDefault(USE_PROFILE_ORIGIN_KEY, "Innate / Granted");
     setFamilyDefault(USE_PROFILE_PASSIVE_MODE_KEY, "Passive, activatable passive, or triggered ability");
+  }
+
+  if (family === "sin") {
+    setFamilyDefault(USE_PROFILE_MAGIC_NATURE_KEY, "SIN (Neither Spell, Skill, nor Ability)");
+    setFamilyDefault(USE_PROFILE_COST_MODEL_KEY, "Emotional activation / Uses");
+    setFamilyDefault(USE_PROFILE_PRIMARY_COST_KEY, "Truthful emotional alignment and control");
+    setFamilyDefault(USE_PROFILE_USES_KEY, "Defined by the individual SIN");
+    setFamilyDefault(USE_PROFILE_ORIGIN_KEY, "Emotional awakening");
   }
 
   return {
@@ -885,6 +939,12 @@ function createCardFromTemplate(template: CardTemplateDef, cardTags: TagDefiniti
     customFields[USE_PROFILE_COST_MODEL_KEY] = "Uses / Exhaustion";
     customFields[USE_PROFILE_PRIMARY_COST_KEY] = "Usually limited uses per long rest";
     customFields[USE_PROFILE_ORIGIN_KEY] = "Innate / Granted";
+  } else if (template.defaultFamily === "sin") {
+    customFields[USE_PROFILE_MAGIC_NATURE_KEY] = "SIN (Neither Spell, Skill, nor Ability)";
+    customFields[USE_PROFILE_COST_MODEL_KEY] = "Emotional activation / Uses";
+    customFields[USE_PROFILE_PRIMARY_COST_KEY] = "Truthful emotional alignment and control";
+    customFields[USE_PROFILE_USES_KEY] = "Defined by the individual SIN";
+    customFields[USE_PROFILE_ORIGIN_KEY] = "Emotional awakening";
   }
 
   return {
@@ -1200,7 +1260,7 @@ function collectCardValidationIssues(
   }
 
   if (!getCardFamily(card)) {
-    pushIssue({ id: "card-family", level: "warning", panel: "core", message: "Pick Spell, Skill, or Ability so the card profile can stay consistent." });
+    pushIssue({ id: "card-family", level: "warning", panel: "core", message: "Pick Spell, Skill, Ability, or SIN so the card profile can stay consistent." });
   }
 
   if (rulesMode === "guided") {
@@ -2207,6 +2267,8 @@ export function DMCardManagerSection({
   const [laEditingDesc, setLaEditingDesc] = useState<string | null>(null);
   const [laCopyConfirm, setLaCopyConfirm] = useState(false);
   const [showRequirementsField, setShowRequirementsField] = useState(false);
+  const [campaignImporting, setCampaignImporting] = useState(false);
+  const [campaignImportMessage, setCampaignImportMessage] = useState("");
   const editorBaselineRef = useRef("");
   const magicSelectedPlayerIdRef = useRef("");
   const levelSelectedPlayerIdRef = useRef("");
@@ -2593,6 +2655,245 @@ export function DMCardManagerSection({
       }
     } catch (err) {
       setDmError(getSaveError(err, "Failed to delete card"));
+    }
+  };
+
+  const handleImportCampaignAbilityPack = async () => {
+    if (!confirmDiscardUnsavedChanges("importing the campaign ability pack")) return;
+
+    const existingIds = new Set(managedCards.map((card) => card.id));
+    const seedsToImport = campaignAbilityPack.filter((seed) => !existingIds.has(seed.card.id));
+    const seedById = new Map(campaignAbilityPack.map((seed) => [seed.card.id, seed]));
+    const centralRulesRefreshIds = new Set([
+      "campaign-lotus-central-star-polaris",
+      "campaign-lotus-forgotten-star-emerald-crown",
+    ]);
+    const seaRulesRefreshIds = new Set([
+      "campaign-lotus-sea-blood-constitution",
+      "campaign-lotus-brackish-hold",
+      "campaign-lotus-seashape",
+      "campaign-lotus-trident-of-the-reef",
+    ]);
+    const seaDescriptionRefreshIds = new Set([
+      "campaign-lotus-seashape",
+      "campaign-lotus-trident-of-the-reef",
+    ]);
+    const easternRulesRefreshIds = new Set([
+      "campaign-lotus-astra-monkey",
+      "campaign-lotus-astra-goat",
+      "campaign-lotus-astra-pig",
+      "campaign-lotus-astra-dog",
+      "campaign-lotus-astra-erlang",
+    ]);
+    const westernRulesRefreshIds = new Set([
+      "campaign-lotus-astral-aegis-cancer",
+      "campaign-lotus-radiant-veil-virgo",
+    ]);
+    const faeEventideRulesRefreshIds = new Set([
+      "campaign-lotus-fae-circle-wild-hold",
+      "campaign-lotus-roots-beneath-skin",
+      "campaign-lotus-threadstep-tether",
+      "campaign-lotus-burning-bloom-refusal",
+      "campaign-lotus-twilights-decree",
+      "campaign-lotus-twilight-binding",
+      "campaign-lotus-horizons-lament",
+    ]);
+
+    setCampaignImporting(true);
+    setCampaignImportMessage("");
+    setDmError(null);
+
+    try {
+      const playerByName = new Map(players.map((player) => [player.name.trim().toLowerCase(), player]));
+      const nextTrees = nodeTrees.map((tree) => ({
+        ...tree,
+        assignedTo: [...tree.assignedTo],
+        nodes: tree.nodes.map((node) => ({
+          ...node,
+          cardIds: [...node.cardIds],
+          prerequisites: [...node.prerequisites],
+        })),
+        connections: tree.connections.map((connection) => ({ ...connection })),
+      }));
+      let treesChanged = false;
+      let migratedCardsCount = 0;
+      const missingPlayers = new Set<string>();
+      const missingNodes = new Set<string>();
+
+      const importedCards = seedsToImport.map((seed) => {
+        const owner = seed.ownerName === "Unassigned" ? undefined : playerByName.get(seed.ownerName.toLowerCase());
+        if (!owner && seed.ownerName !== "Unassigned") missingPlayers.add(seed.ownerName);
+
+        let nodeTreeId: string | undefined;
+        let nodeId: string | undefined;
+        if (owner && seed.nodeLabel) {
+          const normalizedNodeLabel = seed.nodeLabel.trim().toLowerCase();
+          const tree = nextTrees.find((entry) =>
+            (entry.assignedTo.includes(owner.id) || entry.assignedTo.includes("all"))
+            && entry.nodes.some((node) => node.label.trim().toLowerCase() === normalizedNodeLabel),
+          );
+          const node = tree?.nodes.find((entry) => entry.label.trim().toLowerCase() === normalizedNodeLabel);
+          if (tree && node && node.cardIds.length < 3) {
+            node.cardIds.push(seed.card.id);
+            nodeTreeId = tree.id;
+            nodeId = node.id;
+            treesChanged = true;
+          } else {
+            missingNodes.add(`${seed.ownerName}: ${seed.nodeLabel}`);
+          }
+        }
+
+        return {
+          ...seed.card,
+          tags: [...seed.card.tags],
+          assignedTo: [],
+          customFields: { ...seed.card.customFields },
+          ...(nodeTreeId && nodeId ? { nodeTreeId, nodeId } : {}),
+        } satisfies ManagedCard;
+      });
+
+      const migratedCards = managedCards.map((card) => {
+        const seed = seedById.get(card.id);
+        const importedVersion = card.customFields?.["__editor_import_pack"] || "";
+        if (!seed || !importedVersion || importedVersion === CAMPAIGN_ABILITY_PACK_VERSION) return card;
+
+        migratedCardsCount += 1;
+        const nextCustomFields = { ...card.customFields };
+        for (const key of [
+          CARD_FAMILY_KEY,
+          "Source Type",
+          USE_PROFILE_MAGIC_NATURE_KEY,
+          USE_PROFILE_COST_MODEL_KEY,
+          USE_PROFILE_PRIMARY_COST_KEY,
+          USE_PROFILE_USES_KEY,
+          USE_PROFILE_RANGE_KEY,
+          USE_PROFILE_DURATION_KEY,
+          USE_PROFILE_REQUIREMENTS_KEY,
+          USE_PROFILE_COMPONENTS_KEY,
+          USE_PROFILE_COMPONENT_DETAILS_KEY,
+          USE_PROFILE_UPCAST_KEY,
+          "__editor_import_pack",
+          "__editor_balance_rating",
+          "__editor_balance_status",
+          "__editor_balance_summary",
+        ]) {
+          nextCustomFields[key] = seed.card.customFields[key] || "";
+        }
+        const hasCentralRulesRevision = ["2026-09-17-draft-4", "2026-09-17-draft-5", "2026-09-17-draft-6", "2026-09-17-draft-7", "2026-09-17-draft-8", "2026-09-17-draft-9", "2026-09-17-draft-10"].includes(importedVersion);
+        const hasEmeraldDescriptionRevision = ["2026-09-17-draft-5", "2026-09-17-draft-6", "2026-09-17-draft-7", "2026-09-17-draft-8", "2026-09-17-draft-9", "2026-09-17-draft-10"].includes(importedVersion);
+        const hasSeaRevision = ["2026-09-17-draft-6", "2026-09-17-draft-7", "2026-09-17-draft-8", "2026-09-17-draft-9", "2026-09-17-draft-10"].includes(importedVersion);
+        const hasEasternRevision = ["2026-09-17-draft-8", "2026-09-17-draft-9", "2026-09-17-draft-10"].includes(importedVersion);
+        const hasWesternRevision = importedVersion === "2026-09-17-draft-10";
+        const shouldRefreshDescription = faeEventideRulesRefreshIds.has(card.id)
+          || (westernRulesRefreshIds.has(card.id) && !hasWesternRevision)
+          || (easternRulesRefreshIds.has(card.id) && !hasEasternRevision)
+          || (seaDescriptionRefreshIds.has(card.id) && !hasSeaRevision)
+          || (card.id === "campaign-lotus-forgotten-star-emerald-crown" && !hasEmeraldDescriptionRevision);
+        if (shouldRefreshDescription) {
+          nextCustomFields[CARD_DESCRIPTION_KEY] = seed.card.customFields[CARD_DESCRIPTION_KEY] || "";
+        }
+        const shouldRefreshCentralRules = centralRulesRefreshIds.has(card.id) && !hasCentralRulesRevision;
+        const shouldRefreshSeaRules = seaRulesRefreshIds.has(card.id) && !hasSeaRevision;
+        const shouldRefreshEasternRules = easternRulesRefreshIds.has(card.id) && !hasEasternRevision;
+        const shouldRefreshWesternRules = westernRulesRefreshIds.has(card.id) && !hasWesternRevision;
+        const shouldRefreshRules = faeEventideRulesRefreshIds.has(card.id) || shouldRefreshWesternRules || shouldRefreshEasternRules || shouldRefreshSeaRules || shouldRefreshCentralRules;
+        return {
+          ...card,
+          type: seed.card.type,
+          tags: Array.from(new Set([...card.tags, ...seed.card.tags])),
+          customFields: nextCustomFields,
+          ...(shouldRefreshRules ? {
+            actionCost: seed.card.actionCost,
+            effect: seed.card.effect,
+          } : {}),
+        };
+      });
+
+      const nextCards = [...migratedCards, ...importedCards];
+      if (importedCards.length > 0 || migratedCardsCount > 0) await onPersistCards(nextCards);
+      if (treesChanged) await onPersistNodeTrees(nextTrees);
+
+      for (const ownerName of ["Lotus", "Alice"] as const) {
+        const player = playerByName.get(ownerName.toLowerCase());
+        if (!player) continue;
+        const ownerSeeds = campaignAbilityPack.filter((seed) => seed.ownerName === ownerName);
+
+        const rawCategories = await loadDMPlayerLevelCategories(player.id) as LevelCategory[];
+        const categories = normalizeLevelCategories(rawCategories, nextCards);
+        let categoriesChanged = false;
+        for (const seed of ownerSeeds.filter((entry) => entry.levelCategory && !entry.nodeLabel)) {
+          const categoryName = seed.levelCategory!;
+          let category = categories.find((entry) => entry.name.trim().toLowerCase() === categoryName.trim().toLowerCase());
+          if (!category) {
+            const parsedLevel = getLevelCategoryNumber(categoryName);
+            category = {
+              id: `campaign-${ownerName.toLowerCase()}-${categoryName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+              name: categoryName,
+              order: parsedLevel ?? (categories.reduce((max, entry) => Math.max(max, entry.order), -1) + 1),
+              description: "Imported campaign abilities. Review the linked cards in Manage Cards before play.",
+              cardEntries: [],
+            };
+            categories.push(category);
+            categoriesChanged = true;
+          }
+          if (!getLevelCategoryEntries(category).some((entry) => entry.cardId === seed.card.id)) {
+            category.cardEntries = [
+              ...getLevelCategoryEntries(category),
+              {
+                cardId: seed.card.id,
+                showInCards: !seed.magicStage && !/passive/i.test(`${seed.card.type} ${seed.card.actionCost}`),
+              },
+            ];
+            categoriesChanged = true;
+          }
+        }
+        if (categoriesChanged) {
+          await saveDMPlayerLevelCategories(player.id, sortLevelCategories(categories) as unknown as Record<string, unknown>[]);
+        }
+
+        const magicSeeds = ownerSeeds.filter((seed) => seed.magicStage && seed.magicListName);
+        if (magicSeeds.length > 0) {
+          const rawLists = await loadDMPlayerMagicLists(player.id) as PlayerMagicList[];
+          const lists = normalizeMagicLists(rawLists);
+          let listsChanged = false;
+          for (const seed of magicSeeds) {
+            let list = lists.find((entry) => entry.name.trim().toLowerCase() === seed.magicListName!.trim().toLowerCase());
+            if (!list) {
+              list = {
+                ...createEmptyMagicList(seed.magicListName!, lists.length),
+                id: `campaign-${ownerName.toLowerCase()}-${seed.magicListName!.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+                description: "Campaign spell list organized by the Eight Stages of Magic.",
+              };
+              lists.push(list);
+              listsChanged = true;
+            }
+            const tier = seed.magicStage!;
+            if (!list.tiers[tier].includes(seed.card.id)) {
+              list.tiers = {
+                ...list.tiers,
+                [tier]: [...list.tiers[tier], seed.card.id],
+              };
+              listsChanged = true;
+            }
+          }
+          if (listsChanged) {
+            await saveDMPlayerMagicLists(player.id, lists as unknown as Record<string, unknown>[]);
+          }
+        }
+      }
+
+      const notes = [
+        importedCards.length > 0 ? `Imported ${importedCards.length} campaign card${importedCards.length === 1 ? "" : "s"}.` : "No new cards were needed.",
+        migratedCardsCount > 0 ? `Updated the classification profile on ${migratedCardsCount} earlier imported card${migratedCardsCount === 1 ? "" : "s"}.` : "",
+        importedCards.length === 0 && migratedCardsCount === 0 ? `Campaign pack ${CAMPAIGN_ABILITY_PACK_VERSION} was already current; level and magic lists were checked.` : "",
+        missingPlayers.size > 0 ? `Missing player profiles: ${Array.from(missingPlayers).join(", ")}.` : "",
+        missingNodes.size > 0 ? `Unlinked nodes: ${Array.from(missingNodes).join(", ")}.` : "",
+      ].filter(Boolean);
+      setCampaignImportMessage(notes.join(" "));
+    } catch (err) {
+      setDmError(getSaveError(err, "Failed to import the campaign ability pack"));
+    } finally {
+      setCampaignImporting(false);
     }
   };
 
@@ -3201,6 +3502,10 @@ export function DMCardManagerSection({
     const isSpell = currentFamily === "spell";
     const isPassive = /passive/i.test(`${editingCard.type} ${editingCard.actionCost} ${editingCard.customFields[USE_PROFILE_PASSIVE_MODE_KEY] || ""}`);
     const isReaction = /reaction/i.test(`${editingCard.type} ${editingCard.actionCost}`);
+    const balanceRating = (editingCard.customFields["__editor_balance_rating"] || "").trim();
+    const balanceStatus = (editingCard.customFields["__editor_balance_status"] || "").trim();
+    const balanceSummary = (editingCard.customFields["__editor_balance_summary"] || "").trim();
+    const balanceAccent = balanceRating.startsWith("+2") ? "#FF7A7A" : balanceRating.startsWith("+") ? "#FFD070" : balanceRating.startsWith("-") ? "#8AB8FF" : "#7ACA8A";
 
     return (
       <div className="space-y-4">
@@ -3216,6 +3521,19 @@ export function DMCardManagerSection({
             <Settings size={11} /> {showAdvancedProfile ? "Hide Advanced" : "Advanced Profile"}
           </button>
         </div>
+
+        {balanceRating && (
+          <div className={`${retro.sunken} bg-[#0C0C2E] p-4`} style={editorSurfaceStyle(balanceAccent)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[10px]" style={S_SECTION_HDR}>DM BALANCE REVIEW</div>
+              <span className="text-[10px] px-2 py-1" style={sectionBadgeStyle(balanceAccent)}>
+                {balanceRating} {balanceStatus ? `| ${balanceStatus}` : ""}
+              </span>
+            </div>
+            {balanceSummary && <div className="text-[11px] mt-2 leading-relaxed" style={S_SUBTLE}>{balanceSummary}</div>}
+            <div className="text-[9px] mt-2" style={S_MUTED}>DM-only metadata; this review is hidden from player cards.</div>
+          </div>
+        )}
 
         {(
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-4`} style={editorSurfaceStyle("#4A7BFF")}>
@@ -3322,6 +3640,27 @@ export function DMCardManagerSection({
           </div>
         )}
 
+        {currentFamily === "sin" && (
+          <div className={`${retro.sunken} bg-[#0C0C2E] p-5 space-y-3`} style={editorSurfaceStyle("#FF5A7A")}>
+            <div className="text-[10px]" style={S_SECTION_HDR}>SIN PROFILE</div>
+            <div className="text-[10px]" style={S_SUBTLE}>SINs use emotional activation and falsification, not spell stages or automatic Source costs.</div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] block mb-1" style={labelStyle}>Emotional Affinity:</label>
+                <input type="text" value={editingCard.customFields["SIN::Emotional Affinity"] || ""} onChange={(e) => updateCardCustomField("SIN::Emotional Affinity", e.target.value)} placeholder="e.g., Pride" className={inputClass} style={inputStyle} />
+              </div>
+              <div>
+                <label className="text-[10px] block mb-1" style={labelStyle}>Activation:</label>
+                <input type="text" value={editingCard.customFields["SIN::Activation"] || ""} onChange={(e) => updateCardCustomField("SIN::Activation", e.target.value)} placeholder="e.g., Raise the Curtains" className={inputClass} style={inputStyle} />
+              </div>
+              <div className="xl:col-span-2">
+                <label className="text-[10px] block mb-1" style={labelStyle}>Falsification:</label>
+                <textarea value={editingCard.customFields["SIN::Falsification"] || ""} onChange={(e) => updateCardCustomField("SIN::Falsification", e.target.value)} placeholder="What happens when control or emotional truth fails?" rows={3} className={`${inputClass} resize-y`} style={inputStyle} />
+              </div>
+            </div>
+          </div>
+        )}
+
         {showAdvancedProfile && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={editorSurfaceStyle("#8AB8FF")}>
             <div className="grid grid-cols-1 gap-4">
@@ -3329,11 +3668,11 @@ export function DMCardManagerSection({
                 <div>
                   <div className="text-[10px] mb-2" style={S_SECTION_HDR}>PROFILE OVERRIDES</div>
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                    {!isSpell && <div>
+                    {!isSpell && currentFamily !== "sin" && <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Level:</label>
                       <input type="number" min="0" value={editingCard.customFields["Level"] || ""} onChange={(e) => updateCardCustomField("Level", e.target.value)} placeholder="0" className={inputClass} style={inputStyle} />
                     </div>}
-                    {!isSpell && <div>
+                    {!isSpell && currentFamily !== "sin" && <div>
                       <label className="text-[10px] block mb-1" style={labelStyle}>Source Type:</label>
                       <input type="text" value={editingCard.customFields["Source Type"] || ""} onChange={(e) => updateCardCustomField("Source Type", e.target.value)} placeholder="Optional source label" className={inputClass} style={inputStyle} />
                     </div>}
@@ -3350,7 +3689,7 @@ export function DMCardManagerSection({
                       <input type="text" value={editingCard.customFields[USE_PROFILE_RANGE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_RANGE_KEY, e.target.value)} placeholder="Optional passive range" className={inputClass} style={inputStyle} />
                     </div>}
                     {!isSpell && <div>
-                      <label className="text-[10px] block mb-1" style={labelStyle}>Magic Nature:</label>
+                      <label className="text-[10px] block mb-1" style={labelStyle}>{currentFamily === "sin" ? "SIN Nature" : "Magic Nature"}:</label>
                       <input type="text" value={editingCard.customFields[USE_PROFILE_MAGIC_NATURE_KEY] || ""} onChange={(e) => updateCardCustomField(USE_PROFILE_MAGIC_NATURE_KEY, e.target.value)} placeholder="Optional magic classification" className={inputClass} style={inputStyle} />
                     </div>}
                   </div>
@@ -4290,8 +4629,24 @@ export function DMCardManagerSection({
             <button type="button" onClick={handleAddCard} className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
               <Plus size={14} /> {showTemplatePicker ? "Hide Templates" : "New Card"}
             </button>
+            <button
+              type="button"
+              onClick={() => { void handleImportCampaignAbilityPack(); }}
+              disabled={campaignImporting}
+              className={`${retro.button} px-4 py-2 text-[12px] flex items-center gap-2 disabled:opacity-50`}
+              style={S_ACCENT}
+              title="Import campaign cards, including the unassigned Stage of Pride SIN, without replacing existing cards"
+            >
+              <FileText size={14} /> {campaignImporting ? "Importing..." : "Import Ability Pack"}
+            </button>
           </div>
         </div>}
+
+        {!editingCard && campaignImportMessage && (
+          <div className={`${retro.sunken} bg-[#0C0C2E] px-4 py-3 text-[11px]`} style={S_SUBTLE}>
+            {campaignImportMessage}
+          </div>
+        )}
 
         {showTemplatePicker && (
           <div className={`${retro.sunken} bg-[#0C0C2E] p-4 space-y-3`}>
@@ -4684,7 +5039,7 @@ export function DMCardManagerSection({
                                 const tierCards = (list.tiers[tier] || [])
                                   .map((cardId) => managedCards.find((card) => card.id === cardId))
                                   .filter(Boolean) as ManagedCard[];
-                                const availableCards = managedCards.filter((card) => !listCardIds.has(card.id));
+                                const availableCards = managedCards.filter((card) => !listCardIds.has(card.id) && getCardFamily(card) !== "sin");
 
                                 return (
                                   <div key={`${list.id}-${tier}`} className={`${retro.raised} bg-[#0E0E35] p-3 space-y-2`} style={{ border: "1px solid #1A1A4B" }}>
@@ -4727,6 +5082,7 @@ export function DMCardManagerSection({
                                         onChange={(e) => {
                                           if (!e.target.value) return;
                                           const cardId = e.target.value;
+                                          if (getCardFamily(managedCards.find((card) => card.id === cardId) || null) === "sin") return;
                                           const nextLists = magicLists.map((entry) => {
                                             if (entry.id !== list.id) return entry;
                                             const nextTiers = { ...entry.tiers };

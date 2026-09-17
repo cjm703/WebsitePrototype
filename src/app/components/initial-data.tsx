@@ -4,6 +4,7 @@
 // Cache-bust v3
 // ========================
 import { safeGetItem, safeSetItem, safeSetJson } from "./safe-storage";
+import { approvedCampaignCards } from "../data/campaign-ability-pack";
 
 export interface InitialPlayerData {
   id: string;
@@ -151,6 +152,7 @@ export const initialCardTags: TagDefinition[] = [
   { id: "ctag-12", name: "Source Type: Divine", description: "This card consumes Divine-type source when used. The card's Level determines how much source is consumed.", fields: [] },
   { id: "ctag-13", name: "Target: Self", description: "This ability targets the user. Buff/debuff effects from timed effects will apply to your stats.", fields: [] },
   { id: "ctag-14", name: "Target: Enemy", description: "This ability targets an enemy. Timed effects are tracked in your Status Effects panel for duration tracking, but their buff/debuff values will NOT affect your stats.", fields: [] },
+  { id: "ctag-15", name: "SIN", description: "An emotion-awakened SIN, distinct from spells, skills, and abilities. Activation and falsification follow the individual SIN's rules.", fields: [] },
 ];
 
 export const initialInfoTags: TagDefinition[] = [
@@ -234,6 +236,12 @@ export const initialCards: InitialCard[] = [
       "Timed Effect::Buff Value": "P",
     },
   },
+  ...approvedCampaignCards.map((card) => ({
+    ...card,
+    tags: [...card.tags],
+    assignedTo: [],
+    customFields: { ...card.customFields },
+  })),
 ];
 
 export const initialInfos: InitialInfo[] = [];
