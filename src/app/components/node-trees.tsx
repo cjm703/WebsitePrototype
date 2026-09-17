@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { retro } from "./retro-styles";
-import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight } from "lucide-react";
+import { GitBranch, Lock, Unlock, Plus, Trash2, X, Check, ChevronDown, Link2, CreditCard, Search, Circle, Copy, Users, EyeOff, Eye, ArrowLeft, ChevronRight, Layers, Pencil, CornerDownRight, ZoomIn, ZoomOut, Scan } from "lucide-react";
 import { appStore } from "@/lib/app-store";
 import { loadDMNodeTrees, loadPlayerState, saveDMNodeTrees, savePlayerState } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
@@ -51,6 +51,10 @@ function nodeY(rank: number, maxRank: number) {
   return 460 - (rank / mr) * 420;
 }
 function nodeX(x: number) { return x * 4.6 + 20; }
+function playerNodeY(rank: number, maxRank: number, mapHeight: number) {
+  return mapHeight - 75 - (rank / Math.max(maxRank, 1)) * (mapHeight - 150);
+}
+function playerNodeX(x: number) { return Math.max(42, Math.min(458, x * 4.16 + 42)); }
 
 // Shape path generators
 const ALL_SHAPES: NodeShape[] = ["circle", "diamond", "hexagon", "square", "star", "triangle"];
@@ -132,6 +136,37 @@ function resolveNodeColor(node: { color?: string; shrouded?: boolean }, fallback
   return node.color || fallback;
 }
 
+function resolvePlayerNodeColor(node: NodeTreeNode, unlocked: boolean): string {
+  return node.shrouded && !unlocked ? SHROUD_COLOR : node.color || NT_ACCENT;
+}
+
+function playerNodeLabelLines(label: string): string[] {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return ["Unnamed Node"];
+  const lines: string[] = [];
+  for (const word of words) {
+    const current = lines[lines.length - 1] || "";
+    if (current && `${current} ${word}`.length <= 18) lines[lines.length - 1] = `${current} ${word}`;
+    else lines.push(word.length > 18 ? `${word.slice(0, 17)}…` : word);
+  }
+  if (lines.length <= 2) return lines;
+  return [lines[0], `${lines[1].slice(0, 16)}…`];
+}
+
+export function collectRevealedTreeCardIds(
+  tree: Pick<NodeTree, "nodes"> | null,
+  unlockedIds: readonly string[],
+  existingCardIds?: ReadonlySet<string>,
+): Set<string> {
+  const unlocked = new Set(unlockedIds);
+  return new Set(
+    (tree?.nodes || [])
+      .filter((node) => unlocked.has(node.id))
+      .flatMap((node) => node.cardIds)
+      .filter((cardId) => !existingCardIds || existingCardIds.has(cardId)),
+  );
+}
+
 // Small shape preview for UI (non-SVG context, using inline SVG)
 function ShapePreviewMini({ shape, color, size = 14, selected }: { shape: NodeShape; color: string; size?: number; selected?: boolean }) {
   const r = size / 2 - 1;
@@ -169,8 +204,34 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
   const [error, setError] = useState<string | null>(null);
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [viewingCard, setViewingCard] = useState<CardRef | null>(null);
   const [unlocks, setUnlocks] = useState<Record<string, string[]>>({});
+  const [mapZoom, setMapZoom] = useState(1);
+  const [fitMap, setFitMap] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [celebratingNodeId, setCelebratingNodeId] = useState<string | null>(null);
+  const detailsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setPrefersReducedMotion(media.matches);
+    const onChange = (event: MediaQueryListEvent) => setPrefersReducedMotion(event.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!celebratingNodeId) return undefined;
+    const timeout = window.setTimeout(() => setCelebratingNodeId(null), 1400);
+    return () => window.clearTimeout(timeout);
+  }, [celebratingNodeId]);
+
+  useEffect(() => {
+    if (!selectedNodeId || window.innerWidth >= 1280) return undefined;
+    const timeout = window.setTimeout(() => detailsRef.current?.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth", block: "nearest" }), 50);
+    return () => window.clearTimeout(timeout);
+  }, [selectedNodeId, prefersReducedMotion]);
 
 
   useEffect(() => {
@@ -247,6 +308,8 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
   const handleUnlockNode = useCallback(
     async (nodeId: string) => {
       if (!selectedTreeId) return;
+      const node = activeTree?.nodes.find((entry) => entry.id === nodeId);
+      if (!node || !canUnlockNode(node)) return;
 
       const currentTreeUnlocks = unlocks[selectedTreeId] || [];
       if (currentTreeUnlocks.includes(nodeId)) return;
@@ -261,15 +324,16 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
         await savePlayerState({ nodeUnlocks: newUnlocks });
         setUnlocks(newUnlocks);
         onUnlocksChange?.(newUnlocks);
+        setCelebratingNodeId(nodeId);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to unlock node");
       }
     },
-    [unlocks, selectedTreeId, playerId, onUnlocksChange],
+    [unlocks, selectedTreeId, activeTree, canUnlockNode, onUnlocksChange],
   );
 
   const selectedNode = activeTree?.nodes.find((n) => n.id === selectedNodeId) || null;
-  const nodeCards = selectedNode
+  const nodeCards = selectedNode && isNodeUnlocked(selectedNode.id)
     ? selectedNode.cardIds
         .map((cid) => cards.find((c) => c.id === cid))
         .filter(Boolean) as CardRef[]
@@ -278,10 +342,12 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
     () => (activeTree ? Math.max(0, ...activeTree.nodes.map((n) => n.rank)) : 0),
     [activeTree],
   );
-  const activeTreeCardCount = useMemo(
-    () => (activeTree ? new Set(activeTree.nodes.flatMap((node) => node.cardIds)).size : 0),
-    [activeTree],
+  const mapHeight = Math.max(500, maxRank * 95 + 150);
+  const revealedCardIds = useMemo(
+    () => collectRevealedTreeCardIds(activeTree, treeUnlocks, new Set(cards.map((card) => card.id))),
+    [activeTree, treeUnlocks, cards],
   );
+  const unlockedNodeCount = activeTree?.nodes.filter((node) => isNodeUnlocked(node.id)).length || 0;
   const unlockableNodeCount = useMemo(
     () => (activeTree ? activeTree.nodes.filter((node) => !isNodeUnlocked(node.id) && canUnlockNode(node)).length : 0),
     [activeTree, canUnlockNode, isNodeUnlocked],
@@ -353,56 +419,88 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {/* Tree selector */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px]" style={{ color: theme.labelColor }}>Tree:</span>
+      <div className="flex items-center gap-2 flex-wrap" aria-label="Choose a node tree">
+        <span className="text-[10px] uppercase tracking-[0.12em] mr-1" style={{ color: theme.labelColor }}>Your paths</span>
         {myTrees.map(t => {
-          const tUnlocks = (unlocks[t.id] || []).length;
+          const tUnlocks = t.nodes.filter((node) => (unlocks[t.id] || []).includes(node.id)).length;
           return (
             <button
               key={t.id}
               onClick={() => { setSelectedTreeId(t.id); setSelectedNodeId(null); }}
-              className={`${selectedTreeId === t.id ? retro.sunken : retro.raised} px-3 py-1.5 text-[11px] transition-colors`}
+              aria-pressed={selectedTreeId === t.id}
+              className={`${selectedTreeId === t.id ? retro.sunken : retro.raised} px-3 py-2 text-[11px] transition-colors`}
               style={{
                 color: selectedTreeId === t.id ? NT_ACCENT : theme.labelColor,
                 fontWeight: selectedTreeId === t.id ? 600 : 400,
                 background: selectedTreeId === t.id ? theme.panelBg : theme.cardBg,
+                border: `1px solid ${selectedTreeId === t.id ? `${NT_ACCENT}80` : theme.panelBorder}`,
               }}
             >
               <GitBranch size={11} className="inline mr-1" />
               {t.name}
-              <span className="text-[9px] ml-1 opacity-60">({tUnlocks}/{t.nodes.length})</span>
+              <span className="text-[9px] ml-2 opacity-70">{tUnlocks}/{t.nodes.length}</span>
             </button>
           );
         })}
       </div>
 
       {activeTree && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-            {[
-              { label: "Active Tree", value: activeTree.name, accent: NT_ACCENT },
-              { label: "Unlocked Nodes", value: `${treeUnlocks.length} / ${activeTree.nodes.length}`, accent: "#8AB8FF" },
-              { label: "Ready To Unlock", value: `${unlockableNodeCount}`, accent: "#FFD700" },
-              { label: "Cards In Tree", value: `${activeTreeCardCount}`, accent: "#FF7A5A" },
-            ].map((summary) => (
-              <div
-                key={summary.label}
-                className={`${retro.sunken} px-4 py-3`}
-                style={{ background: "#0C0C2E", borderLeft: `3px solid ${summary.accent}66` }}
-              >
-                <div className="text-[9px] uppercase tracking-[0.06em] mb-1" style={S_MUTED}>{summary.label}</div>
-                <div className="text-[13px] break-words" style={{ color: theme.textColor, fontWeight: 700 }}>{summary.value}</div>
+        <div className="space-y-4">
+          <div className={`${retro.raised} relative overflow-hidden p-4 sm:p-5`} style={{ background: "radial-gradient(circle at 88% 0%, #18365A 0%, #101936 36%, #090D25 100%)", border: `1px solid ${NT_ACCENT}44` }}>
+            <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full pointer-events-none" style={{ background: `${NT_ACCENT}13`, filter: "blur(34px)" }} />
+            <div className="relative flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center" style={{ background: `${NT_ACCENT}17`, border: `1px solid ${NT_ACCENT}66`, color: NT_ACCENT }}><GitBranch size={19} /></div>
+                <div className="min-w-0">
+                  <div className="text-[9px] uppercase tracking-[0.17em] mb-1" style={{ color: NT_ACCENT }}>Progression constellation</div>
+                  <h3 className="text-[18px] sm:text-[21px] leading-tight font-bold break-words" style={{ color: theme.textColor }}>{activeTree.name}</h3>
+                  <p className="text-[11px] mt-1" style={{ color: theme.labelColor }}>Follow the lit paths to reveal the next part of your story.</p>
+                </div>
               </div>
-            ))}
+              <div className="shrink-0 sm:text-right">
+                <div className="text-[20px] font-bold" style={{ color: NT_ACCENT }}>{unlockedNodeCount}<span className="text-[12px] font-normal" style={{ color: theme.labelColor }}> / {activeTree.nodes.length} nodes</span></div>
+                <div className="text-[10px]" style={{ color: theme.labelColor }}>{unlockableNodeCount} ready to unlock · {revealedCardIds.size} revealed card{revealedCardIds.size === 1 ? "" : "s"}</div>
+              </div>
+            </div>
+            <div className="relative mt-4 h-1.5 rounded-full overflow-hidden" style={{ background: "#273552" }} role="progressbar" aria-label={`${activeTree.name} progress`} aria-valuenow={unlockedNodeCount} aria-valuemin={0} aria-valuemax={activeTree.nodes.length}>
+              <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${activeTree.nodes.length ? (unlockedNodeCount / activeTree.nodes.length) * 100 : 0}%`, background: `linear-gradient(90deg, #4A8EB3, ${NT_ACCENT})`, boxShadow: `0 0 12px ${NT_ACCENT}88` }} />
+            </div>
+            <div className="relative mt-3 flex flex-wrap gap-x-4 gap-y-2 text-[10px]" style={{ color: theme.labelColor }}>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: NT_ACCENT, boxShadow: `0 0 8px ${NT_ACCENT}` }} />Unlocked</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: "#FFD166", background: "#FFD16633" }} />Ready</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: "#667899", background: "#172038" }} />Locked</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border" style={{ borderColor: SHROUD_COLOR, background: `${SHROUD_COLOR}33` }} />Shrouded</span>
+            </div>
           </div>
 
-          <div className="flex gap-3 flex-col lg:flex-row">
-            <div className={`${retro.sunken} flex-1 relative`} style={{ background: "#080820", minHeight: 400 }}>
-              <svg viewBox="0 0 500 500" className="w-full h-full" style={{ minHeight: 400 }} preserveAspectRatio="xMidYMid meet">
-                {[1, 2, 3, 4].map((i) => (
-                  <line key={`hg${i}`} x1={0} y1={i * 100} x2={500} y2={i * 100} stroke="#1A1A3A" strokeWidth={0.5} />
+          <div className="flex gap-4 flex-col xl:flex-row items-start">
+            <div className={`${retro.sunken} w-full xl:flex-1 xl:min-w-0 overflow-hidden`} style={{ background: "#080E22", border: "1px solid #2A4561" }}>
+              <div className="flex items-center justify-between gap-3 flex-wrap px-3 sm:px-4 py-3" style={{ background: "#0D1931", borderBottom: "1px solid #25415B" }}>
+                <div>
+                  <div className="text-[11px] font-semibold flex items-center gap-1.5" style={{ color: NT_ACCENT }}><GitBranch size={13} /> Constellation map</div>
+                  <div className="text-[9px] mt-0.5" style={{ color: theme.labelColor }}>Select a node to inspect its path and rewards.</div>
+                </div>
+                <div className="flex items-center gap-1.5" aria-label="Map zoom controls">
+                  <button type="button" aria-label="Zoom out" onClick={() => { if (mapZoom <= 1) setFitMap(true); else { setMapZoom((value) => Math.max(1, value - 0.25)); setFitMap(false); } }} className={`${retro.button} p-2`} style={{ color: theme.textColor }}><ZoomOut size={14} /></button>
+                  <button type="button" aria-label="Fit map to width" aria-pressed={fitMap} onClick={() => { setMapZoom(1); setFitMap(true); }} className={`${retro.button} px-2.5 py-2 text-[10px] flex items-center gap-1`} style={{ color: fitMap ? NT_ACCENT : theme.textColor }}><Scan size={13} /> Fit</button>
+                  <button type="button" aria-label="Zoom in" onClick={() => { setFitMap(false); setMapZoom((value) => Math.min(2, value + 0.25)); }} className={`${retro.button} p-2`} style={{ color: theme.textColor }}><ZoomIn size={14} /></button>
+                </div>
+              </div>
+              <div className="overflow-auto overscroll-contain" style={{ scrollbarColor: "#385C77 #091329", maxHeight: "min(78vh, 860px)" }}>
+              <svg viewBox={`0 0 500 ${mapHeight}`} role="group" aria-label={`${activeTree.name} progression map`} className="block h-auto" style={{ width: fitMap ? "100%" : `max(${Math.round(620 * mapZoom)}px, ${Math.round(100 * mapZoom)}%)`, aspectRatio: `500 / ${mapHeight}` }} preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <radialGradient id="player-tree-sky" cx="50%" cy="40%" r="75%"><stop offset="0%" stopColor="#132642" /><stop offset="65%" stopColor="#0B1730" /><stop offset="100%" stopColor="#070D20" /></radialGradient>
+                  <pattern id="player-tree-stars" width="86" height="76" patternUnits="userSpaceOnUse"><circle cx="11" cy="17" r="0.9" fill="#A4C9E6" opacity="0.42" /><circle cx="62" cy="51" r="0.7" fill="#A4C9E6" opacity="0.35" /><circle cx="37" cy="68" r="0.55" fill="#D1E5F1" opacity="0.24" /></pattern>
+                </defs>
+                <rect width="500" height={mapHeight} fill="url(#player-tree-sky)" />
+                <rect width="500" height={mapHeight} fill="url(#player-tree-stars)" />
+                {Array.from(new Set(activeTree.nodes.map((node) => node.rank))).sort((a, b) => a - b).map((rank) => (
+                  <g key={`rank-${rank}`}>
+                    <line x1={24} y1={playerNodeY(rank, maxRank, mapHeight)} x2={476} y2={playerNodeY(rank, maxRank, mapHeight)} stroke="#4A6C89" strokeWidth={0.6} strokeDasharray="2 7" opacity={0.38} />
+                    <text x={27} y={playerNodeY(rank, maxRank, mapHeight) - 28} fill="#6D91A8" fontSize={8} fontWeight={700} letterSpacing={1.2}>RANK {rank}</text>
+                  </g>
                 ))}
 
                 {activeTree.connections.map((conn, ci) => {
@@ -412,85 +510,90 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
                   const fromUnlocked = isNodeUnlocked(fromN.id);
                   const toUnlocked = isNodeUnlocked(toN.id);
                   const bothUnlocked = fromUnlocked && toUnlocked;
-                  const lineColor = bothUnlocked ? (fromN.color || toN.color || NT_ACCENT) : "#2A3A5B";
+                  const nextReady = !bothUnlocked && ((fromUnlocked && canUnlockNode(toN)) || (toUnlocked && canUnlockNode(fromN)));
+                  const lineColor = bothUnlocked ? (fromN.color || toN.color || NT_ACCENT) : nextReady ? "#FFD166" : "#44607B";
                   return (
-                    <line
-                      key={`c${ci}`}
-                      x1={nodeX(fromN.x)}
-                      y1={nodeY(fromN.rank, maxRank)}
-                      x2={nodeX(toN.x)}
-                      y2={nodeY(toN.rank, maxRank)}
-                      stroke={lineColor}
-                      strokeWidth={bothUnlocked ? 2.5 : 1.5}
-                      strokeDasharray={bothUnlocked ? undefined : "6 4"}
-                      opacity={bothUnlocked ? 0.8 : 0.4}
-                    />
+                    <g key={`c${ci}`}>
+                      {bothUnlocked && <line x1={playerNodeX(fromN.x)} y1={playerNodeY(fromN.rank, maxRank, mapHeight)} x2={playerNodeX(toN.x)} y2={playerNodeY(toN.rank, maxRank, mapHeight)} stroke={lineColor} strokeWidth={9} opacity={0.11} />}
+                      <line x1={playerNodeX(fromN.x)} y1={playerNodeY(fromN.rank, maxRank, mapHeight)} x2={playerNodeX(toN.x)} y2={playerNodeY(toN.rank, maxRank, mapHeight)} stroke={lineColor} strokeWidth={bothUnlocked ? 3 : 1.7} strokeDasharray={bothUnlocked ? undefined : nextReady ? "3 5" : "2 6"} strokeLinecap="round" opacity={bothUnlocked ? 0.9 : nextReady ? 0.8 : 0.42} />
+                    </g>
                   );
                 })}
 
                 {activeTree.nodes.map((node) => {
-                  const ny = nodeY(node.rank, maxRank);
-                  const nx = nodeX(node.x);
+                  const ny = playerNodeY(node.rank, maxRank, mapHeight);
+                  const nx = playerNodeX(node.x);
                   const unlocked = isNodeUnlocked(node.id);
                   const canUnlock = canUnlockNode(node);
                   const isSelected = selectedNodeId === node.id;
-                  const isShrouded = node.shrouded;
-                  const r = isSelected ? 20 : 16;
-                  const nColor = resolveNodeColor(node);
+                  const isShrouded = !!node.shrouded && !unlocked;
+                  const r = 19;
+                  const nColor = resolvePlayerNodeColor(node, unlocked);
                   const nShape = node.shape || "circle";
-                  const darkColor = `${nColor}33`;
-                  const labelText = isShrouded && !unlocked
-                    ? "???"
-                    : node.label.length > 14
-                      ? `${node.label.slice(0, 13)}...`
-                      : node.label;
+                  const labelLines = isShrouded ? ["Unknown Node"] : playerNodeLabelLines(node.label);
+                  const labelAnchor = nx < 95 ? "start" : nx > 405 ? "end" : "middle";
+                  const cardCount = unlocked ? node.cardIds.filter((cardId) => cards.some((card) => card.id === cardId)).length : 0;
+                  const nodeState = unlocked ? "unlocked" : canUnlock ? "ready to unlock" : "locked";
 
                   return (
-                    <g key={node.id} style={{ cursor: "pointer" }} onClick={() => setSelectedNodeId(node.id === selectedNodeId ? null : node.id)}>
+                    <g key={node.id} role="button" tabIndex={0} aria-label={`${isShrouded ? "Shrouded node" : node.label}, ${nodeState}`} aria-pressed={isSelected} style={{ cursor: "pointer", outline: "none" }} onClick={() => setSelectedNodeId(node.id === selectedNodeId ? null : node.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedNodeId(node.id === selectedNodeId ? null : node.id); } }} onFocus={() => setFocusedNodeId(node.id)} onBlur={() => setFocusedNodeId(null)}>
+                      <title>{isShrouded ? "Shrouded node" : node.label} — {nodeState}</title>
+                      <circle cx={nx} cy={ny} r={30} fill="transparent" />
+                      {unlocked && <circle cx={nx} cy={ny} r={r + 11} fill={nColor} opacity={0.12} />}
+                      {unlocked && <circle cx={nx} cy={ny} r={r + 6} fill="none" stroke={nColor} strokeWidth={1} opacity={0.45} />}
                       {canUnlock && !unlocked && (
-                        <circle cx={nx} cy={ny} r={r + 6} fill="none" stroke={nColor} strokeWidth={1} opacity={0.4}>
-                          <animate attributeName="r" values={`${r + 4};${r + 8};${r + 4}`} dur="2s" repeatCount="indefinite" />
-                          <animate attributeName="opacity" values="0.4;0.15;0.4" dur="2s" repeatCount="indefinite" />
+                        <circle cx={nx} cy={ny} r={r + 8} fill="none" stroke={isShrouded ? SHROUD_COLOR : "#FFD166"} strokeWidth={1.4} opacity={0.72}>
+                          {!prefersReducedMotion && <animate attributeName="r" values={`${r + 6};${r + 11};${r + 6}`} dur="2.5s" repeatCount="indefinite" />}
+                          {!prefersReducedMotion && <animate attributeName="opacity" values="0.7;0.2;0.7" dur="2.5s" repeatCount="indefinite" />}
                         </circle>
                       )}
-                      {isSelected && <NodeShapeOutline cx={nx} cy={ny} r={r + 3} shape={nShape} stroke="#FFF" strokeWidth={1.5} opacity={0.6} />}
+                      {celebratingNodeId === node.id && !prefersReducedMotion && (
+                        <circle cx={nx} cy={ny} r={r + 5} fill="none" stroke={nColor} strokeWidth={2} opacity={0.85}>
+                          <animate attributeName="r" values={`${r + 5};${r + 28}`} dur="1.2s" fill="freeze" />
+                          <animate attributeName="opacity" values="0.85;0" dur="1.2s" fill="freeze" />
+                        </circle>
+                      )}
+                      {(isSelected || focusedNodeId === node.id) && <NodeShapeOutline cx={nx} cy={ny} r={r + 12} shape={nShape} stroke="#F1FAFF" strokeWidth={1.6} opacity={0.9} />}
                       <NodeShapeSvg
                         cx={nx}
                         cy={ny}
                         r={r}
                         shape={nShape}
-                        fill={unlocked ? nColor : isShrouded ? "#1A1A3A" : canUnlock ? darkColor : "#0E0E30"}
-                        stroke={unlocked ? nColor : isShrouded ? SHROUD_COLOR : canUnlock ? nColor : "#2A3A5B"}
-                        strokeWidth={2}
-                        opacity={unlocked ? 1 : canUnlock ? 0.9 : 0.5}
+                        fill={unlocked ? nColor : isShrouded ? "#211A39" : canUnlock ? `${nColor}30` : "#172039"}
+                        stroke={unlocked ? "#E5FFFA" : isShrouded ? SHROUD_COLOR : canUnlock ? nColor : "#687D9B"}
+                        strokeWidth={unlocked || isSelected ? 2.3 : 1.8}
                       />
                       {!unlocked && !canUnlock && !isShrouded && (
-                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#3A4A6A" fontSize={12}>X</text>
+                        <g fill="none" stroke="#9EB0C9" strokeWidth={1.6} strokeLinecap="round"><path d={`M${nx - 5},${ny - 2} v-4 a5,5 0 0 1 10,0 v4`} /><rect x={nx - 7} y={ny - 2} width={14} height={10} rx={2} /></g>
                       )}
                       {isShrouded && !unlocked && (
-                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill={SHROUD_COLOR} fontSize={11}>?</text>
+                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#D7B5FF" fontSize={17} fontWeight={700}>?</text>
                       )}
                       {unlocked && (
-                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill="#080820" fontSize={9} fontWeight={800}>OK</text>
+                        <path d={`M${nx - 8},${ny} l6,6 11,-13`} fill="none" stroke="#071A22" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" />
                       )}
                       {canUnlock && !unlocked && !isShrouded && (
-                        <text x={nx} y={ny + 1} textAnchor="middle" dominantBaseline="middle" fill={nColor} fontSize={11}>+</text>
+                        <path d={`M${nx - 7},${ny} h14 M${nx},${ny - 7} v14`} fill="none" stroke="#FFE7A7" strokeWidth={2.4} strokeLinecap="round" />
                       )}
                       <text
                         x={nx}
-                        y={ny + r + 14}
-                        textAnchor="middle"
-                        fill={isShrouded && !unlocked ? SHROUD_COLOR : unlocked ? "#C0F0D0" : canUnlock ? nColor : "#4A5A7A"}
-                        fontSize={9}
-                        fontWeight={unlocked ? 600 : 400}
+                        y={ny + r + 16}
+                        textAnchor={labelAnchor}
+                        fill={isShrouded ? "#B69ACF" : unlocked ? "#D5FFF5" : canUnlock ? "#FFE3A1" : "#9EAFCA"}
+                        fontSize={10.5}
+                        fontWeight={unlocked || canUnlock ? 700 : 500}
+                        paintOrder="stroke"
+                        stroke="#091329"
+                        strokeWidth={2.5}
+                        strokeLinejoin="round"
                       >
-                        {labelText}
+                        {labelLines.map((line, index) => <tspan key={`${node.id}-line-${index}`} x={nx} dy={index === 0 ? 0 : 13}>{line}</tspan>)}
                       </text>
-                      {node.cardIds.length > 0 && (
+                      {cardCount > 0 && (
                         <g>
-                          <circle cx={nx + r - 2} cy={ny - r + 2} r={6} fill={isShrouded && !unlocked ? SHROUD_COLOR : "#FF7A5A"} />
-                          <text x={nx + r - 2} y={ny - r + 2.5} textAnchor="middle" dominantBaseline="middle" fill="#FFF" fontSize={8} fontWeight={700}>
-                            {isShrouded && !unlocked ? "?" : node.cardIds.length}
+                          <circle cx={nx + r - 1} cy={ny - r + 1} r={8} fill="#FF8C71" stroke="#091329" strokeWidth={1.8} />
+                          <text x={nx + r - 1} y={ny - r + 2} textAnchor="middle" dominantBaseline="middle" fill="#141522" fontSize={9} fontWeight={800}>
+                            {cardCount}
                           </text>
                         </g>
                       )}
@@ -498,48 +601,59 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
                   );
                 })}
               </svg>
+              </div>
+              <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2 text-[9px]" style={{ color: theme.labelColor, borderTop: "1px solid #25415B", background: "#0B172C" }}>
+                <span>{fitMap ? "Fit view. Zoom in to inspect details." : "Scroll horizontally on smaller screens to explore."}</span>
+                <span className="shrink-0" style={{ color: NT_ACCENT }}>{fitMap ? "FIT" : `${Math.round(mapZoom * 100)}%`}</span>
+              </div>
             </div>
 
-            <div className="w-full lg:w-72 shrink-0 space-y-3">
+            <div ref={detailsRef} className="w-full xl:w-80 shrink-0 space-y-3 scroll-mt-4 xl:sticky xl:top-4">
               {selectedNode ? (
-                <div style={DISPLAY_CONTENTS}>
-                  <div className={`${retro.raised} p-3`} style={{ background: theme.panelBg }}>
+                <div className="space-y-3">
+                  <div className={`${retro.raised} p-4`} style={{ background: "linear-gradient(160deg, #142541, #0C1430)", border: `1px solid ${resolvePlayerNodeColor(selectedNode, isNodeUnlocked(selectedNode.id))}66` }}>
+                    <div className="text-[9px] uppercase tracking-[0.14em] mb-3" style={{ color: theme.labelColor }}>Selected node</div>
                     {selectedNode.shrouded && !isNodeUnlocked(selectedNode.id) ? (
-                      <div style={DISPLAY_CONTENTS}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <EyeOff size={14} style={{ color: SHROUD_COLOR }} />
-                          <div className="text-[13px]" style={{ color: SHROUD_COLOR, fontWeight: 600 }}>Shrouded Node</div>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: `${SHROUD_COLOR}25`, color: SHROUD_COLOR }}><EyeOff size={17} /></div>
+                          <div className="text-[16px]" style={{ color: "#D7B5FF", fontWeight: 700 }}>Shrouded Node</div>
                         </div>
-                        <div className="text-[10px]" style={{ color: "#5A4A7A" }}>
-                          This node's contents are hidden until unlocked. Its rank and requirements are unknown.
-                        </div>
+                        <p className="text-[11px] leading-relaxed" style={{ color: theme.textColor }}>
+                          This part of the path is still a mystery. Its name, story, and rewards will appear when you unlock it.
+                        </p>
+                        {canUnlockNode(selectedNode) ? (
+                          <button onClick={() => void handleUnlockNode(selectedNode.id)} className={`${retro.button} w-full text-[11px] font-semibold flex items-center justify-center gap-2 py-2.5`} style={{ color: "#160E29", background: "#C79CF6" }}><Unlock size={14} /> Unlock Unknown Node</button>
+                        ) : (
+                          <div className="text-[10px] flex items-center gap-1.5 px-3 py-2" style={{ color: "#C2ABD9", background: `${SHROUD_COLOR}15`, border: `1px solid ${SHROUD_COLOR}44` }}><Lock size={12} /> Follow the preceding path to reach this node.</div>
+                        )}
                       </div>
                     ) : (
-                      <div style={DISPLAY_CONTENTS}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <ShapePreviewMini shape={selectedNode.shape || "circle"} color={resolveNodeColor(selectedNode)} size={18} />
-                          <div className="text-[13px]" style={{ color: resolveNodeColor(selectedNode), fontWeight: 600 }}>{selectedNode.label}</div>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `${resolvePlayerNodeColor(selectedNode, isNodeUnlocked(selectedNode.id))}22`, border: `1px solid ${resolvePlayerNodeColor(selectedNode, isNodeUnlocked(selectedNode.id))}66` }}><ShapePreviewMini shape={selectedNode.shape || "circle"} color={resolvePlayerNodeColor(selectedNode, isNodeUnlocked(selectedNode.id))} size={19} /></div>
+                          <div className="min-w-0">
+                            <div className="text-[15px] leading-tight font-bold break-words" style={{ color: theme.textColor }}>{selectedNode.label}</div>
+                            <div className="text-[10px] mt-1" style={{ color: theme.labelColor }}>Rank {selectedNode.rank}</div>
+                          </div>
                         </div>
                         {selectedNode.description && (
-                          <div className="text-[10px] mb-2 italic" style={{ color: theme.textColor }}>{selectedNode.description}</div>
+                          <p className="text-[11px] leading-relaxed" style={{ color: theme.textColor }}>{selectedNode.description}</p>
                         )}
-                        <div className="text-[10px] mb-2" style={{ color: theme.labelColor }}>
-                          Rank {selectedNode.rank} | {selectedNode.cardIds.length} card{selectedNode.cardIds.length !== 1 ? "s" : ""}
-                        </div>
                         {isNodeUnlocked(selectedNode.id) ? (
-                          <div className="flex items-center gap-1.5 text-[11px] px-2 py-1" style={{ background: `${resolveNodeColor(selectedNode)}15`, color: resolveNodeColor(selectedNode), border: `1px solid ${resolveNodeColor(selectedNode)}33` }}>
-                            <Unlock size={12} /> Unlocked
+                          <div className="flex items-center gap-2 text-[11px] px-3 py-2" style={{ background: `${resolvePlayerNodeColor(selectedNode, true)}20`, color: "#CAFFF1", border: `1px solid ${resolvePlayerNodeColor(selectedNode, true)}66` }}>
+                            <Check size={14} /> Unlocked · {nodeCards.length} revealed card{nodeCards.length === 1 ? "" : "s"}
                           </div>
                         ) : canUnlockNode(selectedNode) ? (
-                          <button onClick={() => void handleUnlockNode(selectedNode.id)} className={`${retro.button} w-full text-[11px] flex items-center justify-center gap-1.5 py-2`} style={{ color: "#080820", background: resolveNodeColor(selectedNode) }}>
-                            <Unlock size={12} /> Unlock Node
+                          <button onClick={() => void handleUnlockNode(selectedNode.id)} className={`${retro.button} w-full text-[11px] font-semibold flex items-center justify-center gap-2 py-2.5`} style={{ color: "#241A05", background: "#FFD166" }}>
+                            <Unlock size={14} /> Unlock Node
                           </button>
                         ) : (
-                          <div className="text-[10px] px-2 py-1" style={{ background: "#FF6A6A11", color: "#FF6A6A", border: "1px solid #FF6A6A33" }}>
-                            <Lock size={10} className="inline mr-1" />
-                            Requires: {selectedNode.prerequisites.map((pId) => {
+                          <div className="text-[10px] px-3 py-2 leading-relaxed" style={{ background: "#26324A", color: "#C4D4E9", border: "1px solid #5B7295" }}>
+                            <Lock size={12} className="inline mr-1.5 align-middle" />
+                            Requires {selectedNode.prerequisites.map((pId) => {
                               const preNode = activeTree.nodes.find((n) => n.id === pId);
-                              return preNode?.shrouded && !isNodeUnlocked(preNode.id) ? "???" : preNode?.label || "?";
+                              return preNode?.shrouded && !isNodeUnlocked(preNode.id) ? "an unknown node" : preNode?.label || "an earlier node";
                             }).join(", ")}
                           </div>
                         )}
@@ -547,26 +661,26 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
                     )}
                   </div>
 
-                  {!(selectedNode.shrouded && !isNodeUnlocked(selectedNode.id)) && nodeCards.length > 0 && (
+                  {isNodeUnlocked(selectedNode.id) && nodeCards.length > 0 && (
                     <div className="space-y-2">
-                      <div className="text-[10px]" style={{ color: theme.labelColor }}>Cards ({nodeCards.length}):</div>
+                      <div className="text-[10px] uppercase tracking-[0.12em] flex items-center gap-1.5" style={{ color: "#FFAE93" }}><CreditCard size={12} /> Revealed cards</div>
                       {nodeCards.map((card) => (
                         <button
                           key={card.id}
                           onClick={() => setViewingCard(card)}
                           className={`${retro.raised} p-3 w-full text-left hover:brightness-110 transition-all cursor-pointer`}
-                          style={{ background: theme.cardBg }}
+                          style={{ background: theme.cardBg, border: "1px solid #FF8C7144" }}
                         >
                           <div className="flex items-center gap-1.5 mb-1">
-                            <CreditCard size={12} style={{ color: "#FF7A5A" }} />
-                            <span className="text-[12px]" style={{ color: "#FF7A5A", fontWeight: 600 }}>{card.name}</span>
+                            <CreditCard size={13} style={{ color: "#FFAE93" }} />
+                            <span className="text-[12px]" style={{ color: "#FFAE93", fontWeight: 700 }}>{card.name}</span>
                             <ChevronRight size={10} className="ml-auto" style={{ color: "#4A5A7A" }} />
                           </div>
-                          <div className="text-[9px] mb-1" style={{ color: theme.labelColor }}>
+                          <div className="text-[10px] mb-1" style={{ color: theme.labelColor }}>
                             {card.type}{card.actionCost ? ` | ${card.actionCost}` : ""}
                           </div>
                           {card.effect && (
-                            <div className="text-[10px]" style={{ color: theme.textColor, opacity: 0.8 }}>
+                            <div className="text-[10px] leading-relaxed" style={{ color: theme.textColor, opacity: 0.85 }}>
                               {card.effect.replace(/<[^>]*>/g, "").slice(0, 80)}
                               {card.effect.replace(/<[^>]*>/g, "").length > 80 ? "..." : ""}
                             </div>
@@ -575,20 +689,21 @@ export function PlayerNodeTreeViewer({ playerId, theme, cards, onUnlocksChange }
                       ))}
                     </div>
                   )}
-                  {selectedNode.shrouded && !isNodeUnlocked(selectedNode.id) && selectedNode.cardIds.length > 0 && (
-                    <div className={`${retro.sunken} p-3 text-center`} style={{ background: "#1A1A3A" }}>
-                      <EyeOff size={16} style={{ color: SHROUD_COLOR, margin: "0 auto 6px" }} />
-                      <div className="text-[10px]" style={{ color: SHROUD_COLOR }}>Cards hidden - unlock this node to reveal</div>
+                  {!isNodeUnlocked(selectedNode.id) && (
+                    <div className={`${retro.sunken} p-4 text-center`} style={{ background: "#101A31", border: "1px dashed #435A76" }}>
+                      <EyeOff size={17} style={{ color: "#9AACC5", margin: "0 auto 7px" }} />
+                      <div className="text-[11px]" style={{ color: theme.textColor }}>Rewards are concealed until this node is unlocked.</div>
                     </div>
                   )}
-                  {nodeCards.length === 0 && !(selectedNode.shrouded && !isNodeUnlocked(selectedNode.id)) && (
-                    <div className="text-[10px] text-center py-3" style={S_DIM}>No cards assigned to this node</div>
+                  {isNodeUnlocked(selectedNode.id) && nodeCards.length === 0 && (
+                    <div className="text-[11px] text-center py-3" style={S_DIM}>No cards assigned to this node.</div>
                   )}
                 </div>
               ) : (
-                <div className={`${retro.sunken} p-4 text-center`} style={{ background: "#080820" }}>
-                  <Circle size={24} style={{ color: "#2A3A5B", margin: "0 auto 8px" }} />
-                  <div className="text-[11px]" style={S_DIM}>Click a node to view details</div>
+                <div className={`${retro.sunken} p-6 text-center`} style={{ background: "#101A31", border: "1px dashed #365270" }}>
+                  <Circle size={27} style={{ color: "#6789A9", margin: "0 auto 10px" }} />
+                  <div className="text-[12px] font-semibold" style={{ color: theme.textColor }}>Choose a node</div>
+                  <div className="text-[10px] mt-1" style={S_DIM}>Select a star on the map to see its path and rewards.</div>
                 </div>
               )}
             </div>
