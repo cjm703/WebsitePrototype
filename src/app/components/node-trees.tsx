@@ -5,6 +5,7 @@ import { appStore } from "@/lib/app-store";
 import { loadDMNodeTrees, loadPlayerState, saveDMNodeTrees, savePlayerState } from "@/lib/player-state-api";
 import { DISPLAY_CONTENTS, S_DIM, S_MUTED, S_RED, S_TEXT } from "./shared-styles";
 import { sanitizeRichHtml } from "@/lib/sanitize-rich-html";
+import { createLotusNodeTreePack } from "../data/lotus-node-tree-pack";
 
 // Shared data types
 export type NodeShape = "circle" | "diamond" | "hexagon" | "square" | "star" | "triangle";
@@ -1027,6 +1028,8 @@ export function DMNodeTreeBuilder({ players, cards, onCardNodeAssign, onCardNode
   const [prerequisiteTreeId, setPrerequisiteTreeId] = useState<string | null>(null);
   const [prerequisiteSearch, setPrerequisiteSearch] = useState("");
   const [showNodeList, setShowNodeList] = useState(true);
+  const [importingLotusTrees, setImportingLotusTrees] = useState(false);
+  const [lotusImportMessage, setLotusImportMessage] = useState("");
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [editorZoom, setEditorZoom] = useState(1);
   const [editorFit, setEditorFit] = useState(false);
@@ -1110,6 +1113,30 @@ useEffect(() => {
 }, []);
 
   // Tree CRUD
+  const importLotusTrees = useCallback(async () => {
+    if (importingLotusTrees) return;
+    const lotus = players.find((player) => player.name.trim().toLowerCase() === "lotus");
+    const bundled = createLotusNodeTreePack(lotus?.id);
+    const current = treesRef.current;
+    const additions = bundled.filter((tree) => !current.some((entry) => entry.id === tree.id || entry.name.toLowerCase() === tree.name.toLowerCase()));
+    if (additions.length === 0) {
+      setLotusImportMessage("The four Lotus trees are already present; existing edits were left untouched.");
+      return;
+    }
+    setImportingLotusTrees(true);
+    setLotusImportMessage("");
+    try {
+      await persistTrees([...current, ...additions]);
+      setSelectedTreeId(additions[0].id);
+      setEditingNodeId(null);
+      setLotusImportMessage(`Added ${additions.length} Lotus tree${additions.length === 1 ? "" : "s"}${lotus ? " and assigned them to Lotus" : "; no player named Lotus was found, so assign them when ready"}. Existing trees were preserved.`);
+    } catch (err) {
+      setLotusImportMessage(err instanceof Error ? err.message : "Could not import the Lotus trees.");
+    } finally {
+      setImportingLotusTrees(false);
+    }
+  }, [importingLotusTrees, players]);
+
   const createTree = useCallback(async () => {
     const name = newTreeName.trim();
     if (!name) return;
@@ -1458,10 +1485,16 @@ useEffect(() => {
             Build progression trees, assign them to players, and place cards directly on nodes so Personal Files and the card editor stay in sync.
           </div>
         </div>
-        <button onClick={() => setShowNewTreeForm(true)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`} style={{ color: NT_ACCENT }}>
-          <Plus size={12} /> New Tree
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void importLotusTrees()} disabled={importingLotusTrees} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1 disabled:opacity-60`} style={{ color: "#C9A1F4" }} title="Add the four Lotus path diagrams without replacing existing trees">
+            <GitBranch size={12} /> {importingLotusTrees ? "Importing Lotus..." : "Import Lotus Trees"}
+          </button>
+          <button onClick={() => setShowNewTreeForm(true)} className={`${retro.button} px-3 py-1.5 text-[11px] flex items-center gap-1`} style={{ color: NT_ACCENT }}>
+            <Plus size={12} /> New Tree
+          </button>
+        </div>
       </div>
+      {lotusImportMessage && <div className={`${retro.sunken} px-3 py-2 text-[10px]`} role="status" style={{ color: "#C9A1F4" }}>{lotusImportMessage}</div>}
 
       {/* New tree form */}
       {showNewTreeForm && (

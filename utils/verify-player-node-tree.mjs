@@ -7,7 +7,9 @@ import { build } from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const viewerPath = path.join(root, "src", "app", "components", "node-trees.tsx");
+const packPath = path.join(root, "src", "app", "data", "lotus-node-tree-pack.ts");
 const bundlePath = path.join(os.tmpdir(), `verify-player-node-tree-${process.pid}.mjs`);
+const packBundlePath = path.join(os.tmpdir(), `verify-lotus-node-tree-pack-${process.pid}.mjs`);
 await build({
   entryPoints: [viewerPath],
   bundle: true,
@@ -21,6 +23,30 @@ await build({
 });
 const { collectRevealedTreeCardIds, treeMapWidth, getTreeBranches, treeConnectionPath, getNodePrerequisiteStatuses, areNodePrerequisitesMet } = await import(`${pathToFileURL(bundlePath).href}?run=${Date.now()}`);
 await fs.unlink(bundlePath).catch(() => undefined);
+await build({ entryPoints: [packPath], bundle: true, format: "esm", platform: "node", outfile: packBundlePath });
+const { createLotusNodeTreePack } = await import(`${pathToFileURL(packBundlePath).href}?run=${Date.now()}`);
+await fs.unlink(packBundlePath).catch(() => undefined);
+
+const lotusTrees = createLotusNodeTreePack("lotus-player-id");
+assert.equal(lotusTrees.length, 4, "The four supplied Lotus diagrams should all be importable");
+assert.deepEqual(lotusTrees.map((tree) => tree.nodes.length), [24, 6, 8, 4], "Each diagram should retain every large node, including unknown placeholders");
+assert.ok(lotusTrees.every((tree) => tree.assignedTo.join() === "lotus-player-id"), "All imported trees should be assigned to Lotus when that player exists");
+assert.ok(createLotusNodeTreePack().every((tree) => tree.assignedTo.length === 0), "A missing Lotus player should leave the trees safely unassigned");
+for (const importedTree of lotusTrees) {
+  const ids = new Set(importedTree.nodes.map((node) => node.id));
+  assert.equal(ids.size, importedTree.nodes.length, "Node IDs must be distinct within each imported tree");
+  for (const connection of importedTree.connections) {
+    assert.ok(ids.has(connection.from) && ids.has(connection.to), "Every drawn connection should point to a real node");
+    assert.ok(importedTree.nodes.find((node) => node.id === connection.to).prerequisites.includes(connection.from), "Drawn progression arrows should also gate unlocking");
+  }
+  assert.ok(importedTree.nodes.every((node) => node.cardIds.length === 0), "Diagram import should not invent card assignments");
+}
+const waterPackTree = lotusTrees[0];
+const waterNode = (suffix) => waterPackTree.nodes.find((node) => node.id === `${waterPackTree.id}-${suffix}`);
+assert.equal(waterNode("brineclad").prerequisites.length, 2, "Brineclad should retain both inbound branches");
+assert.ok(waterPackTree.connections.some((edge) => edge.from === waterNode("sea-druid-initiation").id && edge.to === waterNode("crush-depth").id), "The Sea Druid branch should lead to Crush Depth");
+assert.ok(lotusTrees[1].nodes.find((node) => node.label === "Forgotten Star").hint.includes("WS"), "Diagram abbreviations should remain click-to-view hints");
+assert.equal(lotusTrees.flatMap((tree) => tree.nodes).filter((node) => node.shrouded).length, 4, "The four question-mark placeholders should remain hidden mysteries");
 
 const tree = {
   nodes: [
@@ -98,5 +124,6 @@ assert.match(source, /Visual links do not set unlock prerequisites/, "The editor
 assert.match(source, /All are unlocked/, "The DM needs an all-prerequisites option");
 assert.match(source, /Any one is unlocked/, "The DM needs an either-prerequisite option");
 assert.match(source, /Choose prerequisite tree/, "The DM must be able to select a cross-tree prerequisite");
+assert.match(source, /Import Lotus Trees/, "The DM should have a non-destructive Lotus import action");
 
 console.log("Node Tree verification passed: reveal gating, wide layout, shared branches, all/any local and cross-tree prerequisites, click-to-see hints, and map navigation.");
