@@ -11,6 +11,7 @@ export interface PlayerData {
   id: string;
   name: string;
   loginLocked?: boolean;
+  profileOrder?: number;
   race?: string;
   class: string;
   level: number;
@@ -155,6 +156,7 @@ export interface LoginProfile {
   hasAuthCode: boolean;
   description: string;
   loginLocked?: boolean;
+  profileOrder?: number;
 }
 
 export interface StoredImageAsset {

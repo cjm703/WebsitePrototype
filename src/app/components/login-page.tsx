@@ -34,6 +34,9 @@ async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
 
   const data = await res.json().catch(() => ({}));
   const rows = Array.isArray((data as any)?.profiles) ? (data as any).profiles : [];
+  if (rows.some((profile: any) => typeof profile?.loginLocked !== "boolean")) {
+    throw new Error("Profile registry does not support login locks");
+  }
 
   return rows
     .filter((p: any) => String(p?.id) !== "dm")
@@ -43,7 +46,11 @@ async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
       hasAuthCode: false,
       description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
       loginLocked: p.loginLocked === true,
-    }));
+      profileOrder: Number.isInteger(p.profileOrder) ? p.profileOrder : undefined,
+    }))
+    .sort((a: LoginProfile, b: LoginProfile) =>
+      (a.profileOrder ?? Number.MAX_SAFE_INTEGER) - (b.profileOrder ?? Number.MAX_SAFE_INTEGER)
+    );
 }
 
 function buildFallbackProfiles(): LoginProfile[] {
@@ -124,13 +131,14 @@ export function LoginPage() {
     let cancelled = false;
 
     (async () => {
-      let nextProfiles: LoginProfile[] = buildFallbackProfiles();
+      let nextProfiles: LoginProfile[] = [DM_PROFILE];
 
       try {
         const serverProfiles = await fetchProfilesFromServer();
         nextProfiles = [...serverProfiles, DM_PROFILE];
       } catch (err) {
-        console.error("Failed to fetch profiles from server, using built-in fallback:", err);
+        console.error("Failed to verify profile registry; player login is disabled:", err);
+        if (!cancelled) setError("PROFILE REGISTRY UNAVAILABLE — PLAYER LOGIN DISABLED");
       }
 
       try {

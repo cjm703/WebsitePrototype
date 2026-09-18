@@ -176,6 +176,14 @@ function normalizePlayerForEditor(player: PlayerData): PlayerData {
   };
 }
 
+function sortPlayersByProfileOrder(players: PlayerData[]): PlayerData[] {
+  return [...players].sort((a, b) => {
+    const aOrder = Number.isInteger(a.profileOrder) ? a.profileOrder! : Number.MAX_SAFE_INTEGER;
+    const bOrder = Number.isInteger(b.profileOrder) ? b.profileOrder! : Number.MAX_SAFE_INTEGER;
+    return aOrder - bOrder;
+  });
+}
+
 const cfKey = (tagName: string, fieldName: string) => `${tagName}::${fieldName}`;
 
 // Migrate legacy string assignedTo → string[] for backward compatibility
@@ -701,7 +709,7 @@ useEffect(() => {
 
       if (cancelled) return;
 
-      setPlayers(playersData.filter((player) => player.id !== "dm"));
+      setPlayers(sortPlayersByProfileOrder(playersData.filter((player) => player.id !== "dm")));
       setDeletedPlayers(deletedPlayersData.filter((p) => p.id !== "dm"));
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
@@ -763,8 +771,9 @@ useEffect(() => {
 async function persistPlayers(next: PlayerData[]) {
   try {
     setDmError(null);
-    await saveDMPlayers(next as unknown as Record<string, unknown>[]);
-    setPlayers(next);
+    const ordered = next.map((player, profileOrder) => ({ ...player, profileOrder }));
+    await saveDMPlayers(ordered as unknown as Record<string, unknown>[]);
+    setPlayers(ordered);
   } catch (err) {
     setDmError(getSaveError(err, "Failed to save players"));
     throw err;
@@ -1113,11 +1122,12 @@ async function persistCustomReactions(next: CustomReaction[]) {
   // Profile sync: write player profiles + DM to localStorage for login page
   // ========================
   const syncProfilesToLocalStorage = useCallback((playerList: PlayerData[]) => {
-    const profiles: LoginProfile[] = playerList.filter((p) => p.id !== "dm").map((p) => ({
+    const profiles: LoginProfile[] = playerList.filter((p) => p.id !== "dm").map((p, profileOrder) => ({
       id: p.id,
       name: p.name,
       description: `${p.class} · Level ${p.level}`,
       loginLocked: p.loginLocked === true,
+      profileOrder,
     }));
     // Always include the DM profile (auth codes live on server, not here)
     profiles.push({ id: "dm", name: "DM", description: "System Administrator · Full Access" });
@@ -1225,6 +1235,23 @@ async function persistCustomReactions(next: CustomReaction[]) {
       setEditingPlayer((current) => current?.id === player.id ? { ...current, loginLocked: player.loginLocked !== true } : current);
     } catch {
       // persistPlayers displays the save error and keeps the prior player list.
+    } finally {
+      setLockSavingPlayerId(null);
+    }
+  };
+  const movePlayerProfile = async (playerId: string, direction: -1 | 1) => {
+    if (lockSavingPlayerId) return;
+    const index = players.findIndex((player) => player.id === playerId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= players.length) return;
+    const next = [...players];
+    [next[index], next[target]] = [next[target], next[index]];
+    setLockSavingPlayerId(playerId);
+    try {
+      await persistPlayers(next);
+      syncProfilesToLocalStorage(next);
+    } catch {
+      // persistPlayers displays the save error and retains the previous order.
     } finally {
       setLockSavingPlayerId(null);
     }
@@ -1829,13 +1856,14 @@ const handleSaveItem = async () => {
 
               <div className={`${retro.sunken} bg-[#0C0C2E] p-4`}>
                 <div className="text-[12px] mb-3" style={S_SECTION_HDR}>REGISTERED PLAYERS ({players.length})</div>
+                <div className="text-[10px] mb-3" style={S_MUTED}>Use the arrows to set the order players appear on the login screen. The DM profile stays last.</div>
                 {players.length === 0 ? (
                   <div className="text-[12px] text-center py-6" style={S_MUTED}>No players registered.</div>
                 ) : (
                   <div className="space-y-3">
-                    {players.map((player) => (
+                    {players.map((player, playerIndex) => (
                       <div key={player.id} className={`${retro.raised} bg-[#0E0E35] p-4`}>
-                        <div className="flex items-start justify-between mb-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                           <div>
                             <div className="flex items-center gap-2 mb-0.5">
                               <div className="text-[14px]" style={S_TEXT_BOLD}>{player.name}</div>
@@ -1845,7 +1873,11 @@ const handleSaveItem = async () => {
                               {(player.race || "").trim() ? `${player.race} | ` : ""}{player.class} | Level {player.level}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            <div className="flex flex-col gap-0.5" aria-label={`Reorder ${player.name}`}>
+                              <button type="button" onClick={() => void movePlayerProfile(player.id, -1)} disabled={playerIndex === 0 || lockSavingPlayerId !== null} className={`${retro.button} px-1.5 py-0.5 disabled:opacity-40`} title={`Move ${player.name} up`} aria-label={`Move ${player.name} up`}><ChevronUp size={12} /></button>
+                              <button type="button" onClick={() => void movePlayerProfile(player.id, 1)} disabled={playerIndex === players.length - 1 || lockSavingPlayerId !== null} className={`${retro.button} px-1.5 py-0.5 disabled:opacity-40`} title={`Move ${player.name} down`} aria-label={`Move ${player.name} down`}><ChevronDown size={12} /></button>
+                            </div>
                             <button type="button" onClick={() => void togglePlayerLoginLock(player)} disabled={lockSavingPlayerId !== null} className={`${retro.button} px-3 py-1 text-[11px] flex items-center gap-1 disabled:opacity-60`} style={{ color: player.loginLocked ? "#9FE2BD" : "#E7BD85" }} title={player.loginLocked ? "Allow this profile to log in again" : "Prevent login and end existing sessions"}>
                               {player.loginLocked ? <Unlock size={12} /> : <Lock size={12} />}
                               {lockSavingPlayerId === player.id ? "Saving..." : player.loginLocked ? "Unlock Login" : "Lock Login"}

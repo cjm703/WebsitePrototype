@@ -139,6 +139,13 @@ async function testSessionValidation() {
     playerId: "player-1",
     isDM: false,
   });
+
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: "Session revoked: profile locked or unavailable" }),
+    { status: 401, headers: { "Content-Type": "application/json" } },
+  );
+  await assert.rejects(api.validatePlayerSession(), /Session revoked/);
+  assert.equal(localStorage.getItem("inet-session-token"), null, "A locked session must be cleared locally");
 }
 
 async function testCollectionDeletionDiff() {

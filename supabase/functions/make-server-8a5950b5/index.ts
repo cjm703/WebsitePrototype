@@ -170,6 +170,18 @@ async function resolveSessionPlayerId(c: any): Promise<string> {
   if (data.revoked) throw new Error("Session revoked");
   if (new Date(data.expires_at).getTime() < Date.now()) throw new Error("Session expired");
 
+  if (data.player_id !== "dm") {
+    const { data: profile, error: profileError } = await supabase
+      .from("app_players")
+      .select("data")
+      .eq("id", data.player_id)
+      .maybeSingle();
+    if (profileError) throw new Error(profileError.message);
+    if (!profile || profile.data?.loginLocked === true) {
+      throw new Error("Session revoked: profile locked or unavailable");
+    }
+  }
+
   return data.player_id;
 }
 
@@ -2664,7 +2676,10 @@ function registerRoutes(prefix: string) {
         class: row.data?.class ?? row.data?.className ?? null,
         level: row.data?.level ?? 1,
         loginLocked: row.id !== "dm" && row.data?.loginLocked === true,
-      }));
+        profileOrder: Number.isInteger(row.data?.profileOrder) ? row.data.profileOrder : null,
+      })).sort((a: any, b: any) =>
+        (a.profileOrder ?? Number.MAX_SAFE_INTEGER) - (b.profileOrder ?? Number.MAX_SAFE_INTEGER)
+      );
 
       return c.json({ profiles });
     } catch (err) {
