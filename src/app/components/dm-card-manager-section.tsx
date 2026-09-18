@@ -2686,6 +2686,7 @@ export function DMCardManagerSection({
       "campaign-lotus-astra-erlang",
     ]);
     const westernRulesRefreshIds = new Set([
+      "campaign-lotus-stellar-tides-aquarius",
       "campaign-lotus-astral-aegis-cancer",
       "campaign-lotus-radiant-veil-virgo",
     ]);
@@ -2697,6 +2698,14 @@ export function DMCardManagerSection({
       "campaign-lotus-twilights-decree",
       "campaign-lotus-twilight-binding",
       "campaign-lotus-horizons-lament",
+    ]);
+    const exactWordingRefreshIds = new Set([
+      ...centralRulesRefreshIds,
+      ...seaRulesRefreshIds,
+      ...easternRulesRefreshIds,
+      ...westernRulesRefreshIds,
+      ...faeEventideRulesRefreshIds,
+      "campaign-unassigned-stage-of-pride",
     ]);
 
     setCampaignImporting(true);
@@ -2784,7 +2793,8 @@ export function DMCardManagerSection({
         const hasSeaRevision = ["2026-09-17-draft-6", "2026-09-17-draft-7", "2026-09-17-draft-8", "2026-09-17-draft-9", "2026-09-17-draft-10"].includes(importedVersion);
         const hasEasternRevision = ["2026-09-17-draft-8", "2026-09-17-draft-9", "2026-09-17-draft-10"].includes(importedVersion);
         const hasWesternRevision = importedVersion === "2026-09-17-draft-10";
-        const shouldRefreshDescription = faeEventideRulesRefreshIds.has(card.id)
+        const shouldRefreshDescription = exactWordingRefreshIds.has(card.id)
+          || faeEventideRulesRefreshIds.has(card.id)
           || (westernRulesRefreshIds.has(card.id) && !hasWesternRevision)
           || (easternRulesRefreshIds.has(card.id) && !hasEasternRevision)
           || (seaDescriptionRefreshIds.has(card.id) && !hasSeaRevision)
@@ -2796,7 +2806,7 @@ export function DMCardManagerSection({
         const shouldRefreshSeaRules = seaRulesRefreshIds.has(card.id) && !hasSeaRevision;
         const shouldRefreshEasternRules = easternRulesRefreshIds.has(card.id) && !hasEasternRevision;
         const shouldRefreshWesternRules = westernRulesRefreshIds.has(card.id) && !hasWesternRevision;
-        const shouldRefreshRules = faeEventideRulesRefreshIds.has(card.id) || shouldRefreshWesternRules || shouldRefreshEasternRules || shouldRefreshSeaRules || shouldRefreshCentralRules;
+        const shouldRefreshRules = exactWordingRefreshIds.has(card.id) || faeEventideRulesRefreshIds.has(card.id) || shouldRefreshWesternRules || shouldRefreshEasternRules || shouldRefreshSeaRules || shouldRefreshCentralRules;
         return {
           ...card,
           type: seed.card.type,
@@ -2884,7 +2894,7 @@ export function DMCardManagerSection({
 
       const notes = [
         importedCards.length > 0 ? `Imported ${importedCards.length} campaign card${importedCards.length === 1 ? "" : "s"}.` : "No new cards were needed.",
-        migratedCardsCount > 0 ? `Updated the classification profile on ${migratedCardsCount} earlier imported card${migratedCardsCount === 1 ? "" : "s"}.` : "",
+        migratedCardsCount > 0 ? `Refreshed the exact source wording and classification on ${migratedCardsCount} earlier imported card${migratedCardsCount === 1 ? "" : "s"}.` : "",
         importedCards.length === 0 && migratedCardsCount === 0 ? `Campaign pack ${CAMPAIGN_ABILITY_PACK_VERSION} was already current; level and magic lists were checked.` : "",
         missingPlayers.size > 0 ? `Missing player profiles: ${Array.from(missingPlayers).join(", ")}.` : "",
         missingNodes.size > 0 ? `Unlinked nodes: ${Array.from(missingNodes).join(", ")}.` : "",
