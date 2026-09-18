@@ -17,8 +17,7 @@ export function SinTarotEmblem({ affinity, className = "" }: { affinity: string;
     return (
       <svg className={className} viewBox="0 0 160 180" fill="none" aria-hidden="true" focusable="false">
         <path d="M80 10c25 0 49 8 61 23l-5 66c-3 31-27 54-56 69-29-15-53-38-56-69l-5-66C31 18 55 10 80 10Z" fill="currentColor" fillOpacity=".22" stroke="currentColor" strokeWidth="3" />
-        <path d="M34 42c14-12 29-18 46-18s32 6 46 18M29 96c9 27 27 48 51 62 24-14 42-35 51-62" stroke="currentColor" strokeWidth="2" strokeOpacity=".58" strokeLinecap="round" />
-        <path d="M80 2v12M45 10l7 10m63-10-7 10M7 50l14 4m132-4-14 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M45 78c7-7 15-7 22 0M93 78c7 7 15 7 22 0" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
       </svg>
     );
   }
