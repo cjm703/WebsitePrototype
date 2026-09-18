@@ -3122,7 +3122,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       timedEffectFields.length > 0 ? { title: "Timed Effect", accent: "#4ADE80", fields: timedEffectFields } : null,
       otherDetailFields.length > 0 ? { title: "More Details", accent: "#9A8CFF", fields: otherDetailFields } : null,
     ].filter(Boolean) as Array<{ title: string; accent: string; fields: Array<{ key: string; label: string; value: string }> }>;
-    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : isSin ? "#E6C486" : theme.accentColor;
+    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : isSin ? (sinAffinity.toLowerCase() === "pride" ? "#FFFFFF" : "#E6C486") : theme.accentColor;
 
     return (
       <div className="space-y-4">
@@ -3150,8 +3150,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 {card.actionCost && <div className="sin-tarot__ritual">{card.actionCost}</div>}
               </div>
               {isUseButtonEnabled && (
-                <button onClick={() => handleUseCard(card)} className={`${retro.button} sin-tarot__header-action px-4 py-2 text-[12px] flex items-center gap-2 font-semibold`} style={{ color: "#f4dca9", background: justUsed ? "#6b3e43" : "#211322", border: "1px solid #c7a36b" }}>
-                  <Play size={13} fill={justUsed ? "#f4dca9" : "none"} /> {justUsed ? "Activated!" : "Activate SIN"}
+                <button onClick={() => handleUseCard(card)} className={`${retro.button} sin-tarot__header-action px-4 py-2 text-[12px] flex items-center gap-2 font-semibold`} data-activated={justUsed ? "true" : "false"}>
+                  <Play size={13} fill={justUsed ? "currentColor" : "none"} /> {justUsed ? "Activated!" : "Activate SIN"}
                 </button>
               )}
             </div>
@@ -3220,12 +3220,12 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5 items-start">
             <section className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "#E6C486" : "#7FA6FF", fontWeight: 700 }}>
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "var(--sin-bright)" : "#7FA6FF", fontWeight: 700 }}>
                 <Info size={12} /> {isSin ? "The Legend" : "Description & Lore"}
               </div>
               {descriptionText && (
                 <div className="mb-4">
-                  <RenderFormattedText text={descriptionText} color={isSin ? "#F5E9D8" : theme.textColor} baseSize={12} />
+                  <RenderFormattedText text={descriptionText} color={isSin ? "var(--sin-ink)" : theme.textColor} baseSize={12} />
                   {renderDiceRollControls(`card:${card.id}:description`, descriptionText, detailRollPotency)}
                 </div>
               )}
@@ -3233,7 +3233,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </section>
 
             <section className="space-y-3 min-w-0 xl:border-l xl:pl-5" style={{ borderColor: bc(theme.dividerColor) }}>
-              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "#E6C486" : "#C4A0FF", fontWeight: 700 }}>
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "var(--sin-bright)" : "#C4A0FF", fontWeight: 700 }}>
                 <Zap size={12} /> {isSin ? "The Invocation" : "Gameplay"}
               </div>
               {primaryFacts.length > 0 && (
@@ -3241,18 +3241,18 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                   {primaryFacts.map((fact) => (
                     <div key={fact.label} className="px-2.5 py-2 min-h-[46px]" style={{ background: "rgba(12,18,46,0.94)", borderTop: `2px solid ${cardAccent}88` }}>
                       <div className="text-[8px] uppercase tracking-[0.07em] mb-0.5" style={S_MUTED}>{fact.label}</div>
-                      <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "#F5E9D8" : theme.textColor, fontWeight: 600 }}>{fact.value}</div>
+                      <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "var(--sin-ink)" : theme.textColor, fontWeight: 600 }}>{fact.value}</div>
                     </div>
                   ))}
                 </div>
               )}
 
               <div className="border-l-2 pl-3 py-1" style={{ borderColor: cardAccent }}>
-                <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: isSin ? "#E6C486" : "#8AB8FF", fontWeight: 700 }}>
+                <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: isSin ? "var(--sin-bright)" : "#8AB8FF", fontWeight: 700 }}>
                   {isSin ? "Complete SIN Rules" : "Effect"}
                 </div>
                 {card.effect?.trim() ? (
-                  <RenderFormattedText text={card.effect} color={isSin ? "#F5E9D8" : theme.textColor} baseSize={12} />
+                  <RenderFormattedText text={card.effect} color={isSin ? "var(--sin-ink)" : theme.textColor} baseSize={12} />
                 ) : (
                   <div className="text-[11px] italic" style={S_MUTED}>No effect text has been added.</div>
                 )}
@@ -3272,7 +3272,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     {section.fields.map((field) => (
                       <div key={field.key} className="pb-1.5 last:pb-0 border-b last:border-b-0" style={{ borderColor: `${section.accent}18` }}>
                         <div className="text-[7px] uppercase tracking-[0.05em] mb-0.5" style={S_MUTED}>{field.label}</div>
-                        <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "#F5E9D8" : theme.textColor }}>{field.value}</div>
+                        <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "var(--sin-ink)" : theme.textColor }}>{field.value}</div>
                         {renderDiceRollControls(`card:${card.id}:sidebar:${field.key}`, field.value, detailRollPotency, true)}
                       </div>
                     ))}

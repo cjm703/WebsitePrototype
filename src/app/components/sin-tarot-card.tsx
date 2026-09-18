@@ -16,12 +16,9 @@ export function SinTarotEmblem({ affinity, className = "" }: { affinity: string;
   if (affinity.trim().toLowerCase() === "pride") {
     return (
       <svg className={className} viewBox="0 0 160 180" fill="none" aria-hidden="true" focusable="false">
-        <path d="M80 12c25 0 49 7 61 21l-5 68c-3 30-27 52-56 67-29-15-53-37-56-67l-5-68C31 19 55 12 80 12Z" fill="currentColor" fillOpacity=".13" stroke="currentColor" strokeWidth="3" />
-        <path d="M32 38c15-10 31-15 48-15s33 5 48 15M26 91c10 33 29 53 54 66 25-13 44-33 54-66" stroke="currentColor" strokeWidth="2" strokeOpacity=".8" />
-        <path d="M42 75c9-8 19-10 29-4-5 10-14 14-27 10m74-6c-9-8-19-10-29-4 5 10 14 14 27 10" fill="currentColor" fillOpacity=".32" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-        <path d="M80 82l-5 22 5 3 5-3-5-22ZM58 119c14 8 30 8 44 0M64 131c10 4 22 4 32 0" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M111 34 99 53l7 10-12 17 9 11-11 21" stroke="currentColor" strokeWidth="2" strokeOpacity=".72" strokeLinejoin="round" />
-        <path d="M80 3v10M46 9l6 9m62-9-6 9M6 48l13 4m135-4-13 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M80 10c25 0 49 8 61 23l-5 66c-3 31-27 54-56 69-29-15-53-38-56-69l-5-66C31 18 55 10 80 10Z" fill="currentColor" fillOpacity=".22" stroke="currentColor" strokeWidth="3" />
+        <path d="M34 42c14-12 29-18 46-18s32 6 46 18M29 96c9 27 27 48 51 62 24-14 42-35 51-62" stroke="currentColor" strokeWidth="2" strokeOpacity=".58" strokeLinecap="round" />
+        <path d="M80 2v12M45 10l7 10m63-10-7 10M7 50l14 4m132-4-14 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
       </svg>
     );
   }

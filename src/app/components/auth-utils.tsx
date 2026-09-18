@@ -30,20 +30,23 @@ async function resilientFetch(
   timeoutMs = 8000
 ): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const res = await fetch(url, { ...opts, signal: controller.signal });
-      clearTimeout(timer);
-      return res;
+      timer = setTimeout(() => controller.abort(), timeoutMs);
+      return await fetch(url, { ...opts, signal: controller.signal });
     } catch (err: unknown) {
       const isLast = attempt === retries;
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
+      const isAbort =
+        (err instanceof DOMException && err.name === "AbortError") ||
+        (err instanceof Error && err.name === "AbortError");
       if (isLast) throw err;
       await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
       console.log(
         `Auth fetch retry ${attempt + 1}/${retries} for ${url}${isAbort ? " (timeout)" : ""}`
       );
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
   throw new Error("resilientFetch: unreachable");

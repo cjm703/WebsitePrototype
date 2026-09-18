@@ -3,6 +3,30 @@
   --sin-bright: #f2d9a2;
   --sin-ink: #f5e9d8;
   --sin-muted: #d4baa7;
+  --sin-frame-outer: #d5b8808c;
+  --sin-frame-inner: #b88d5847;
+  --sin-header-border: #d4ad746b;
+  --sin-header-wash: #b57c6330;
+  --sin-header-edge: #d6a97524;
+  --sin-seal-bg: #1a101dc9;
+  --sin-seal-ring: #c7a36b20;
+  --sin-ritual: #f0dcc1;
+  --sin-ritual-border: #c7a36b87;
+  --sin-rule-line: #c7a36b99;
+  --sin-chapter-border: #b58c6380;
+  --sin-chapter-bg: #4320369e;
+  --sin-chapter-bg-end: #170f21e8;
+  --sin-chapter-inset: #ab865146;
+  --sin-falsification-border: #a87e7f9c;
+  --sin-falsification-bg: #2c192c;
+  --sin-falsification-bg-end: #160f20;
+  --sin-falsification-label: #efbfc0;
+  --sin-falsification-crack: #f0c3bf;
+  --sin-tile-hover: #a96e6538;
+  --sin-tile-footer: #c7a36b66;
+  --sin-action-text: #f4dca9;
+  --sin-action-bg: #211322;
+  --sin-action-active: #6b3e43;
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -14,12 +38,44 @@
 }
 
 .sin-tarot--pride {
-  --sin-metal: #c7a36b;
-  --sin-bright: #f4dca9;
-  --sin-ink: #fff0df;
-  --sin-muted: #e0c4b5;
-  background: radial-gradient(ellipse at 50% 0%, #68263e 0%, #3a152e 34%, #1a101f 72%, #0d0b16 100%);
+  --sin-metal: #d9c9ff;
+  --sin-bright: #ffffff;
+  --sin-ink: #fbf9ff;
+  --sin-muted: #e5dafa;
+  --sin-frame-outer: #f3efff99;
+  --sin-frame-inner: #bda5f15c;
+  --sin-header-border: #eee8ff91;
+  --sin-header-wash: #a879e738;
+  --sin-header-edge: #e5dcff38;
+  --sin-seal-bg: #211438e6;
+  --sin-seal-ring: #d8c8ff38;
+  --sin-ritual: #ffffff;
+  --sin-ritual-border: #dfd2ffb0;
+  --sin-rule-line: #d5c3ffb8;
+  --sin-chapter-border: #d9c9ff99;
+  --sin-chapter-bg: #5a397fbb;
+  --sin-chapter-bg-end: #211331f2;
+  --sin-chapter-inset: #e4d9ff45;
+  --sin-falsification-border: #ded0ffad;
+  --sin-falsification-bg: #3d265b;
+  --sin-falsification-bg-end: #1c112b;
+  --sin-falsification-label: #ffffff;
+  --sin-falsification-crack: #ffffff;
+  --sin-tile-hover: #bb96ff5c;
+  --sin-tile-footer: #d6c3ff99;
+  --sin-action-text: #ffffff;
+  --sin-action-bg: #2b1745;
+  --sin-action-active: #744ca0;
+  background: radial-gradient(ellipse at 50% 0%, #9a72db 0%, #5a397f 34%, #28163e 72%, #100a1c 100%);
 }
+
+.sin-tarot--pride .sin-tarot__watermark,
+.sin-tarot--pride .sin-tarot__tile-emblem {
+  color: #ffffff;
+}
+
+.sin-tarot--pride .sin-tarot__watermark { opacity: .18; }
+.sin-tarot--pride .sin-tarot__tile-emblem { opacity: .24; }
 
 .sin-tarot::before {
   content: "";
@@ -27,7 +83,7 @@
   z-index: 0;
   pointer-events: none;
   inset: 6px;
-  border: 1px solid #d5b8808c;
+  border: 1px solid var(--sin-frame-outer);
   border-radius: 9px 9px 15px 15px;
 }
 
@@ -37,7 +93,7 @@
   z-index: 0;
   pointer-events: none;
   inset: 11px;
-  border: 1px solid #b88d5847;
+  border: 1px solid var(--sin-frame-inner);
   border-radius: 5px 5px 11px 11px;
 }
 
@@ -87,8 +143,8 @@
   justify-content: space-between;
   gap: 22px;
   overflow: hidden;
-  border-bottom: 1px solid #d4ad746b;
-  background: radial-gradient(circle at 50% 43%, #b57c6330, transparent 38%), linear-gradient(90deg, #160d1b4d, transparent 28%, transparent 72%, #160d1b4d);
+  border-bottom: 1px solid var(--sin-header-border);
+  background: radial-gradient(circle at 50% 43%, var(--sin-header-wash), transparent 38%), linear-gradient(90deg, #160d1b4d, transparent 28%, transparent 72%, #160d1b4d);
 }
 
 .sin-tarot__header::before,
@@ -98,7 +154,7 @@
   top: 0;
   bottom: 0;
   width: 34px;
-  border: 1px solid #d6a97524;
+  border: 1px solid var(--sin-header-edge);
   border-radius: 50% 50% 0 0;
   pointer-events: none;
 }
@@ -133,11 +189,11 @@
   color: var(--sin-bright);
   border: 1px solid var(--sin-metal);
   border-radius: 999px;
-  background: #1a101dc9;
+  background: var(--sin-seal-bg);
   font: 700 10px/1.2 Georgia, "Times New Roman", serif;
   letter-spacing: .18em;
   text-transform: uppercase;
-  box-shadow: 0 0 0 3px #c7a36b20;
+  box-shadow: 0 0 0 3px var(--sin-seal-ring);
 }
 
 .sin-tarot__seal-dot { font-size: 13px; line-height: 0; }
@@ -162,8 +218,8 @@
   display: inline-block;
   margin-top: 11px;
   padding-top: 8px;
-  color: #f0dcc1;
-  border-top: 1px solid #c7a36b87;
+  color: var(--sin-ritual);
+  border-top: 1px solid var(--sin-ritual-border);
   font: 11px/1.4 Georgia, "Times New Roman", serif;
 }
 
@@ -179,7 +235,7 @@
 }
 
 .sin-tarot__rule::before,
-.sin-tarot__rule::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, #c7a36b99, transparent); }
+.sin-tarot__rule::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--sin-rule-line), transparent); }
 
 .sin-tarot__chapters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin: 0 0 22px; }
 
@@ -188,14 +244,14 @@
   min-width: 0;
   overflow: hidden;
   padding: 17px 18px;
-  border: 1px solid #b58c6380;
-  background: linear-gradient(135deg, #4320369e, #170f21e8);
-  box-shadow: inset 0 0 0 3px #0e091476, inset 0 0 0 4px #ab865146;
+  border: 1px solid var(--sin-chapter-border);
+  background: linear-gradient(135deg, var(--sin-chapter-bg), var(--sin-chapter-bg-end));
+  box-shadow: inset 0 0 0 3px #0e091476, inset 0 0 0 4px var(--sin-chapter-inset);
 }
 
 .sin-tarot__chapter--falsification {
-  border-color: #a87e7f9c;
-  background: linear-gradient(135deg, #2c192c, #160f20 74%);
+  border-color: var(--sin-falsification-border);
+  background: linear-gradient(135deg, var(--sin-falsification-bg), var(--sin-falsification-bg-end) 74%);
 }
 
 .sin-tarot__chapter-label {
@@ -208,8 +264,8 @@
   text-transform: uppercase;
 }
 
-.sin-tarot__chapter--falsification .sin-tarot__chapter-label { color: #efbfc0; }
-.sin-tarot__chapter-text { position: relative; z-index: 1; color: #f4e6df; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.sin-tarot__chapter--falsification .sin-tarot__chapter-label { color: var(--sin-falsification-label); }
+.sin-tarot__chapter-text { position: relative; z-index: 1; color: var(--sin-ink); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 
 .sin-tarot__crack {
   position: absolute;
@@ -217,7 +273,7 @@
   height: 130px;
   right: 0;
   top: 0;
-  color: #f0c3bf;
+  color: var(--sin-falsification-crack);
   opacity: .18;
   pointer-events: none;
 }
@@ -231,7 +287,7 @@
 }
 
 .sin-tarot--tile:hover,
-.sin-tarot--tile:focus-visible { transform: translateY(-3px); box-shadow: 0 19px 36px #05030db3, 0 0 20px #a96e6538; }
+.sin-tarot--tile:focus-visible { transform: translateY(-3px); box-shadow: 0 19px 36px #05030db3, 0 0 20px var(--sin-tile-hover); }
 .sin-tarot--tile:focus-visible { outline: 2px solid var(--sin-bright); outline-offset: 3px; }
 
 .sin-tarot__tile-content { position: relative; z-index: 2; min-height: 210px; }
@@ -257,8 +313,18 @@
 }
 
 .sin-tarot__tile-meta { color: var(--sin-muted); font: 10px/1.5 Georgia, "Times New Roman", serif; letter-spacing: .07em; }
-.sin-tarot__tile-excerpt { margin-top: 15px; color: #e9d9d0; font-size: 11px; line-height: 1.5; }
-.sin-tarot__tile-footer { margin-top: 18px; padding-top: 11px; border-top: 1px solid #c7a36b66; }
+.sin-tarot__tile-excerpt { margin-top: 15px; color: var(--sin-ink); font-size: 11px; line-height: 1.5; }
+.sin-tarot__tile-footer { margin-top: 18px; padding-top: 11px; border-top: 1px solid var(--sin-tile-footer); }
+
+.sin-tarot__header-action {
+  color: var(--sin-action-text) !important;
+  background: var(--sin-action-bg) !important;
+  border-color: var(--sin-metal) !important;
+}
+
+.sin-tarot__header-action[data-activated="true"] {
+  background: var(--sin-action-active) !important;
+}
 
 @media (max-width: 680px) {
   .sin-tarot__header { min-height: 175px; padding: 30px 24px 24px; }

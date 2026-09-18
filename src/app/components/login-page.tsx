@@ -208,6 +208,12 @@ export function LoginPage() {
       return;
     }
 
+    // Claim the submit immediately, before the network request starts. The
+    // previous flow only set `connecting` after verification completed, so a
+    // double-click (or Enter + click) could launch two concurrent requests.
+    setConnecting(true);
+    setError("");
+
     let result: Awaited<ReturnType<typeof verifyAuthCode>>;
     try {
       result = await verifyAuthCode(selectedProfile.id, password);
@@ -215,20 +221,20 @@ export function LoginPage() {
         setSelectedProfile(null);
         setPassword("");
         setError("PROFILE LOCKED BY THE DM");
+        setConnecting(false);
         return;
       }
       if (!result.valid) {
         setError("INVALID AUTHORIZATION CODE");
+        setConnecting(false);
         return;
       }
     } catch (err) {
       console.error("Auth verification error:", err);
       setError("CONNECTION ERROR — TRY AGAIN");
+      setConnecting(false);
       return;
     }
-
-    setConnecting(true);
-    setError("");
 
     setTimeout(() => {
       try { safeSetItem("inet-user", selectedProfile.name); } catch {}
