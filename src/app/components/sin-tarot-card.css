@@ -27,6 +27,8 @@
   --sin-action-text: #f4dca9;
   --sin-action-bg: #211322;
   --sin-action-active: #6b3e43;
+  --sin-fact-bg: #170d25e8;
+  --sin-fact-border: #bd955b45;
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -66,6 +68,8 @@
   --sin-action-text: #ffffff;
   --sin-action-bg: #2b1745;
   --sin-action-active: #744ca0;
+  --sin-fact-bg: #24143be8;
+  --sin-fact-border: #d9c9ff66;
   background: radial-gradient(ellipse at 50% 0%, #9a72db 0%, #5a397f 34%, #28163e 72%, #100a1c 100%);
 }
 
@@ -332,6 +336,12 @@
 .sin-tarot__tile-meta { color: var(--sin-muted); font: 10px/1.5 Georgia, "Times New Roman", serif; letter-spacing: .07em; }
 .sin-tarot__tile-excerpt { margin-top: 15px; color: var(--sin-ink); font-size: 11px; line-height: 1.5; }
 .sin-tarot__tile-footer { margin-top: 18px; padding-top: 11px; border-top: 1px solid var(--sin-tile-footer); }
+
+.sin-tarot__fact {
+  background: var(--sin-fact-bg);
+  border: 1px solid var(--sin-fact-border);
+  box-shadow: inset 0 0 0 1px #ffffff0b, 0 4px 12px #05020e35;
+}
 
 .sin-tarot__invocation-panel {
   border-top: 1px solid var(--sin-header-border);

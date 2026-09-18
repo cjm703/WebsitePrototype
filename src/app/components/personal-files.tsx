@@ -3239,7 +3239,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               {primaryFacts.length > 0 && (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
                   {primaryFacts.map((fact) => (
-                    <div key={fact.label} className="px-2.5 py-2 min-h-[46px]" style={{ background: "rgba(12,18,46,0.94)", borderTop: `2px solid ${cardAccent}88` }}>
+                    <div key={fact.label} className={`px-2.5 py-2 min-h-[46px]${isSin ? " sin-tarot__fact" : ""}`} style={{ background: isSin ? undefined : "rgba(12,18,46,0.94)", borderTop: `2px solid ${cardAccent}88` }}>
                       <div className="text-[8px] uppercase tracking-[0.07em] mb-0.5" style={S_MUTED}>{fact.label}</div>
                       <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "var(--sin-ink)" : theme.textColor, fontWeight: 600 }}>{fact.value}</div>
                     </div>
