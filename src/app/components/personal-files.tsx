@@ -3139,20 +3139,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
 
         <div className={isSin ? `sin-tarot${sinAffinity.toLowerCase() === "pride" ? " sin-tarot--pride" : ""}` : `${retro.sunken} bg-[#0C0C2E] p-5`} style={isSin ? undefined : { borderLeft: `4px solid ${cardAccent}` }}>
           {isSin && <SinTarotOrnaments />}
-          {isSin && (
-            <div className="sin-tarot__full-illustration" aria-hidden="true">
-              <div className="sin-tarot__split-good" />
-              <div className="sin-tarot__split-bad" />
-              <svg className="sin-tarot__split-divider" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
-                <path className="sin-tarot__split-divider-glow" d="M0 100 100 0" />
-                <path d="M0 100 100 0" />
-              </svg>
-            </div>
-          )}
-          {isSin && <SinTarotEmblem affinity={sinAffinity} className="sin-tarot__full-mask" />}
           <div className={isSin ? "sin-tarot__content" : undefined}>
           {isSin ? (
             <div className="sin-tarot__header">
+              <SinTarotEmblem affinity={sinAffinity} className="sin-tarot__watermark" />
               <div className="sin-tarot__header-copy">
                 <div className="sin-tarot__seal"><span>SIN</span><span className="sin-tarot__seal-dot" aria-hidden="true">·</span><span>{sinAffinity}</span></div>
                 <h2 className="sin-tarot__title">{card.name}</h2>
