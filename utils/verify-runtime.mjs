@@ -113,6 +113,15 @@ async function testAuthRequests() {
     new Headers(requests[3].init.headers).get("X-Session-Token"),
     "dm-session",
   );
+
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ error: "Profile locked by DM", locked: true }),
+    { status: 423, headers: { "Content-Type": "application/json" } },
+  );
+  const locked = await auth.verifyAuthCode("player-1", "correct-code");
+  assert.equal(locked.valid, false, "Locked profiles must not authenticate");
+  assert.equal(locked.locked, true, "The login page should distinguish a lock from a bad code");
+  assert.equal(locked.sessionToken, undefined, "A lock response must never carry a session token");
 }
 
 async function testSessionValidation() {

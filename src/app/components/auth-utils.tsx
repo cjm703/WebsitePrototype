@@ -72,6 +72,7 @@ export async function setAuthCode(
 export type VerifyAuthCodeResult = {
   valid: boolean;
   hasCode: boolean;
+  locked?: boolean;
   playerId?: string;
   sessionToken?: string;
 };
@@ -88,6 +89,9 @@ export async function verifyAuthCode(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    if (res.status === 423 && body.locked === true) {
+      return { valid: false, hasCode: false, locked: true };
+    }
     throw new Error(
       `Failed to verify auth code for ${profileId}: ${body.error || res.statusText}`
     );

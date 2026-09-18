@@ -16,6 +16,7 @@ const personalFiles = read("src/app/components/personal-files.tsx");
 const itemCombatRules = read("src/lib/item-combat-rules.ts");
 const initialData = read("src/app/components/initial-data.tsx");
 const dmArea = read("src/app/components/dm-area.tsx");
+const loginPage = read("src/app/components/login-page.tsx");
 const dmWikiSection = read("src/app/components/dm-wiki-section.tsx");
 const routes = read("src/app/routes.tsx");
 const gamePage = read("src/app/components/game.tsx");
@@ -96,6 +97,12 @@ for (const [marker, next] of [
 }
 assert.doesNotMatch(edge, /VERIFY BODY|VERIFY STORED|debug-kv|debug-test/);
 assert.match(routeBody("/auth-codes/verify", "/auth-codes/status"), /recordFailedAuthAttempt/);
+assert.match(routeBody("/auth-codes/verify", "/auth-codes/status"), /profile\?\.data\?\.loginLocked === true[\s\S]*423/);
+assert.match(routeBody("/auth-codes/profiles", "/auth-codes/:profileId"), /loginLocked: row\.id !== "dm" && row\.data\?\.loginLocked === true/);
+assert.match(routeBody("/dm/players/save", "/dm/player/delete"), /lockedIds[\s\S]*app_sessions/);
+assert.match(loginPage, /disabled=\{profile\.loginLocked === true\}/);
+assert.match(loginPage, /LockedProfileOverlay/);
+assert.match(dmArea, /Lock this profile from login/);
 assert.match(edge, /app\.get\(`\$\{prefix\}\/session\/me`/);
 assert.match(edge, /sanitizeStoredValue/);
 assert.match(edge, /\/data\/collection\/:table/);

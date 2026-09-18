@@ -2528,6 +2528,18 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "Missing or invalid profileId" }, 400);
       }
 
+      if (profileId !== "dm") {
+        const { data: profile, error: profileError } = await admin()
+          .from("app_players")
+          .select("data")
+          .eq("id", profileId)
+          .maybeSingle();
+        if (profileError) throw new Error(profileError.message);
+        if (profile?.data?.loginLocked === true) {
+          return c.json({ error: "Profile locked by DM", locked: true }, 423);
+        }
+      }
+
       const attemptState = await getAuthAttemptState(c, profileId);
       if (attemptState.lockedUntil > Date.now()) {
         return c.json(
@@ -2651,6 +2663,7 @@ function registerRoutes(prefix: string) {
         name: row.data?.name ?? row.id,
         class: row.data?.class ?? row.data?.className ?? null,
         level: row.data?.level ?? 1,
+        loginLocked: row.id !== "dm" && row.data?.loginLocked === true,
       }));
 
       return c.json({ profiles });
@@ -4582,7 +4595,15 @@ function registerRoutes(prefix: string) {
         return c.json({ error: "players must be an array" }, 400);
       }
 
-      await syncEntityRows("app_players", body.players, body?.deleteIds);
+      const players = body.players.map((player: any) => player?.id === "dm" ? { ...player, loginLocked: false } : player);
+      await syncEntityRows("app_players", players, body?.deleteIds);
+      const lockedIds = players
+        .filter((player: any) => player?.id !== "dm" && player?.loginLocked === true && typeof player?.id === "string")
+        .map((player: any) => player.id);
+      if (lockedIds.length > 0) {
+        const { error: revokeError } = await admin().from("app_sessions").delete().in("player_id", lockedIds);
+        if (revokeError) throw new Error(revokeError.message);
+      }
       return c.json({ ok: true });
     } catch (err) {
       return c.json({ error: String(err) }, 403);

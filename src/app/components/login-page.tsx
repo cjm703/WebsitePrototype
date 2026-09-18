@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { DISPLAY_CONTENTS, S_MUTED, S_DIM, S_ACCENT, S_RED } from "./shared-styles";
-import { LogIn, Shield, User, ChevronDown, X } from "lucide-react";
+import { LogIn, Shield, User, ChevronDown, X, Lock } from "lucide-react";
 import { initialPlayers } from "./initial-data";
 import { verifyAuthCode, getAuthStatuses } from "./auth-utils";
 import { safeSetItem } from "./safe-storage";
@@ -42,6 +42,7 @@ async function fetchProfilesFromServer(): Promise<LoginProfile[]> {
       name: String(p.name ?? p.id),
       hasAuthCode: false,
       description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
+      loginLocked: p.loginLocked === true,
     }));
 }
 
@@ -54,6 +55,7 @@ function buildFallbackProfiles(): LoginProfile[] {
           name: String(p.name ?? p.id),
           hasAuthCode: false,
           description: `${p.class || "Operative"} · Level ${p.level ?? 1}`,
+          loginLocked: p.loginLocked === true,
         }))
     : [];
 
@@ -88,6 +90,22 @@ function LoadingLogo() {
         </div>
       </div>
     </>
+  );
+}
+
+function LockedProfileOverlay() {
+  return (
+    <span className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true" style={{ background: "#08091BC4" }}>
+      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 360 58" preserveAspectRatio="none" fill="none">
+        <path d="M-12 54 372 4" stroke="#D1AD79" strokeWidth="2" opacity=".65" />
+        {Array.from({ length: 15 }, (_, index) => {
+          const x = index * 27 - 8;
+          const y = 54 - (x / 360) * 50;
+          return <ellipse key={index} cx={x} cy={y} rx="10" ry="5" transform={`rotate(-8 ${x} ${y})`} stroke="#E4C18D" strokeWidth="2" opacity=".83" />;
+        })}
+      </svg>
+      <span className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 px-2 py-1 text-[9px] font-bold tracking-wider" style={{ color: "#F3D9AD", background: "#17131BE8", border: "1px solid #D1AD79", boxShadow: "0 0 12px #05040B" }}><Lock size={12} /> LOCKED</span>
+    </span>
   );
 }
 
@@ -160,6 +178,7 @@ export function LoginPage() {
   }, [menuOpen]);
 
   const handleSelectProfile = (profile: LoginProfile) => {
+    if (profile.id !== "dm" && profile.loginLocked) return;
     setSelectedProfile(profile);
     setMenuOpen(false);
     setError("");
@@ -174,10 +193,22 @@ export function LoginPage() {
       setError("SELECT AN AGENT PROFILE TO CONTINUE");
       return;
     }
+    if (selectedProfile.id !== "dm" && (selectedProfile.loginLocked || profiles.find((profile) => profile.id === selectedProfile.id)?.loginLocked)) {
+      setSelectedProfile(null);
+      setPassword("");
+      setError("PROFILE LOCKED BY THE DM");
+      return;
+    }
 
     let result: Awaited<ReturnType<typeof verifyAuthCode>>;
     try {
       result = await verifyAuthCode(selectedProfile.id, password);
+      if (result.locked) {
+        setSelectedProfile(null);
+        setPassword("");
+        setError("PROFILE LOCKED BY THE DM");
+        return;
+      }
       if (!result.valid) {
         setError("INVALID AUTHORIZATION CODE");
         return;
@@ -342,9 +373,12 @@ export function LoginPage() {
                           <button
                             type="button"
                             key={profile.id}
+                            disabled={profile.loginLocked === true}
+                            aria-label={profile.loginLocked ? `${profile.name} — locked by the DM` : profile.name}
+                            title={profile.loginLocked ? "Locked by the DM; this profile cannot log in" : undefined}
                             onClick={() => handleSelectProfile(profile)}
-                            className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-[#1A1A5B] transition-colors"
-                            style={{ borderBottom: "1px solid #1A1A3B" }}
+                            className={`relative w-full text-left px-3 py-2.5 flex items-center gap-3 transition-colors ${profile.loginLocked ? "cursor-not-allowed" : "hover:bg-[#1A1A5B]"}`}
+                            style={{ borderBottom: "1px solid #1A1A3B", minHeight: 54 }}
                           >
                             <div className={`${retro.sunken} bg-[#0A0A28] p-1.5`}>
                               <User size={14} style={S_ACCENT} />
@@ -357,6 +391,7 @@ export function LoginPage() {
                                 {profile.description}
                               </div>
                             </div>
+                            {profile.loginLocked && <LockedProfileOverlay />}
                           </button>
                         ))}
                       </>

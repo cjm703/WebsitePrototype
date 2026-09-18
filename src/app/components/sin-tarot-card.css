@@ -1,0 +1,273 @@
+.sin-tarot {
+  --sin-metal: #bd955b;
+  --sin-bright: #f2d9a2;
+  --sin-ink: #f5e9d8;
+  --sin-muted: #d4baa7;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: var(--sin-ink);
+  border: 1px solid var(--sin-metal);
+  border-radius: 14px 14px 20px 20px;
+  background: radial-gradient(ellipse at 50% 0%, #4b2141 0%, #261329 40%, #120e1c 78%, #0b0b16 100%);
+  box-shadow: 0 14px 36px #05030d80, inset 0 0 0 1px #efd7a31c, inset 0 0 42px #05020e99;
+}
+
+.sin-tarot--pride {
+  --sin-metal: #c7a36b;
+  --sin-bright: #f4dca9;
+  --sin-ink: #fff0df;
+  --sin-muted: #e0c4b5;
+  background: radial-gradient(ellipse at 50% 0%, #68263e 0%, #3a152e 34%, #1a101f 72%, #0d0b16 100%);
+}
+
+.sin-tarot::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  inset: 6px;
+  border: 1px solid #d5b8808c;
+  border-radius: 9px 9px 15px 15px;
+}
+
+.sin-tarot::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  inset: 11px;
+  border: 1px solid #b88d5847;
+  border-radius: 5px 5px 11px 11px;
+}
+
+.sin-tarot__ornaments {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sin-tarot__corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-color: var(--sin-bright);
+  border-style: solid;
+  opacity: .9;
+}
+
+.sin-tarot__corner::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--sin-bright);
+  transform: rotate(45deg);
+}
+
+.sin-tarot__corner--top-left { top: 12px; left: 12px; border-width: 1px 0 0 1px; }
+.sin-tarot__corner--top-left::after { top: 5px; left: 5px; }
+.sin-tarot__corner--top-right { top: 12px; right: 12px; border-width: 1px 1px 0 0; }
+.sin-tarot__corner--top-right::after { top: 5px; right: 5px; }
+.sin-tarot__corner--bottom-left { bottom: 12px; left: 12px; border-width: 0 0 1px 1px; }
+.sin-tarot__corner--bottom-left::after { bottom: 5px; left: 5px; }
+.sin-tarot__corner--bottom-right { bottom: 12px; right: 12px; border-width: 0 1px 1px 0; }
+.sin-tarot__corner--bottom-right::after { bottom: 5px; right: 5px; }
+
+.sin-tarot__content { position: relative; z-index: 2; }
+
+.sin-tarot__header {
+  position: relative;
+  min-height: 190px;
+  padding: 32px 34px 28px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 22px;
+  overflow: hidden;
+  border-bottom: 1px solid #d4ad746b;
+  background: radial-gradient(circle at 50% 43%, #b57c6330, transparent 38%), linear-gradient(90deg, #160d1b4d, transparent 28%, transparent 72%, #160d1b4d);
+}
+
+.sin-tarot__header::before,
+.sin-tarot__header::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  border: 1px solid #d6a97524;
+  border-radius: 50% 50% 0 0;
+  pointer-events: none;
+}
+
+.sin-tarot__header::before { left: 13%; }
+.sin-tarot__header::after { right: 13%; }
+
+.sin-tarot__header-copy,
+.sin-tarot__header-action { position: relative; z-index: 2; }
+
+.sin-tarot__header-copy { min-width: 0; flex: 1 1 280px; }
+
+.sin-tarot__watermark {
+  position: absolute;
+  z-index: 0;
+  width: 180px;
+  height: 200px;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--sin-bright);
+  opacity: .13;
+  pointer-events: none;
+}
+
+.sin-tarot__seal {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  padding: 5px 12px;
+  color: var(--sin-bright);
+  border: 1px solid var(--sin-metal);
+  border-radius: 999px;
+  background: #1a101dc9;
+  font: 700 10px/1.2 Georgia, "Times New Roman", serif;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 3px #c7a36b20;
+}
+
+.sin-tarot__seal-dot { font-size: 13px; line-height: 0; }
+
+.sin-tarot__title {
+  margin: 16px 0 8px;
+  color: #fff5e7;
+  font: 700 clamp(25px, 3vw, 37px)/1.06 Georgia, "Times New Roman", serif;
+  letter-spacing: .025em;
+  text-wrap: balance;
+  text-shadow: 0 2px 15px #07020d;
+}
+
+.sin-tarot__subtitle {
+  color: var(--sin-muted);
+  font: 11px/1.5 Georgia, "Times New Roman", serif;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.sin-tarot__ritual {
+  display: inline-block;
+  margin-top: 11px;
+  padding-top: 8px;
+  color: #f0dcc1;
+  border-top: 1px solid #c7a36b87;
+  font: 11px/1.4 Georgia, "Times New Roman", serif;
+}
+
+.sin-tarot__inner { padding: 22px 28px 30px; }
+
+.sin-tarot__rule {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin: 18px 0 20px;
+  color: var(--sin-bright);
+  font: 14px Georgia, "Times New Roman", serif;
+}
+
+.sin-tarot__rule::before,
+.sin-tarot__rule::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, #c7a36b99, transparent); }
+
+.sin-tarot__chapters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin: 0 0 22px; }
+
+.sin-tarot__chapter {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  padding: 17px 18px;
+  border: 1px solid #b58c6380;
+  background: linear-gradient(135deg, #4320369e, #170f21e8);
+  box-shadow: inset 0 0 0 3px #0e091476, inset 0 0 0 4px #ab865146;
+}
+
+.sin-tarot__chapter--falsification {
+  border-color: #a87e7f9c;
+  background: linear-gradient(135deg, #2c192c, #160f20 74%);
+}
+
+.sin-tarot__chapter-label {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 8px;
+  color: var(--sin-bright);
+  font: 700 10px/1.3 Georgia, "Times New Roman", serif;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.sin-tarot__chapter--falsification .sin-tarot__chapter-label { color: #efbfc0; }
+.sin-tarot__chapter-text { position: relative; z-index: 1; color: #f4e6df; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+
+.sin-tarot__crack {
+  position: absolute;
+  width: 110px;
+  height: 130px;
+  right: 0;
+  top: 0;
+  color: #f0c3bf;
+  opacity: .18;
+  pointer-events: none;
+}
+
+.sin-tarot--tile {
+  display: block;
+  min-height: 265px;
+  padding: 28px 25px 23px;
+  text-align: left;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+
+.sin-tarot--tile:hover,
+.sin-tarot--tile:focus-visible { transform: translateY(-3px); box-shadow: 0 19px 36px #05030db3, 0 0 20px #a96e6538; }
+.sin-tarot--tile:focus-visible { outline: 2px solid var(--sin-bright); outline-offset: 3px; }
+
+.sin-tarot__tile-content { position: relative; z-index: 2; min-height: 210px; }
+
+.sin-tarot__tile-emblem {
+  position: absolute;
+  z-index: -1;
+  top: 10px;
+  right: 0;
+  width: 110px;
+  height: 125px;
+  color: var(--sin-bright);
+  opacity: .18;
+  pointer-events: none;
+}
+
+.sin-tarot__tile-title {
+  margin: 23px 0 6px;
+  max-width: 85%;
+  color: #fff2e2;
+  font: 700 20px/1.12 Georgia, "Times New Roman", serif;
+  text-wrap: balance;
+}
+
+.sin-tarot__tile-meta { color: var(--sin-muted); font: 10px/1.5 Georgia, "Times New Roman", serif; letter-spacing: .07em; }
+.sin-tarot__tile-excerpt { margin-top: 15px; color: #e9d9d0; font-size: 11px; line-height: 1.5; }
+.sin-tarot__tile-footer { margin-top: 18px; padding-top: 11px; border-top: 1px solid #c7a36b66; }
+
+@media (max-width: 680px) {
+  .sin-tarot__header { min-height: 175px; padding: 30px 24px 24px; }
+  .sin-tarot__inner { padding: 20px 24px 25px; }
+  .sin-tarot__chapters { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sin-tarot--tile { transition: none; }
+  .sin-tarot--tile:hover,
+  .sin-tarot--tile:focus-visible { transform: none; }
+}

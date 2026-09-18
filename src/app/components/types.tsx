@@ -10,6 +10,7 @@ export interface PlayerStats {
 export interface PlayerData {
   id: string;
   name: string;
+  loginLocked?: boolean;
   race?: string;
   class: string;
   level: number;
@@ -153,6 +154,7 @@ export interface LoginProfile {
   name: string;
   hasAuthCode: boolean;
   description: string;
+  loginLocked?: boolean;
 }
 
 export interface StoredImageAsset {

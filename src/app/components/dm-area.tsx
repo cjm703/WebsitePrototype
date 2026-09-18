@@ -6,7 +6,7 @@ import { loadDMPlayers, saveDMPlayers, loadDMDeletedPlayers, saveDMDeletedPlayer
 import {
   ShieldAlert, Package, CreditCard, FileText, Users,
   Trash2, Plus, Save, X, Edit, Tag, ChevronDown, ChevronRight, ArrowLeft, ArrowRight,
-  Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, GitBranch, CalendarDays,
+  Undo2, AlertTriangle, Paintbrush, Gamepad2, SmilePlus, Lock, Unlock, GitBranch, CalendarDays,
   Newspaper, Copy, Zap, ChevronUp, Images, BookOpen, Server, Hammer,
 } from "lucide-react";
 import type { NodeTree } from "./node-trees";
@@ -146,6 +146,7 @@ function normalizePlayerForEditor(player: PlayerData): PlayerData {
     ...player,
     id: playerText(player.id),
     name: playerText(player.name, "Unnamed Player"),
+    loginLocked: player.id !== "dm" && player.loginLocked === true,
     race: playerText(player.race),
     class: playerText(player.class, "Operative"),
     level: Math.max(1, finitePlayerNumber(player.level, 1)),
@@ -608,6 +609,7 @@ export function DMArea() {
   // Players
   const [players, setPlayers] = useState<PlayerData[]>([]);
   const [editingPlayer, setEditingPlayer] = useState<PlayerData | null>(null);
+  const [lockSavingPlayerId, setLockSavingPlayerId] = useState<string | null>(null);
   const [isAddingNewPlayer, setIsAddingNewPlayer] = useState(false);
   const [playerEditorOpenRequest, setPlayerEditorOpenRequest] = useState(0);
   const playerEditorRef = useRef<HTMLDivElement>(null);
@@ -699,7 +701,7 @@ useEffect(() => {
 
       if (cancelled) return;
 
-      setPlayers(playersData);
+      setPlayers(playersData.filter((player) => player.id !== "dm"));
       setDeletedPlayers(deletedPlayersData.filter((p) => p.id !== "dm"));
       setItemTags(itemTagData.length ? itemTagData : initialItemTags);
       setCardTags(cardTagData.length ? cardTagData : initialCardTags);
@@ -1111,10 +1113,11 @@ async function persistCustomReactions(next: CustomReaction[]) {
   // Profile sync: write player profiles + DM to localStorage for login page
   // ========================
   const syncProfilesToLocalStorage = useCallback((playerList: PlayerData[]) => {
-    const profiles: LoginProfile[] = playerList.map((p) => ({
+    const profiles: LoginProfile[] = playerList.filter((p) => p.id !== "dm").map((p) => ({
       id: p.id,
       name: p.name,
       description: `${p.class} · Level ${p.level}`,
+      loginLocked: p.loginLocked === true,
     }));
     // Always include the DM profile (auth codes live on server, not here)
     profiles.push({ id: "dm", name: "DM", description: "System Administrator · Full Access" });
@@ -1167,6 +1170,7 @@ async function persistCustomReactions(next: CustomReaction[]) {
       stats: { ...defaultStats }, currentHP: 10, maxHP: 10, armorClass: 10,
       speed: "30 ft", woundDice: "1d6", currentWounds: 0, totalWounds: 3,
       damageReduction: 0, tempHP: 0, currentWeight: 0, maxWeight: getAutoMaxWeightFromCon(defaultStats.CON), autoMaxWeight: true, insanityPoints: 0, inspirationPoints: 0, foresight: false, exhaustion: 0, maxExhaustion: 6,
+      loginLocked: false,
       authCode: "",
     });
     setIsAddingNewPlayer(true);
@@ -1210,6 +1214,20 @@ async function persistCustomReactions(next: CustomReaction[]) {
     setEditingPlayer(null);
     setIsAddingNewPlayer(false);
     setPendingAuthCode("");
+  };
+  const togglePlayerLoginLock = async (player: PlayerData) => {
+    if (player.id === "dm" || lockSavingPlayerId) return;
+    setLockSavingPlayerId(player.id);
+    const next = players.map((entry) => entry.id === player.id ? { ...entry, loginLocked: entry.loginLocked !== true } : entry);
+    try {
+      await persistPlayers(next);
+      syncProfilesToLocalStorage(next);
+      setEditingPlayer((current) => current?.id === player.id ? { ...current, loginLocked: player.loginLocked !== true } : current);
+    } catch {
+      // persistPlayers displays the save error and keeps the prior player list.
+    } finally {
+      setLockSavingPlayerId(null);
+    }
   };
   // Step 1: initiate deletion and show the first confirm modal.
   const initiateDeletePlayer = (player: PlayerData) => {
@@ -1790,6 +1808,15 @@ const handleSaveItem = async () => {
                       </div>
                     </div>
 
+                    <label className={`${retro.sunken} bg-[#191324] px-3 py-3 mb-4 flex items-start gap-3 cursor-pointer`} style={{ border: `1px solid ${editingPlayer.loginLocked ? "#A9706B" : "#3A4D68"}` }}>
+                      <input type="checkbox" checked={editingPlayer.loginLocked === true} onChange={(event) => updatePlayerField("loginLocked", event.target.checked)} className="mt-0.5 accent-[#D5AD76]" />
+                      {editingPlayer.loginLocked ? <Lock size={15} className="shrink-0 mt-0.5" style={{ color: "#E7BD85" }} /> : <Unlock size={15} className="shrink-0 mt-0.5" style={{ color: "#8CBCA7" }} />}
+                      <span className="min-w-0">
+                        <span className="block text-[11px] font-semibold" style={{ color: editingPlayer.loginLocked ? "#E7BD85" : "#C9D9E9" }}>Lock this profile from login</span>
+                        <span className="block text-[9px] mt-1 leading-relaxed" style={S_MUTED}>A locked profile stays visible but cannot be selected or authenticated. Saving a lock also ends its existing sessions. The DM profile cannot be locked.</span>
+                      </span>
+                    </label>
+
                     <div className="flex gap-2">
                       <button type="submit" className={`${retro.button} px-6 py-2 text-[12px] flex items-center gap-2`} style={S_GREEN_BTN}>
                         <Save size={14} /> {isAddingNewPlayer ? "Add Player" : "Save Changes"}
@@ -1810,12 +1837,19 @@ const handleSaveItem = async () => {
                       <div key={player.id} className={`${retro.raised} bg-[#0E0E35] p-4`}>
                         <div className="flex items-start justify-between mb-3">
                           <div>
-                            <div className="text-[14px] mb-0.5" style={S_TEXT_BOLD}>{player.name}</div>
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <div className="text-[14px]" style={S_TEXT_BOLD}>{player.name}</div>
+                              {player.loginLocked === true && <span className="flex items-center gap-1 px-1.5 py-0.5 text-[8px] font-semibold" style={{ color: "#E7BD85", background: "#3A2727", border: "1px solid #A9706B" }}><Lock size={9} /> LOGIN LOCKED</span>}
+                            </div>
                             <div className="text-[11px]" style={S_MUTED}>
                               {(player.race || "").trim() ? `${player.race} | ` : ""}{player.class} | Level {player.level}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
+                            <button type="button" onClick={() => void togglePlayerLoginLock(player)} disabled={lockSavingPlayerId !== null} className={`${retro.button} px-3 py-1 text-[11px] flex items-center gap-1 disabled:opacity-60`} style={{ color: player.loginLocked ? "#9FE2BD" : "#E7BD85" }} title={player.loginLocked ? "Allow this profile to log in again" : "Prevent login and end existing sessions"}>
+                              {player.loginLocked ? <Unlock size={12} /> : <Lock size={12} />}
+                              {lockSavingPlayerId === player.id ? "Saving..." : player.loginLocked ? "Unlock Login" : "Lock Login"}
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleEditPlayer(player)}

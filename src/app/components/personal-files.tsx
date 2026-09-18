@@ -12,6 +12,7 @@ import { playDiceRoll, playTabClick, playSuccessChime } from "./sound-effects";
 import { safeGetItem } from "./safe-storage";
 import { triggerDiceAnimation, parseDiceGroups } from "./dice-animation";
 import { PlayerNodeTreeViewer, type NodeTree } from "./node-trees";
+import { SinTarotEmblem, SinTarotOrnaments } from "./sin-tarot-card";
 import { appStore } from "@/lib/app-store";
 import { loadPlayerState, savePlayerState } from "@/lib/player-state-api";
 import {
@@ -3043,6 +3044,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
     const descriptionText = (card.customFields[CARD_DESCRIPTION_KEY] || "").trim();
     const detailRollPotency = (card.customFields?.[CARD_TRACKER_POTENCY_KEY] || card.customFields?.["Timed Effect::Potency"] || "").trim();
     const familyLabel = getPlayerCardFamilyLabel(card);
+    const isSin = familyLabel === "SIN";
+    const sinAffinity = (card.customFields?.["SIN::Emotional Affinity"] || "Unbound").trim() || "Unbound";
+    const sinActivation = (card.customFields?.["SIN::Activation"] || "").trim();
+    const sinFalsification = (card.customFields?.["SIN::Falsification"] || "").trim();
     const componentValue = getPlayerCardComponentsDisplay(card);
     const requirementsValue = (card.customFields?.["Use Profile::Requirements"] || "").trim();
     const componentsOrRequirementsLabel = componentValue ? "Components" : requirementsValue ? "Requirements" : "";
@@ -3105,6 +3110,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
         if (key.startsWith("Use Profile::")) return false;
         if (key.startsWith("Timed Effect::")) return false;
         if (key.startsWith("Tracker::")) return false;
+        if (isSin && key.startsWith("SIN::")) return false;
         return true;
       })
       .map(([key, value]) => formatCardDetailField(key, String(value)))
@@ -3116,7 +3122,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
       timedEffectFields.length > 0 ? { title: "Timed Effect", accent: "#4ADE80", fields: timedEffectFields } : null,
       otherDetailFields.length > 0 ? { title: "More Details", accent: "#9A8CFF", fields: otherDetailFields } : null,
     ].filter(Boolean) as Array<{ title: string; accent: string; fields: Array<{ key: string; label: string; value: string }> }>;
-    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : familyLabel === "SIN" ? "#FF5A7A" : theme.accentColor;
+    const cardAccent = familyLabel === "Spell" ? "#9A8CFF" : familyLabel === "Ability" ? "#FF8A5A" : familyLabel === "Skill" ? "#5AE0B0" : isSin ? "#E6C486" : theme.accentColor;
 
     return (
       <div className="space-y-4">
@@ -3131,8 +3137,25 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           </button>
         )}
 
-        <div className={`${retro.sunken} bg-[#0C0C2E] p-5`} style={{ borderLeft: `4px solid ${cardAccent}` }}>
-          <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
+        <div className={isSin ? `sin-tarot${sinAffinity.toLowerCase() === "pride" ? " sin-tarot--pride" : ""}` : `${retro.sunken} bg-[#0C0C2E] p-5`} style={isSin ? undefined : { borderLeft: `4px solid ${cardAccent}` }}>
+          {isSin && <SinTarotOrnaments />}
+          <div className={isSin ? "sin-tarot__content" : undefined}>
+          {isSin ? (
+            <div className="sin-tarot__header">
+              <SinTarotEmblem affinity={sinAffinity} className="sin-tarot__watermark" />
+              <div className="sin-tarot__header-copy">
+                <div className="sin-tarot__seal"><span>SIN</span><span className="sin-tarot__seal-dot" aria-hidden="true">·</span><span>{sinAffinity}</span></div>
+                <h2 className="sin-tarot__title">{card.name}</h2>
+                <div className="sin-tarot__subtitle">{sinActivation || card.type || "Emotional Awakening"}</div>
+                {card.actionCost && <div className="sin-tarot__ritual">{card.actionCost}</div>}
+              </div>
+              {isUseButtonEnabled && (
+                <button onClick={() => handleUseCard(card)} className={`${retro.button} sin-tarot__header-action px-4 py-2 text-[12px] flex items-center gap-2 font-semibold`} style={{ color: "#f4dca9", background: justUsed ? "#6b3e43" : "#211322", border: "1px solid #c7a36b" }}>
+                  <Play size={13} fill={justUsed ? "#f4dca9" : "none"} /> {justUsed ? "Activated!" : "Activate SIN"}
+                </button>
+              )}
+            </div>
+          ) : <div className="flex items-start justify-between mb-4 gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="text-[9px] uppercase tracking-[0.1em] mb-1 flex items-center gap-1.5" style={{ color: cardAccent, fontWeight: 700 }}>
                 <CreditCard size={11} /> Card Record
@@ -3173,23 +3196,36 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 {justUsed ? "Activated!" : "Use"}
               </button>
             )}
-          </div>
+          </div>}
+
+          <div className={isSin ? "sin-tarot__inner" : undefined}>
 
           <div className="mb-4">{renderDetailTags(`card:${card.id}`, card.tags, getDisplayCardTagName)}</div>
 
-          <div
-            className="h-[1px] w-full mb-4"
-            style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }}
-          />
+          {isSin ? <div className="sin-tarot__rule" aria-hidden="true">✦</div> : <div className="h-[1px] w-full mb-4" style={{ background: `linear-gradient(90deg, transparent, ${bc(theme.dividerColor)}, transparent)` }} />}
+
+          {isSin && (sinActivation || sinFalsification) && (
+            <div className="sin-tarot__chapters">
+              <section className="sin-tarot__chapter" aria-label="SIN activation">
+                <div className="sin-tarot__chapter-label">I · Activation</div>
+                <div className="sin-tarot__chapter-text">{sinActivation || "See the complete SIN rules below."}</div>
+              </section>
+              <section className="sin-tarot__chapter sin-tarot__chapter--falsification" aria-label="SIN falsification">
+                <svg className="sin-tarot__crack" viewBox="0 0 110 130" fill="none" aria-hidden="true"><path d="M102 0 79 25l9 17-28 20 10 16-32 21 7 31" stroke="currentColor" strokeWidth="2" /></svg>
+                <div className="sin-tarot__chapter-label">II · Falsification</div>
+                <div className="sin-tarot__chapter-text">{sinFalsification || "The consequences are detailed in the SIN rules below."}</div>
+              </section>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5 items-start">
             <section className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#7FA6FF", fontWeight: 700 }}>
-                <Info size={12} /> Description &amp; Lore
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "#E6C486" : "#7FA6FF", fontWeight: 700 }}>
+                <Info size={12} /> {isSin ? "The Legend" : "Description & Lore"}
               </div>
               {descriptionText && (
                 <div className="mb-4">
-                  <RenderFormattedText text={descriptionText} color={theme.textColor} baseSize={12} />
+                  <RenderFormattedText text={descriptionText} color={isSin ? "#F5E9D8" : theme.textColor} baseSize={12} />
                   {renderDiceRollControls(`card:${card.id}:description`, descriptionText, detailRollPotency)}
                 </div>
               )}
@@ -3197,26 +3233,26 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
             </section>
 
             <section className="space-y-3 min-w-0 xl:border-l xl:pl-5" style={{ borderColor: bc(theme.dividerColor) }}>
-              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: "#C4A0FF", fontWeight: 700 }}>
-                <Zap size={12} /> Gameplay
+              <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "#E6C486" : "#C4A0FF", fontWeight: 700 }}>
+                <Zap size={12} /> {isSin ? "The Invocation" : "Gameplay"}
               </div>
               {primaryFacts.length > 0 && (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
                   {primaryFacts.map((fact) => (
                     <div key={fact.label} className="px-2.5 py-2 min-h-[46px]" style={{ background: "rgba(12,18,46,0.94)", borderTop: `2px solid ${cardAccent}88` }}>
                       <div className="text-[8px] uppercase tracking-[0.07em] mb-0.5" style={S_MUTED}>{fact.label}</div>
-                      <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor, fontWeight: 600 }}>{fact.value}</div>
+                      <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "#F5E9D8" : theme.textColor, fontWeight: 600 }}>{fact.value}</div>
                     </div>
                   ))}
                 </div>
               )}
 
               <div className="border-l-2 pl-3 py-1" style={{ borderColor: cardAccent }}>
-                <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: "#8AB8FF", fontWeight: 700 }}>
-                  Effect
+                <div className="text-[10px] uppercase tracking-[0.1em] mb-2" style={{ color: isSin ? "#E6C486" : "#8AB8FF", fontWeight: 700 }}>
+                  {isSin ? "Complete SIN Rules" : "Effect"}
                 </div>
                 {card.effect?.trim() ? (
-                  <RenderFormattedText text={card.effect} color={theme.textColor} baseSize={12} />
+                  <RenderFormattedText text={card.effect} color={isSin ? "#F5E9D8" : theme.textColor} baseSize={12} />
                 ) : (
                   <div className="text-[11px] italic" style={S_MUTED}>No effect text has been added.</div>
                 )}
@@ -3236,7 +3272,7 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                     {section.fields.map((field) => (
                       <div key={field.key} className="pb-1.5 last:pb-0 border-b last:border-b-0" style={{ borderColor: `${section.accent}18` }}>
                         <div className="text-[7px] uppercase tracking-[0.05em] mb-0.5" style={S_MUTED}>{field.label}</div>
-                        <div className="text-[10px] leading-snug break-words" style={{ color: theme.textColor }}>{field.value}</div>
+                        <div className="text-[10px] leading-snug break-words" style={{ color: isSin ? "#F5E9D8" : theme.textColor }}>{field.value}</div>
                         {renderDiceRollControls(`card:${card.id}:sidebar:${field.key}`, field.value, detailRollPotency, true)}
                       </div>
                     ))}
@@ -3244,6 +3280,8 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
               ))}
             </section>
+          </div>
+          </div>
           </div>
         </div>
       </div>
@@ -5471,21 +5509,29 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                         </div>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
-                          {filteredCards.map((card) => (
+                          {filteredCards.map((card) => {
+                            const isSin = getPlayerCardFamilyLabel(card) === "SIN";
+                            const sinAffinity = (card.customFields?.["SIN::Emotional Affinity"] || "Unbound").trim() || "Unbound";
+                            const previewText = (isSin ? card.customFields?.[CARD_DESCRIPTION_KEY] || card.effect : card.effect).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                            return (
                             <button
                               key={card.id}
                               onClick={() => setSelectedCard(card)}
-                              className={`${retro.raised} p-4 text-left hover:brightness-110 transition-colors cursor-pointer`}
-                              style={{ background: theme.cardBg }}
+                              className={isSin ? `sin-tarot sin-tarot--tile${sinAffinity.toLowerCase() === "pride" ? " sin-tarot--pride" : ""} cursor-pointer` : `${retro.raised} p-4 text-left hover:brightness-110 transition-colors cursor-pointer`}
+                              style={isSin ? undefined : { background: theme.cardBg }}
                             >
-                              <div className="text-[14px] mb-1" style={{ ...ts(theme.accentColor), fontWeight: 600 }}>
+                              {isSin && <SinTarotOrnaments />}
+                              <div className={isSin ? "sin-tarot__tile-content" : undefined}>
+                              {isSin && <div className="sin-tarot__seal"><span>SIN</span><span className="sin-tarot__seal-dot" aria-hidden="true">·</span><span>{sinAffinity}</span></div>}
+                              {isSin && <SinTarotEmblem affinity={sinAffinity} className="sin-tarot__tile-emblem" />}
+                              <div className={isSin ? "sin-tarot__tile-title" : "text-[14px] mb-1"} style={isSin ? undefined : { ...ts(theme.accentColor), fontWeight: 600 }}>
                                 {card.name}
                               </div>
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] mb-2" style={{ color: theme.labelColor }}>
-                                <span>{card.type || "No type"}</span>
-                                <span style={S_DIM}>|</span>
+                              <div className={isSin ? "sin-tarot__tile-meta flex flex-wrap items-center gap-x-2 gap-y-1 mb-2" : "flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] mb-2"} style={isSin ? undefined : { color: theme.labelColor }}>
+                                {!isSin && <><span>{card.type || "No type"}</span><span style={S_DIM}>|</span></>}
+                                {isSin && card.customFields?.["SIN::Activation"] && <><span>{card.customFields["SIN::Activation"]}</span><span aria-hidden="true">·</span></>}
                                 <span>{card.actionCost || "No action cost"}</span>
-                                {card.customFields["Level"] && (
+                                {!isSin && card.customFields["Level"] && (
                                   <>
                                     <span style={S_DIM}>|</span>
                                     <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span>
@@ -5503,10 +5549,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                 {card.customFields["Level"] && <span style={DISPLAY_CONTENTS}> | <span style={{ color: "#FFD700" }}>Lv.{card.customFields["Level"]}</span></span>}
                                 {card.customFields["Source Type"] && <span style={DISPLAY_CONTENTS}> | <span style={{ color: "#9A7ABB" }}>{card.customFields["Source Type"]}</span></span>}
                               </div>
-                              <div className="text-[12px] leading-relaxed mb-3 break-words" style={{ color: theme.textColor }}>
-                                {(() => { const plain = card.effect.replace(/<[^>]*>/g, ""); return plain.length > 100 ? plain.slice(0, 100) + "..." : plain; })()}
+                              <div className={isSin ? "sin-tarot__tile-excerpt break-words" : "text-[12px] leading-relaxed mb-3 break-words"} style={isSin ? undefined : { color: theme.textColor }}>
+                                {previewText.length > (isSin ? 120 : 100) ? previewText.slice(0, isSin ? 120 : 100) + "..." : previewText}
                               </div>
-                              <div className="flex flex-wrap gap-1 mb-2">
+                              <div className={isSin ? "sin-tarot__tile-footer flex flex-wrap gap-1 mb-2" : "flex flex-wrap gap-1 mb-2"}>
                                 {getCardSourceLabels(card.id).map((source) => (
                                   <span
                                     key={`${card.id}-${source}`}
@@ -5532,8 +5578,10 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                                   </span>
                                 ))}
                               </div>
+                              </div>
                             </button>
-                          ))}
+                          );
+                          })}
                         </div>
                       )}
                     </div>
