@@ -3142,6 +3142,17 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           <div className={isSin ? "sin-tarot__content" : undefined}>
           {isSin ? (
             <div className="sin-tarot__header">
+              <div className="sin-tarot__stage-panel" aria-hidden="true">
+                <div className="sin-tarot__stage-good" />
+                <div className="sin-tarot__stage-bad" />
+                <div className="sin-tarot__stage-curtain sin-tarot__stage-curtain--left" />
+                <div className="sin-tarot__stage-curtain sin-tarot__stage-curtain--right" />
+                <div className="sin-tarot__stage-valance" />
+                <div className="sin-tarot__stage-spotlight" />
+                <svg className="sin-tarot__stage-split" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+                  <path d="M0 100 100 0" />
+                </svg>
+              </div>
               <SinTarotEmblem affinity={sinAffinity} className="sin-tarot__watermark" />
               <div className="sin-tarot__header-copy">
                 <div className="sin-tarot__seal"><span>SIN</span><span className="sin-tarot__seal-dot" aria-hidden="true">·</span><span>{sinAffinity}</span></div>
@@ -3207,19 +3218,19 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
           {isSin && (sinActivation || sinFalsification) && (
             <div className="sin-tarot__chapters">
               <section className="sin-tarot__chapter" aria-label="SIN activation">
-                <div className="sin-tarot__chapter-label">I · Activation</div>
+                <div className="sin-tarot__chapter-label"><span className="sin-tarot__suit-symbol" aria-hidden="true">✦</span>I · Activation</div>
                 <div className="sin-tarot__chapter-text">{sinActivation || "See the complete SIN rules below."}</div>
               </section>
               <section className="sin-tarot__chapter sin-tarot__chapter--falsification" aria-label="SIN falsification">
                 <svg className="sin-tarot__crack" viewBox="0 0 110 130" fill="none" aria-hidden="true"><path d="M102 0 79 25l9 17-28 20 10 16-32 21 7 31" stroke="currentColor" strokeWidth="2" /></svg>
-                <div className="sin-tarot__chapter-label">II · Falsification</div>
+                <div className="sin-tarot__chapter-label"><span className="sin-tarot__suit-symbol" aria-hidden="true">☾</span>II · Falsification</div>
                 <div className="sin-tarot__chapter-text">{sinFalsification || "The consequences are detailed in the SIN rules below."}</div>
               </section>
             </div>
           )}
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-5 items-start">
-            <section className="min-w-0">
+            {!isSin && <section className="min-w-0">
               <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "var(--sin-bright)" : "#7FA6FF", fontWeight: 700 }}>
                 <Info size={12} /> {isSin ? "The Legend" : "Description & Lore"}
               </div>
@@ -3230,11 +3241,11 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
                 </div>
               )}
               {!descriptionText && <div className="text-[11px] italic" style={S_MUTED}>No description has been added.</div>}
-            </section>
+            </section>}
 
-            <section className="space-y-3 min-w-0 xl:border-l xl:pl-5" style={{ borderColor: bc(theme.dividerColor) }}>
+            <section className={`space-y-3 min-w-0 ${isSin ? "xl:col-span-2 sin-tarot__invocation-panel" : "xl:border-l xl:pl-5"}`} style={{ borderColor: bc(theme.dividerColor) }}>
               <div className="text-[10px] uppercase tracking-[0.1em] mb-3 flex items-center gap-1.5" style={{ color: isSin ? "var(--sin-bright)" : "#C4A0FF", fontWeight: 700 }}>
-                <Zap size={12} /> {isSin ? "The Invocation" : "Gameplay"}
+                {isSin ? <span className="sin-tarot__heading-sigil" aria-hidden="true">✧</span> : <Zap size={12} />} {isSin ? "The Invocation" : "Gameplay"}
               </div>
               {primaryFacts.length > 0 && (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
@@ -3281,6 +3292,9 @@ const runSaveWithToast = useCallback(async (saveFn: () => Promise<void>) => {
               ))}
             </section>
           </div>
+          {isSin && descriptionText && (
+            <blockquote className="sin-tarot__motto">“{descriptionText}”</blockquote>
+          )}
           </div>
           </div>
         </div>
