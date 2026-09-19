@@ -1,5 +1,5 @@
 import { sessionApiFetch } from "./api-client";
-import { removeSupabaseChannelSafely, supabase } from "./supabaseClient";
+import { supabase } from "./supabaseClient";
 
 export interface FacilityAdditionAction {
   action: "install" | "remove";
@@ -70,19 +70,63 @@ export async function advanceFacilityMonth<T>(action: FacilityMonthAdvanceAction
   return body.state as T;
 }
 
-export function subscribeToOfficeStateSignals(onSignal: () => void) {
+type OfficeRealtimeChannel = ReturnType<typeof supabase.channel>;
+
+interface OfficeSignalRegistry {
+  channel: OfficeRealtimeChannel | null;
+  listeners: Set<() => void>;
+}
+
+const OFFICE_SIGNAL_REGISTRY_KEY = "__inetOfficeSignalRegistryV2";
+const officeSignalGlobal = globalThis as typeof globalThis & {
+  [OFFICE_SIGNAL_REGISTRY_KEY]?: OfficeSignalRegistry;
+};
+const officeSignalRegistry = officeSignalGlobal[OFFICE_SIGNAL_REGISTRY_KEY] ?? {
+  channel: null,
+  listeners: new Set<() => void>(),
+};
+officeSignalGlobal[OFFICE_SIGNAL_REGISTRY_KEY] = officeSignalRegistry;
+
+function dispatchOfficeStateSignal() {
+  for (const listener of [...officeSignalRegistry.listeners]) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn("Office state signal listener failed", error);
+    }
+  }
+}
+
+function getOfficeStateSignalChannel() {
+  if (officeSignalRegistry.channel) return officeSignalRegistry.channel;
+
+  // Supabase reuses channels by topic. Bind callbacks exactly once, then fan out
+  // locally so React remounts and multiple Office views cannot mutate a joined channel.
   const channel = supabase
-    .channel("office-state-updates")
-    .on("broadcast", { event: "office-state-updated" }, onSignal)
+    .channel("office-state-updates-v2")
+    .on("broadcast", { event: "office-state-updated" }, dispatchOfficeStateSignal)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "app_nexus_nomad_state", filter: "id=eq.default" },
-      onSignal,
+      dispatchOfficeStateSignal,
     )
     .subscribe();
 
+  officeSignalRegistry.channel = channel;
+  return channel;
+}
+
+export function subscribeToOfficeStateSignals(onSignal: () => void) {
+  officeSignalRegistry.listeners.add(onSignal);
+  const channel = getOfficeStateSignalChannel();
+  let subscribed = true;
+
   return {
     notify: () => channel.httpSend("office-state-updated", { updatedAt: new Date().toISOString() }),
-    unsubscribe: () => removeSupabaseChannelSafely(channel),
+    unsubscribe: () => {
+      if (!subscribed) return;
+      subscribed = false;
+      officeSignalRegistry.listeners.delete(onSignal);
+    },
   };
 }
