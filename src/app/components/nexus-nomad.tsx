@@ -23,10 +23,8 @@ import {
 import { safeGetItem } from "./safe-storage";
 import { appStore } from "@/lib/app-store";
 import {
-  OfficeBusinessMap,
   collectBusinessMapAssets,
   countInstalledFacilityAdditionSlots,
-  countInstalledFacilityAdditions,
   createDefaultOfficeBusinessMap,
   createFacilityBusinessMap,
   normalizeOfficeBusinessMap,
@@ -36,10 +34,8 @@ import {
 } from "./office-business-map";
 import { deleteBusinessMapImage } from "@/lib/business-map-storage";
 import {
-  applyFacilityAdditionAction as applyFacilityAdditionServerAction,
   saveOfficeState,
   subscribeToOfficeStateSignals,
-  type FacilityAdditionAction,
 } from "@/lib/office-state-api";
 import {
   createMysticLandsParkFacility,
@@ -1548,7 +1544,7 @@ function ContractCategoryPanel({
 
 export function NexusNomad() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<"overview" | "map" | "inventory" | "facilities" | "employees" | "contracts" | "info">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "facilities" | "employees" | "contracts" | "info">("overview");
 
   const currentUserId = safeGetItem("inet-user-id") || "";
   const isDM = currentUserId === "dm";
@@ -1832,11 +1828,6 @@ export function NexusNomad() {
 
   const persistentStateJson = useMemo(() => JSON.stringify(persistentState), [persistentState]);
   latestPersistentStateJsonRef.current = persistentStateJson;
-  const facilityAdditionUsage = useMemo(
-    () => countInstalledFacilityAdditions([businessMap, ...facilities.map((facility) => facility.businessMap)]),
-    [businessMap, facilities],
-  );
-
   useEffect(() => {
     if (!isStateHydrated || !isDM) return;
     if (lastSavedStateJsonRef.current === persistentStateJson) return;
@@ -1949,15 +1940,6 @@ export function NexusNomad() {
       });
     return () => { cancelled = true; };
   }, [currentUserId, isDM]);
-
-  const handleFacilityAdditionAction = useCallback(async (action: FacilityAdditionAction) => {
-    const saved = normalizeNexusNomadState(await applyFacilityAdditionServerAction<NexusNomadState>(action));
-    lastSavedStateJsonRef.current = JSON.stringify(saved);
-    applyLoadedState(saved);
-    setStateSaveError(null);
-    showSaveNotice("saved", "Facility map updated.", 1400);
-    void officeStateSignalRef.current?.notify();
-  }, [applyLoadedState, showSaveNotice]);
 
   const saveRep = useCallback((v: number) => {
     setReputation(Math.max(-100, Math.min(100, v)));
@@ -2687,7 +2669,6 @@ export function NexusNomad() {
 
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Building2 },
-    { id: "map" as const, label: "Business Map", icon: Waypoints },
     { id: "inventory" as const, label: "Inventory", icon: Package },
     { id: "facilities" as const, label: "Facilities", icon: Factory },
     { id: "employees" as const, label: "Employees", icon: Users },
@@ -3531,22 +3512,6 @@ export function NexusNomad() {
               </div>
             );
           })()}
-
-          {activeTab === "map" && (
-            <OfficeBusinessMap
-              value={businessMap}
-              onChange={setBusinessMap}
-              isDM={isDM}
-              facilities={facilities.map((facility) => ({ id: facility.id, name: facility.name }))}
-              additions={facilityAdditions}
-              onAdditionsChange={setFacilityAdditions}
-              additionUsage={facilityAdditionUsage}
-              mapKey="global"
-              currentPlayerId={currentUserId}
-              players={businessMapPlayers}
-              onPlayerAction={handleFacilityAdditionAction}
-            />
-          )}
 
           {activeTab === "inventory" && (() => {
             const tab = activeInvTabData;
