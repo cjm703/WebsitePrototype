@@ -58,6 +58,9 @@ await build({
   plugins: [{
     name: "office-signal-mocks",
     setup(buildApi) {
+      buildApi.onResolve({ filter: /^\.\/src\/lib\/office-state-api\.ts$/ }, () => ({
+        path: path.join(root, "src", "lib", "office-state-api.ts"),
+      }));
       buildApi.onResolve({ filter: /(?:^|\/)supabaseClient(?:\.ts)?$/ }, () => ({ path: "supabase-client", namespace: "office-test" }));
       buildApi.onLoad({ filter: /^supabase-client$/, namespace: "office-test" }, () => ({ contents: supabaseMock, loader: "js" }));
       buildApi.onResolve({ filter: /(?:^|\/)api-client$/ }, () => ({ path: "api-client", namespace: "office-test" }));

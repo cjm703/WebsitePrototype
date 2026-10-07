@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { retro } from "./retro-styles";
 import { ArrowLeft, ChevronLeft, ChevronRight, Cloud, CloudRain, CloudDrizzle, CloudLightning, CloudFog, Snowflake, Wind } from "lucide-react";
@@ -346,11 +346,14 @@ export function CalendarPage() {
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [wheelRotation, setWheelRotation] = useState(() => -getSegmentMidAngle(currentDate.isStarfall ? 14 : currentDate.month));
   const [forecast, setForecast] = useState<Record<string, DayForecast>>(loadLegacyForecast);
+  const hasChosenMonth = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
+    let latestHydration = 0;
 
     const hydrateCalendar = async () => {
+      const hydration = ++latestHydration;
       const legacyCalendar = loadLegacyCalendarDate();
       const legacyFlavorTexts = loadLegacyFlavorTexts();
       const legacyForecast = loadLegacyForecast();
@@ -362,17 +365,17 @@ export function CalendarPage() {
           monthFlavorTexts: legacyFlavorTexts,
           dailyForecast: legacyForecast,
         });
-        if (cancelled) return;
+        if (cancelled || hydration !== latestHydration) return;
         const nextDate = state.calendarDate || state.calendar || legacyCalendar;
         setCurrentDate(nextDate);
-        setSelectedMonth(nextDate.isStarfall ? 14 : nextDate.month);
+        if (!hasChosenMonth.current) setSelectedMonth(nextDate.isStarfall ? 14 : nextDate.month);
         setFlavorTexts(state.monthFlavorTexts || legacyFlavorTexts);
         setForecast(state.dailyForecast || legacyForecast);
       } catch {
-        if (cancelled) return;
+        if (cancelled || hydration !== latestHydration) return;
         const nextDate = loadLegacyCalendarDate();
         setCurrentDate(nextDate);
-        setSelectedMonth(nextDate.isStarfall ? 14 : nextDate.month);
+        if (!hasChosenMonth.current) setSelectedMonth(nextDate.isStarfall ? 14 : nextDate.month);
         setFlavorTexts(loadLegacyFlavorTexts());
         setForecast(loadLegacyForecast());
       }
@@ -405,6 +408,7 @@ export function CalendarPage() {
 
   const handleDayClick = (dayNum: number) => {
     if (isStarfallSelected) return;
+    hasChosenMonth.current = true;
     setSelectedDay(dayNum);
     const dayAngle = (selectedMonth - 1) * MONTH_ARC + (MONTH_ARC / (DAYS_PER_MONTH + 1)) * dayNum;
     setWheelRotation(prev => {
@@ -420,12 +424,18 @@ export function CalendarPage() {
   };
 
   const navigateMonth = (dir: number) => {
+    hasChosenMonth.current = true;
     setSelectedMonth(prev => {
       let next = prev + dir;
       if (next < 1) next = 14;
       if (next > 14) next = 1;
       return next;
     });
+  };
+
+  const selectMonth = (month: number) => {
+    hasChosenMonth.current = true;
+    setSelectedMonth(month);
   };
 
   const isStarfallSelected = selectedMonth === 14;
@@ -602,7 +612,7 @@ export function CalendarPage() {
                 const star = MONTH_STARS[mIdx];
 
                 return (
-                  <g key={month} style={{ cursor: "pointer" }} onClick={() => setSelectedMonth(mIdx + 1)}>
+                  <g key={month} style={{ cursor: "pointer" }} onClick={() => selectMonth(mIdx + 1)}>
                     {/* Month arc segment - thin band */}
                     {(() => {
                       const innerR = 310;
@@ -854,7 +864,7 @@ export function CalendarPage() {
                 const rotation = midAngle + 90;
 
                 return (
-                  <g style={{ cursor: "pointer" }} onClick={() => setSelectedMonth(14)}>
+                  <g style={{ cursor: "pointer" }} onClick={() => selectMonth(14)}>
                     <path
                       d={path}
                       fill={isActive ? "#1A1A3B" : "#0A0A20"}
@@ -1108,7 +1118,7 @@ export function CalendarPage() {
               {MONTH_STARS.map((star, i) => (
                 <button
                   key={star.name}
-                  onClick={() => setSelectedMonth(i + 1)}
+                  onClick={() => selectMonth(i + 1)}
                   className={`flex items-center gap-2 px-2 py-1.5 text-left transition-colors ${selectedMonth === i + 1 ? retro.sunken : retro.raised + " hover:bg-[#12123A]"}`}
                   style={{
                     background: selectedMonth === i + 1 ? "#0E0E35" : "#080825",
@@ -1136,7 +1146,7 @@ export function CalendarPage() {
                 </button>
               ))}
               <button
-                onClick={() => setSelectedMonth(14)}
+                onClick={() => selectMonth(14)}
                 className={`flex items-center gap-2 px-2 py-1.5 text-left transition-colors ${selectedMonth === 14 ? retro.sunken : retro.raised + " hover:bg-[#12123A]"}`}
                 style={{
                   background: selectedMonth === 14 ? "#0E0E35" : "#080825",
